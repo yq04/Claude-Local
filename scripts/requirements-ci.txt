@@ -1,0 +1,3 @@
+# Versions verified in the local synthetic test environment.
+cryptography==45.0.7
+PyYAML==6.0.3

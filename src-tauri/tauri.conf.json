@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Claude-Local",
+  "version": "0.1.0",
+  "identifier": "ai.local.claude-local",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Claude-Local",
+        "width": 1040,
+        "height": 820,
+        "minWidth": 760,
+        "minHeight": 640,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "backgroundColor": "#FFFFFF"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "resources": {
+      "../dist/": "browser-ui/",
+      "../browser-runtime/version.txt": "browser-runtime/version.txt",
+      "../browser-runtime/LICENSE.fingerprint-chromium": "browser-runtime/LICENSE.fingerprint-chromium",
+      "../assets/ai-icons/LICENSE.lobehub.txt": "licenses/LICENSE.lobehub.txt"
+    }
+  },
+  "mainBinaryName": "claude-local"
+}

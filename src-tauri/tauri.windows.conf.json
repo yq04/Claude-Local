@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "bun run build && pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-browser.ps1"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Claude-Local",
+        "width": 1040,
+        "height": 820,
+        "minWidth": 760,
+        "minHeight": 640,
+        "decorations": true
+      }
+    ]
+  },
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "resources": {
+      "../dist/": "browser-ui/",
+      "../browser-runtime/version.txt": "browser-runtime/version.txt",
+      "../browser-runtime/LICENSE.fingerprint-chromium": "browser-runtime/LICENSE.fingerprint-chromium",
+      "../browser-runtime/WindowsBrowser/": "browser-runtime/WindowsBrowser/",
+      "../browser-runtime/icons/browser.ico": "browser-runtime/icons/browser.ico",
+      "windows/LICENSE.unicode.txt": "licenses/LICENSE.unicode.txt"
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "languages": [
+          "English",
+          "SimpChinese",
+          "TradChinese"
+        ],
+        "installerHooks": "windows/installer-hooks.nsh"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    }
+  }
+}

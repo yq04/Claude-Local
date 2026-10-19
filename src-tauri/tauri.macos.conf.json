@@ -1,0 +1,18 @@
+{
+  "bundle": {
+    "targets": [
+      "app"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-"
+    },
+    "resources": {
+      "../dist/": "browser-ui/",
+      "../browser-runtime/Browser.zip": "browser-runtime/Browser.zip",
+      "../browser-runtime/version.txt": "browser-runtime/version.txt",
+      "../browser-runtime/LICENSE.fingerprint-chromium": "browser-runtime/LICENSE.fingerprint-chromium",
+      "../assets/ai-icons/LICENSE.lobehub.txt": "licenses/LICENSE.lobehub.txt"
+    }
+  }
+}

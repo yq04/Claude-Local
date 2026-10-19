@@ -1,0 +1,41 @@
+{
+  "name": "claude-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:windows": "bun run build && bun run tauri build --config src-tauri/tauri.windows.conf.json --features custom-protocol",
+    "tauri": "tauri",
+    "test": "bun test",
+    "test:windows": "python scripts/test-windows.py",
+    "test:identities": "node --experimental-strip-types scripts/test-identities-ui.ts",
+    "build:local": "bun run build && cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml",
+    "deploy:local": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-local.ps1"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "clsx": "2.1.1",
+    "cromma-ui": "file:./vendor/cromma-ui",
+    "motion": "14.0.0",
+    "radix-ui": "1.6.7",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwind-merge": "3.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/bun": "^1.3.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5",
+    "playwright-core": "1.64.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0",
+    "yaml": "^2.9.1"
+  },
+  "license": "MIT"
+}

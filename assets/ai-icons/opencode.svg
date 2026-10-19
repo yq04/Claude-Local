@@ -1,0 +1,7 @@
+<!--
+[INPUT]: LobeHub lobe-icons opencode 原版 SVG，固定上游 c385b2b8d1f9。
+[OUTPUT]: 网络页 AI 分段静态图标，保留原始图形。
+[POS]: 仅 UI 标识，不含脚本/外部请求；许可见 LICENSE.lobehub.txt。
+[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+-->
+<svg fill="currentColor" fill-rule="evenodd" height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>opencode</title><path d="M16 6H8v12h8V6zm4 16H4V2h16v20z"></path></svg>

@@ -1,0 +1,107 @@
+name: Windows source checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-checks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows:
+    name: Windows source and fixture tests
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONUTF8: '1'
+      CARGO_TERM_COLOR: always
+      # Native unit tests need public build resources, never a downloaded engine.
+      TAURI_CONFIG: '{"bundle":{"resources":["../dist/","../browser-runtime/version.txt","../browser-runtime/LICENSE.fingerprint-chromium"]}}'
+      TAURI_SIGNING_PRIVATE_KEY: ''
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22.23.2'
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3.5'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install locked dependencies and native tools
+        run: |
+          $ErrorActionPreference = 'Stop'
+          rustup toolchain install 1.98.1 --profile minimal
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustup default 1.98.1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          bun install --frozen-lockfile
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pip install --disable-pip-version-check -r scripts/requirements-ci.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (-not (Test-Path "$env:SystemRoot\System32\OpenSSH\ssh.exe")) {
+            Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0 | Out-Null
+          }
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: claude-local-source-windows-msvc
+          cache-on-failure: true
+      - name: Isolate all test homes
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'claude-local-source-fixtures'
+          $paths = @{
+            HOME = Join-Path $fixture 'home'
+            USERPROFILE = Join-Path $fixture 'home'
+            APPDATA = Join-Path $fixture 'roaming'
+            LOCALAPPDATA = Join-Path $fixture 'local'
+            XDG_CONFIG_HOME = Join-Path $fixture 'config'
+            XDG_CACHE_HOME = Join-Path $fixture 'cache'
+            TEMP = Join-Path $fixture 'tmp'
+            TMP = Join-Path $fixture 'tmp'
+          }
+          # Preserve only toolchain locations before changing the fixture home.
+          $paths.CARGO_HOME = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+          $paths.RUSTUP_HOME = if ($env:RUSTUP_HOME) { $env:RUSTUP_HOME } else { Join-Path $env:USERPROFILE '.rustup' }
+          foreach ($entry in $paths.GetEnumerator()) {
+            New-Item -ItemType Directory -Path $entry.Value -Force | Out-Null
+            "$($entry.Key)=$($entry.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+      - name: Frontend tests
+        run: bun test
+      - name: Build frontend and verify referenced resources
+        run: |
+          bun run build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/browser_ui.py dist
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Native tests with public static resources
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol -- --test-threads=1
+      - name: Offline browser preparation fixtures
+        run: python scripts/test-fetch-browser.py
+      - name: Offline quota and migration fixtures
+        run: |
+          python scripts/test-claude-quota-local.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/test-migrate-local-data.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Offline Windows CLI fixtures
+        run: |
+          python scripts/test-windows.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }

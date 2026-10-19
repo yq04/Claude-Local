@@ -1,0 +1,13 @@
+# [INPUT]: 本机已安装的 claude-local 宿主。
+# [OUTPUT]: B 桌面入口与 URL 处理能力声明；只有用户明确设置才成为默认。
+# [POS]: Linux 桌面集成，不承载安装或数据读写。
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+[Desktop Entry]
+Type=Application
+Name=Claude-Local Browser
+Comment=Claude-Local companion fingerprint browser
+Exec=claude-local --browser %U
+Icon=claude-local-browser
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;
