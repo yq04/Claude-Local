@@ -11,6 +11,7 @@ assets/ - Independent CL marks and retained third-party notices.
 vendor/ - Existing UI components with separate attribution/license boundaries in NOTICE.md.
 docs/ - Local development, data boundaries and distribution documentation.
 .github/workflows/ - Credential-free Windows checks and explicitly dispatched private build artifacts.
+HANDOFF.md - Current work, verified results, remaining validation and compatibility pitfalls; private machine details stay in ignored .local/.
 </directory>
 
 Product Claude-Local / binary claude-local.exe / identifier ai.local.claude-local. Browser registration Claude-Local-Browser. All data is in the user's independent app-data root; the default Claude workspace is the managed integration boundary, not an OS sandbox. Ordinary startup does not open the browser. No commercial acquisition or external Skill installation UI is part of this product.
