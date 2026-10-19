@@ -59,6 +59,26 @@ class MigrationTests(unittest.TestCase):
             for path in [self.destination, *self.destination.rglob("*")]:
                 migration.private_files().assert_private(migration.winpath(path))
 
+    def test_explicit_cache_exclusion_preserves_personal_assets_without_reading_caches(self):
+        cache = self.source / "browser/contexts/fixture-slot/profile/Default/Cache/No_Vary_Search"
+        cache.mkdir(parents=True)
+        (cache / "journal.baj").write_bytes(b"cache")
+        original_digest = migration.digest_file
+        def guarded_digest(path):
+            if "Cache" in path.parts:
+                raise PermissionError("fixture sandbox-only cache")
+            return original_digest(path)
+        with patch.object(migration, "digest_file", side_effect=guarded_digest):
+            with self.assertRaises(PermissionError):
+                migration.migrate(self.source, self.destination)
+            result = migration.migrate(self.source, self.destination, exclude_browser_caches=True)
+        self.assertTrue(result["regenerable_browser_caches_excluded"])
+        self.assertTrue((cache / "journal.baj").exists())
+        copied_default = self.destination / "browser/contexts/fixture-slot/profile/Default"
+        self.assertTrue((copied_default / "fixture-data").exists())
+        self.assertFalse((copied_default / "Cache").exists())
+        self.assertTrue(result["all_hashes_match"])
+
     def test_existing_empty_and_nonempty_destinations_are_refused(self):
         self.destination.mkdir()
         with self.assertRaises(FileExistsError):

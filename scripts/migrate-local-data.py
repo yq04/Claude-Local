@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # [INPUT]: 显式绝对源/目标目录、已退出的旧宿主/浏览器与 Windows 当前用户私有 ACL 层。
-# [OUTPUT]: 保留源的私有暂存复制、SQLite 完整性/全文件哈希验收和原子公开；失败保留暂存目录。
+# [OUTPUT]: 保留源的私有暂存复制、SQLite 完整性/所选资料全文件哈希验收（可显式排除可再生浏览器缓存）和原子公开；失败保留暂存目录。
 # [POS]: 一次性本地版资料迁移；不停止进程、不改 Claude 工作区、不覆盖目标、不输出文件正文。
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 import argparse
@@ -120,7 +120,17 @@ def digest_file(path):
     return digest
 
 
-def snapshot(root):
+def is_regenerable_browser_cache(relative):
+    parts = Path(relative).parts
+    if not parts or parts[0] != "browser" or "profile" not in parts:
+        return False
+    tail = parts[parts.index("profile") + 1:]
+    profile_caches = {"GPUCache", "ShaderCache", "GrShaderCache", "GraphiteDawnCache", "DawnCache"}
+    return bool(tail and (tail[0] in profile_caches or
+        (len(tail) > 1 and tail[0] == "Default" and tail[1] in {"Cache", "Code Cache", *profile_caches})))
+
+
+def snapshot(root, exclude_browser_caches=False):
     result = {}
     for name in ASSETS:
         path = root / name
@@ -129,8 +139,10 @@ def snapshot(root):
         pending = [path]
         while pending:
             entry = pending.pop()
-            metadata = check_node(entry)
             relative = entry.relative_to(root).as_posix()
+            if exclude_browser_caches and is_regenerable_browser_cache(relative):
+                continue
+            metadata = check_node(entry)
             if stat.S_ISDIR(metadata.st_mode):
                 result[relative] = ("directory",)
                 pending.extend(sorted(entry.iterdir(), reverse=True))
@@ -180,7 +192,7 @@ def copy_file(source, destination):
             os.close(descriptor)
 
 
-def migrate(source, destination):
+def migrate(source, destination, exclude_browser_caches=False):
     source, destination = absolute_path(source), absolute_path(destination)
     check_parents(source)
     check_parents(destination.parent)
@@ -195,7 +207,7 @@ def migrate(source, destination):
     if os.path.lexists(destination):
         raise FileExistsError("Destination already exists; migration never overwrites it")
     ensure_no_source_processes(source)
-    before = snapshot(source)
+    before = snapshot(source, exclude_browser_caches)
     identities = database_summary(source)
     stage = destination.with_name(f".{destination.name}.migrate-{uuid.uuid4().hex}")
     private_directory(stage)
@@ -207,7 +219,7 @@ def migrate(source, destination):
             else:
                 copy_file(source / relative, target)
         ensure_no_source_processes(source)
-        after, copied = snapshot(source), snapshot(stage)
+        after, copied = snapshot(source, exclude_browser_caches), snapshot(stage, exclude_browser_caches)
         if before != after or before != copied:
             raise RuntimeError("Source changed or copy hashes differ; no destination was published")
         if database_summary(source) != identities or database_summary(stage) != identities:
@@ -224,6 +236,7 @@ def migrate(source, destination):
         "files": sum(entry[0] == "file" for entry in before.values()),
         "saved_identities": identities, "all_hashes_match": True,
         "source_preserved": True, "manifest_sha256": manifest_hash,
+        "regenerable_browser_caches_excluded": exclude_browser_caches,
     }
 
 
@@ -231,9 +244,10 @@ def main():
     parser = argparse.ArgumentParser(description="Copy Claude-Local data to a separate local app root; preserve source")
     parser.add_argument("--source", required=True)
     parser.add_argument("--destination", required=True)
+    parser.add_argument("--exclude-browser-caches", action="store_true", help="Skip only regenerable browser cache directories; retain all originals")
     args = parser.parse_args()
     try:
-        print(json.dumps(migrate(args.source, args.destination), ensure_ascii=False, indent=2))
+        print(json.dumps(migrate(args.source, args.destination, args.exclude_browser_caches), ensure_ascii=False, indent=2))
     except Exception as error:
         print(str(error), file=sys.stderr)
         if error.__cause__:
