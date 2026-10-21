@@ -86,18 +86,13 @@ pub(super) fn current_id(
 impl Store {
     pub(super) fn index_legacy(&self) -> Result<(), String> {
         let summaries = self.db.summaries()?;
-        for record in self
-            .db
-            .records()?
-            .into_iter()
-            .filter(|r| {
-                r.account_key.is_none()
-                    || (!r.empty
-                        && !summaries
-                            .get(&r.id)
-                            .is_some_and(super::profile::Summary::has_quota_check))
-            })
-        {
+        for record in self.db.records()?.into_iter().filter(|r| {
+            r.account_key.is_none()
+                || (!r.empty
+                    && !summaries
+                        .get(&r.id)
+                        .is_some_and(super::profile::Summary::has_quota_check))
+        }) {
             // 损坏的旧副本不自动删除；用户仍可单独删除或保留排查。
             let Ok(stage) = self.load(&record) else {
                 continue;
@@ -118,9 +113,10 @@ impl Store {
                 self.db.index(&record.id, key.as_deref().unwrap_or(""))?;
             }
             if !record.empty {
-                let _ = self
-                    .db
-                    .set_summary(&record.id, &super::profile::summarize_stage(&stage));
+                let _ = self.db.set_summary(
+                    &record.id,
+                    &super::profile::summarize_stage_with_ledger(&stage, &self.vault),
+                );
             }
         }
         Ok(())

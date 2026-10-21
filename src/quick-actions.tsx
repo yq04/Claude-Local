@@ -53,17 +53,17 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
   const target = browser.value ? effectiveBrowserTarget(browser.value) : null;
   const linked = browser.value?.identity_linked ?? browser.value?.identity?.linked;
   const snapshots = [
-    {key: 'identity', label: t('身份管理'), state: identity, value: identityStatus, detail: identity.value ? t('quick.savedCount', {n: identity.value.records.length}) : '—'},
     {key: 'browser', label: t('浏览环境'), state: browser, value: browserStatus, detail: t(linked == null ? 'quick.unknown' : linked ? 'quick.browserLinked' : 'quick.browserIndependent')},
     {key: 'system', label: t('电脑环境'), state: system, value: system.value?.timezone || t('quick.unknown'), detail: system.value?.languages.join(' · ') || '—'},
+    {key: 'identity', label: t('身份管理'), state: identity, value: identityStatus, detail: identity.value ? t('quick.savedCount', {n: identity.value.records.length}) : '—'},
     {key: 'cli', label: 'Claude Code CLI', state: cli, value: cliStatus, detail: cli.value?.version || '—'},
   ];
   const failed = snapshots.filter(({state}) => state.error);
   const cards = [
-    {page: 'vps', title: '网络环境', description: 'quick.networkHint', action: '前往网络环境'},
-    {page: 'cleaner', title: '身份管理', description: 'quick.identityHint', action: '前往身份管理'},
     {page: 'browser', title: '浏览环境', description: 'quick.browserHint', action: '前往浏览器环境'},
     {page: 'system', title: '电脑环境', description: 'quick.systemHint', action: '前往电脑环境'},
+    {page: 'vps', title: '网络环境', description: 'quick.networkHint', action: '前往网络环境'},
+    {page: 'cleaner', title: '身份管理', description: 'quick.identityHint', action: '前往身份管理'},
     {page: 'usage', title: 'usage.title', description: 'quick.usageHint', action: '查看用量统计'},
     {page: 'settings', title: '软件设置', description: 'quick.settingsHint', action: '前往软件设置'},
   ] as const;

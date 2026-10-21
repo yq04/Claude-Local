@@ -11,7 +11,7 @@ import {getVersion} from '@tauri-apps/api/app';
 import {invoke} from '@tauri-apps/api/core';
 import appLogo from '../assets/claude-local-mark.svg';
 import {useI18n, setLocale, type Locale} from './i18n';
-import {resetPreferences, updatePreferences, usePreferences, type AccentTone} from './settings-model';
+import {resetPreferences, updatePreferences, usePreferences, usePrivacySyncError, type AccentTone} from './settings-model';
 
 type SettingsTab = 'general' | 'appearance' | 'data' | 'about';
 
@@ -46,6 +46,7 @@ function GroupHeading({children}: {children: ReactNode}) {
 export function SettingsPanel({onNavigate}: {onNavigate?: (page: 'cleaner' | 'browser' | 'vps' | 'help') => void}) {
   const {t, locale} = useI18n();
   const prefs = usePreferences();
+  const privacyError = usePrivacySyncError();
   const [tab, setTab] = useState<SettingsTab>('general');
   const [version, setVersion] = useState('');
   const [langBusy, setLangBusy] = useState(false);
@@ -86,6 +87,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: 'cleaner' | 'br
       <header className="cleanup-title settings-header">
         <h1>{t('软件设置')}</h1>
       </header>
+      {privacyError && <p className="system-feedback error" role="alert">{t(privacyError)}</p>}
 
       <Tabs
         aria-label={t('设置分类')}
@@ -118,14 +120,14 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: 'cleaner' | 'br
                   </span>
                   <div>
                     <strong>{t('本机独立应用资料根')}</strong>
-                    <p>{t('加密身份保险库、独立浏览器资料与离线额度账本均保存在此私有目录，与上游或其他工具完全隔离。')}</p>
+                    <p>{t('identitySafety.dataBoundary')}</p>
                   </div>
                 </div>
                 <code className="settings-path-code">%APPDATA%\ai.local.claude-local</code>
                 <div className="settings-meta-pills">
                   <span className="settings-meta-pill ok">{t('BAGAID01 认证加密')}</span>
                   <span className="settings-meta-pill">{t('SQLite v3 索引')}</span>
-                  <span className="settings-meta-pill">{t('跨账号会话自动脱敏')}</span>
+                  <span className="settings-meta-pill">{t('identitySafety.historyPreserved')}</span>
                 </div>
               </div>
               {onNavigate && (
@@ -255,7 +257,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: 'cleaner' | 'br
                       {version && <span className="settings-version-pill">v{version}</span>}
                       <span className="settings-meta-pill ok">{t('独立发行版')}</span>
                     </div>
-                    <span>{t('独立 Windows x64 桌面端 · 伴生指纹浏览器 Claude-Local Browser · 零上游遥测')}</span>
+                    <span>{t('identitySafety.productScope')}</span>
                     <span>{t('本地独立版不联网检查更新；新版本以安装包形式交付。')}</span>
                   </div>
                 </div>

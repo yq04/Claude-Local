@@ -12,17 +12,19 @@ mod cleaner;
 mod identities;
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(target_os = "windows")]
-mod windows;
+#[cfg(test)]
+mod local_edition_tests;
+mod local_runtime;
 mod native;
+mod network_links;
 mod progress;
 mod regions;
 mod system;
 mod ui_language;
-mod local_runtime;
-#[cfg(test)]
-mod local_edition_tests;
-mod network_links;
+mod ui_privacy;
+mod quota_setup;
+#[cfg(target_os = "windows")]
+mod windows;
 use tauri::{tray::TrayIconBuilder, Manager};
 fn show(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -63,7 +65,11 @@ pub(crate) fn startup_trace(stage: &str) {
     if std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true") {
         // CI 只记录固定启动阶段，不读取文件正文、参数或凭据。
         let path = std::env::temp_dir().join("claude-local-ci-startup.log");
-        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
             use std::io::Write;
             let _ = writeln!(file, "{stage}");
         }
@@ -90,6 +96,7 @@ fn main() {
         .setup(|app| {
             startup_trace("host setup");
             app.manage(ui_language::UiLanguage::load(app.handle()));
+            app.manage(ui_privacy::UiPrivacy::load(app.handle()));
             app.manage(cleaner::Cleaner::default());
             app.manage(browser::Browser::default());
             #[cfg(target_os = "macos")]
@@ -126,6 +133,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             ui_language::ui_language_read,
             ui_language::ui_language_write,
+            ui_privacy::ui_privacy_read,
+            ui_privacy::ui_privacy_write,
+            quota_setup::quota_setup_status,
             runtime_platform,
             open_permissions,
             unlock_keychain,
@@ -162,7 +172,7 @@ fn main() {
             browser::browser_align,
             browser::browser_default_read,
             browser::browser_set_default,
-            browser::browser_rotate,
+            browser::browser_open_usage,
             network_links::network_diagnose_domains
         ])
         .build(tauri::generate_context!())

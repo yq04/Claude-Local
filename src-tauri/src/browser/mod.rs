@@ -7,7 +7,7 @@ mod launch;
 mod network;
 mod profile;
 mod workspaces;
-use launch::launch_locked;
+use launch::{launch_locked, launch_with_urls_locked};
 pub(crate) use workspaces::delete_saved;
 pub(crate) use workspaces::identity_action;
 pub(crate) fn configure_identity(
@@ -100,6 +100,7 @@ pub struct Snapshot {
     running: bool,
     profile: String,
     identity_linked: bool,
+    identity: Option<crate::identities::browser_link::BrowserIdentity>,
     cache: Vec<profile::CacheItem>,
     cache_error: String,
     report: Option<Report>,
@@ -208,9 +209,6 @@ fn open_session(
     machine: &Machine,
     engine_version: String,
 ) -> Result<String, String> {
-    use std::io::Write;
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
     let state = app.state::<Browser>();
     let listener = server::bind()?;
     let port = listener
@@ -219,8 +217,9 @@ fn open_session(
         .port();
     let token = server::nonce()?;
     let page = format!("http://127.0.0.1:{port}/{token}/browser.html");
+    let mask = crate::ui_privacy::effective_privacy_mask(app);
     let context = Context {
-        identity: identity_context(app)?,
+        identity: mask_browser_identity(identity_context(app)?, mask),
         ui_language: crate::ui_language::ui_language_read(app.clone()),
         exit_services: &network::SERVICES,
         region: config.region(machine),
@@ -236,16 +235,8 @@ fn open_session(
     });
     server::start(app.clone(), listener, token, web, context);
     let root = root(app)?;
-    fs::create_dir_all(&root).map_err(|_| "无法创建浏览器目录。")?;
-    let temp = root.join("start.url.tmp");
-    let mut options = fs::OpenOptions::new();
-    options.create(true).write(true).truncate(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(&temp).map_err(|_| "无法写入起始页地址。")?;
-    file.write_all(format!("{page}\n").as_bytes())
-        .map_err(|_| "无法写入起始页地址。")?;
-    fs::rename(&temp, root.join("start.url")).map_err(|_| "无法写入起始页地址。")?;
+    crate::identities::private::directory(&root)?;
+    crate::identities::private::write(&root.join("start.url"), format!("{page}\n").as_bytes())?;
     Ok(page)
 }
 /// 资料或配置变化使旧会话失效后，立即换新会话，保证 start.url 始终指向存活的起始页服务。
@@ -353,8 +344,9 @@ pub async fn browser_default_read() -> Result<DefaultBrowser, String> {
 #[tauri::command]
 pub async fn browser_set_default(app: tauri::AppHandle) -> Result<DefaultBrowser, String> {
     run(move || {
-        let browser = installed()
-            .ok_or("未找到 /Applications/Claude-Local Browser.app，请先运行 bun run install:apps。")?;
+        let browser = installed().ok_or(
+            "未找到 /Applications/Claude-Local Browser.app，请先运行 bun run install:apps。",
+        )?;
         let copy = root(&app)?.join("engine/Browser.app");
         if copy.exists() {
             let _ = Command::new(LSREGISTER).arg("-u").arg(&copy).status();
@@ -475,6 +467,9 @@ fn snapshot(app: &tauri::AppHandle) -> Result<Snapshot, String> {
         Ok(items) => (items, String::new()),
         Err(error) => (Vec::new(), error),
     };
+    let identity = identity_context(app)
+        .ok()
+        .map(|id| mask_browser_identity(id, crate::ui_privacy::effective_privacy_mask(app)));
     Ok(Snapshot {
         ui_language: crate::ui_language::ui_language_read(app.clone()),
         exit_services: &network::SERVICES,
@@ -486,6 +481,7 @@ fn snapshot(app: &tauri::AppHandle) -> Result<Snapshot, String> {
         running,
         profile: profile.to_string_lossy().into(),
         identity_linked: workspaces::database(&root)?.browser_link()?.enabled,
+        identity,
         cache,
         cache_error,
         report,
@@ -748,37 +744,69 @@ pub async fn browser_align(
     .await
 }
 
-/// 快捷换指纹：正常退出后更新种子与选定地区，网络跟随 TUN；旧观测会话失效。
+pub fn mask_email(email: &str) -> String {
+    if email.is_empty() {
+        return String::new();
+    }
+    match email.find('@') {
+        None => "***".to_string(),
+        Some(0) => format!("***{email}"),
+        Some(at) => {
+            let (local, domain) = email.split_at(at);
+            if local.len() <= 1 {
+                format!("*{domain}")
+            } else {
+                let keep = (local.len() / 2).max(1).min(3);
+                format!("{}***{domain}", &local[..keep])
+            }
+        }
+    }
+}
+
+pub fn mask_display_name(name: &str, email: Option<&str>) -> String {
+    if name.is_empty() {
+        return String::new();
+    }
+    if name.contains('@') {
+        return mask_email(name);
+    }
+    if let Some(e) = email {
+        let local = e.split('@').next().unwrap_or(e);
+        if name.eq_ignore_ascii_case(local) {
+            return mask_email(e);
+        }
+    }
+    name.to_string()
+}
+
+pub fn mask_browser_identity(
+    mut identity: crate::identities::browser_link::BrowserIdentity,
+    mask: bool,
+) -> crate::identities::browser_link::BrowserIdentity {
+    if !mask {
+        return identity;
+    }
+    let email_ref = identity.email.clone();
+    identity.name = identity
+        .name
+        .map(|n| mask_display_name(&n, email_ref.as_deref()));
+    identity.email = identity.email.map(|e| mask_email(&e));
+    identity
+}
+
+const USAGE_SETTINGS_URL: &str = "https://claude.ai/settings/usage";
+
 #[tauri::command]
-pub async fn browser_rotate(app: tauri::AppHandle, region: String) -> Result<Snapshot, String> {
-    let region = crate::regions::find(&region)?;
+pub async fn browser_open_usage(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    on_progress: Option<tauri::ipc::JavaScriptChannelId>,
+) -> Result<Snapshot, String> {
+    let on_progress = on_progress.map(|id| id.channel_on(webview));
     run(move || {
         let state = app.state::<Browser>();
         let _guard = state.gate.lock().unwrap();
-        workspaces::ready(&root(&app)?)?;
-        let root = root(&app)?;
-        let settings = workspaces::scope(&root)?;
-        let profile = settings.join("profile");
-        profile::check_path(&root, &profile)?;
-        profile::quit(&profile)?;
-        let mut config = config::load(&workspaces::scope(&root)?)?;
-        let old = config.seed;
-        while config.seed == old || config.seed == 0 {
-            let nonce = server::nonce()?;
-            config.seed = u32::from_str_radix(&nonce[..8], 16).map_err(|_| "无法生成指纹种子。")?;
-        }
-        config.follow_machine = false;
-        config.language = region.language.into();
-        config.timezone = region.timezone.into();
-        config.proxy.clear();
-        // ----- 种子必须作用于 Canvas/布局，真实设备参数继续沿用 -----
-        config.native_graphics = false;
-        config.validate(&config::machine()?)?;
-        config::save(&workspaces::scope(&root)?, &config)?;
-        refresh_launch_args(&app)?;
-        *state.host.lock().unwrap() = None;
-        renew_session(&app);
-        snapshot(&app)
+        launch_with_urls_locked(&app, &Reporter::channel(on_progress), &[USAGE_SETTINGS_URL])
     })
     .await
 }

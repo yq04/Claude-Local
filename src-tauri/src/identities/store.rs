@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 目录、用户策略、白名单源、已验收归档代次、认证加密与平台凭据桥。
-// [OUTPUT]: 已验证身份归档、先暂存后切换、恢复后跨账号残留消毒、旧归档会话历史无损合并、持久恢复记录、原位配置合并、直接删除与清除/恢复/凭据/提交/回滚真实进度。
+// [OUTPUT]: 已验证身份归档、先暂存后切换、旧归档写回前的设备/客户端状态保护投影、显式切换/恢复后的窄账号缓存维护、原始历史保留、持久恢复与真实阶段进度。
 // [POS]: 身份的文件事务；SQLite 与文件系统由恢复日志协调，不能假装是同一原子事务。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -97,9 +97,6 @@ impl Store {
             store.index_legacy()?;
             store.db.remove_empty()?;
             store.collect_generations()?;
-            if store.stopped().is_ok() {
-                let _ = identity::sanitize_cross_account_residue(&store.home);
-            }
         }
         Ok(store)
     }
@@ -165,7 +162,7 @@ impl Store {
                 if s.keys.is_empty() && s.category != "settings" && policy.keeps(&s.category) {
                     return None;
                 }
-                let mut s = s.clone();
+                let mut s = identity::writable_source(&stage.manifest.home, s)?;
                 if s.keys.is_empty() && s.category == "settings" && policy.settings {
                     s.keys = crate::cleaner::identity::SETTINGS_IDENTITY_KEYS
                         .iter()
@@ -497,9 +494,10 @@ impl Store {
         );
         self.db.remember(&record)?;
         self.db.rename(&record.id, &record.name)?;
-        let _ = self
-            .db
-            .set_summary(&record.id, &super::profile::summarize_stage(&stage));
+        let _ = self.db.set_summary(
+            &record.id,
+            &super::profile::summarize_stage_with_ledger(&stage, &self.vault),
+        );
         self.db.complete(&record.id)?;
         self.db.compact()?;
         super::usage::commit_switch_boundary(
@@ -625,7 +623,7 @@ impl Store {
             reporter.log("credentials", "ok", "当前本地登录凭据已清除。", 1, Some(1));
             if let Some(stage) = incoming.as_ref() {
                 self.restore(stage, &next, policy, reporter, "restore")?;
-                let _ = identity::sanitize_cross_account_residue(&self.home);
+                let _ = identity::maintain_account_caches(&self.home);
             }
             reporter.log(
                 "commit",
@@ -635,17 +633,23 @@ impl Store {
                 Some(1),
             );
             self.db.complete(target)?;
-            let next_account = if target == "empty" { None } else { self.record(target)?.account_key };
+            let next_account = if target == "empty" {
+                None
+            } else {
+                self.record(target)?.account_key
+            };
             super::usage::commit_switch_boundary(&self.vault, &self.home, next_account.as_deref());
             if !record.empty {
-                let _ = self
-                    .db
-                    .set_summary(&record.id, &super::profile::summarize_stage(&outgoing));
+                let _ = self.db.set_summary(
+                    &record.id,
+                    &super::profile::summarize_stage_with_ledger(&outgoing, &self.vault),
+                );
             }
             if let Some(stage) = incoming.as_ref() {
-                let _ = self
-                    .db
-                    .set_summary(target, &super::profile::summarize_stage(stage));
+                let _ = self.db.set_summary(
+                    target,
+                    &super::profile::summarize_stage_with_ledger(stage, &self.vault),
+                );
             }
             reporter.log("commit", "ok", "身份与浏览器选择已提交。", 1, Some(1));
             Ok(())
@@ -753,7 +757,7 @@ impl Store {
             self.db.remember(&checkpoint)?;
             let _ = self.db.set_summary(
                 &checkpoint.id,
-                &super::profile::summarize_stage(&current_stage),
+                &super::profile::summarize_stage_with_ledger(&current_stage, &self.vault),
             );
         }
         self.clear(
@@ -793,7 +797,7 @@ impl Store {
             reporter,
             "restore",
         )?;
-        let _ = identity::sanitize_cross_account_residue(&self.home);
+        let _ = identity::maintain_account_caches(&self.home);
         reporter.log(
             "commit",
             "running",
@@ -803,9 +807,10 @@ impl Store {
         );
         self.db.complete(&record.id)?;
         if !record.empty {
-            let _ = self
-                .db
-                .set_summary(&record.id, &super::profile::summarize_stage(&outgoing));
+            let _ = self.db.set_summary(
+                &record.id,
+                &super::profile::summarize_stage_with_ledger(&outgoing, &self.vault),
+            );
         }
         self.db.compact()?;
         super::usage::commit_switch_boundary(

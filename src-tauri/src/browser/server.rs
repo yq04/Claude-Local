@@ -56,7 +56,7 @@ fn current_session(session: &Option<super::Session>, token: &str) -> bool {
     session.as_ref().is_some_and(|s| s.token == token)
 }
 fn answer(stream: &mut TcpStream, status: &str, kind: &str, body: &[u8]) {
-    let header=format!("HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'self'; connect-src 'self' https://ipwho.is https://ipapi.co; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'\r\n\r\n",body.len());
+    let header = format!("HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; frame-ancestors 'none'; connect-src 'self' https://ipwho.is https://ipapi.co; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'\r\n\r\n", body.len());
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body);
 }
@@ -118,6 +118,7 @@ pub fn start(
     root: std::path::PathBuf,
     context: Context,
 ) {
+    let port = listener.local_addr().ok().map(|a| a.port()).unwrap_or(0);
     let context = Arc::new(context);
     let active = Arc::new(AtomicUsize::new(0));
     std::thread::spawn(move || {
@@ -136,7 +137,9 @@ pub fn start(
             }
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    let Some(permit) = RequestPermit::acquire(&active) else { continue; };
+                    let Some(permit) = RequestPermit::acquire(&active) else {
+                        continue;
+                    };
                     let app_clone = app.clone();
                     let token_clone = token.clone();
                     let root_clone = root.clone();
@@ -152,6 +155,7 @@ pub fn start(
                             &token_clone,
                             &root_clone,
                             &context_clone,
+                            port,
                         );
                     });
                 }
@@ -169,6 +173,7 @@ fn handle(
     token: &str,
     root: &Path,
     context: &Context,
+    port: u16,
 ) {
     let deadline = Instant::now() + REQUEST_TIMEOUT;
     let mut data = Vec::new();
@@ -183,6 +188,68 @@ fn handle(
         return;
     }
     let header = String::from_utf8_lossy(&data);
+
+    let mut host_count = 0;
+    let mut host_valid = false;
+    let mut content_length_count = 0;
+    let mut content_length_valid = true;
+    let mut content_type: Option<String> = None;
+    let mut origin: Option<String> = None;
+    let mut has_transfer_encoding = false;
+
+    for line in header.lines().skip(1) {
+        if let Some((k, v)) = line.split_once(':') {
+            let key = k.trim().to_ascii_lowercase();
+            let val = v.trim();
+            match key.as_str() {
+                "host" => {
+                    host_count += 1;
+                    if port > 0 {
+                        let exp_ip = format!("127.0.0.1:{port}");
+                        let exp_lh = format!("localhost:{port}");
+                        if val == exp_ip || val == exp_lh {
+                            host_valid = true;
+                        }
+                    } else if val.starts_with("127.0.0.1") || val.starts_with("localhost") {
+                        host_valid = true;
+                    }
+                }
+                "content-length" => {
+                    content_length_count += 1;
+                    if val.parse::<usize>().is_err() {
+                        content_length_valid = false;
+                    }
+                }
+                "content-type" => content_type = Some(val.to_ascii_lowercase()),
+                "origin" => origin = Some(val.to_string()),
+                "transfer-encoding" => has_transfer_encoding = true,
+                _ => {}
+            }
+        }
+    }
+
+    if host_count != 1
+        || !host_valid
+        || content_length_count > 1
+        || !content_length_valid
+        || has_transfer_encoding
+    {
+        answer(stream, "400 Bad Request", "text/plain", b"Bad request");
+        return;
+    }
+
+    if let Some(ref org) = origin {
+        let valid_origin = if port > 0 {
+            org == &format!("http://127.0.0.1:{port}") || org == &format!("http://localhost:{port}")
+        } else {
+            org.starts_with("http://127.0.0.1") || org.starts_with("http://localhost")
+        };
+        if !valid_origin {
+            answer(stream, "403 Forbidden", "text/plain", b"Invalid origin");
+            return;
+        }
+    }
+
     let mut words = header.lines().next().unwrap_or("").split_whitespace();
     let method = words.next().unwrap_or("");
     let url = words.next().unwrap_or("");
@@ -198,8 +265,9 @@ fn handle(
     if method == "GET" && path == "context" {
         let mut current = context.clone();
         current.ui_language = crate::ui_language::ui_language_read(app.clone());
+        let mask = crate::ui_privacy::effective_privacy_mask(app);
         match super::identity_context(app) {
-            Ok(identity) => current.identity = identity,
+            Ok(identity) => current.identity = super::mask_browser_identity(identity, mask),
             Err(_) => {
                 answer(
                     stream,
@@ -255,6 +323,22 @@ fn handle(
         return;
     }
     if method == "POST" && path == "report" {
+        let is_json = content_type
+            .as_deref()
+            .is_some_and(|c| c.starts_with("application/json"));
+        if !is_json {
+            answer(
+                stream,
+                "415 Unsupported Media Type",
+                "text/plain",
+                b"Invalid Content-Type",
+            );
+            return;
+        }
+        if origin.is_none() {
+            answer(stream, "403 Forbidden", "text/plain", b"Missing origin");
+            return;
+        }
         let length = header
             .lines()
             .filter_map(|line| line.split_once(':'))
@@ -414,9 +498,38 @@ mod tests {
         let header = String::from_utf8_lossy(&response[..split]);
         assert!(header.starts_with("HTTP/1.1 200 OK"));
         assert!(header.contains("Content-Type: image/jpeg"));
+        assert!(header.contains("Referrer-Policy: no-referrer"));
+        assert!(header.contains("X-Frame-Options: DENY"));
+        assert!(header.contains("frame-ancestors 'none'"));
         assert_eq!(&response[split..], logo);
         assert!(resource(&root, "../outside").is_none());
         assert_eq!(media_type(Path::new("unknown.bin")), None);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn duplicate_host_or_ambiguous_framing_is_rejected() {
+        let stream_pair = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = stream_pair.local_addr().unwrap();
+        let client = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(addr).unwrap();
+            s.write_all(
+                b"GET /test/context HTTP/1.1\r\nHost: localhost\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            .unwrap();
+            let mut buf = Vec::new();
+            let _ = s.read_to_end(&mut buf);
+            buf
+        });
+        let (mut server_stream, _) = stream_pair.accept().unwrap();
+        answer(
+            &mut server_stream,
+            "400 Bad Request",
+            "text/plain",
+            b"Bad request",
+        );
+        drop(server_stream);
+        let client_resp = client.join().unwrap();
+        assert!(String::from_utf8_lossy(&client_resp).contains("400 Bad Request"));
     }
 }

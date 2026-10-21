@@ -7,7 +7,8 @@
 import {effectiveBrowserTarget, matchesDevice, type BrowserContext, type Report} from './browser-model';
 export type VerificationPhase='checking'|'failed'|'passed';
 export type VerificationCheck={label:string;actual:string;expected:string;ok:boolean|null};
-export function verifyBrowser(context:BrowserContext|null,report:Report|null,linked:boolean,error:string,busy:boolean) {
+export const REPORT_MAX_AGE_MS = 10 * 60 * 1000;
+export function verifyBrowser(context:BrowserContext|null,report:Report|null,linked:boolean,error:string,busy:boolean,reportedAt?:number|null) {
  const checks:VerificationCheck[]=[];
  const problems:string[]=[];
  if(error)problems.push(error);
@@ -15,6 +16,7 @@ export function verifyBrowser(context:BrowserContext|null,report:Report|null,lin
  if(!linked&&!busy)problems.push('与 Claude-Local的连接已断开，请在清理器内重新打开实测页。');
  if(!context?.region&&!busy)problems.push('请先在主应用选择目标地区。');
  if(!report&&!busy&&!error)problems.push('尚未取得完整检测结果。');
+ if(reportedAt && (Date.now() - reportedAt > REPORT_MAX_AGE_MS)) problems.push('检测结果已超过 10 分钟（已过时），请点击「重新实测」更新。');
  if(context&&report){
   const {machine,region,config}=context, exit=report.exit;
   const target=effectiveBrowserTarget(context);

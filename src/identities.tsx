@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生身份命令、保留策略、离线 5h/7d 额度与重置时间戳、订阅到期摘要、经 Cromma 入口的 Motion 弹簧与根级减弱动效（系统设置或「减少动画」偏好）、settings-model 视图偏好、共享确认窗/进度、文件残留与 CLI 维护。
- * [OUTPUT]: 180×286 身份工牌统一以本地保存名为单行主标题，原账号名仅在非隐私提示中保留；同字体双额度/重置时间/订阅信息、最优账号切换及原有确认与真实操作进度。
+ * [INPUT]: 原生身份命令、保留策略、带来源与观测时间的离线 5h/7d 额度、重置权益未知状态与固定官方用量入口、订阅到期摘要、经 Cromma 入口的 Motion 弹簧与根级减弱动效（系统设置或「减少动画」偏好）、settings-model 视图偏好、共享确认窗/进度、文件残留与 CLI 维护。
+ * [OUTPUT]: 180×286 身份工牌统一以本地保存名为单行主标题，原账号名仅在非隐私提示中保留；同字体独立双额度、过期/未知不推荐、额度详情与官网权益入口、明确恢复/删除进程确认及真实操作进度。
  * [POS]: 身份管理 GUI；只呈现脱敏元数据与离线额度，身份正文留在原生保险库；可选浏览器绑定/旧资料采用确认与重开重试，关联浏览器资料删除单独选择。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -15,10 +15,11 @@ import {formatBytes} from './cleaner-model';
 import {ClaudeCliPanel} from './claude-cli-panel';
 import {ClaudeResiduePanel} from './claude-residue-panel';
 import {defaultPolicy, policyRows, type Identity, type IdentityState} from './identity-model';
-import {maskEmailAddress, usePreferences} from './settings-model';
+import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
+import {evaluateQuota, formatCompactEta, formatResetClock} from './identity-quota';
 
 type Target = Identity | 'empty' | 'recovery';
-type QuotaInput = {quota_5h_used?: number | null; quota_5h_reset_at?: number | null; quota_7d_used?: number | null; quota_7d_reset_at?: number | null};
+type QuotaSetupStatus={state:'not_configured'|'custom_statusline'|'invalid_settings_path'|'invalid_settings_json'|'invalid_statusline';collector_bundled:boolean;has_statusline:boolean};
 
 function authBadgeLabel(status: string | null | undefined, t: (key: string) => string) {
   if (status === 'valid') return t('凭据有效');
@@ -27,58 +28,12 @@ function authBadgeLabel(status: string | null | undefined, t: (key: string) => s
   if (status === 'api_key') return t('API 密钥');
   return null;
 }
-function formatCompactEta(resetSec: number | null | undefined, nowSec: number) {
-  if (!resetSec || resetSec <= nowSec) return '';
-  const mins = Math.max(1, Math.floor((resetSec - nowSec) / 60));
-  const d = Math.floor(mins / 1440),
-    h = Math.floor((mins % 1440) / 60),
-    m = mins % 60;
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-function formatResetClock(resetSec: number | null | undefined, includeDate: boolean) {
-  if (!resetSec) return '';
-  const dt = new Date(resetSec * 1000);
-  const hh = String(dt.getHours()).padStart(2, '0');
-  const mm = String(dt.getMinutes()).padStart(2, '0');
-  if (!includeDate) return `${hh}:${mm}`;
-  const mo = String(dt.getMonth() + 1).padStart(2, '0');
-  const da = String(dt.getDate()).padStart(2, '0');
-  return `${mo}-${da} ${hh}:${mm}`;
-}
-function evaluateQuota(item: QuotaInput | null | undefined, nowSec: number) {
-  if (!item || (item.quota_5h_used == null && item.quota_7d_used == null)) return null;
-  let r7 = item.quota_7d_reset_at ?? null;
-  let used7d = item.quota_7d_used ?? 0;
-  if (r7 && nowSec >= r7) {
-    while (nowSec >= r7) r7 += 7 * 86400;
-    used7d = 0;
-  }
-  const rem7d = Math.max(0, 100 - used7d);
-  const expired5h = item.quota_5h_reset_at != null && nowSec >= item.quota_5h_reset_at;
-  const r5 = !expired5h && item.quota_5h_reset_at ? item.quota_5h_reset_at : null;
-  const used5h = expired5h ? 0 : (item.quota_5h_used ?? 0);
-  const rem5h = rem7d === 0 ? 0 : Math.max(0, 100 - used5h);
-  const effectiveRem = Math.min(rem5h, rem7d);
-  const level: 'ok' | 'warn' | 'empty' = effectiveRem === 0 ? 'empty' : effectiveRem <= 20 ? 'warn' : 'ok';
-  const level5h: 'ok' | 'warn' | 'empty' = rem5h === 0 ? 'empty' : rem5h <= 20 ? 'warn' : 'ok';
-  const level7d: 'ok' | 'warn' | 'empty' = rem7d === 0 ? 'empty' : rem7d <= 20 ? 'warn' : 'ok';
-  const eta5h = formatCompactEta(r5, nowSec);
-  const eta7d = formatCompactEta(r7, nowSec);
-  const clock5h = formatResetClock(r5, false);
-  const clock7d = formatResetClock(r7, true);
-  const primaryEta = rem7d === 0 ? eta7d : eta5h && eta7d ? `${eta5h}/${eta7d}` : eta5h || eta7d;
-  const badge = `5h ${rem5h}% · 7d ${rem7d}%${primaryEta ? ` (${primaryEta})` : ''}`;
-  const detail = `5h: ${rem5h}%${eta5h ? ` (${eta5h} · ${clock5h})` : ''} | 7d: ${rem7d}%${eta7d ? ` (${eta7d} · ${clock7d})` : ''}`;
-  return {rem5h, rem7d, effectiveRem, level, level5h, level7d, primaryEta, badge, detail, used5h, used7d, r5, r7, expired5h, known5h: item.quota_5h_used != null || expired5h, known7d: item.quota_7d_used != null || (!!item.quota_7d_reset_at && nowSec >= item.quota_7d_reset_at)};
-}
 
 function QuotaWindow({label, used, remaining, resetAt, resetComplete = false, known, level, display, nowSec, t}: {label: string; used: number; remaining: number; resetAt: number | null; resetComplete?: boolean; known: boolean; level: string; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string}) {
   const value = display === 'used' ? used : remaining;
   const reset = resetAt ? formatResetClock(resetAt, label === '7d') : '';
   const countdown = formatCompactEta(resetAt, nowSec);
-  const resetLabel = reset ? `${t('identityCard.reset')} ${reset}` : resetComplete ? t('identityCard.resetComplete') : t('identityCard.resetUnavailable');
+  const resetLabel = reset ? `${t('identityCard.reset')} ${reset}` : resetComplete ? t('identityCard.windowExpired') : t('identityCard.resetUnavailable');
   const resetDate = resetAt == null ? null : new Date(resetAt * 1000);
   const resetDateTime = resetDate && Number.isFinite(resetDate.getTime()) ? resetDate.toISOString() : undefined;
   return (
@@ -98,11 +53,11 @@ function QuotaWindow({label, used, remaining, resetAt, resetComplete = false, kn
   );
 }
 
-function IdentityQuota({quota, display, nowSec, t}: {quota: ReturnType<typeof evaluateQuota>; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string}) {
+function IdentityQuota({quota, display, nowSec, t, onOpenDetails}: {quota: ReturnType<typeof evaluateQuota>; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string; onOpenDetails?: () => void}) {
   return (
-    <div className="identity-quota-stack" data-identity-quota>
+    <div className="identity-quota-stack identity-quota-open" data-identity-quota tabIndex={0} role="button" aria-label={t('quota.details')} onClick={onOpenDetails} onKeyDown={e => {if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenDetails?.(); }}}>
       <QuotaWindow label="5h" used={quota?.used5h ?? 0} remaining={quota?.rem5h ?? 0} resetAt={quota?.r5 ?? null} resetComplete={quota?.expired5h} known={quota?.known5h ?? false} level={quota?.level5h ?? 'ok'} display={display} nowSec={nowSec} t={t} />
-      <QuotaWindow label="7d" used={quota?.used7d ?? 0} remaining={quota?.rem7d ?? 0} resetAt={quota?.r7 ?? null} known={quota?.known7d ?? false} level={quota?.level7d ?? 'ok'} display={display} nowSec={nowSec} t={t} />
+      <QuotaWindow label="7d" used={quota?.used7d ?? 0} remaining={quota?.rem7d ?? 0} resetAt={quota?.r7 ?? null} resetComplete={quota?.expired7d} known={quota?.known7d ?? false} level={quota?.level7d ?? 'ok'} display={display} nowSec={nowSec} t={t} />
     </div>
   );
 }
@@ -112,9 +67,10 @@ function SubscriptionExpiry({expiresAt, locale, t}: {expiresAt?: number | null; 
   return <div className="identity-subscription" data-subscription-expiry={expiresAt ?? 'unknown'} title={expiresAt == null ? t('identityCard.subscriptionSourceMissing') : undefined}><strong>{t('identityCard.subscriptionExpiry')}</strong><span>{value}</span></div>;
 }
 
-function IdentityName({name, accountName, privacyMask, saved = false, t}: {name: string; accountName?: string | null; privacyMask: boolean; saved?: boolean; t: (key: string) => string}) {
+function IdentityName({name, email, accountName, privacyMask, saved = false, t}: {name: string; email?:string|null; accountName?: string | null; privacyMask: boolean; saved?: boolean; t: (key: string) => string}) {
+  const shownName = maskDisplayName(name, email, privacyMask);
   const description = !privacyMask && accountName && accountName !== name ? `${t('identityCard.accountName')}: ${accountName}` : undefined;
-  return <h3 className="identity-name-with-label" data-identity-name data-identity-username={!saved || undefined} data-identity-saved-name={saved || undefined} aria-description={description}><strong title={description ? `${name}\n${description}` : name}>{name}</strong></h3>;
+  return <h3 className="identity-name-with-label" data-identity-name data-identity-username={!saved || undefined} data-identity-saved-name={saved || undefined} aria-description={description}><strong title={description ? `${shownName}\n${description}` : shownName}>{shownName}</strong></h3>;
 }
 
 export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: boolean) => void; initialEmpty?: boolean}) {
@@ -138,12 +94,16 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
   const [deleteBrowser, setDeleteBrowser] = useState(false);
   const [deletion, setDeletion] = useState<Identity | 'current' | null>(null),
     [accepted, setAccepted] = useState(false);
+  const [quotaDetails, setQuotaDetails] = useState<{id:string;name:string}|null>(null);
+  const [quotaFeedback, setQuotaFeedback] = useState('');
+  const [quotaSetup, setQuotaSetup] = useState<QuotaSetupStatus|null>(null);
+  const [quotaSetupError, setQuotaSetupError] = useState(false);
   const activity = useCleanupActivity();
   const rail = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotionConfig() ?? false;
   const scrollSpring = useSpring(0, {stiffness: 170, damping: 25, mass: 0.8});
   const scrollTarget = useRef(0);
-  const locked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!deletion || browserReview !== null;
+  const locked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!deletion || browserReview !== null || quotaDetails !== null;
   const active = state?.records.find(row => row.id === state.active);
   const current = state?.current;
   const saved = state?.records.filter(row => !current?.present || row.id !== state.active) ?? [];
@@ -154,6 +114,10 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
   const isDefaultPolicy = policyRows.every(([key]) => policy[key] === defaultPolicy[key]);
   const nowSec = Math.floor(Date.now() / 1000);
   const currentQuota = evaluateQuota(current, nowSec);
+  const detailsAreCurrent = quotaDetails?.id === 'current' || (!!quotaDetails && quotaDetails.id === state?.active);
+  const detailsSummary = detailsAreCurrent ? current : quotaDetails ? state?.summaries[quotaDetails.id] : undefined;
+  const detailsQuota = evaluateQuota(detailsSummary, nowSec);
+  const recoveryRecord = state?.records.find(row => row.id === state.recovery);
   const targetSummary = typeof review === 'object' && review ? state?.summaries?.[review.id] : undefined;
   const targetQuota = evaluateQuota(targetSummary, nowSec);
   const proxyChanged = typeof review === 'object' && review && (current?.proxy || null) !== (targetSummary?.proxy || null);
@@ -161,7 +125,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
     const sum = state?.summaries?.[row.id];
     if (sum?.auth_status === 'expired') return best;
     const q = evaluateQuota(sum, nowSec);
-    if (!q || q.effectiveRem <= 0) return best;
+    if (!q?.recommendable || q.effectiveRem <= 0) return best;
     if (!best || q.effectiveRem > best.effectiveRem) return {row, effectiveRem: q.effectiveRem};
     return best;
   }, null);
@@ -171,6 +135,16 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
   useEffect(() => {
     void read();
   }, []);
+  useEffect(() => {
+    if (!quotaDetails) return;
+    let live=true;
+    setQuotaSetup(null);setQuotaSetupError(false);
+    void invoke<QuotaSetupStatus>('quota_setup_status').then(value=>{
+      if(live && value && typeof value.state==='string') setQuotaSetup(value);
+      else if(live) setQuotaSetupError(true);
+    },()=>{if(live)setQuotaSetupError(true);});
+    return ()=>{live=false;};
+  }, [quotaDetails]);
   useEffect(() => {
     if (typeof window !== 'undefined' && 'identityFixture' in window) return;
     const timer = window.setInterval(() => {
@@ -275,6 +249,22 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
     } catch (e) {
       setError(String(e));
       activity.finish(false, String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function openUsagePage() {
+    if (busy || !detailsAreCurrent) return;
+    setBusy(true);
+    setQuotaFeedback('');
+    try {
+      await invoke('browser_open_usage', {onProgress: activity.start('browser')});
+      activity.finish(true, 'quota.opened');
+      setQuotaFeedback('quota.opened');
+    } catch (reason) {
+      const message = String(reason);
+      setQuotaFeedback(message);
+      activity.finish(false, message);
     } finally {
       setBusy(false);
     }
@@ -392,7 +382,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
   const options = (
     <div className="identity-policy-body">
       <div className="identity-policy-banner">
-        <span>{t('默认已开启智能无感接力：切换账号时自动保留对话历史（支持 claude --resume 续接）、项目、MCP 与 Skills，仅自动清理遥测缓存与日志。非特殊排障无需改动。')}</span>
+        <span>{t('identitySafety.policyDetails')}</span>
         {!isDefaultPolicy && (
           <Button variant="secondary" size="small" disabled={locked} onClick={() => setPolicy({...defaultPolicy})}>
             {t('恢复推荐默认')}
@@ -406,6 +396,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
           </div>
         ))}
       </div>
+      <p className="identity-quota-note">{t('identitySafety.policyScopes')}</p>
     </div>
   );
 
@@ -468,7 +459,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             <i aria-hidden="true">→</i>
             <span className="identity-onboarding-chip">{t('内置浏览器验证并登录充值号')}</span>
             <i aria-hidden="true">→</i>
-            <span className="identity-onboarding-chip">{t('Claude Code CLI 自动 Login')}</span>
+            <span className="identity-onboarding-chip">{t('identitySafety.cliStep')}</span>
           </div>
           <Button variant="secondary" size="small" disabled={blocked} onClick={() => void retryBrowser()}>
             {t('打开内置浏览器')}
@@ -484,7 +475,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
                 <span className="identity-live-badge">{t('待登录')}</span>
               </div>
               <h3>{t('新身份')}</h3>
-              <p className="identity-empty-note">{t('已准备全新隔离环境：请先在内置浏览器（全部验证通过）登录已充值的 Claude 网页版，再进 Claude Code CLI 自动 Login。')}</p>
+              <p className="identity-empty-note">{t('identitySafety.emptyGuide')}</p>
               <div className="identity-card-footer">
                 <Button variant="ink" size="small" disabled={blocked} onClick={() => void retryBrowser()}>
                   {t('打开内置浏览器')}
@@ -499,8 +490,9 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
                   {active?.name || current?.display_name || current?.email ? Array.from(currentName)[0]?.toUpperCase() : <ShieldCheck size={20} />}
                 </div>
                 <span className="identity-live-badge">{loading ? t('检查中') : state?.running ? t('运行中') : t('进程已停止')}</span>
+
               </div>
-              <IdentityName name={currentName} accountName={current?.display_name} privacyMask={prefs.privacyMask} t={t} />
+              <IdentityName name={currentName} email={current?.email} accountName={current?.display_name} privacyMask={prefs.privacyMask} t={t} />
               <div className="identity-account identity-email-line">
                 {current?.email ? (
                   <span className="identity-email" title={maskEmailAddress(current.email, prefs.privacyMask)}>{maskEmailAddress(current.email, prefs.privacyMask)}</span>
@@ -512,7 +504,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
                 <span className={`identity-meta-badge plan ${current?.plan ? '' : 'unknown'}`}>{current?.plan || t('identityCard.planUnknown')}</span>
                 {current?.auth_status && <span className={`identity-meta-badge auth-${current.auth_status}`}>{authBadgeLabel(current.auth_status, t)}</span>}
               </div>
-              <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} />
+              <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:active?.id || 'current', name:currentName});setQuotaFeedback('');}} />
               <SubscriptionExpiry expiresAt={current?.subscription_expires_at} locale={locale} t={t} />
               <div className="identity-card-footer">
                 <Button variant="secondary" size="small" disabled={blocked} onClick={openSnapshot}>
@@ -535,8 +527,9 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
                     {Array.from(row.name)[0]?.toUpperCase()}
                   </div>
                   <span className="identity-size">{formatBytes(row.bytes)}</span>
+
                 </div>
-                <IdentityName name={row.name} accountName={summary?.display_name} privacyMask={prefs.privacyMask} saved t={t} />
+                <IdentityName name={row.name} email={summary?.email} accountName={summary?.display_name} privacyMask={prefs.privacyMask} saved t={t} />
                 <div className="identity-account identity-email-line saved">
                   {summary?.email ? <span className="identity-email" title={maskEmailAddress(summary.email, prefs.privacyMask)}>{maskEmailAddress(summary.email, prefs.privacyMask)}</span> : <span className="identity-account-unknown">{t('identityCard.emailUnavailable')}</span>}
                 </div>
@@ -545,7 +538,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
                   {summary?.auth_status && <span className={`identity-meta-badge auth-${summary.auth_status}`}>{authBadgeLabel(summary.auth_status, t)}</span>}
                   {isRecommended && <span className="identity-meta-badge ok">{t('推荐切换')}</span>}
                 </div>
-                <IdentityQuota quota={savedQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} />
+                <IdentityQuota quota={savedQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:row.id, name:row.name});setQuotaFeedback('');}} />
                 <SubscriptionExpiry expiresAt={summary?.subscription_expires_at} locale={locale} t={t} />
                 <div className="identity-card-footer">
                   <Button variant="secondary" size="small" disabled={blocked} onClick={() => choose(row)}>
@@ -579,7 +572,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
         summary={
           <>
             <strong>{t('保留在工作区')}</strong>
-            <span className="identity-policy-hint">{t('切号已自动保留对话历史与配置、自动清理遥测日志，日常无需改动')}</span>
+            <span className="identity-policy-hint">{t('identitySafety.policyHint')}</span>
           </>
         }
         aside={<span className={`identity-policy-mode ${isDefaultPolicy ? 'ok' : ''}`}>{isDefaultPolicy ? t('智能默认') : `${kept.length} / ${policyRows.length}`}</span>}
@@ -605,6 +598,32 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
       />
       <ClaudeCliPanel blocked={locked || loading || !!state?.recovery} onBusy={setCliBusy} />
       <AppDialog
+        open={quotaDetails !== null}
+        onOpenChange={open => {if (!open && !busy) setQuotaDetails(null);}}
+        title={t('quota.details')}
+        description={t('quota.localOnly')}
+        footer={<>
+          <Button variant="secondary" disabled={busy || loading} onClick={() => void read(false)}>{t('quota.refreshLocal')}</Button>
+          <Button variant="ink" loading={busy} disabled={busy || !detailsAreCurrent || !!state?.recovery} onClick={() => void openUsagePage()}>{t('quota.openOfficial')}</Button>
+        </>}
+      >
+        <div className="identity-quota-details">
+          <h3>{maskDisplayName(quotaDetails?.name, detailsSummary?.email, prefs.privacyMask)}</h3>
+          {detailsSummary?.email && <p>{maskEmailAddress(detailsSummary.email, prefs.privacyMask)}</p>}
+          <IdentityQuota quota={detailsQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} />
+          <div className="identity-confirm-target"><span>{t('quota.source')}</span><strong>{t(detailsSummary?.quota_source === 'server_anchor' ? 'quota.serverSnapshot' : detailsSummary?.quota_source === 'local_estimate' ? 'quota.estimated' : 'quota.unverified')}</strong></div>
+          <div className="identity-confirm-target"><span>{t('quota.observedAt')}</span><strong>{detailsSummary?.quota_observed_at_ms ? new Date(detailsSummary.quota_observed_at_ms).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') : t('identityCard.notProvided')}</strong></div>
+          <div className="identity-confirm-target"><span>{t('quota.resetCount')}</span><strong>{t('identityCard.notProvided')}</strong></div>
+          <div className="identity-confirm-target"><span>{t('quota.resetSchedule')}</span><strong>{t('identityCard.notProvided')}</strong></div>
+          <p className="identity-quota-note">{t('quota.resetHint')}</p>
+          <div className="identity-confirm-target"><span>{t('quotaSetup.status')}</span><strong>{t(quotaSetupError ? 'quotaSetup.unavailable' : !quotaSetup ? 'quotaSetup.checking' : 'quotaSetup.' + quotaSetup.state)}</strong></div>
+          <p className="identity-quota-note">{t(quotaSetup?.collector_bundled ? 'quotaSetup.runtimeUnverified' : 'quotaSetup.notBundled')}</p>
+          <Disclosure summary={t('quotaSetup.guideTitle')}><p className="identity-quota-note">{t('quotaSetup.guide')}</p></Disclosure>
+          {!detailsAreCurrent && <p className="identity-quota-note">{t('quota.currentOnly')}</p>}
+          {quotaFeedback && <p role="status">{t(quotaFeedback)}</p>}
+        </div>
+      </AppDialog>
+      <AppDialog
         open={snapshot}
         onOpenChange={open => {
           if (!open && !busy) setSnapshot(false);
@@ -629,7 +648,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             <div className="identity-confirm-target">
               <span>{t('当前身份')}</span>
               <strong>
-                {current.email}
+                {maskEmailAddress(current.email, prefs.privacyMask)}
                 {current.plan ? ` (${current.plan})` : ''}
               </strong>
             </div>
@@ -668,7 +687,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
           if (!open && !busy) setReview(null);
         }}
         title={review === 'recovery' ? t('恢复原身份') : review === 'empty' ? t('切换到空身份') : t('切换身份')}
-        description={t('先压缩暂存当前 Claude Code 与 Desktop 状态，再切换。将结束已识别的 Claude 进程，未保存任务会中断。')}
+        description={t(review === 'recovery' ? 'identitySafety.recoveryHint' : '先压缩暂存当前 Claude Code 与 Desktop 状态，再切换。将结束已识别的 Claude 进程，未保存任务会中断。')}
         footer={
           <>
             <Button variant="secondary" onClick={() => setReview(null)}>
@@ -683,12 +702,13 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
         <div className="identity-confirm">
           <label htmlFor="identity-current-name">{t('当前身份保存为')}</label>
           <Input id="identity-current-name" maxLength={64} value={name} onChange={e => setName(e.target.value)} />
+          {review === 'recovery' && <div className="identity-confirm-target"><span>{t('identitySafety.restoreIdentity')}</span><strong>{maskDisplayName(recoveryRecord?.name, undefined, prefs.privacyMask) || t('identitySafety.originalUnavailable')}</strong></div>}
           {typeof review === 'object' && review && (
             <div className="identity-confirm-target">
               <span>{t('目标身份')}</span>
               <strong>
-                {review.name}
-                {targetSummary?.email ? ` · ${targetSummary.email}` : ''}
+                {maskDisplayName(review.name, targetSummary?.email, prefs.privacyMask)}
+                {targetSummary?.email ? ` · ${maskEmailAddress(targetSummary.email, prefs.privacyMask)}` : ''}
                 {targetSummary?.plan ? ` (${targetSummary.plan})` : ''}
               </strong>
             </div>
@@ -719,8 +739,8 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             <div className="identity-confirm-guide">
               <strong>{t('切换后添加新号步骤：')}</strong>
               <ol>
-                <li>{t('在内置浏览器（已通过全部验证）中登录已充值的 Claude 网页版账号；')}</li>
-                <li>{t('进入 Claude Code CLI 自动 Login 完成授权；')}</li>
+                <li>{t('identitySafety.browserSignIn')}</li>
+                <li>{t('identitySafety.cliStep')}</li>
                 <li>{t('返回本页面点击「刷新」与「保存备份」即可随时一键切号。')}</li>
               </ol>
             </div>
@@ -775,13 +795,17 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
                 <span>{t('删除范围')}</span>
                 <strong>{[t('登录与身份数据'), ...removed].join(' · ')}</strong>
               </div>
+              {(state?.sessions?.length ?? 0) > 0 && <div className="identity-confirm-sessions">
+                <span>{t('identitySafety.deleteSessions')}</span>
+                <ul>{state!.sessions.map(session => <li key={session.pid}><code>PID {session.pid}</code><span>{session.entrypoint}</span>{session.workspace && <strong>{session.workspace}</strong>}</li>)}</ul>
+              </div>}
               <div className="identity-confirm-keep">
                 <span>{t('留在工作区')}</span>
                 <strong>{kept.join(' · ') || t('无')}</strong>
               </div>
             </>
           ) : (
-            <strong>{deletion?.name}</strong>
+            <strong>{maskDisplayName(deletion?.name, undefined, prefs.privacyMask)}</strong>
           )}
           {typeof deletion === 'object' && deletion && state?.browser.bound_ids.includes(deletion.id) && (
             <Checkbox label={t('同时永久删除关联浏览器资料')} checked={deleteBrowser} onCheckedChange={value => setDeleteBrowser(value === true)} />

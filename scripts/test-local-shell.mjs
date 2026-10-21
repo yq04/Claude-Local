@@ -2,6 +2,7 @@
 // [OUTPUT]: Bilingual local-only shell and quick setup previews.
 // [POS]: Isolated fake IPC screenshot helper; no runtime data or native changes.
 // [PROTOCOL]: Update scripts/CLAUDE.md with changes.
+import assert from 'node:assert/strict';
 import {resolve,join} from 'node:path';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
@@ -27,6 +28,10 @@ window.localPreviewCommands=[];
 mockIPC((command,args)=>{
   window.localPreviewCommands.push(command);
   if(command==='get_regions')return [{id:'us-west',label:'美国 · 洛杉矶',language:'en-US',locale:'en_US',timezone:'America/Los_Angeles'}];
+  if(command==='copy_result'){if(window.localPreviewCopyFail)throw Error('Synthetic clipboard failure');window.localPreviewCopied=args.text;return;}
+  if(command==='quota_setup_status')return {state:'not_configured',collector_bundled:false,has_statusline:false};
+  if(command==='ui_privacy_read')return window.__privacyPreference ?? null;
+  if(command==='ui_privacy_write'){window.__privacyPreference=args.masked;return;}
   if(command==='ui_language_read')return locale;
   if(command==='ui_language_write'){locale=args.language;return;}
   if(command==='plugin:app|version')return '0.1.0';
@@ -63,7 +68,9 @@ try{
  const page=await context.newPage();page.setDefaultTimeout(15000);
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(base+'/__local-preview.html');
+ await page.evaluate(async()=>{const prefs=await import('/src/settings-model.ts');await prefs.synchronizePrivacyPreference(false);});
  await page.getByRole('group',{name:'本地版本信息',exact:true}).waitFor();
+ assert.deepEqual((await page.locator('.workspace-nav').allTextContents()).map(value=>value.trim()),['快速配置','浏览环境','电脑环境','网络环境','身份管理','用量分析','使用说明','软件设置']);
  await page.getByRole('button',{name:'快速配置',exact:true}).click();
  await page.locator('.quick-overview[aria-busy="false"]').waitFor();
  await page.mouse.move(2,2);
@@ -72,6 +79,10 @@ try{
  await page.getByText('studio@example.invalid',{exact:true}).waitFor();
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'02-identities-zh.png'),fullPage:true});
+ await page.locator('.identity-card.current .identity-quota-open').click();
+ await page.getByRole('dialog').getByText('额度与重置权益',{exact:true}).waitFor();
+ await page.screenshot({path:join(output,'10-quota-details-zh.png'),fullPage:true});
+ await page.getByRole('dialog').getByRole('button',{name:'关闭弹窗',exact:true}).click();
  const geometry=await page.locator('.identity-card').evaluateAll(nodes=>nodes.slice(0,4).map(node=>{const box=node.getBoundingClientRect();return {width:box.width,height:box.height,scrollWidth:node.scrollWidth,clientWidth:node.clientWidth};}));
  await page.getByRole('radio',{name:'EN',exact:true}).click();
  await page.getByRole('group',{name:'Local build information',exact:true}).waitFor();
@@ -101,6 +112,19 @@ try{
  await page.getByRole('heading',{name:'Claude 服务连通性',exact:true}).waitFor();
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'09-network-dark-zh.png'),fullPage:true});
+ await page.getByRole('button',{name:'使用说明',exact:true}).click();
+ await page.getByRole('button',{name:'任务交接模板',exact:true}).click();
+ await page.getByLabel('目标',{exact:true}).fill('Synthetic project goal');
+ await page.getByLabel('下一步',{exact:true}).fill('Run the focused checks');
+ await page.evaluate(()=>{window.localPreviewCopyFail=true;});
+ await page.getByRole('button',{name:'复制交接内容',exact:true}).click();
+ await page.getByText('复制失败，请重试',{exact:true}).waitFor();
+ await page.evaluate(()=>{window.localPreviewCopyFail=false;});
+ await page.getByRole('button',{name:'复制交接内容',exact:true}).click();
+ await page.getByText('交接内容已复制',{exact:true}).waitFor();
+ const copied=await page.evaluate(()=>window.localPreviewCopied);
+ assert.ok(copied.includes('Synthetic project goal') && copied.includes('Run the focused checks'));
+ assert.ok(!copied.includes('studio@example.invalid'),'Handoff must not read the identity fixture');
  const commands=await page.evaluate(()=>window.localPreviewCommands);
  if(commands.some(command=>/update|stop|switch|manage|delete|clean/.test(command)))throw Error('Unexpected mutation/update request: '+commands.join(','));
  const result={output,geometry,errors,commands:[...new Set(commands)]};

@@ -1,11 +1,18 @@
 // [INPUT]: 隔离临时目录/Windows 子进程 AppData、脱敏配置、清理事务与当前用户官方原生 CLI 版本路径。
-// [OUTPUT]: 白名单、文件夹范围、配置保留、组织检索、直接删除、大目录完整统计、读失败拒绝快照、快照保护、真实日志次序与原生版本/可丢弃 Node CLI 进程的识别/终止/隔离验证。
+// [OUTPUT]: 白名单、设备/客户端/实验/诊断状态保留、配置与组织范围、直接删除、大目录统计、快照保护、真实日志次序与原生版本/可丢弃进程验证；S13仅跑临时与纯值过滤。
 // [POS]: 仅操作测试数据，进程样本由本机编译并握手确认启动，避免重用 Apple 平台二进制，不访问现有 Claude 数据。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
 #[cfg(windows)]
 fn junction(source: &Path, target: &Path) {
-    assert!(std::process::Command::new("cmd.exe").args(["/D", "/C", "mklink", "/J"]).arg(target.to_string_lossy().replace('/', "\\")).arg(source.to_string_lossy().replace('/', "\\")).output().unwrap().status.success());
+    assert!(std::process::Command::new("cmd.exe")
+        .args(["/D", "/C", "mklink", "/J"])
+        .arg(target.to_string_lossy().replace('/', "\\"))
+        .arg(source.to_string_lossy().replace('/', "\\"))
+        .output()
+        .unwrap()
+        .status
+        .success());
 }
 
 #[test]
@@ -115,7 +122,7 @@ fn discovers_supported_data_and_preserves_personal_assets() {
     );
     f.file(
         ".claude.json",
-        r#"{"userID":"old","projects":{"/my-project":{}}}"#,
+        r#"{"oauthAccount":{"accountUuid":"fictional"},"userID":"old","projects":{"/my-project":{}}}"#,
     );
     f.file("unrelated/.claude.json", r#"{"userID":"unrelated"}"#);
     let plan = collect(&f.0, None).unwrap();
@@ -146,7 +153,10 @@ fn ignores_linked_targets() {
 #[test]
 fn rejects_stale_or_unknown_targets() {
     let f = Fixture::new();
-    f.file(".claude.json", r#"{"userID":"old"}"#);
+    f.file(
+        ".claude.json",
+        r#"{"oauthAccount":{"accountUuid":"fictional"},"userID":"old"}"#,
+    );
     let plan = collect(&f.0, None).unwrap();
     let i = &plan.items[0];
     assert!(identity(i, &f.0).is_ok());
@@ -158,7 +168,10 @@ fn rejects_stale_or_unknown_targets() {
         1
     );
     fs::rename(f.0.join(".claude.json"), f.0.join("old")).unwrap();
-    f.file(".claude.json", r#"{"userID":"old"}"#);
+    f.file(
+        ".claude.json",
+        r#"{"oauthAccount":{"accountUuid":"fictional"},"userID":"old"}"#,
+    );
     assert!(identity(i, &f.0).is_err());
 }
 #[cfg(unix)]
@@ -278,11 +291,53 @@ fn desktop_cleaning_preserves_personal_configuration() {
     .unwrap();
     assert_eq!(all.len(), 1);
     assert!(all[0].path.ends_with("/Claude/Cache"));
-    f.file("Library/Application Support/Claude/claude_desktop_config.json", "personal MCP configuration");
-    f.file("Library/Application Support/Claude/plugins/personal", "personal plugin");
-    perform_items(&f.0, &all, &Cleaner::default(), || Ok(false), &Reporter::channel(None)).unwrap();
-    assert!(f.0.join("Library/Application Support/Claude/claude_desktop_config.json").exists());
-    assert!(f.0.join("Library/Application Support/Claude/plugins/personal").exists());
+    f.file(
+        "Library/Application Support/Claude/claude_desktop_config.json",
+        "personal MCP configuration",
+    );
+    f.file(
+        "Library/Application Support/Claude/plugins/personal",
+        "personal plugin",
+    );
+    perform_items(
+        &f.0,
+        &all,
+        &Cleaner::default(),
+        || Ok(false),
+        &Reporter::channel(None),
+    )
+    .unwrap();
+    assert!(f
+        .0
+        .join("Library/Application Support/Claude/claude_desktop_config.json")
+        .exists());
+    assert!(f
+        .0
+        .join("Library/Application Support/Claude/plugins/personal")
+        .exists());
+}
+#[test]
+fn s13_account_cleanup_preserves_device_and_client_state() {
+    let before = serde_json::json!({"oauthAccount":{"accountUuid":"fictional-a"},
+        "primaryApiKey":"fictional-key", "customApiKeyResponses":{"fixture":true},
+        "userID":"device-user", "machineID":"device-machine", "anonymousId":"device-anonymous",
+        "remoteControlMachineId":"device-remote", "numStartups":42, "firstStartTime":"old",
+        "tipsHistory":{"keep":1}, "cachedExperimentData":{"keep":true},
+        "cachedStatsigGates":{"keep":true}, "groveConfigCache":{"foreign":{"keep":true}},
+        "metricsStatusCacheByPrincipal":{"foreign":{"keep":true}},
+        "projects":{"keep":{}}, "mcpServers":{"keep":{}}, "theme":"dark"});
+    let (after, removed) =
+        config::transform(&before.to_string(), config::EditKind::Account).unwrap();
+    let after: serde_json::Value = serde_json::from_str(&after).unwrap();
+    for key in ["oauthAccount", "primaryApiKey", "customApiKeyResponses"] {
+        assert!(after.get(key).is_none());
+        assert!(removed.iter().any(|k| k == key));
+    }
+    for (key, value) in before.as_object().unwrap() {
+        if !["oauthAccount", "primaryApiKey", "customApiKeyResponses"].contains(&key.as_str()) {
+            assert_eq!(after.get(key), Some(value), "preserve {key}");
+        }
+    }
 }
 #[test]
 fn account_reset_preserves_projects_and_mcp_and_removes_only_known_account_keys() {
@@ -290,7 +345,8 @@ fn account_reset_preserves_projects_and_mcp_and_removes_only_known_account_keys(
     let (updated, keys) = config::transform(original, config::EditKind::Account).unwrap();
     let value: serde_json::Value = serde_json::from_str(&updated).unwrap();
     assert!(value.get("oauthAccount").is_none());
-    assert!(value.get("userID").is_none());
+    assert_eq!(value["userID"], "old");
+    assert_eq!(value["machineID"], "old");
     assert!(value["projects"]["/source"].is_object());
     assert!(value["mcpServers"]["server"].is_object());
     assert_eq!(value["unknown"], 9);
@@ -405,7 +461,7 @@ fn direct_cleanup_removes_selected_data_and_backups_without_copies() {
     );
     let value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(f.0.join(".claude.json")).unwrap()).unwrap();
-    assert!(value.get("userID").is_none());
+    assert_eq!(value["userID"], "old");
     assert!(value["mcpServers"]["keep"].is_object());
     let events = reporter.events();
     assert!(!events
@@ -523,8 +579,10 @@ fn node_claude_entry_is_identified_and_unrelated_node_is_preserved() {
     }
     let target = target.expect("必须识别 Node 启动的官方 CLI 入口");
     assert_eq!(target.name, "Claude Code");
-    #[cfg(windows)] {
-        let mut stale = target.clone(); stale.created ^= 1;
+    #[cfg(windows)]
+    {
+        let mut stale = target.clone();
+        stale.created ^= 1;
         signal_same_process(&stale, 9).unwrap();
         assert!(children.0[0].try_wait().unwrap().is_none());
         let serialized = serde_json::to_string(&target).unwrap();
@@ -569,22 +627,51 @@ fn linux_cleanup_uses_xdg_cache_paths_and_preserves_desktop_configuration() {
 #[test]
 fn windows_desktop_storage_preserves_mcp_plugins_and_programs() {
     let f = Fixture::new();
-    for desktop in ["AppData/Roaming/Claude", "AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude"] {
+    for desktop in [
+        "AppData/Roaming/Claude",
+        "AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude",
+    ] {
         f.file(&format!("{desktop}/Cache/data"), "cache");
-        f.file(&format!("{desktop}/Local Storage/token"), "local login state");
-        f.file(&format!("{desktop}/claude_desktop_config.json"), "personal MCP");
+        f.file(
+            &format!("{desktop}/Local Storage/token"),
+            "local login state",
+        );
+        f.file(
+            &format!("{desktop}/claude_desktop_config.json"),
+            "personal MCP",
+        );
         f.file(&format!("{desktop}/plugins/personal"), "personal plugin");
     }
-    f.file("AppData/Local/AnthropicClaude/Claude.exe", "installed program");
+    f.file(
+        "AppData/Local/AnthropicClaude/Claude.exe",
+        "installed program",
+    );
     let plan = collect(&f.0, None).unwrap();
-    perform_items(&f.0, &plan.items, &Cleaner::default(), || Ok(false), &Reporter::channel(None)).unwrap();
-    for desktop in ["AppData/Roaming/Claude", "AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude"] {
+    perform_items(
+        &f.0,
+        &plan.items,
+        &Cleaner::default(),
+        || Ok(false),
+        &Reporter::channel(None),
+    )
+    .unwrap();
+    for desktop in [
+        "AppData/Roaming/Claude",
+        "AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude",
+    ] {
         assert!(!f.0.join(desktop).join("Cache").exists());
         assert!(!f.0.join(desktop).join("Local Storage").exists());
-        assert!(f.0.join(desktop).join("claude_desktop_config.json").exists());
+        assert!(f
+            .0
+            .join(desktop)
+            .join("claude_desktop_config.json")
+            .exists());
         assert!(f.0.join(desktop).join("plugins/personal").exists());
     }
-    assert!(f.0.join("AppData/Local/AnthropicClaude/Claude.exe").exists());
+    assert!(f
+        .0
+        .join("AppData/Local/AnthropicClaude/Claude.exe")
+        .exists());
 }
 
 #[test]
@@ -597,14 +684,25 @@ fn large_directory_is_fully_measured_and_cleaned_with_snapshot_protection() {
         fs::write(cache.join(format!("entry-{index:05}")), b"x").unwrap();
     }
     let scan = collect(&f.0, None).unwrap();
-    let item = scan.items.iter().find(|item| item.path == cache.to_string_lossy()).unwrap();
+    let item = scan
+        .items
+        .iter()
+        .find(|item| item.path == cache.to_string_lossy())
+        .unwrap();
     assert!(item.exact);
     assert_eq!((item.files, item.bytes), (30_006, 30_009));
     assert!(identity(item, &f.0).is_ok());
     fs::write(cache.join("entry-30004"), b"changed").unwrap();
     assert!(identity(item, &f.0).is_err());
     let scan = collect(&f.0, None).unwrap();
-    let result = perform_items(&f.0, &scan.items, &Cleaner::default(), || Ok(false), &Reporter::channel(None)).unwrap();
+    let result = perform_items(
+        &f.0,
+        &scan.items,
+        &Cleaner::default(),
+        || Ok(false),
+        &Reporter::channel(None),
+    )
+    .unwrap();
     assert!(result.completed && !cache.exists());
     assert!(f.0.join(".claude/skills/personal/SKILL.md").exists());
 }
@@ -613,15 +711,23 @@ fn large_directory_is_fully_measured_and_cleaned_with_snapshot_protection() {
 #[test]
 fn unreadable_directory_is_reported_and_never_offered_for_deletion() {
     use std::os::unix::fs::PermissionsExt;
-    if unsafe { getuid() } == 0 { return; }
+    if unsafe { getuid() } == 0 {
+        return;
+    }
     let f = Fixture::new();
     f.file(".claude/cache/blocked/data", "keep");
     let blocked = f.0.join(".claude/cache/blocked");
     fs::set_permissions(&blocked, fs::Permissions::from_mode(0o000)).unwrap();
     let scan = collect(&f.0, None).unwrap();
     fs::set_permissions(&blocked, fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(!scan.items.iter().any(|item| item.path == f.0.join(".claude/cache").to_string_lossy()));
-    assert!(scan.warnings.iter().any(|warning| warning.contains("目录无法完整读取") && warning.contains("blocked")));
+    assert!(!scan
+        .items
+        .iter()
+        .any(|item| item.path == f.0.join(".claude/cache").to_string_lossy()));
+    assert!(scan
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("目录无法完整读取") && warning.contains("blocked")));
     assert!(blocked.join("data").exists());
 }
 
@@ -633,32 +739,55 @@ fn windows_redirected_appdata_remains_whitelisted() {
         let home = Fixture::new();
         let outside = Fixture::new();
         outside.file("roaming/Claude/Cookies", "disposable cookie fixture");
-        outside.file("roaming/Claude/local_sessions/record.json", r#"{"org":"org-fixture-123"}"#);
+        outside.file(
+            "roaming/Claude/local_sessions/record.json",
+            r#"{"org":"org-fixture-123"}"#,
+        );
         outside.file("local/claude-cli-nodejs/cache", "disposable cache fixture");
         outside.file("unrelated/data", "keep");
         let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "cleaner::tests::windows_redirected_appdata_remains_whitelisted", "--nocapture"])
+            .args([
+                "--exact",
+                "cleaner::tests::windows_redirected_appdata_remains_whitelisted",
+                "--nocapture",
+            ])
             .env("CC_REDIRECTED_APPDATA_FIXTURE", &outside.0)
-            .env("USERPROFILE", &home.0).env("HOME", &home.0)
+            .env("USERPROFILE", &home.0)
+            .env("HOME", &home.0)
             .env("APPDATA", outside.0.join("roaming"))
             .env("LOCALAPPDATA", outside.0.join("local"))
-            .status().unwrap();
+            .status()
+            .unwrap();
         assert!(status.success());
-        assert_eq!(fs::read_to_string(outside.0.join("unrelated/data")).unwrap(), "keep");
+        assert_eq!(
+            fs::read_to_string(outside.0.join("unrelated/data")).unwrap(),
+            "keep"
+        );
         return;
     }
     let root = home().unwrap();
     let outside = PathBuf::from(std::env::var_os("CC_REDIRECTED_APPDATA_FIXTURE").unwrap());
     let scan = current_scan(&root, None).unwrap();
-    let cookie = scan.items.iter().find(|item| Path::new(&item.path) == outside.join("roaming/Claude/Cookies")).unwrap();
+    let cookie = scan
+        .items
+        .iter()
+        .find(|item| Path::new(&item.path) == outside.join("roaming/Claude/Cookies"))
+        .unwrap();
     assert!(identity(cookie, &root).is_ok());
     let mut unrelated = cookie.clone();
     unrelated.path = outside.join("unrelated/data").to_string_lossy().into();
     assert!(identity(&unrelated, &root).is_err());
     let (files, complete) = targets::org_files(&root, "org-fixture-123").unwrap();
     assert!(complete);
-    assert_eq!(files, vec![outside.join("roaming/Claude/local_sessions/record.json")]);
+    assert_eq!(
+        files,
+        vec![outside.join("roaming/Claude/local_sessions/record.json")]
+    );
     let sources = super::identity::sources(&root, &crate::identities::Policy::default()).unwrap();
-    assert!(sources.iter().any(|source| source.path == Path::new(&cookie.path)));
-    assert!(sources.iter().all(|source| super::identity::allowed(&root, source)));
+    assert!(sources
+        .iter()
+        .any(|source| source.path == Path::new(&cookie.path)));
+    assert!(sources
+        .iter()
+        .all(|source| super::identity::allowed(&root, source)));
 }

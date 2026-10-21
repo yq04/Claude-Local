@@ -93,6 +93,7 @@ Object.assign(identityState.summaries[id(2)],{display_name:'Beta account owner',
 Object.assign(identityState.summaries[id(3)],{display_name:'Gamma account owner',plan:'Max 20x',proxy:'http://proxy.example.invalid:7890',quota_5h_used:null,quota_7d_used:null});
 window.usageFixture.identityState=identityState;
 let locale = 'zh';
+localStorage.setItem('claude-local.preferences.v1', JSON.stringify({privacyMask: false}));
 localStorage.setItem('claude-local.page.v1', ${JSON.stringify(quickOnly ? 'quick' : 'usage')});
 localStorage.setItem('claude-local.kookeey-referral.v1','https://legacy.example.invalid/referral');
 mockIPC(async (command,args)=>{
@@ -108,6 +109,9 @@ mockIPC(async (command,args)=>{
     const value = window.usageFixture.empty?empty:selected;
     return {generated_at:Math.floor(Date.now()/1000),tracking_since:now-86400,granularity:args.period==='today'?'hour':'day',totals:value,unattributed:window.usageFixture.empty?empty:unknown,accounts:accounts.map(a=>({...a,totals:window.usageFixture.empty?empty:a.totals})),daily:window.usageFixture.empty?[]:dailyRows(value,args.period),models:window.usageFixture.empty?[]:modelRows(value),warnings:window.usageFixture.warnings};
   }
+  if(command==='ui_privacy_read')return false;
+  if(command==='ui_privacy_write')return;
+  if(command==='quota_setup_status')return {state:'not_configured',collector_bundled:false,has_statusline:false};
   if(command==='ui_language_read')return locale;
   if(command==='ui_language_write'){locale=args.language;return;}
   if(command==='plugin:app|version')return '0.1.3';

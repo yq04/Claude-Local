@@ -36,6 +36,7 @@ try{
  const page=await context.newPage();page.setDefaultTimeout(10000);
  const errors:string[]=[];page.on('console',message=>{if(message.type()==='error')console.error(message.text());});page.on('pageerror',error=>{errors.push(error.message);console.error(error.message);});
  await page.goto(base+'/tests/identities.html');
+ await page.evaluate(async()=>{const prefs=await import('/src/settings-model.ts');await prefs.synchronizePrivacyPreference(false);});
  const cards=page.locator('.identity-card');
  await page.getByText('fixture@example.invalid',{exact:true}).waitFor();
  assert.equal(await cards.count(),40);assert.equal(await page.getByRole('button',{name:'新身份',exact:true}).count(),1);
@@ -61,6 +62,24 @@ try{
  await linking.getByRole('button',{name:'确认',exact:true}).click();
  await page.waitForFunction(()=>(window as any).identityFixture.state.browser.enabled===true);checks++;
  const current=page.locator('.identity-card.current');
+ const stopsBeforeQuota=await page.evaluate(()=>(window as any).identityFixture.commands.filter((row:any)=>row.command==='identities_stop').length);
+ await current.locator('.identity-quota-open').click();
+ let quotaDialog=page.getByRole('dialog');
+ await quotaDialog.getByText('额度与重置权益',{exact:true}).waitFor();
+ assert.equal(await quotaDialog.getByText('可用主动重置次数',{exact:true}).count(),1);
+ assert.equal(await quotaDialog.getByRole('button',{name:'打开官方用量页',exact:true}).isEnabled(),true);
+ await quotaDialog.getByRole('button',{name:'打开官方用量页',exact:true}).click();
+ await quotaDialog.getByText('已在当前身份的浏览器资料中打开官方用量页，请核对网页实际登录账号。',{exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>(window as any).identityFixture.commands.filter((row:any)=>row.command==='identities_stop').length),stopsBeforeQuota);
+ await quotaDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();
+ await cards.nth(1).locator('.identity-quota-open').click();
+ quotaDialog=page.getByRole('dialog');
+ assert.equal(await quotaDialog.getByRole('button',{name:'打开官方用量页',exact:true}).isEnabled(),false);
+ await quotaDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();checks++;
+ await current.getByRole('button',{name:'直接删除',exact:true}).click();
+ await page.getByRole('alertdialog').getByText('PID 4201',{exact:true}).waitFor();
+ await page.getByRole('alertdialog').getByRole('button',{name:'取消',exact:true}).click();checks++;
+
  const light=await current.evaluate(node=>getComputedStyle(node,'::before').boxShadow);assert.match(light,/67, 228, 132/);
  await page.mouse.move(geometry[0].x+90,geometry[0].y+85);
  await page.waitForFunction(()=>getComputedStyle(document.querySelector('.identity-card.current')!).transform!=='none');

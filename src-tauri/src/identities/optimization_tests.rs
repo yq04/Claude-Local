@@ -1,6 +1,6 @@
 // [INPUT]: 虚构 UUID/组织/凭据、隔离文件系统和归档格式。
-// [OUTPUT]: A/B 往返去重、刷新凭据覆盖、跨组织隔离、旧版迁移与覆盖故障回归。
-// [POS]: 账号匹配与不可变归档代次的离线证明，不读取真实用户数据。
+// [OUTPUT]: A/B 往返去重、原始会话保留、窄缓存维护、旧68键归档只读兼容与设备/客户端写回保护、显式MCP/项目映射策略、刷新凭据覆盖及故障回归。
+// [POS]: 账号匹配、读/保存工作区无副作用与不可变归档代次的离线证明，不读取真实用户数据。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
 #[cfg(windows)]
@@ -60,6 +60,161 @@ impl Drop for Fixture {
         let _ = fs::remove_dir_all(&self.root);
     }
 }
+#[test]
+fn s13_legacy_68_key_archive_reads_without_restoring_device_or_ui_state() {
+    let legacy_keys = "userID machineID anonymousId oauthAccount primaryApiKey additionalModelCostsCache additionalModelOptionsAnsweredAt additionalModelOptionsCache agentLastUsed announcementImpressions autoCompactWindowsCache cachedArtifactRoster cachedChromeExtensionInstalled cachedDynamicConfigs cachedExperimentData cachedExperimentFeatures cachedExtraUsageDisabledReason cachedGrowthBookFeatures cachedGrowthBookFeaturesAt cachedStatsigGates cachedUsageUtilization changelogLastFetched claudeAiMcpEverConnected claudeCodeFirstTokenDate clientDataCache clientDataCacheSlots closedIssuesLastChecked customApiKeyResponses feedbackSurveyState firstStartTime firstStartVersion githubWebConnectionStatusCache groveConfigCache hasAvailableSubscription hasCompletedOnboarding hasOpenedAgentsView hasResetAutoModeOptInForDefaultOffer hasSeenAutoDefaultNotice hasSeenAutoModeOutsideReadPrompt lastClawdEntranceVersion lastOnboardingVersion lastPlanModeUse lastReleaseNotesSeen metricsStatusCache metricsStatusCacheByPrincipal migrationVersion modelAccessCache numStartups officialMarketplaceAutoInstallAttempted officialMarketplaceAutoInstalled opusProMigrationComplete orgModelDefaultCache passesEligibilityCache pluginUsage pluginUsageLspGraceAppliedIds promptQueueUseCount remoteControlMachineId remoteControlUpsellSeenCount s1mAccessCache seenNotifications skillUsage sonnet1m45MigrationComplete subscriptionNoticeCount summonSidKey tipLifetimeShownCounts tipsHistory tipsHistoryByCommand transcriptShareDismissed";
+    let keys: Vec<String> = legacy_keys.split_whitespace().map(str::to_string).collect();
+    assert_eq!(keys.len(), 68);
+    for keep_settings in [true, false] {
+        let f = Fixture::new();
+        let r = Reporter::channel(None);
+        let p = Policy {
+            settings: keep_settings,
+            ..Policy::default()
+        };
+        let mut s = store::Store::open(&f.vault, &f.home).unwrap();
+        f.login("A", "org-a", "fictional-a-login");
+        let (mut record, mut stage) = s.save_checkpoint("legacy-a", &p, &r).unwrap();
+        let slot = stage
+            .manifest
+            .sources
+            .iter()
+            .position(|source| source.path == f.home.join(".claude.json"))
+            .unwrap();
+        stage.manifest.sources[slot].keys = keys.clone();
+        let mut old = serde_json::Map::new();
+        for key in &keys {
+            old.insert(key.clone(), serde_json::json!("old-device-or-client-state"));
+        }
+        old.insert("oauthAccount".into(), serde_json::json!({"accountUuid":"A", "organizationUuid":"org-a", "emailAddress":"A@example.invalid"}));
+        fs::write(
+            stage.path.join(format!("data/{slot}")),
+            serde_json::to_vec(&old).unwrap(),
+        )
+        .unwrap();
+        let device_slot = stage.manifest.sources.len();
+        stage
+            .manifest
+            .sources
+            .push(crate::cleaner::identity::Source {
+                path: f.home.join(".claude/.machine-id"),
+                category: "account".into(),
+                keys: Vec::new(),
+            });
+        stage.manifest.fingerprints.push(Vec::new());
+        fs::write(
+            stage.path.join(format!("data/{device_slot}")),
+            b"old-device-file",
+        )
+        .unwrap();
+        record.archive = format!("{}.baga", new_id().unwrap());
+        let seal = codec::Seal::new(
+            private::create(&f.vault.join(&record.archive)).unwrap(),
+            &s.key,
+        )
+        .unwrap();
+        let mut tar = tar::Builder::new(compression::encode(seal).unwrap());
+        let bytes = serde_json::to_vec(&stage.manifest).unwrap();
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o600);
+        header.set_cksum();
+        tar.append_data(&mut header, "manifest.json", &bytes[..])
+            .unwrap();
+        for item in fs::read_dir(stage.path.join("data")).unwrap() {
+            let item = item.unwrap();
+            let name = std::path::Path::new("data").join(item.file_name());
+            if item.path().is_dir() {
+                tar.append_dir_all(name, item.path()).unwrap();
+            } else {
+                tar.append_path_with_name(item.path(), name).unwrap();
+            }
+        }
+        tar.into_inner()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .sync_all()
+            .unwrap();
+        s.db.remember(&record).unwrap();
+        drop(stage);
+        let verified = s
+            .load(&record)
+            .expect("legacy 68-key manifest must remain readable");
+        assert_eq!(verified.manifest.sources[slot].keys.len(), 68);
+        drop(verified);
+        f.login("B", "org-b", "fictional-b-login");
+        let stable = serde_json::json!({"userID":"current-user", "machineID":"current-machine", "anonymousId":"current-anonymous", "remoteControlMachineId":"current-remote", "tipsHistory":{"current":1}, "cachedExperimentData":{"current":true}, "numStartups":72});
+        let mut current: serde_json::Value =
+            serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+        current
+            .as_object_mut()
+            .unwrap()
+            .extend(stable.as_object().unwrap().clone());
+        f.write(".claude.json", &serde_json::to_vec(&current).unwrap());
+        f.write(".claude/.machine-id", b"current-device-file");
+        s.switch(&record.id, "B", &p, &r).unwrap();
+        let restored: serde_json::Value =
+            serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+        for (key, expected) in stable.as_object().unwrap() {
+            assert_eq!(
+                restored.get(key),
+                Some(expected),
+                "preserve {key}, settings={keep_settings}"
+            );
+        }
+        assert_eq!(restored["oauthAccount"]["accountUuid"], "A");
+        assert_eq!(f.token(), "fictional-a-login");
+        assert_eq!(
+            fs::read(f.home.join(".claude/.machine-id")).unwrap(),
+            b"current-device-file"
+        );
+    }
+}
+
+#[test]
+fn s13_device_projection_preserves_explicit_mcp_and_project_mapping_policy() {
+    let f = Fixture::new();
+    let r = Reporter::channel(None);
+    let p = Policy {
+        settings: false,
+        mcp: false,
+        projects: false,
+        ..Policy::default()
+    };
+    let s = store::Store::open(&f.vault, &f.home).unwrap();
+    f.login("A", "org-a", "fictional-login");
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    config["userID"] = "keep-device".into();
+    config["tipsHistory"] = serde_json::json!({"keep":1});
+    config["mcpServers"] = serde_json::json!({"move":{}});
+    config["projects"] = serde_json::json!({"move":{}});
+    config["githubRepoPaths"] = serde_json::json!({"move":["repo"]});
+    f.write(".claude.json", &serde_json::to_vec(&config).unwrap());
+    f.write(
+        ".claude/settings.json",
+        br#"{"model":"move-with-settings"}"#,
+    );
+    let (_, stage) = s.save_checkpoint("A", &p, &r).unwrap();
+    let selected = store::Store::selected(&stage, &p);
+    let source = selected
+        .iter()
+        .find(|(_, source)| source.path == f.home.join(".claude.json"))
+        .unwrap();
+    for key in ["oauthAccount", "mcpServers", "projects", "githubRepoPaths"] {
+        assert!(source.1.keys.iter().any(|k| k == key));
+    }
+    for key in ["userID", "tipsHistory"] {
+        assert!(!source.1.keys.iter().any(|k| k == key));
+    }
+    assert!(selected.iter().any(
+        |(_, source)| source.path == f.home.join(".claude/settings.json") && source.keys.is_empty()
+    ));
+}
+
 #[test]
 fn repeated_accounts_update_one_slot_and_keep_latest_tokens_and_history() {
     let f = Fixture::new();
@@ -423,7 +578,7 @@ fn switching_from_empty_identity_does_not_leak_empty_sqlite_rows_or_archives() {
     assert_eq!(bagas, 1);
 }
 #[test]
-fn cross_account_residue_sanitization_purges_foreign_uuids_while_preserving_active_account() {
+fn store_open_is_read_only_for_workspace_and_explicit_cache_maintenance_is_narrow() {
     let f = Fixture::new();
     let active_acct = "dc56850a-1111-4111-8111-111111111111";
     let active_org = "cd9d0243-2222-4222-8222-222222222222";
@@ -448,6 +603,13 @@ fn cross_account_residue_sanitization_purges_foreign_uuids_while_preserving_acti
             "metricsStatusCacheByPrincipal": {
                 active_acct: {"enabled": true},
                 foreign_acct: {"enabled": true}
+            },
+            "projects": {
+                "D:/fixture": {
+                    "lastSessionId": "sess-fixture",
+                    "lastCost": 1.25,
+                    "lastModelUsage": {"fixture-model": {"costUSD": 1.25}}
+                }
             }
         }))
         .unwrap()
@@ -457,6 +619,24 @@ fn cross_account_residue_sanitization_purges_foreign_uuids_while_preserving_acti
         ".claude/.credentials.json",
         br#"{"claudeAiOauth":{"accessToken":"active-token"}}"#,
     );
+    let raw_session = br#"{"type":"attachment","attachment":{"type":"credential_org","organizationUuid":"foreign-org"}}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"preserve","signature":"foreign-signature"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"dangling"}]}}"#;
+    f.write(".claude/projects/demo/sess-fixture.jsonl", raw_session);
+    f.write(
+        &format!(".claude/plugins/synced/{active_org}_{active_acct}/keep.json"),
+        b"{}",
+    );
+    f.write(
+        ".claude/plugins/synced/foreign-org_foreign-account/drop.json",
+        b"{}",
+    );
+    f.write(
+        &format!(".claude/cache/model-catalog/{active_org}-123-cc.json"),
+        b"{}",
+    );
+    f.write(".claude/cache/model-catalog/foreign-org-123-cc.json", b"{}");
+    let original_config = fs::read(f.home.join(".claude.json")).unwrap();
     #[cfg(target_os = "windows")]
     {
         f.write(
@@ -505,6 +685,24 @@ fn cross_account_residue_sanitization_purges_foreign_uuids_while_preserving_acti
         f.write("AppData/Roaming/Claude/DIPS", b"unassociated");
     }
     let _s = store::Store::open(&f.vault, &f.home).unwrap();
+    assert_eq!(
+        fs::read(f.home.join(".claude.json")).unwrap(),
+        original_config
+    );
+    assert_eq!(
+        fs::read(f.home.join(".claude/projects/demo/sess-fixture.jsonl")).unwrap(),
+        raw_session
+    );
+    assert!(f
+        .home
+        .join(".claude/plugins/synced/foreign-org_foreign-account/drop.json")
+        .exists());
+    assert!(f
+        .home
+        .join(".claude/cache/model-catalog/foreign-org-123-cc.json")
+        .exists());
+
+    crate::cleaner::identity::maintain_account_caches(&f.home).unwrap();
     let cfg: serde_json::Value =
         serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
     assert!(cfg["s1mAccessCache"].get(active_org).is_some());
@@ -516,7 +714,39 @@ fn cross_account_residue_sanitization_purges_foreign_uuids_while_preserving_acti
         .is_some());
     assert!(cfg["metricsStatusCacheByPrincipal"]
         .get(foreign_acct)
-        .is_none());
+        .is_some());
+    assert_eq!(
+        cfg["projects"]["D:/fixture"]["lastSessionId"],
+        "sess-fixture"
+    );
+    assert_eq!(cfg["projects"]["D:/fixture"]["lastCost"], 1.25);
+    assert!(cfg["projects"]["D:/fixture"]
+        .get("lastModelUsage")
+        .is_some());
+    assert_eq!(
+        fs::read(f.home.join(".claude/projects/demo/sess-fixture.jsonl")).unwrap(),
+        raw_session
+    );
+    assert!(f
+        .home
+        .join(format!(
+            ".claude/plugins/synced/{active_org}_{active_acct}/keep.json"
+        ))
+        .exists());
+    assert!(!f
+        .home
+        .join(".claude/plugins/synced/foreign-org_foreign-account")
+        .exists());
+    assert!(f
+        .home
+        .join(format!(
+            ".claude/cache/model-catalog/{active_org}-123-cc.json"
+        ))
+        .exists());
+    assert!(!f
+        .home
+        .join(".claude/cache/model-catalog/foreign-org-123-cc.json")
+        .exists());
     #[cfg(target_os = "windows")]
     {
         let msix_cfg: serde_json::Value = serde_json::from_slice(
@@ -531,7 +761,7 @@ fn cross_account_residue_sanitization_purges_foreign_uuids_while_preserving_acti
             .is_some());
         assert!(msix_cfg
             .get(format!("dxt:allowlist:{foreign_acct}"))
-            .is_none());
+            .is_some());
         let dev_reg: serde_json::Value = serde_json::from_slice(
             &fs::read(f.home.join(
                 "AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/ant-device-registry.json",
@@ -540,29 +770,29 @@ fn cross_account_residue_sanitization_purges_foreign_uuids_while_preserving_acti
         )
         .unwrap();
         assert!(dev_reg.get(active_acct).is_some());
-        assert!(dev_reg.get(foreign_acct).is_none());
+        assert!(dev_reg.get(foreign_acct).is_some());
         assert!(f
             .home
             .join(format!("AppData/Roaming/Claude/local-agent-mode-sessions/{active_acct}/{active_org}/keep.json"))
             .exists());
-        assert!(!f
+        assert!(f
             .home
             .join(format!(
                 "AppData/Roaming/Claude/local-agent-mode-sessions/{foreign_acct}"
             ))
             .exists());
-        assert!(!f
+        assert!(f
             .home
             .join(format!(
                 "AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/{foreign_org}"
             ))
             .exists());
-        assert!(!f.home.join("AppData/Local/Claude-3p/config.json").exists());
-        assert!(!f
+        assert!(f.home.join("AppData/Local/Claude-3p/config.json").exists());
+        assert!(f
             .home
             .join("AppData/Local/Claude-3p/Local Storage")
             .exists());
-        assert!(!f.home.join("AppData/Roaming/Claude/DIPS").exists());
+        assert!(f.home.join("AppData/Roaming/Claude/DIPS").exists());
     }
 }
 
@@ -603,11 +833,11 @@ fn per_identity_proxy_and_repo_paths_and_oauth_lock_are_isolated_across_switches
     // After switching to empty with policy.settings = true and policy.projects = false:
     // 1. .oauth_refresh.lock.owner is removed
     assert!(!f.home.join(".claude/.oauth_refresh.lock.owner").exists());
-    // 2. changelogLastFetched, lastClawdEntranceVersion, githubRepoPaths are cleared from .claude.json
+    // 2. Client UI state stays on the machine; selected project mappings move with the account.
     let empty_claude: serde_json::Value =
         serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
-    assert!(empty_claude.get("changelogLastFetched").is_none());
-    assert!(empty_claude.get("lastClawdEntranceVersion").is_none());
+    assert_eq!(empty_claude["changelogLastFetched"], 1791955499521u64);
+    assert_eq!(empty_claude["lastClawdEntranceVersion"], "2.1.299");
     assert!(empty_claude.get("githubRepoPaths").is_none());
     // 3. Account A's proxy is removed from settings.json while shared theme & SHARED_FLAG remain
     let empty_settings: serde_json::Value =
@@ -655,7 +885,7 @@ fn per_identity_proxy_and_repo_paths_and_oauth_lock_are_isolated_across_switches
 }
 
 #[test]
-fn in_place_save_and_summary_backfill_and_lock_cleanup() {
+fn in_place_save_and_summary_backfill_leave_default_workspace_untouched() {
     let f = Fixture::new();
     let r = Reporter::channel(None);
     let p = Policy::default();
@@ -685,6 +915,11 @@ fn in_place_save_and_summary_backfill_and_lock_cleanup() {
         }))
         .unwrap(),
     );
+    let original_config = fs::read(f.home.join(".claude.json")).unwrap();
+    let raw_session = br#"{"type":"attachment","attachment":{"type":"credential_org","organizationUuid":"foreign-org"}}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"preserve","signature":"foreign-signature"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"dangling"}]}}"#;
+    f.write(".claude/projects/demo/sess-save.jsonl", raw_session);
     f.write(
         ".claude/.credentials.json",
         br#"{"claudeAiOauth":{"accessToken":"tok-max","refreshToken":"ref-max","expiresAt":4102444800000,"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}"#,
@@ -696,14 +931,25 @@ fn in_place_save_and_summary_backfill_and_lock_cleanup() {
     f.write(".claude.lock", b"stale");
     f.write(".claude.json.lock", b"stale-json");
     f.write(".claude/plugins/synced/org-max_acct-max/ok.json", b"{}");
-    f.write(".claude/plugins/synced/org-other_acct-other/drop.json", b"{}");
+    f.write(
+        ".claude/plugins/synced/org-other_acct-other/drop.json",
+        b"{}",
+    );
     f.write(".claude/cache/model-catalog/org-max-123-cc.json", b"{}");
     f.write(".claude/cache/model-catalog/org-other-123-cc.json", b"{}");
 
     // 1. In-place save snapshots into vault without clearing live files or switching browser slot
     s.save_current("主力 Max 20x", &p, &r).unwrap();
-    assert!(!f.home.join(".claude.lock").exists());
-    assert!(!f.home.join(".claude.json.lock").exists());
+    assert!(f.home.join(".claude.lock").exists());
+    assert!(f.home.join(".claude.json.lock").exists());
+    assert_eq!(
+        fs::read(f.home.join(".claude.json")).unwrap(),
+        original_config
+    );
+    assert_eq!(
+        fs::read(f.home.join(".claude/projects/demo/sess-save.jsonl")).unwrap(),
+        raw_session
+    );
     assert_eq!(f.token(), "tok-max");
     assert_eq!(s.records().len(), 1);
     let rec = &s.records()[0];
@@ -734,7 +980,7 @@ fn in_place_save_and_summary_backfill_and_lock_cleanup() {
     assert_eq!(sum.quota_7d_used, Some(40));
     assert_eq!(sum.quota_checked, Some(true));
 
-    // 3. Simulate legacy archive without summary row and verify automatic backfill + plugin/catalog cleanup on Store::open
+    // 3. Simulate a legacy archive without a summary and confirm open backfills only private index data.
     let rec_id = rec.id.clone();
     s.db.connection
         .execute("DELETE FROM identity_summaries WHERE id=?1", [&rec_id])
@@ -747,7 +993,7 @@ fn in_place_save_and_summary_backfill_and_lock_cleanup() {
         .home
         .join(".claude/plugins/synced/org-max_acct-max/ok.json")
         .exists());
-    assert!(!f
+    assert!(f
         .home
         .join(".claude/plugins/synced/org-other_acct-other")
         .exists());
@@ -755,10 +1001,20 @@ fn in_place_save_and_summary_backfill_and_lock_cleanup() {
         .home
         .join(".claude/cache/model-catalog/org-max-123-cc.json")
         .exists());
-    assert!(!f
+    assert!(f
         .home
         .join(".claude/cache/model-catalog/org-other-123-cc.json")
         .exists());
+    assert_eq!(
+        fs::read(f.home.join(".claude.json")).unwrap(),
+        original_config
+    );
+    assert_eq!(
+        fs::read(f.home.join(".claude/projects/demo/sess-save.jsonl")).unwrap(),
+        raw_session
+    );
+    assert!(f.home.join(".claude.lock").exists());
+    assert!(f.home.join(".claude.json.lock").exists());
     let backfilled = s.db.summaries().unwrap();
     let sum2 = backfilled.get(&rec_id).unwrap();
     assert_eq!(sum2.email.as_deref(), Some("max@example.invalid"));
@@ -769,7 +1025,7 @@ fn in_place_save_and_summary_backfill_and_lock_cleanup() {
 }
 
 #[test]
-fn cross_account_session_resume_merges_legacy_history_and_sanitizes_risk_vectors() {
+fn cross_account_session_resume_preserves_original_history_bytes() {
     let f = Fixture::new();
     let r = Reporter::channel(None);
     let mut s = store::Store::open(&f.vault, &f.home).unwrap();
@@ -804,7 +1060,10 @@ fn cross_account_session_resume_merges_legacy_history_and_sanitizes_risk_vectors
     ]
     .join("\n")
         + "\n";
-    f.write(".claude/projects/demo/sess-a.jsonl", sess_a_lines.as_bytes());
+    f.write(
+        ".claude/projects/demo/sess-a.jsonl",
+        sess_a_lines.as_bytes(),
+    );
     f.write(
         ".claude/projects/demo/sess-a/subagents/agent-1.jsonl",
         b"{\"type\":\"assistant\",\"uuid\":\"sub1\",\"message\":{\"content\":[{\"type\":\"thinking\",\"thinking\":\"sub-secret\",\"signature\":\"sig-org-a\"},{\"type\":\"text\",\"text\":\"subagent output\"}]}}\n",
@@ -865,22 +1124,20 @@ fn cross_account_session_resume_merges_legacy_history_and_sanitizes_risk_vectors
     assert!(f.home.join(".claude/projects/demo/sess-a.jsonl").exists());
     assert!(f.home.join(".claude/projects/demo/sess-b.jsonl").exists());
 
-    // sess-a.jsonl must be sanitized for Account B (org-b, b@example.invalid, thinking blocks stripped)
-    let sanitized_a = fs::read_to_string(f.home.join(".claude/projects/demo/sess-a.jsonl")).unwrap();
-    assert!(!sanitized_a.contains("org-a"));
-    assert!(sanitized_a.contains("\"organizationUuid\":\"org-b\""));
-    assert!(!sanitized_a.contains("a@example.invalid"));
-    assert!(sanitized_a.contains("The user's email address is b@example.invalid. Use it only to identify the user"));
-    assert!(!sanitized_a.contains("sig-org-a"));
-    assert!(sanitized_a.contains("[Thinking removed]"));
-    assert!(sanitized_a.contains("unfinished work on A"));
-
-    // Subagent file under sess-a/subagents/ must also have its foreign thinking block stripped
-    let sanitized_sub =
-        fs::read_to_string(f.home.join(".claude/projects/demo/sess-a/subagents/agent-1.jsonl"))
-            .unwrap();
-    assert!(!sanitized_sub.contains("sig-org-a"));
-    assert!(sanitized_sub.contains("subagent output"));
+    // Cross-account resume may be incompatible, but switching never rewrites archived history.
+    assert_eq!(
+        fs::read(f.home.join(".claude/projects/demo/sess-a.jsonl")).unwrap(),
+        sess_a_lines.as_bytes()
+    );
+    let raw_subagent = b"{\"type\":\"assistant\",\"uuid\":\"sub1\",\"message\":{\"content\":[{\"type\":\"thinking\",\"thinking\":\"sub-secret\",\"signature\":\"sig-org-a\"},{\"type\":\"text\",\"text\":\"subagent output\"}]}}\n";
+    assert_eq!(
+        fs::read(
+            f.home
+                .join(".claude/projects/demo/sess-a/subagents/agent-1.jsonl")
+        )
+        .unwrap(),
+        raw_subagent
+    );
 
     // lastSessionId in .claude.json is preserved because sess-a.jsonl is present in .claude/projects/demo/
     let claude_cfg: serde_json::Value =
@@ -889,7 +1146,7 @@ fn cross_account_session_resume_merges_legacy_history_and_sanitizes_risk_vectors
 }
 
 #[test]
-fn cross_account_tool_pair_self_healing_and_replay_blob_sanitization() {
+fn cross_account_switch_preserves_session_replay_and_tool_blocks() {
     let f = Fixture::new();
     let r = Reporter::channel(None);
     let mut s = store::Store::open(&f.vault, &f.home).unwrap();
@@ -975,37 +1232,32 @@ fn cross_account_tool_pair_self_healing_and_replay_blob_sanitization() {
         br#"{"claudeAiOauth":{"accessToken":"tok-b"}}"#,
     );
     s.save_current("Account B", &p, &r).unwrap();
-    let b_id = s.records().into_iter().find(|rec| rec.id != a_id).unwrap().id;
+    let b_id = s
+        .records()
+        .into_iter()
+        .find(|rec| rec.id != a_id)
+        .unwrap()
+        .id;
 
     // Switch to Account A, then switch to Account B (simulating 5h limit relay from A -> B)
     s.switch(&a_id, "Account B", &p, &r).unwrap();
     s.switch(&b_id, "Account A", &p, &r).unwrap();
 
-    let healed =
-        fs::read_to_string(f.home.join(".claude/projects/demo/sess-interrupted.jsonl")).unwrap();
-    // 1. api-request-blob, api-request-shape, and bridge-session are completely stripped
-    assert!(!healed.contains("api-request-blob"));
-    assert!(!healed.contains("sig-blob-org-a"));
-    assert!(!healed.contains("api-request-shape"));
-    assert!(!healed.contains("bridge-session"));
-    assert!(!healed.contains("bridgeOwnerAccountUuid"));
-    // 2. Orphaned tool_result and dangling tool_use are healed in-place preserving uuid/parentUuid
-    assert!(!healed.contains("toolu_missing"));
-    assert!(healed.contains("[Orphaned tool result removed due to conversation resume]"));
-    assert!(!healed.contains("toolu_interrupted_429"));
-    assert!(healed.contains("[Tool use interrupted]"));
-    assert!(healed.contains("\"parentUuid\":\"u-orphan\""));
+    assert_eq!(
+        fs::read(f.home.join(".claude/projects/demo/sess-interrupted.jsonl")).unwrap(),
+        interrupted_lines.as_bytes()
+    );
 
-    // 3. Foreign lastSessionId is preserved for seamless resume, while lastCost/lastDuration are stripped to disarm tengu_exit
+    // Session references and telemetry remain byte-for-byte tied to the original history.
     let cfg_b: serde_json::Value =
         serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
     assert_eq!(
         cfg_b["projects"]["D:/demo"]["lastSessionId"],
         "sess-interrupted"
     );
-    assert!(cfg_b["projects"]["D:/demo"].get("lastCost").is_none());
-    assert!(cfg_b["projects"]["D:/demo"].get("lastDuration").is_none());
-    assert!(cfg_b["projects"]["D:/demo"].get("lastModelUsage").is_none());
+    assert_eq!(cfg_b["projects"]["D:/demo"]["lastCost"], 4.25);
+    assert_eq!(cfg_b["projects"]["D:/demo"]["lastDuration"], 180000);
+    assert!(cfg_b["projects"]["D:/demo"].get("lastModelUsage").is_some());
     // 4. Missing project & githubRepoPaths from Account A were merged into Account B
     assert!(cfg_b["projects"].get("D:/demo-OnlyInA").is_some());
     assert!(cfg_b["githubRepoPaths"].get("owner/repo-a").is_some());

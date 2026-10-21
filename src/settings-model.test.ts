@@ -2,6 +2,8 @@ import {expect, test} from 'bun:test';
 import {
   defaultPreferences,
   getPreferences,
+  initializePrivacyPreference,
+  maskDisplayName,
   maskEmailAddress,
   resetPreferences,
   updatePreferences,
@@ -34,6 +36,21 @@ test('settings model updates, sanitizes and resets preferences safely', () => {
   expect(masked).toBe('stu***@example.invalid');
   expect(maskEmailAddress('studio@example.invalid', false)).toBe('studio@example.invalid');
 
+  // 单字符用户名必须打码，不可漏出原始字符
+  expect(maskEmailAddress('a@example.invalid', true)).toBe('*@example.invalid');
+  expect(maskEmailAddress('ab@example.invalid', true)).toBe('a***@example.invalid');
+
+  // 兜底名称命中邮箱或包含邮箱特征时安全打码
+  expect(maskDisplayName('studio', 'studio@example.invalid', true)).toBe('stu***@example.invalid');
+  expect(maskDisplayName('work-space@example.invalid', null, true)).toBe('wor***@example.invalid');
+  expect(maskDisplayName('自定义名称', 'studio@example.invalid', true)).toBe('自定义名称');
+
   resetPreferences();
   expect(getPreferences()).toEqual(defaultPreferences);
+  expect(getPreferences().privacyMask).toBe(true);
+});
+
+test('initializePrivacyPreference safely falls back in non-Tauri test runtime', async () => {
+  const result = await initializePrivacyPreference();
+  expect(typeof result).toBe('boolean');
 });

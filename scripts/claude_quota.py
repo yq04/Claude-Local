@@ -8,11 +8,12 @@ claude-quota v4: 离线/被动式、无后台额度网络请求的 Claude 多身
 2. Claude Code 2.1.302 内核级 qHr 精确计费表: 完整对齐 opus-5-5 ($4/$20/$5/$8/$0.20)、haiku-5-5 ($0.10/$0.50)、
    opus-4-7/4-8 ($5/$25)、sonnet-5-5 ($2/$10/$0.10) 及 US 推理倍率 (1.1x)；
 3. 跨文件全局 (message.id, requestId) 去重 + 单账号快照自适应标定 (Adaptive Window Calibration)；
-4. 多账号持久账本 (quota_ledger.json) 与 Claude-Local (identities.sqlite) 双向实时同步。
+4. Python 独占写入多账号账本与 SQLite 摘要；按账号/组织来源、真实观测时间与窗口合并，归档/重算时间不冒充新观测。
 """
 import sys
 import os
 import json
+import hashlib
 import struct
 import sqlite3
 import tempfile
@@ -29,7 +30,46 @@ sys.stdout.reconfigure(encoding="utf-8")
 # 同时支持从各账号自身官方快照窗口内真实会话流自动计算自适应费率 (Adaptive Calibration)
 PRO_WEEKLY_COST_USD = 242.5
 PRO_5H_COST_USD = 32.0
-CURRENT_QUOTA_VERSION = 3
+CURRENT_QUOTA_VERSION = 4
+
+
+def quota_identity(account: dict) -> str | None:
+    """Non-secret provenance fingerprint; independent of the vault's HMAC identity."""
+    uuid = str(account.get("accountUuid") or "").strip()
+    email = str(account.get("emailAddress") or "").strip().lower()
+    org = str(account.get("organizationUuid") or account.get("organizationName") or "").strip()
+    if not uuid and not email:
+        return None
+    return hashlib.sha256(json.dumps([uuid, email, org], ensure_ascii=False,
+                                      separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def same_quota_account(info: dict, entry: dict) -> bool:
+    left, right = info.get("quota_identity"), entry.get("quota_identity")
+    if left and right:
+        return left == right
+    anchor = entry.get("server_anchor") or {}
+    uuid = entry.get("account_uuid") or anchor.get("accountUuid")
+    if uuid and not (info.get("account_uuid") or (info.get("server_anchor") or {}).get("accountUuid")):
+        return False
+    info_uuid = info.get("account_uuid") or (info.get("server_anchor") or {}).get("accountUuid")
+    if info_uuid and uuid != info_uuid:
+        return False
+    org = info.get("organization_uuid") or info.get("organization")
+    entry_org = entry.get("organization_uuid") or entry.get("organization")
+    return not org or org == entry_org
+
+
+def ledger_account(accounts: dict, email: str, info: dict) -> dict:
+    primary = accounts.get(email.lower()) or {}
+    if same_quota_account(info, primary):
+        return primary
+    identity = info.get("quota_identity")
+    if identity:
+        candidate = accounts.get(email.lower() + "#" + identity) or {}
+        if candidate and same_quota_account(info, candidate):
+            return candidate
+    return primary
 
 
 def tier_multiplier(plan_str: str) -> float:
@@ -584,6 +624,14 @@ def format_account(
         auth_status = "expired"
 
     q = evaluate_quota(cj, slices, latest_dt, plan, now_utc, active_since_dt=active_since_dt)
+    candidate_anchor = cj.get("cachedUsageUtilization")
+    if not isinstance(candidate_anchor, dict) or (acc.get("accountUuid") and candidate_anchor.get("accountUuid") != acc.get("accountUuid")):
+        candidate_anchor = None
+    source = "local_estimate"
+    for window in ("five_hour", "seven_day"):
+        reset = parse_reset_dt((((candidate_anchor or {}).get("utilization") or {}).get(window) or {}).get("resets_at"))
+        if reset is None or reset <= now_utc:
+            source = "unknown"
     if q["effective_rem"] == 0:
         avail_badge = "🔴 额度已耗尽 (不可用)"
     elif q["effective_rem"] <= 20:
@@ -595,6 +643,12 @@ def format_account(
         "display": display,
         "email": email,
         "organization": org,
+        "account_uuid": acc.get("accountUuid"),
+        "organization_uuid": acc.get("organizationUuid"),
+        "quota_identity": quota_identity(acc),
+        "quota_observed_at_ms": anchor_fetched_at_ms(candidate_anchor) or None,
+        "quota_source": source,
+        "server_anchor": candidate_anchor,
         "plan": plan,
         "auth_status": auth_status,
         "auth_expires_at": int(exp_ms) if exp_ms else None,
@@ -607,23 +661,41 @@ def format_account(
 
 def apply_ledger_fallback_to_account(info: dict, ledger_accounts: dict, saved_at_ms: int, now_utc: datetime) -> None:
     email_key = (info.get("email") or "").strip().lower()
-    if not email_key or email_key not in ledger_accounts:
+    if not email_key:
         return
-    entry = ledger_accounts[email_key]
-    ledger_sec = int(entry.get("updated_at_sec") or 0)
-    if not info.get("has_quota_data") or ledger_sec > (saved_at_ms // 1000):
+    entry = ledger_account(ledger_accounts, email_key, info)
+    if not entry:
+        return
+    if not same_quota_account(info, entry):
+        if not entry.get("quota_identity"):
+            info["quota_source"] = "unknown"
+        return
+    incoming_ms = anchor_fetched_at_ms(info.get("server_anchor"))
+    ledger_ms = anchor_fetched_at_ms(entry.get("server_anchor"))
+    # Archive creation and computation times say nothing about observation freshness.
+    if not info.get("has_quota_data") or ledger_ms >= incoming_ms:
         q5 = entry.get("quota_5h_used")
         r5 = entry.get("quota_5h_reset_at")
         q7 = entry.get("quota_7d_used")
         r7 = entry.get("quota_7d_reset_at")
+        if ledger_ms == incoming_ms:
+            if r5 == info.get("reset_5h_ts") and q5 is not None:
+                q5 = max(q5, info.get("used_5h") or 0)
+            if r7 == info.get("reset_7d_ts") and q7 is not None:
+                q7 = max(q7, info.get("used_7d") or 0)
         now_sec = int(now_utc.timestamp())
+        info["server_anchor"] = entry.get("server_anchor")
+        info["quota_observed_at_ms"] = ledger_ms or None
+        info["quota_source"] = entry.get("quota_source") or ("server_anchor" if ledger_ms else "local_estimate")
         if r7 is not None and now_sec >= int(r7):
+            info["quota_source"] = "unknown"
             r7_val = int(r7)
             while now_sec >= r7_val:
                 r7_val += 7 * 86400
             r7 = r7_val
             q7 = 0
         if r5 is not None and now_sec >= int(r5):
+            info["quota_source"] = "unknown"
             q5 = 0
             r5 = None
         if q7 is not None:
@@ -725,7 +797,6 @@ def anchor_fetched_at_ms(anchor) -> int:
 
 def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: list[dict], now_utc: datetime) -> None:
     now_sec = int(now_utc.timestamp())
-    now_ms = int(now_utc.timestamp() * 1000)
     ledger = load_ledger(app_dir)
     accs = ledger.setdefault("accounts", {})
     accepted_accounts = []
@@ -737,16 +808,31 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
             continue
         key = email.lower()
         prev_entry = accs.get(key) if isinstance(accs.get(key), dict) else {}
+        if prev_entry and not same_quota_account(item, prev_entry):
+            # Preserve the legacy/other-organization slot; a new observation gets
+            # its own provenance-qualified slot without changing archive/HMAC IDs.
+            if not item.get("quota_identity"):
+                continue
+            key += "#" + item["quota_identity"]
+            prev_entry = accs.get(key) or {}
         prev_anchor = prev_entry.get("server_anchor")
         incoming_anchor = item.get("server_anchor")
-        incoming_ms = anchor_fetched_at_ms(incoming_anchor) if incoming_anchor else now_ms
+        incoming_ms = anchor_fetched_at_ms(incoming_anchor)
         # Inputs are computed before acquiring this lock. A later statusLine
         # response may already have committed both its anchor and its summary.
-        if anchor_fetched_at_ms(prev_anchor) > incoming_ms:
+        if incoming_anchor and anchor_fetched_at_ms(prev_anchor) > incoming_ms:
             continue
         if not incoming_anchor and int(prev_entry.get("updated_at_sec") or 0) > now_sec:
             continue
         item = dict(item)
+        if prev_anchor and (not incoming_anchor or anchor_fetched_at_ms(prev_anchor) == incoming_ms):
+            for suffix in ("5h", "7d"):
+                old_used = prev_entry.get(f"quota_{suffix}_used")
+                old_reset = prev_entry.get(f"quota_{suffix}_reset_at")
+                new_used = item.get(f"used_{suffix}")
+                if not incoming_anchor or old_reset == item.get(f"reset_{suffix}_ts"):
+                    item[f"used_{suffix}"] = max(old_used or 0, new_used or 0) if old_used is not None else new_used
+                    item[f"reset_{suffix}_ts"] = old_reset
         observed = item.get("server_anchor_observed_windows")
         if (isinstance(incoming_anchor, dict) and isinstance(prev_anchor, dict)
                 and incoming_anchor.get("accountUuid")
@@ -763,11 +849,18 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                     item[f"reset_{suffix}_ts"] = prev_entry.get(f"quota_{suffix}_reset_at")
             incoming_anchor = {**incoming_anchor, "utilization": utilization}
         item["server_anchor"] = incoming_anchor
+        if item.get("used_5h") is None or item.get("used_7d") is None:
+            item["quota_source"] = "unknown"
         accepted_accounts.append(item)
         accs[key] = {
             "email": email,
             "display_name": item.get("display"),
             "organization": item.get("organization"),
+            "account_uuid": item.get("account_uuid") or prev_entry.get("account_uuid"),
+            "organization_uuid": item.get("organization_uuid") or prev_entry.get("organization_uuid"),
+            "quota_identity": item.get("quota_identity") or prev_entry.get("quota_identity"),
+            "quota_observed_at_ms": anchor_fetched_at_ms(incoming_anchor or prev_anchor) or None,
+            "quota_source": item.get("quota_source") or ("server_anchor" if incoming_anchor else "local_estimate"),
             "plan": item.get("plan"),
             "auth_status": item.get("auth_status"),
             "quota_5h_used": item.get("used_5h"),
@@ -819,16 +912,19 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
             for a in accepted_accounts
             if a.get("role") in ("current", "saved") and a.get("email")
         }
+        by_identity = {a.get("quota_identity"): a for a in accepted_accounts if a.get("quota_identity")}
         for ident_id, ident_name in rows:
             prev = existing_sums.get(ident_id) or {}
             email_lower = (prev.get("email") or "").lower()
-            matched = by_email.get(email_lower)
+            matched = by_identity.get(prev.get("quota_identity")) or by_email.get(email_lower)
             if not matched:
                 for a in accepted_accounts:
-                    if a.get("id") == ident_id or (a.get("name") == ident_name and a.get("role") in ("current", "saved")):
+                    if a.get("id") == ident_id:
                         matched = a
                         break
             if not matched:
+                continue
+            if prev.get("quota_identity") and matched.get("quota_identity") != prev["quota_identity"]:
                 continue
             new_sum = {
                 "display_name": matched.get("display") or prev.get("display_name"),
@@ -842,6 +938,9 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 "quota_7d_reset_at": matched.get("reset_7d_ts"),
                 "quota_checked": True,
                 "quota_version": CURRENT_QUOTA_VERSION,
+                "quota_identity": matched.get("quota_identity") or prev.get("quota_identity"),
+                "quota_observed_at_ms": anchor_fetched_at_ms(matched.get("server_anchor")) or prev.get("quota_observed_at_ms"),
+                "quota_source": matched.get("quota_source") or ("server_anchor" if matched.get("server_anchor") else "local_estimate"),
                 "auth_expires_at": matched.get("auth_expires_at") or prev.get("auth_expires_at"),
                 "auth_has_refresh": (
                     matched.get("auth_has_refresh")
@@ -930,6 +1029,9 @@ def handle_statusline() -> None:
     vault_dir = os.path.join(app_dir, "identity-vault")
     ledger = load_ledger(app_dir)
     email = (acc.get("emailAddress") or "").strip()
+    account_info = {"quota_identity": quota_identity(acc), "account_uuid": acct_uuid,
+        "organization_uuid": acc.get("organizationUuid"), "organization": acc.get("organizationName")}
+    account_entry = ledger_account(ledger.get("accounts", {}), email, account_info)
     anchor_base_ms = 0
     observed_windows = []
 
@@ -938,8 +1040,9 @@ def handle_statusline() -> None:
         cu = live_cj.get("cachedUsageUtilization")
         if not isinstance(cu, dict) or (acct_uuid and cu.get("accountUuid") not in (None, "", acct_uuid)):
             cu = {}
-        previous_anchor = (ledger.get("accounts", {}).get(email.lower()) or {}).get("server_anchor")
-        if (acct_uuid and isinstance(previous_anchor, dict)
+        previous_anchor = account_entry.get("server_anchor")
+        account_matches = same_quota_account(account_info, account_entry)
+        if (account_matches and acct_uuid and isinstance(previous_anchor, dict)
                 and previous_anchor.get("accountUuid") == acct_uuid
                 and anchor_fetched_at_ms(previous_anchor) > anchor_fetched_at_ms(cu)):
             cu = previous_anchor
@@ -985,8 +1088,8 @@ def handle_statusline() -> None:
     r7_val = rl_7d.get("resets_at")
 
     if u5_val is None or u7_val is None:
-        if email.lower() in ledger.get("accounts", {}):
-            le = ledger["accounts"][email.lower()]
+        if account_entry and same_quota_account(account_info, account_entry):
+            le = account_entry
             if u5_val is None:
                 u5_val = le.get("quota_5h_used")
                 r5_val = le.get("quota_5h_reset_at")
@@ -1007,6 +1110,7 @@ def handle_statusline() -> None:
     used7 = min(100, max(0, int(round(float(u7_val))))) if u7_val is not None else None
     r5_int = int(r5_val) if r5_val else None
     r7_int = int(r7_val) if r7_val else None
+    expired_observation = bool((r5_int and now_sec >= r5_int) or (r7_int and now_sec >= r7_int))
     if r7_int and now_sec >= r7_int:
         while now_sec >= r7_int:
             r7_int += 7 * 86400
@@ -1025,12 +1129,16 @@ def handle_statusline() -> None:
                     "display": acct_name,
                     "email": email,
                     "organization": acc.get("organizationName"),
+                    "account_uuid": acct_uuid,
+                    "organization_uuid": acc.get("organizationUuid"),
+                    "quota_identity": quota_identity(acc),
+                    "quota_source": "unknown" if expired_observation else "server_anchor",
                     "plan": "Pro",
                     "auth_status": "valid",
-                    "used_5h": used5 if used5 is not None else 0,
+                    "used_5h": used5,
                     "rem_5h": max(0, 100 - (used5 if used5 is not None else 0)),
                     "reset_5h_ts": r5_int,
-                    "used_7d": used7 if used7 is not None else 0,
+                    "used_7d": used7,
                     "rem_7d": max(0, 100 - (used7 if used7 is not None else 0)),
                     "reset_7d_ts": r7_int,
                     "server_anchor": server_anchor,
@@ -1336,8 +1444,13 @@ def main():
             pass
 
     if live_email:
-        le_anchor = (ledger_accounts.get(live_email) or {}).get("server_anchor")
-        if isinstance(le_anchor, dict):
+        live_acc = live_cj.get("oauthAccount") or {}
+        live_info = {
+                "quota_identity": quota_identity(live_acc), "account_uuid": live_acc.get("accountUuid"),
+                "organization_uuid": live_acc.get("organizationUuid"), "organization": live_acc.get("organizationName")}
+        live_entry = ledger_account(ledger_accounts, live_email, live_info)
+        le_anchor = live_entry.get("server_anchor")
+        if isinstance(le_anchor, dict) and same_quota_account(live_info, live_entry):
             cj_cu = live_cj.get("cachedUsageUtilization")
             cj_ms = int(cj_cu.get("fetchedAtMs") or 0) if isinstance(cj_cu, dict) else 0
             le_ms = int(le_anchor.get("fetchedAtMs") or 0)
@@ -1350,6 +1463,7 @@ def main():
         )
         info["role"] = "current"
         info["name"] = info["display"]
+        apply_ledger_fallback_to_account(info, ledger_accounts, 0, now_utc)
         accounts_out.append(info)
 
     key_path = os.path.join(vault, "key.bin")
@@ -1384,7 +1498,7 @@ def main():
                 continue
             try:
                 cached_entry = quota_cache.get(archive)
-                if isinstance(cached_entry, dict) and cached_entry.get("v") == 3:
+                if isinstance(cached_entry, dict) and cached_entry.get("v") == 4:
                     baga_cj = cached_entry["cj"]
                     baga_cred = cached_entry["cred"]
                     baga_slices = [
@@ -1406,6 +1520,7 @@ def main():
                             "emailAddress": acc_raw.get("emailAddress"),
                             "displayName": acc_raw.get("displayName"),
                             "organizationName": acc_raw.get("organizationName"),
+                            "organizationUuid": acc_raw.get("organizationUuid"),
                             "billingType": acc_raw.get("billingType"),
                         },
                         "cachedUsageUtilization": raw_cj.get("cachedUsageUtilization", {}),
@@ -1419,7 +1534,7 @@ def main():
                         }
                     }
                     quota_cache[archive] = {
-                        "v": 3,
+                        "v": 4,
                         "cj": baga_cj,
                         "cred": baga_cred,
                         "slices": [[dt.timestamp(), round(c, 6)] for dt, c in baga_slices],
@@ -1428,9 +1543,10 @@ def main():
                     cache_dirty = True
 
                 baga_email = (baga_cj.get("oauthAccount") or {}).get("emailAddress", "").lower()
-                if baga_email and baga_email == live_email:
+                if baga_email and baga_email == live_email and quota_identity(baga_cj.get("oauthAccount") or {}) == quota_identity(live_cj.get("oauthAccount") or {}):
                     continue
-                info = format_account(baga_cj, baga_cred, baga_slices, baga_latest, now_utc)
+                # Archived shared sessions cannot prove which account paid for them.
+                info = format_account(baga_cj, baga_cred, [], None, now_utc)
                 apply_ledger_fallback_to_account(info, ledger_accounts, int(saved_at), now_utc)
                 info["role"] = "saved"
                 info["id"] = ident_id
@@ -1456,7 +1572,7 @@ def main():
     # Persist multi-account ledger and synchronize identities.sqlite summaries
     save_ledger_and_sync_sqlite(app_dir, vault, accounts_out, now_utc)
 
-    valid_accounts = [a for a in accounts_out if a.get("role") in ("current", "saved")]
+    valid_accounts = [a for a in accounts_out if a.get("role") in ("current", "saved") and a.get("quota_source") != "unknown"]
     relay_rec = (
         select_best_relay_candidate(valid_accounts, int(now_utc.timestamp()))
         if valid_accounts

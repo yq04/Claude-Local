@@ -19,6 +19,117 @@ spec.loader.exec_module(quota)
 
 
 class LocalQuotaTests(unittest.TestCase):
+    def test_saved_after_exhaustion_keeps_observed_quota(self):
+        now = datetime.fromtimestamp(100, timezone.utc)
+        info = {"email": "a@example.invalid", "account_uuid": "a", "used_5h": 10,
+                "rem_7d": 80, "reset_5h_ts": 1000, "has_quota_data": True,
+                "server_anchor": {"accountUuid": "a", "fetchedAtMs": 1000}}
+        entry = {"quota_5h_used": 100, "quota_5h_reset_at": 1000, "updated_at_sec": 2,
+                 "server_anchor": {"accountUuid": "a", "fetchedAtMs": 2000}}
+        quota.apply_ledger_fallback_to_account(info, {"a@example.invalid": entry}, 90000, now)
+        self.assertEqual(info["used_5h"], 100)
+
+    def test_old_estimate_recomputed_after_anchor_cannot_lower_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            vault = self.create_summary_database(root)
+            quota.save_ledger_and_sync_sqlite(temp, str(vault), [{"role": "current",
+                "email": "fixture@example.invalid", "used_5h": 100, "reset_5h_ts": 1000,
+                "server_anchor": {"accountUuid": "a", "fetchedAtMs": 2000}}],
+                datetime.fromtimestamp(2, timezone.utc))
+            quota.save_ledger_and_sync_sqlite(temp, str(vault), [{"role": "saved",
+                "email": "fixture@example.invalid", "used_5h": 10, "reset_5h_ts": 1000}],
+                datetime.fromtimestamp(3, timezone.utc))
+            account, summary = self.read_account_and_summary(root)
+            self.assertEqual(account["quota_5h_used"], 100)
+            self.assertEqual(summary["quota_5h_used"], 100)
+
+    def test_new_observation_and_new_window_can_lower_utilization(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            vault = self.create_summary_database(root)
+            for fetched, used, reset in [(1000, 100, 100), (2000, 20, 100), (3000, 5, 200)]:
+                quota.save_ledger_and_sync_sqlite(temp, str(vault), [{"role": "current",
+                    "email": "fixture@example.invalid", "used_5h": used, "reset_5h_ts": reset,
+                    "server_anchor": {"accountUuid": "a", "fetchedAtMs": fetched}}],
+                    datetime.fromtimestamp(fetched / 1000, timezone.utc))
+            account, _ = self.read_account_and_summary(root)
+            self.assertEqual(account["quota_5h_used"], 5)
+            self.assertEqual(account["quota_5h_reset_at"], 200)
+
+    def test_return_to_account_preserves_same_window_consumption(self):
+        info = {"email": "a@example.invalid", "account_uuid": "a", "used_5h": 10,
+                "rem_7d": 80, "reset_5h_ts": 1000, "has_quota_data": True,
+                "server_anchor": {"accountUuid": "a", "fetchedAtMs": 1000}}
+        entry = {"quota_5h_used": 90, "quota_5h_reset_at": 1000, "updated_at_sec": 2,
+                 "server_anchor": {"accountUuid": "a", "fetchedAtMs": 1000}}
+        quota.apply_ledger_fallback_to_account(info, {"a@example.invalid": entry}, 90000,
+                                               datetime.fromtimestamp(100, timezone.utc))
+        self.assertEqual(info["used_5h"], 90)
+
+    def test_same_email_different_account_or_organization_is_not_merged(self):
+        for uuid, org in [("b", "org-a"), ("a", "org-b")]:
+            info = {"email": "a@example.invalid", "account_uuid": "a", "organization_uuid": "org-a",
+                    "used_5h": 10, "has_quota_data": True, "rem_7d": 100}
+            entry = {"account_uuid": uuid, "organization_uuid": org, "quota_5h_used": 100,
+                     "updated_at_sec": 200, "server_anchor": {"accountUuid": uuid, "fetchedAtMs": 2000}}
+            quota.apply_ledger_fallback_to_account(info, {"a@example.invalid": entry}, 0,
+                                                   datetime.fromtimestamp(100, timezone.utc))
+            self.assertEqual(info["used_5h"], 10)
+
+    def test_a_b_a_writer_retains_first_visit_consumption_and_other_account(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for uuid, used, fetched in [("a", 90, 1000), ("b", 20, 2000), ("a", 10, 1000)]:
+                quota.save_ledger_and_sync_sqlite(temp, str(root / "no-db"), [{
+                    "role": "current", "email": f"{uuid}@example.invalid", "account_uuid": uuid,
+                    "used_5h": used, "reset_5h_ts": 1000,
+                    "server_anchor": {"accountUuid": uuid, "fetchedAtMs": fetched}}],
+                    datetime.fromtimestamp(3, timezone.utc))
+            ledger = quota.load_ledger(temp)["accounts"]
+            self.assertEqual(ledger["a@example.invalid"]["quota_5h_used"], 90)
+            self.assertEqual(ledger["b@example.invalid"]["quota_5h_used"], 20)
+
+    def test_unknown_window_is_not_filled_as_zero_by_statusline(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            home.mkdir()
+            app.mkdir(parents=True)
+            (home / ".claude.json").write_text(json.dumps({"oauthAccount": {
+                "accountUuid": "a", "emailAddress": "a@example.invalid"}}), encoding="utf-8")
+            payload = {"rate_limits": {"five_hour": {"used_percentage": 100,
+                "resets_at": int(datetime.now(timezone.utc).timestamp()) + 1000}}}
+            with patch.dict(os.environ, {"USERPROFILE": str(home), "APPDATA": str(appdata)}, clear=True), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                quota.handle_statusline()
+            entry = quota.load_ledger(str(app))["accounts"]["a@example.invalid"]
+            self.assertIsNone(entry["quota_7d_used"])
+            self.assertEqual(entry["quota_5h_used"], 100)
+            self.assertEqual(entry["quota_source"], "unknown")
+
+    def test_same_email_organizations_keep_separate_ledger_observations(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for org, used in [("org-a", 100), ("org-b", 20)]:
+                account = {"accountUuid": "a", "emailAddress": "same@example.invalid", "organizationUuid": org}
+                quota.save_ledger_and_sync_sqlite(temp, str(root / "no-db"), [{
+                    "role": "current", "email": "same@example.invalid", "account_uuid": "a",
+                    "organization_uuid": org, "quota_identity": quota.quota_identity(account),
+                    "used_5h": used, "reset_5h_ts": 1000,
+                    "server_anchor": {"accountUuid": "a", "fetchedAtMs": 1000}}],
+                    datetime.fromtimestamp(2, timezone.utc))
+            accounts = quota.load_ledger(temp)["accounts"]
+            self.assertEqual(len(accounts), 2)
+            for org, expected in [("org-a", 100), ("org-b", 20)]:
+                account = {"accountUuid": "a", "emailAddress": "same@example.invalid", "organizationUuid": org}
+                info = {"email": "same@example.invalid", "account_uuid": "a", "organization_uuid": org,
+                        "quota_identity": quota.quota_identity(account), "rem_7d": 100}
+                quota.apply_ledger_fallback_to_account(info, accounts, 90000, datetime.fromtimestamp(100, timezone.utc))
+                self.assertEqual(info["used_5h"], expected)
+
     def create_summary_database(self, root):
         vault = root / "identity-vault"
         vault.mkdir()
@@ -46,7 +157,7 @@ class LocalQuotaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             now = datetime.now(timezone.utc)
-            item = {"role": "current", "email": "A@example.invalid", "used_5h": 23,
+            item = {"role": "current", "email": "A@example.invalid", "account_uuid": "fixture", "used_5h": 23,
                     "server_anchor": {"accountUuid": "fixture", "fetchedAtMs": 123}}
             quota.save_ledger_and_sync_sqlite(temp, str(root / "no-db"), [item], now)
             item.pop("server_anchor")

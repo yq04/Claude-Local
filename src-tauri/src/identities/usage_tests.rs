@@ -347,25 +347,68 @@ fn aggregate_filters_keep_account_and_unattributed_totals_global_and_ignore_remo
         1
     );
     // An explicit fallback absorbs both unknown and no-longer-mapped owners.
-    let assigned = usage::read_at_with_fallback(&vault, &home, "all", None, 0, Some("Alpha")).unwrap();
+    let assigned =
+        usage::read_at_with_fallback(&vault, &home, "all", None, 0, Some("Alpha")).unwrap();
     assert_eq!(assigned.unattributed.requests, 0);
     assert_eq!(assigned.totals.input_tokens, 4);
-    assert_eq!(assigned.accounts.iter().find(|a| a.id == aid).unwrap().totals.input_tokens, 3);
-    assert_eq!(assigned.daily.iter().map(|d| d.totals.input_tokens).sum::<u64>(), 4);
-    assert_eq!(assigned.models.iter().map(|m| m.totals.input_tokens).sum::<u64>(), 4);
+    assert_eq!(
+        assigned
+            .accounts
+            .iter()
+            .find(|a| a.id == aid)
+            .unwrap()
+            .totals
+            .input_tokens,
+        3
+    );
+    assert_eq!(
+        assigned
+            .daily
+            .iter()
+            .map(|d| d.totals.input_tokens)
+            .sum::<u64>(),
+        4
+    );
+    assert_eq!(
+        assigned
+            .models
+            .iter()
+            .map(|m| m.totals.input_tokens)
+            .sum::<u64>(),
+        4
+    );
     // A later name preference cannot silently redirect the saved ID.
     let index = rusqlite::Connection::open(&db_path).unwrap();
-    index.execute("UPDATE identities SET name='Renamed' WHERE id=?1", [aid]).unwrap();
-    let assigned = usage::read_at_with_fallback(&vault, &home, "all", Some(aid), 0, Some("Beta")).unwrap();
+    index
+        .execute("UPDATE identities SET name='Renamed' WHERE id=?1", [aid])
+        .unwrap();
+    let assigned =
+        usage::read_at_with_fallback(&vault, &home, "all", Some(aid), 0, Some("Beta")).unwrap();
     assert_eq!(assigned.totals.input_tokens, 3);
     let ledger = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
     let mut later = HashMap::new();
-    later.insert("future-unknown".into(), event("future-unknown", 110, Counts { input: 7, ..Counts::default() }));
+    later.insert(
+        "future-unknown".into(),
+        event(
+            "future-unknown",
+            110,
+            Counts {
+                input: 7,
+                ..Counts::default()
+            },
+        ),
+    );
     usage::persist_scan(&ledger, later, &[], &[]).unwrap();
     drop(ledger);
     let repeated = usage::read_at(&vault, &home, "all", Some(aid), 0).unwrap();
     assert_eq!(repeated.totals.input_tokens, 10);
-    assert_eq!(usage::read_at(&vault, &home, "all", Some(aid), 0).unwrap().totals.input_tokens, 10);
+    assert_eq!(
+        usage::read_at(&vault, &home, "all", Some(aid), 0)
+            .unwrap()
+            .totals
+            .input_tokens,
+        10
+    );
     drop(index);
     drop(all);
     fs::remove_dir_all(dir).unwrap();

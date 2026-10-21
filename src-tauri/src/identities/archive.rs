@@ -1,5 +1,5 @@
 // [INPUT]: 白名单身份源、SQLite 账号目录、Zstandard/旧 gzip 与认证加密流。
-// [OUTPUT]: 不可变归档代次与短期解包区，逐源完成/压缩落盘/完整归档验收的真实局部进度；首身份复用空浏览器编号。
+// [OUTPUT]: 不可变归档代次与短期解包区，原始会话源不经隐式改写，逐源完成/压缩落盘/完整归档验收的真实局部进度；首身份复用空浏览器编号。
 // [POS]: 保险库的数据格式边界，与 store 的工作区切换事务分离，旧 gzip 归档保持可读。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -214,9 +214,6 @@ impl Store {
         reuse: bool,
     ) -> Result<(Record, Stage), String> {
         self.stopped()?;
-        if reuse {
-            let _ = identity::sanitize_cross_account_residue(&self.home);
-        }
         reporter.log("validate", "running", "正在检查当前身份文件。", 0, None);
         let sources = identity::sources(&self.home, policy)?;
         let mut fingerprints = Vec::with_capacity(sources.len());

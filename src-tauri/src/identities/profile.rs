@@ -1,10 +1,17 @@
 // [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话账单增量、本地 settings.json 代理环境变量、只读外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据；当前无可信订阅到期来源。
 // [OUTPUT]: 当前本地身份与已保存身份的脱敏摘要（用户名/邮箱/组织/套餐档位/OAuth有效状态/可选订阅到期/专属代理/离线5h与7d额度及重置时间戳）及有界活动会话列表；不输出令牌、不联网验证账号。
-// [POS]: 身份卡片的只读展示边界；不读取钥匙串、Cookie 正文或任意项目源码文件。
+// [POS]: 身份卡片的只读展示边界；额度按账号/组织来源和实际观测时间选择，归档时间不代表额度新鲜度；不写外部账本。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, fs, io::Read, path::Path};
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaSource {
+    ServerAnchor,
+    LocalEstimate,
+    Unknown,
+}
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Account {
@@ -22,6 +29,12 @@ struct Config {
 }
 #[derive(Clone, Default, Serialize)]
 pub struct Current {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_observed_at_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_source: Option<QuotaSource>,
     pub present: bool,
     pub display_name: Option<String>,
     pub email: Option<String>,
@@ -44,9 +57,15 @@ pub struct Current {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_expires_at: Option<u64>,
 }
-pub const CURRENT_QUOTA_VERSION: u8 = 3;
+pub const CURRENT_QUOTA_VERSION: u8 = 4;
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Summary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_identity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_observed_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_source: Option<QuotaSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,11 +109,13 @@ impl Summary {
                 }
                 self.quota_7d_used = Some(0);
                 self.quota_7d_reset_at = Some(r);
+                self.quota_source = Some(QuotaSource::Unknown);
             }
         }
         if self.quota_5h_reset_at.is_some_and(|r| now_sec >= r) {
             self.quota_5h_used = Some(0);
             self.quota_5h_reset_at = None;
+            self.quota_source = Some(QuotaSource::Unknown);
         }
         if self.auth_status.as_deref() == Some("valid") {
             if let Some(exp_ms) = self.auth_expires_at {
@@ -110,6 +131,9 @@ impl Summary {
     }
     pub fn from_current(cur: &Current) -> Self {
         Self {
+            quota_identity: cur.quota_identity.clone(),
+            quota_observed_at_ms: cur.quota_observed_at_ms,
+            quota_source: cur.quota_source,
             display_name: cur.display_name.clone(),
             email: cur.email.clone(),
             organization: cur.organization.clone(),
@@ -640,6 +664,84 @@ fn extract_quota(
 
     (used_5h, eff_reset_5h, used_7d, eff_reset_7d)
 }
+fn quota_identity(cj: &Value) -> Option<String> {
+    let account = cj.get("oauthAccount")?;
+    let field = |name| {
+        account
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+    };
+    let uuid = field("accountUuid");
+    let email = field("emailAddress").to_ascii_lowercase();
+    let org = if field("organizationUuid").is_empty() {
+        field("organizationName")
+    } else {
+        field("organizationUuid")
+    };
+    if uuid.is_empty() && email.is_empty() {
+        return None;
+    }
+    let raw = serde_json::to_vec(&[uuid, &email, org]).ok()?;
+    Some(
+        ring::digest::digest(&ring::digest::SHA256, &raw)
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    )
+}
+fn ledger_identity(entry: &Value, email: &str) -> Option<String> {
+    if let Some(id) = entry.get("quota_identity").and_then(Value::as_str) {
+        return Some(id.to_string());
+    }
+    quota_identity(&serde_json::json!({"oauthAccount": {
+        "accountUuid": entry.get("account_uuid").or_else(|| entry.pointer("/server_anchor/accountUuid")),
+        "emailAddress": email,
+        "organizationUuid": entry.get("organization_uuid"),
+        "organizationName": entry.get("organization")
+    }}))
+}
+fn ledger_account<'a>(ledger: &'a Value, email: &str, identity: Option<&str>) -> Option<&'a Value> {
+    let accounts = ledger.get("accounts")?;
+    let primary = accounts.get(email);
+    if primary.is_some_and(|entry| ledger_identity(entry, email).as_deref() == identity) {
+        return primary;
+    }
+    identity
+        .and_then(|id| accounts.get(format!("{email}#{id}")))
+        .or(primary)
+}
+fn quota_observed_at(cj: &Value) -> Option<u64> {
+    let cache = cj.get("cachedUsageUtilization")?;
+    let active = cj
+        .pointer("/oauthAccount/accountUuid")
+        .and_then(Value::as_str);
+    if active.is_some() && active != cache.get("accountUuid").and_then(Value::as_str) {
+        return None;
+    }
+    cache
+        .get("fetchedAtMs")
+        .and_then(Value::as_u64)
+        .filter(|v| *v > 0)
+}
+fn extracted_quota_source(cj: &Value, now_sec: u64, q5: Option<u8>, q7: Option<u8>) -> QuotaSource {
+    if q5.is_none() || q7.is_none() || quota_observed_at(cj).is_none() {
+        return QuotaSource::Unknown;
+    }
+    for window in ["five_hour", "seven_day"] {
+        let reset = cj
+            .pointer("/cachedUsageUtilization/utilization")
+            .and_then(|u| u.get(window))
+            .and_then(|w| w.get("resets_at"))
+            .and_then(parse_reset_value);
+        if reset.is_none_or(|reset| now_sec >= reset) {
+            return QuotaSource::Unknown;
+        }
+    }
+    QuotaSource::LocalEstimate
+}
 // The statusLine collector is the sole ledger writer. UI reads must never replace
 // a newer server anchor with an estimate derived from an older official cache.
 fn merge_server_anchor(claude_json: &mut Value, ledger: &Value) {
@@ -650,11 +752,14 @@ fn merge_server_anchor(claude_json: &mut Value, ledger: &Value) {
         return;
     };
     let key = email.trim().to_ascii_lowercase();
-    let Some(anchor) = ledger
-        .pointer("/accounts")
-        .and_then(|a| a.get(&key))
-        .and_then(|a| a.get("server_anchor"))
-    else {
+    let identity = quota_identity(claude_json);
+    let Some(entry) = ledger_account(ledger, &key, identity.as_deref()) else {
+        return;
+    };
+    if quota_identity(claude_json) != ledger_identity(entry, &key) {
+        return;
+    }
+    let Some(anchor) = entry.get("server_anchor") else {
         return;
     };
     let active_uuid = claude_json
@@ -689,7 +794,7 @@ fn merge_server_anchor(claude_json: &mut Value, ledger: &Value) {
 pub(super) fn apply_ledger_to_summary(
     vault_dir: &Path,
     summary: &mut Summary,
-    saved_at_ms: u64,
+    _saved_at_ms: u64,
     now_sec: u64,
 ) {
     let Some(email) = summary
@@ -711,28 +816,60 @@ pub(super) fn apply_ledger_to_summary(
         return;
     };
     let key = email.to_ascii_lowercase();
-    let Some(entry) = root.get("accounts").and_then(|a| a.get(&key)) else {
+    let Some(entry) = ledger_account(&root, &key, summary.quota_identity.as_deref()) else {
         return;
     };
-    let ledger_sec = entry
-        .get("updated_at_sec")
+    if summary.quota_identity.is_none() || summary.quota_identity != ledger_identity(entry, &key) {
+        if entry.get("quota_identity").is_none() {
+            summary.quota_source = Some(QuotaSource::Unknown);
+        }
+        return;
+    }
+    let ledger_ms = entry
+        .pointer("/server_anchor/fetchedAtMs")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let summary_ms = summary.quota_observed_at_ms.unwrap_or(0);
     let missing_quota = summary.quota_5h_used.is_none() && summary.quota_7d_used.is_none();
-    if missing_quota || ledger_sec > saved_at_ms / 1000 {
+    if missing_quota || ledger_ms >= summary_ms {
         if let Some(q5) = entry.get("quota_5h_used").and_then(Value::as_u64) {
-            summary.quota_5h_used = Some(q5.min(100) as u8);
+            let q5 = q5.min(100) as u8;
+            let same_window =
+                entry.get("quota_5h_reset_at").and_then(Value::as_u64) == summary.quota_5h_reset_at;
+            summary.quota_5h_used = Some(if ledger_ms == summary_ms && same_window {
+                q5.max(summary.quota_5h_used.unwrap_or(0))
+            } else {
+                q5
+            });
+            summary.quota_5h_reset_at = entry.get("quota_5h_reset_at").and_then(Value::as_u64);
         }
         if let Some(r5) = entry.get("quota_5h_reset_at").and_then(Value::as_u64) {
             summary.quota_5h_reset_at = Some(r5);
         }
         if let Some(q7) = entry.get("quota_7d_used").and_then(Value::as_u64) {
-            summary.quota_7d_used = Some(q7.min(100) as u8);
+            let q7 = q7.min(100) as u8;
+            let same_window =
+                entry.get("quota_7d_reset_at").and_then(Value::as_u64) == summary.quota_7d_reset_at;
+            summary.quota_7d_used = Some(if ledger_ms == summary_ms && same_window {
+                q7.max(summary.quota_7d_used.unwrap_or(0))
+            } else {
+                q7
+            });
+            summary.quota_7d_reset_at = entry.get("quota_7d_reset_at").and_then(Value::as_u64);
         }
         if let Some(r7) = entry.get("quota_7d_reset_at").and_then(Value::as_u64) {
             summary.quota_7d_reset_at = Some(r7);
         }
         summary.quota_checked = Some(true);
+        summary.quota_observed_at_ms = (ledger_ms > 0).then_some(ledger_ms);
+        summary.quota_source = Some(match entry.get("quota_source").and_then(Value::as_str) {
+            Some("server_anchor") => QuotaSource::ServerAnchor,
+            Some("unknown") => QuotaSource::Unknown,
+            _ => QuotaSource::LocalEstimate,
+        });
+        if summary.quota_5h_used.is_none() || summary.quota_7d_used.is_none() {
+            summary.quota_source = Some(QuotaSource::Unknown);
+        }
         summary.quota_version = Some(CURRENT_QUOTA_VERSION);
         summary.refresh_for_now(now_sec);
     }
@@ -889,6 +1026,9 @@ fn parse(bytes: &[u8]) -> Result<Current, serde_json::Error> {
     let config: Config = serde_json::from_slice(bytes)?;
     Ok(match config.account {
         Some(account) => Current {
+            quota_identity: None,
+            quota_observed_at_ms: None,
+            quota_source: None,
             present: true,
             display_name: display(account.display_name, 80),
             email: display(account.email_address, 254),
@@ -1009,6 +1149,24 @@ fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
             current.quota_5h_reset_at = r5;
             current.quota_7d_used = q7;
             current.quota_7d_reset_at = r7;
+            current.quota_identity = quota_identity(cj);
+            current.quota_observed_at_ms = quota_observed_at(cj);
+            current.quota_source = Some(extracted_quota_source(cj, now_epoch_sec(), q5, q7));
+            if let Some(app_dir) = app_dir {
+                let mut effective = Summary::from_current(&current);
+                apply_ledger_to_summary(
+                    &app_dir.join("identity-vault"),
+                    &mut effective,
+                    0,
+                    now_epoch_sec(),
+                );
+                current.quota_5h_used = effective.quota_5h_used;
+                current.quota_5h_reset_at = effective.quota_5h_reset_at;
+                current.quota_7d_used = effective.quota_7d_used;
+                current.quota_7d_reset_at = effective.quota_7d_reset_at;
+                current.quota_observed_at_ms = effective.quota_observed_at_ms;
+                current.quota_source = effective.quota_source;
+            }
         }
         let mut has_settings_api = false;
         for name in ["settings.json", "settings.local.json"] {
@@ -1039,12 +1197,11 @@ pub(super) fn summarize_stage(stage: &super::archive::Stage) -> Summary {
     let mut tier = None;
     let mut has_api_key = false;
     let mut claude_val: Option<Value> = None;
-    let mut projects_slot_path: Option<std::path::PathBuf> = None;
     let home = &stage.manifest.home;
     for (n, source) in stage.manifest.sources.iter().enumerate() {
         let data_path = stage.path.join(format!("data/{n}"));
         if source.path == home.join(".claude/projects") && data_path.is_dir() {
-            projects_slot_path = Some(data_path);
+            // Shared historical sessions do not prove which account paid for a turn.
             continue;
         }
         let Some(val) = read_bounded_json(&data_path, 8 * 1024 * 1024) else {
@@ -1117,18 +1274,23 @@ pub(super) fn summarize_stage(stage: &super::archive::Stage) -> Summary {
         summary.auth_status = Some("api_key".into());
     }
     if let Some(ref cj) = claude_val {
-        let (q5, r5, q7, r7) = extract_quota(
-            cj,
-            projects_slot_path.as_deref(),
-            summary.plan.as_deref(),
-            now_epoch_sec(),
-            0,
-        );
+        let (q5, r5, q7, r7) = extract_quota(cj, None, summary.plan.as_deref(), now_epoch_sec(), 0);
         summary.quota_5h_used = q5;
         summary.quota_5h_reset_at = r5;
         summary.quota_7d_used = q7;
         summary.quota_7d_reset_at = r7;
+        summary.quota_identity = quota_identity(cj);
+        summary.quota_observed_at_ms = quota_observed_at(cj);
+        summary.quota_source = Some(extracted_quota_source(cj, now_epoch_sec(), q5, q7));
     }
+    summary
+}
+pub(super) fn summarize_stage_with_ledger(
+    stage: &super::archive::Stage,
+    vault_dir: &Path,
+) -> Summary {
+    let mut summary = summarize_stage(stage);
+    apply_ledger_to_summary(vault_dir, &mut summary, 0, now_epoch_sec());
     summary
 }
 pub fn active_sessions(home: &Path) -> Vec<ActiveSession> {
@@ -1170,6 +1332,9 @@ pub fn active_sessions(home: &Path) -> Vec<ActiveSession> {
     }
     out
 }
+#[cfg(test)]
+#[path = "quota_regression_tests.rs"]
+mod quota_regression_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

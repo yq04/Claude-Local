@@ -38,29 +38,51 @@ pub struct ClaudeCliUpdateStatus {
 const LATEST_VERSION_URL: &str = "https://downloads.claude.ai/claude-code-releases/latest";
 fn release_version(text: &str) -> Option<[u64; 3]> {
     let parts: Vec<_> = text.trim().split('.').collect();
-    if parts.len() != 3 { return None; }
+    if parts.len() != 3 {
+        return None;
+    }
     let mut result = [0; 3];
     for (index, part) in parts.iter().enumerate() {
-        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) || (part.len() > 1 && part.starts_with('0')) { return None; }
+        if part.is_empty()
+            || !part.bytes().all(|b| b.is_ascii_digit())
+            || (part.len() > 1 && part.starts_with('0'))
+        {
+            return None;
+        }
         result[index] = part.parse().ok()?;
     }
     Some(result)
 }
 fn compare_release(current: &str, latest: &str) -> Result<bool, String> {
-    let current = current.split_whitespace().next().and_then(release_version)
+    let current = current
+        .split_whitespace()
+        .next()
+        .and_then(release_version)
         .ok_or("cli.error.currentVersion")?;
     let latest = release_version(latest).ok_or("cli.error.latestVersion")?;
     Ok(latest > current)
 }
 async fn latest_release(mut response: reqwest::Response) -> Result<String, String> {
-    if response.status() != reqwest::StatusCode::OK { return Err("cli.error.checkFailed".into()); }
-    if response.content_length().is_some_and(|size| size > 64) { return Err("cli.error.latestVersion".into()); }
+    if response.status() != reqwest::StatusCode::OK {
+        return Err("cli.error.checkFailed".into());
+    }
+    if response.content_length().is_some_and(|size| size > 64) {
+        return Err("cli.error.latestVersion".into());
+    }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| "cli.error.checkFailed")? {
-        if chunk.len() > 64 - bytes.len() { return Err("cli.error.latestVersion".into()); }
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "cli.error.checkFailed")?
+    {
+        if chunk.len() > 64 - bytes.len() {
+            return Err("cli.error.latestVersion".into());
+        }
         bytes.extend_from_slice(&chunk);
     }
-    let version = std::str::from_utf8(&bytes).map_err(|_| "cli.error.latestVersion")?.trim();
+    let version = std::str::from_utf8(&bytes)
+        .map_err(|_| "cli.error.latestVersion")?
+        .trim();
     release_version(version).ok_or("cli.error.latestVersion")?;
     Ok(version.to_string())
 }
@@ -234,19 +256,38 @@ pub async fn claude_cli_read() -> Result<CliStatus, String> {
 #[tauri::command]
 pub async fn claude_cli_check(app: tauri::AppHandle) -> Result<ClaudeCliUpdateStatus, String> {
     let current = claude_cli_read().await?;
-    if current.method.is_empty() { return Err("cli.error.notInstalled".into()); }
-    let proxy = tauri::async_runtime::spawn_blocking(move || crate::browser::configured_or_system_proxy(&app))
-        .await.map_err(|_| "cli.error.checkFailed")?;
-    let mut builder = reqwest::Client::builder().no_proxy()
+    if current.method.is_empty() {
+        return Err("cli.error.notInstalled".into());
+    }
+    let proxy = tauri::async_runtime::spawn_blocking(move || {
+        crate::browser::configured_or_system_proxy(&app)
+    })
+    .await
+    .map_err(|_| "cli.error.checkFailed")?;
+    let mut builder = reqwest::Client::builder()
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(12));
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(12));
     if !proxy.trim().is_empty() {
-        builder = builder.proxy(reqwest::Proxy::all(proxy.trim()).map_err(|_| "cli.error.checkFailed")?);
+        builder =
+            builder.proxy(reqwest::Proxy::all(proxy.trim()).map_err(|_| "cli.error.checkFailed")?);
     }
     let client = builder.build().map_err(|_| "cli.error.checkFailed")?;
-    let latest_version = latest_release(client.get(LATEST_VERSION_URL).send().await.map_err(|_| "cli.error.checkFailed")?).await?;
+    let latest_version = latest_release(
+        client
+            .get(LATEST_VERSION_URL)
+            .send()
+            .await
+            .map_err(|_| "cli.error.checkFailed")?,
+    )
+    .await?;
     let update_available = compare_release(&current.version, &latest_version)?;
-    Ok(ClaudeCliUpdateStatus { current, latest_version, update_available })
+    Ok(ClaudeCliUpdateStatus {
+        current,
+        latest_version,
+        update_available,
+    })
 }
 #[tauri::command]
 pub async fn claude_cli_manage(
@@ -486,7 +527,13 @@ mod update_tests {
         assert_eq!(compare_release("2.1.9 (Claude Code)", "2.1.10"), Ok(true));
         assert_eq!(compare_release("2.1.10 (Claude Code)", "2.1.10"), Ok(false));
         assert_eq!(compare_release("3.0.0 (Claude Code)", "2.1.10"), Ok(false));
-        for invalid in ["<html>2.1.10</html>", "2.1", "2.01.10", "2.1.10\nCC_CLI_DONE=1", "2.1.10-beta"] {
+        for invalid in [
+            "<html>2.1.10</html>",
+            "2.1",
+            "2.01.10",
+            "2.1.10\nCC_CLI_DONE=1",
+            "2.1.10-beta",
+        ] {
             assert!(compare_release("2.1.9 (Claude Code)", invalid).is_err());
         }
         assert!(compare_release("unknown", "2.1.10").is_err());
@@ -519,11 +566,24 @@ mod update_tests {
             }
         });
         tauri::async_runtime::block_on(async {
-            let client = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(3)).build().unwrap();
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(3))
+                .build()
+                .unwrap();
             for index in 0..4 {
-                let response = client.get(format!("http://{address}/latest")).send().await.unwrap();
+                let response = client
+                    .get(format!("http://{address}/latest"))
+                    .send()
+                    .await
+                    .unwrap();
                 let result = latest_release(response).await;
-                if index == 0 { assert_eq!(result.unwrap(), "2.1.10"); } else { assert!(result.is_err()); }
+                if index == 0 {
+                    assert_eq!(result.unwrap(), "2.1.10");
+                } else {
+                    assert!(result.is_err());
+                }
             }
         });
         server.join().unwrap();

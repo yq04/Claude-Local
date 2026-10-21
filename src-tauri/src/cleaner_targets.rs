@@ -1,5 +1,5 @@
 // [INPUT]: 当前用户目录、Windows 实际 AppData、Claude 清理白名单与可选组织编号。
-// [OUTPUT]: 分类清理目标（站点存储不含个人偏好、密码密钥或工作区）、无条目截断的目标发现与读取警告、完整目录元数据统计及受限旧组织文件匹配。
+// [OUTPUT]: 分类清理目标（不含设备标识、诊断身份、个人偏好、密码密钥或工作区）、目标发现与读取警告、完整元数据统计及受限旧组织文件匹配。
 // [POS]: 清理发现边界；不跟随链接，不遍历项目仓库，不读取凭据内容。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -270,8 +270,6 @@ pub(super) fn definitions_with_warnings(root: &Path) -> (Vec<Target>, Vec<String
     for (name, title) in [
         ("credentials.json", "Code 备用登录凭据"),
         ("auth.json", "Code 认证配置"),
-        (".user-id", "Code 本地用户标识"),
-        (".machine-id", "Code 本地设备标识"),
     ] {
         result.push(target(
             root,
@@ -279,24 +277,23 @@ pub(super) fn definitions_with_warnings(root: &Path) -> (Vec<Target>, Vec<String
             title,
             "account",
             "login",
-            "清除本地登录凭据或设备标识；不会删除服务端记录。",
+            "清除本地登录凭据；保留设备标识，不删除服务端记录。",
         ));
     }
-    let mut account = target(root, ".claude.json", "Code 账号与本地标识", "account", "login", "清除账号缓存及本地 userID、machineID；保留项目、MCP 和个人设置。再次运行时由 Claude 重新生成本地标识。");
+    let mut account = target(
+        root,
+        ".claude.json",
+        "Code 账号凭据与归属缓存",
+        "account",
+        "login",
+        "仅清除账号凭据、归属元数据与必要缓存；保留设备标识、界面与实验设置、项目和 MCP。",
+    );
     account.operation = Operation::Edit(config::EditKind::Account);
     result.push(account);
     for (relative, title) in [
         (
             "Library/HTTPStorages/com.anthropic.claudefordesktop",
             "Desktop HTTP 登录存储",
-        ),
-        (
-            "Library/Preferences/com.anthropic.claudefordesktop.plist",
-            "Desktop 偏好设置",
-        ),
-        (
-            "Library/Saved Application State/com.anthropic.claudefordesktop.savedState",
-            "Desktop 窗口状态",
         ),
         (
             "Library/WebKit/com.anthropic.claudefordesktop",
@@ -318,19 +315,6 @@ pub(super) fn definitions_with_warnings(root: &Path) -> (Vec<Target>, Vec<String
         "Library/Application Support/com.anthropic.claudefordesktop",
     ] {
         result.extend(desktop_storage(root, &root.join(relative)));
-    }
-    for entry in entries(&root.join("Library/Preferences/ByHost"), &mut warnings) {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with("com.anthropic.claudefordesktop") && name.ends_with(".plist") {
-            result.push(target(
-                root,
-                &format!("Library/Preferences/ByHost/{name}"),
-                "Desktop 设备偏好",
-                "desktop",
-                "login",
-                "重置桌面端在这台设备上的偏好设置。",
-            ));
-        }
     }
     // ----- 既有备份也是删除目标，不创建新的备份 -----
     for (relative, title) in [
@@ -358,19 +342,6 @@ pub(super) fn definitions_with_warnings(root: &Path) -> (Vec<Target>, Vec<String
                 "永久删除旧配置备份，避免其中残留账号与认证信息。",
             ));
         }
-    }
-    for relative in [
-        "Library/Application Support/Claude/ant-did",
-        "Library/Application Support/Claude/ant-device-registry.json",
-    ] {
-        result.push(target(
-            root,
-            relative,
-            "Desktop 本地设备标识",
-            "account",
-            "login",
-            "仅清除本地记录；不能删除服务端账号或设备记录。",
-        ));
     }
     for (relative, kind) in [
         (".claude/settings.json", config::EditKind::Settings),
@@ -439,24 +410,6 @@ pub(super) fn definitions_with_warnings(root: &Path) -> (Vec<Target>, Vec<String
                 });
             }
             result.extend(desktop_storage(root, &desktop));
-            for name in [
-                "ant-did",
-                "ant-device-registry.json",
-                ".machine-id",
-                "machine-id",
-            ] {
-                result.push(Target {
-                    path: desktop.join(name),
-                    ..target(
-                        root,
-                        "",
-                        "Desktop 本地设备标识",
-                        "account",
-                        "login",
-                        "仅清除本地记录；不能删除服务端账号或设备记录。",
-                    )
-                });
-            }
         }
     }
     #[cfg(target_os = "linux")]

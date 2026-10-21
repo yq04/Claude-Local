@@ -307,8 +307,7 @@ impl Database {
             })
             .optional()
             .map_err(error)?;
-        if pending_target.as_deref() == Some(active)
-            && pending_recovery.as_deref() != Some(active)
+        if pending_target.as_deref() == Some(active) && pending_recovery.as_deref() != Some(active)
         {
             let now_sec = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

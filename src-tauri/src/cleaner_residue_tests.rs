@@ -1,5 +1,5 @@
 // [INPUT]: 临时 Claude 文件、虚构账号配置、隔离 SQLite 保险库与注入的进程状态。
-// [OUTPUT]: 文件范围、凭据脱敏与桌面个人资产保留、Linux 路径排除、快照过期/不完整、运行/恢复阻断及部分失败回归。
+// [OUTPUT]: 文件范围、登录键隔离与设备/诊断/桌面个人资产保留、Linux 路径排除、快照过期/不完整、运行/恢复阻断及部分失败回归。
 // [POS]: 文件残留入口的离线安全验收；不改 HOME、不检查真实进程、不访问钥匙串或现有账号。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -206,6 +206,41 @@ fn residual_scope_never_includes_shell_personal_assets_vault_or_browser() {
 }
 
 #[test]
+fn s13_device_and_diagnostics_are_not_cleanup_targets() {
+    let f = Fixture::new();
+    for relative in [".claude/.user-id", ".claude/.machine-id"] {
+        f.file(relative, "fictional stable identifier");
+    }
+    #[cfg(windows)]
+    let desktop = "AppData/Roaming/Claude";
+    #[cfg(not(windows))]
+    let desktop = "Library/Application Support/Claude";
+    let protected = [
+        "ant-did",
+        "ant-device-registry.json",
+        ".machine-id",
+        "machine-id",
+        "sentry/scope_v3.json",
+    ];
+    for relative in protected {
+        f.file(
+            &format!("{desktop}/{relative}"),
+            "fictional device/diagnostic state",
+        );
+    }
+    let plan = collect(&f.0);
+    assert!(
+        plan.items.is_empty(),
+        "device/diagnostic data must not be offered for cleanup"
+    );
+    for relative in protected {
+        assert_eq!(
+            fs::read(f.0.join(desktop).join(relative)).unwrap(),
+            b"fictional device/diagnostic state"
+        );
+    }
+}
+#[test]
 fn residual_account_cleanup_shows_only_keys_and_preserves_shared_secrets() {
     let f = Fixture::new();
     f.file(".claude/.credentials.json", r#"{"claudeAiOauth":{"accessToken":"fake-secret-value"},"trustedDeviceToken":"fake-secret-value","mcpOAuth":{"secret":"keep"},"pluginSecrets":{"secret":"keep"}}"#);
@@ -230,7 +265,7 @@ fn residual_account_cleanup_shows_only_keys_and_preserves_shared_secrets() {
     let config: serde_json::Value =
         serde_json::from_slice(&fs::read(f.0.join(".claude.json")).unwrap()).unwrap();
     assert!(config.get("oauthAccount").is_none());
-    assert!(config.get("machineID").is_none());
+    assert_eq!(config["machineID"], "fake-device");
     assert!(config["mcpServers"]["keep"].is_object());
     assert!(config["projects"]["keep"].is_object());
     assert_eq!(config["theme"], "dark");

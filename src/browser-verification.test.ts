@@ -53,3 +53,12 @@ test('手动预设继续检查所选脚本；跟随机器保留原有 en 到 en-
  const manual={...context,config:{...context.config,language:'zh-Hant'},machine:{...context.machine,languages:['zh-Hans-TW']}};
  expect(verifyBrowser(manual,{...report,language:'zh-Hans-TW'},true,'',false).checks.find(row=>row.label==='网页语言')?.ok).toBe(false);
 });
+
+test('检测结果超过 10 分钟自动判定过时，要求手动重新检测', () => {
+ const fresh = Date.now() - 2 * 60 * 1000;
+ expect(verifyBrowser(context, report, true, '', false, fresh).phase).toBe('passed');
+ const stale = Date.now() - 11 * 60 * 1000;
+ const result = verifyBrowser(context, report, true, '', false, stale);
+ expect(result.phase).toBe('failed');
+ expect(result.problems.some(p => p.includes('10 分钟'))).toBe(true);
+});

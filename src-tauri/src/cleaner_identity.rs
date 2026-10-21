@@ -1,5 +1,5 @@
 // [INPUT]: Cleaner 白名单、共享 Code 登录键常量、完整目录快照、用户保留策略与 JSON 配置。
-// [OUTPUT]: 受限身份目标与配置身份键（含独立代理环境变量与 githubRepoPaths）的提取/清空/恢复、跨账号残留与共享会话（credential_org/userEmail/thinking签名/api-request回放块/bridge-session/未配对tool_use自愈）风控脱敏，保留工作区未选择的个人资产及桌面身份路径元数据检测。
+// [OUTPUT]: 账号凭据/归属与必要缓存的受限身份目标；旧归档只读兼容、写回前投影保护设备和 UI/实验状态；显式切换后的窄账号缓存维护不改诊断或历史正文。
 // [POS]: 身份保险库复用原有路径边界；不扫描项目源码、Shell 或系统代理配置。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -108,10 +108,7 @@ fn definitions(root: &Path, policy: &Policy) -> Vec<Source> {
             path: root.join(".claude").join(name),
             category: "settings".into(),
             keys: if policy.settings {
-                SETTINGS_IDENTITY_KEYS
-                    .iter()
-                    .map(|k| (*k).into())
-                    .collect()
+                SETTINGS_IDENTITY_KEYS.iter().map(|k| (*k).into()).collect()
             } else {
                 Vec::new()
             },
@@ -142,7 +139,7 @@ fn definitions(root: &Path, policy: &Policy) -> Vec<Source> {
 }
 pub(crate) fn sources(root: &Path, policy: &Policy) -> Result<Vec<Source>, String> {
     let mut result = Vec::new();
-    for mut source in definitions(root, policy) {
+    for source in definitions(root, policy) {
         let meta = match fs::symlink_metadata(&source.path) {
             Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -163,23 +160,6 @@ pub(crate) fn sources(root: &Path, policy: &Policy) -> Result<Vec<Source>, Strin
         }
         crate::identities::private::safe(&source.path)?;
         targets::measure(&source.path)?;
-        if source.path == root.join(".claude.json") && !policy.settings {
-            let value: serde_json::Value =
-                serde_json::from_slice(&fs::read(&source.path).map_err(|_| "身份配置无法读取。")?)
-                    .map_err(|_| "身份配置不是有效 JSON。")?;
-            let object = value.as_object().ok_or("身份配置不是对象。")?;
-            source.keys = object
-                .keys()
-                .filter(|k| {
-                    !(policy.mcp && *k == "mcpServers")
-                        && !(policy.projects && (*k == "projects" || *k == "githubRepoPaths"))
-                })
-                .cloned()
-                .collect();
-            if source.keys.is_empty() {
-                continue;
-            }
-        }
         if !source.keys.is_empty() {
             let text = fs::read_to_string(&source.path).map_err(|_| "身份配置无法读取。")?;
             if extract(&source, &text)?
@@ -197,6 +177,60 @@ pub(crate) fn sources(root: &Path, policy: &Policy) -> Result<Vec<Source>, Strin
             .any(|p| p.path != s.path && p.keys.is_empty() && s.path.starts_with(&p.path))
     });
     Ok(result)
+}
+fn preserved_client_path(root: &Path, path: &Path) -> bool {
+    [".claude/.user-id", ".claude/.machine-id"]
+        .iter()
+        .any(|p| path == root.join(p))
+        || [
+            "Library/Preferences/com.anthropic.claudefordesktop.plist",
+            "Library/Saved Application State/com.anthropic.claudefordesktop.savedState",
+        ]
+        .iter()
+        .any(|p| path == root.join(p))
+        || (path.parent() == Some(root.join("Library/Preferences/ByHost").as_path())
+            && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                n.starts_with("com.anthropic.claudefordesktop") && n.ends_with(".plist")
+            }))
+        || targets::desktop_roots(root).iter().any(|desktop| {
+            [
+                "ant-did",
+                "ant-device-registry.json",
+                ".machine-id",
+                "machine-id",
+                "sentry",
+            ]
+            .iter()
+            .any(|name| path == desktop.join(name))
+        })
+}
+fn writable_account_key(key: &str) -> bool {
+    config::ACCOUNT_KEYS.contains(&key)
+        || ["mcpServers", "projects", "githubRepoPaths"].contains(&key)
+}
+/// Reading a legacy manifest is distinct from authorizing its current write set.
+/// Old broad account snapshots remain verifiable; device/UI state never moves back.
+pub(crate) fn writable_source(root: &Path, source: &Source) -> Option<Source> {
+    if preserved_client_path(root, &source.path) {
+        return None;
+    }
+    let mut projected = source.clone();
+    if source.path == root.join(".claude.json") && source.category == "account" {
+        if projected.keys.is_empty() {
+            projected.keys = config::ACCOUNT_KEYS
+                .iter()
+                .copied()
+                .chain(["mcpServers", "projects", "githubRepoPaths"])
+                .map(str::to_string)
+                .collect();
+        } else {
+            projected.keys.retain(|key| writable_account_key(key));
+        }
+        if projected.keys.is_empty() {
+            return None;
+        }
+    }
+    Some(projected)
 }
 pub(crate) fn allowed(root: &Path, source: &Source) -> bool {
     let all = definitions(root, &Policy::all());
@@ -236,7 +270,12 @@ pub(crate) fn allowed(root: &Path, source: &Source) -> bool {
                     .and_then(|s| s.to_str())
                     .is_some_and(|s| s.starts_with(prefix))
         });
-    known || special
+    // These exact old device/preference targets may be authenticated and read,
+    // but writable_source excludes them from clearing and restoring.
+    let legacy_preserved = source.keys.is_empty()
+        && matches!(source.category.as_str(), "account" | "desktop")
+        && preserved_client_path(root, &source.path);
+    known || special || legacy_preserved
 }
 pub(crate) fn fingerprint(path: &Path) -> Result<Vec<u8>, String> {
     Ok(targets::measure(path)?.2)
@@ -273,6 +312,15 @@ pub(crate) fn apply_config(source: &Source, saved: &serde_json::Value) -> Result
         return Err("身份配置不是对象。".into());
     }
     for key in &source.keys {
+        if source.category == "account"
+            && source
+                .path
+                .file_name()
+                .is_some_and(|name| name == ".claude.json")
+            && !writable_account_key(key)
+        {
+            continue;
+        }
         let mut parts = key.split('.');
         let first = parts.next().unwrap();
         let obj = if let Some(second) = parts.next() {
@@ -621,7 +669,7 @@ fn family_needs_foreign_sanitization(
 
 /// 借鉴 `KarpelesLab/teamclaude` (`tool-pair-sanitize.js`) 与 Claude Code `ensureToolResultPairing`：
 /// 当账号因 5h 限额耗尽 (429) 或手动中断而卡在 `tool_use` 半途时，修复末尾或跨轮次未配对的 `tool_use` / 孤儿 `tool_result`，
-/// 保持原记录 `uuid` / `parentUuid` 链不断裂，阻断跨号 `claude --resume` / `claude -c` 触发 HTTP 400 或 `tengu_tool_result_pairing_repaired` 异常遥测。
+/// 旧兼容诊断转换：保持 `uuid` / `parentUuid` 链；产品切换和恢复不调用此转换。
 fn repair_unpaired_tool_blocks_in_lines(lines: &[String]) -> Option<Vec<String>> {
     let has_tool_blocks = lines
         .iter()
@@ -795,10 +843,7 @@ fn sanitize_jsonl_session_file(
                 if matches!(
                     val.get("type").and_then(|t| t.as_str()),
                     Some(
-                        "api-request"
-                            | "api-request-shape"
-                            | "api-request-blob"
-                            | "bridge-session"
+                        "api-request" | "api-request-shape" | "api-request-blob" | "bridge-session"
                     )
                 ) {
                     file_modified = true;
@@ -823,8 +868,7 @@ fn sanitize_jsonl_session_file(
                             .and_then(|u| u.as_str())
                             .is_some_and(|u| !u.is_empty() && u != act_org)
                     {
-                        if let Some(att) =
-                            val.get_mut("attachment").and_then(|a| a.as_object_mut())
+                        if let Some(att) = val.get_mut("attachment").and_then(|a| a.as_object_mut())
                         {
                             att.insert(
                                 "organizationUuid".into(),
@@ -890,9 +934,9 @@ fn sanitize_jsonl_session_file(
     }
 }
 
-/// 对共享 `.claude/projects/` 下跨账号遗留的 `.jsonl` 会话（及子代理会话）执行风控对齐与断尾自愈：
-/// 1) 将异账号 `credential_org.organizationUuid` 对齐至当前 `active_org`（阻断 `context_credential_org_change` 遥测）；
-/// 2) 将 `session_context` 中异账号 `userEmail` 提醒对齐至当前 `active_email`（阻断跨号邮箱泄露与 `tengu_context_announcement`）；
+/// 旧正文转换，仅供兼容诊断；产品入口不调用，也不以此改变遥测或服务行为：
+/// 1) 旧实现会改写 `credential_org.organizationUuid` 至 `active_org`；
+/// 2) 旧实现会改写 `session_context.userEmail` 至 `active_email`；
 /// 3) 剥离异账号会话中绑定原组织密钥的 `thinking` / `redacted_thinking` 签名块、诊断回放块 (`api-request*`) 与远程桥接记录 (`bridge-session`)；
 /// 4) 修复因额度耗尽 (429) 或中断遗留的未配对 `tool_use` / 孤儿 `tool_result`（保持 `uuid`/`parentUuid` 链不断裂）。
 fn sanitize_project_sessions(
@@ -1006,7 +1050,101 @@ fn sanitize_project_sessions(
     foreign_session_ids
 }
 
-/// 清理与当前活跃 `.claude.json` 账号 UUID 不一致的历史跨账号残留（如异账号 dxt:allowlist、异账号会话目录、plugins/synced、model-catalog、共享会话异账号风控锚点及未同步的 Claude-3p 旧登录）。
+/// 在明确的身份切换或恢复完成后，只维护账号绑定的缓存白名单。
+/// 不扫描或改写会话、项目遥测、凭据及其他用户工作区内容。
+pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
+    let claude_json = root.join(".claude.json");
+    let meta = match fs::symlink_metadata(&claude_json) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Ok(()),
+    };
+    if linked(&meta)
+        || !meta.is_file()
+        || meta.len() > 8 * 1024 * 1024
+        || canonicalize(&claude_json).ok().as_deref() != Some(claude_json.as_path())
+    {
+        return Ok(());
+    }
+    crate::identities::private::parents(root)?;
+    crate::identities::private::safe(&claude_json)?;
+    let bytes = fs::read(&claude_json).map_err(|_| "身份配置无法读取。")?;
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| "身份配置不是有效 JSON。")?;
+    let Some(acct) = value["oauthAccount"]["accountUuid"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 254 && !s.chars().any(char::is_control))
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    let org = value["oauthAccount"]["organizationUuid"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 254 && !s.chars().any(char::is_control))
+        .map(str::to_string);
+
+    let mut modified = false;
+    if let Some(obj) = value.as_object_mut() {
+        if let Some(active_org) = org.as_deref() {
+            for key in ["s1mAccessCache", "passesEligibilityCache"] {
+                if let Some(entries) = obj.get_mut(key).and_then(|v| v.as_object_mut()) {
+                    let before = entries.len();
+                    entries.retain(|k, _| k == active_org);
+                    modified |= entries.len() != before;
+                }
+            }
+        }
+        for key in [
+            "cachedUsageUtilization",
+            "cachedArtifactRoster",
+            "githubWebConnectionStatusCache",
+        ] {
+            if obj
+                .get(key)
+                .and_then(|v| v.get("accountUuid"))
+                .and_then(|v| v.as_str())
+                .is_some_and(|u| !u.is_empty() && u != acct)
+            {
+                obj.remove(key);
+                modified = true;
+            }
+        }
+    }
+    if modified {
+        let text = serde_json::to_string_pretty(&value).map_err(|_| "身份配置无法更新缓存。")?;
+        file_io::atomic_write(&claude_json, format!("{text}\n").as_bytes(), 0o600)
+            .map_err(|_| "身份配置无法更新缓存。")?;
+    }
+
+    for relative in [".claude/plugins/synced", ".claude/cache/model-catalog"] {
+        if let Ok(entries) = fs::read_dir(root.join(relative)) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let is_plugins = relative.ends_with("synced");
+                let candidate = if is_plugins {
+                    name.contains('-')
+                } else {
+                    name.ends_with("-cc.json")
+                };
+                let matches_active = if is_plugins {
+                    name.contains(&acct) || org.as_deref().is_some_and(|o| name.contains(o))
+                } else {
+                    name.starts_with(&acct) || org.as_deref().is_some_and(|o| name.starts_with(o))
+                };
+                if candidate && !matches_active {
+                    remove_safe_entry(&entry.path());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 清理与当前活跃 `.claude.json` 账号 UUID 不一致的旧跨账号残留。
+/// 仅保留给显式测试/兼容诊断使用；产品入口调用上方窄缓存维护函数。
+#[allow(dead_code)]
 pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> {
     clear_stale_locks(root);
     let claude_json = root.join(".claude.json");
@@ -1054,29 +1192,12 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
     if let Some(obj) = value.as_object_mut() {
         if let Some(ref active_org) = org {
             for org_cache_key in ["s1mAccessCache", "passesEligibilityCache"] {
-                if let Some(org_map) = obj
-                    .get_mut(org_cache_key)
-                    .and_then(|v| v.as_object_mut())
-                {
+                if let Some(org_map) = obj.get_mut(org_cache_key).and_then(|v| v.as_object_mut()) {
                     let before = org_map.len();
                     org_map.retain(|k, _| k == active_org);
                     if org_map.len() != before {
                         claude_modified = true;
                     }
-                }
-            }
-        }
-        for acct_cache_key in ["metricsStatusCacheByPrincipal", "groveConfigCache"] {
-            if let Some(principals) = obj
-                .get_mut(acct_cache_key)
-                .and_then(|v| v.as_object_mut())
-            {
-                let before = principals.len();
-                principals.retain(|k, _| {
-                    k.contains(&acct) || org.as_deref().is_some_and(|o| k.contains(o))
-                });
-                if principals.len() != before {
-                    claude_modified = true;
                 }
             }
         }
@@ -1177,8 +1298,8 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.contains('-') {
-                let matches_active = name.contains(&acct)
-                    || org.as_deref().is_some_and(|o| name.contains(o));
+                let matches_active =
+                    name.contains(&acct) || org.as_deref().is_some_and(|o| name.contains(o));
                 if !matches_active {
                     remove_safe_entry(&entry.path());
                 }
@@ -1190,8 +1311,8 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.ends_with("-cc.json") {
-                let matches_active = name.starts_with(&acct)
-                    || org.as_deref().is_some_and(|o| name.starts_with(o));
+                let matches_active =
+                    name.starts_with(&acct) || org.as_deref().is_some_and(|o| name.starts_with(o));
                 if !matches_active {
                     remove_safe_entry(&entry.path());
                 }
@@ -1214,7 +1335,10 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
                                     .as_str()
                                     .map(str::to_string)
                             });
-                        if backup_acct.as_deref().is_some_and(|u| !u.is_empty() && u != acct) {
+                        if backup_acct
+                            .as_deref()
+                            .is_some_and(|u| !u.is_empty() && u != acct)
+                        {
                             remove_safe_entry(&path);
                         }
                     }
@@ -1332,53 +1456,6 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
                 }
             }
         }
-        let dev_reg_path = desktop.join("ant-device-registry.json");
-        if let Ok(m) = fs::symlink_metadata(&dev_reg_path) {
-            if !linked(&m)
-                && m.is_file()
-                && m.len() <= 1024 * 1024
-                && canonicalize(&dev_reg_path).ok().as_deref() == Some(dev_reg_path.as_path())
-                && crate::identities::private::safe(&dev_reg_path).is_ok()
-            {
-                if let Some(mut reg) = fs::read(&dev_reg_path)
-                    .ok()
-                    .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-                {
-                    if let Some(obj) = reg.as_object_mut() {
-                        let before = obj.len();
-                        obj.retain(|k, _| k == &acct || org.as_deref() == Some(k.as_str()));
-                        if obj.len() != before {
-                            if obj.is_empty() {
-                                remove_safe_entry(&dev_reg_path);
-                                remove_safe_entry(&desktop.join("ant-did"));
-                                if !has_matching_desktop_account {
-                                    foreign_desktop_root = true;
-                                }
-                            } else if let Ok(text) = serde_json::to_string(&reg) {
-                                let _ =
-                                    file_io::atomic_write(&dev_reg_path, text.as_bytes(), 0o600);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        let sentry_scope = desktop.join("sentry/scope_v3.json");
-        if let Ok(m) = fs::symlink_metadata(&sentry_scope) {
-            if !linked(&m) && m.is_file() && m.len() <= 1024 * 1024 {
-                let user_id = fs::read(&sentry_scope)
-                    .ok()
-                    .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-                    .and_then(|v| {
-                        v.pointer("/scope/user/id")
-                            .and_then(|u| u.as_str())
-                            .map(str::to_string)
-                    });
-                if user_id.as_deref() != Some(acct.as_str()) {
-                    remove_safe_entry(&desktop.join("sentry"));
-                }
-            }
-        }
         for sub in ["local-agent-mode-sessions", "claude-code-sessions"] {
             let dir = desktop.join(sub);
             let Ok(entries) = fs::read_dir(&dir) else {
@@ -1455,10 +1532,6 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
                 remove_safe_entry(&target.path);
             }
             for dev in [
-                "ant-did",
-                "ant-device-registry.json",
-                ".machine-id",
-                "machine-id",
                 "Cache",
                 "Code Cache",
                 "GPUCache",
@@ -1488,7 +1561,6 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
                 "SharedStorage",
                 "SharedStorage-wal",
                 "blob_storage",
-                "sentry",
                 "DawnGraphiteCache",
                 "DawnWebGPUCache",
             ] {

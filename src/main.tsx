@@ -21,7 +21,7 @@ import {pageIcons as icons} from './page-icons';
 import {HelpPanel} from './help';
 import {SettingsPanel} from './settings';
 import {UsageStatisticsPanel} from './usage-statistics';
-import {updatePreferences, usePreferences} from './settings-model';
+import {initializePrivacyPreference, updatePreferences, usePreferences} from './settings-model';
 import appLogo from '../assets/claude-local-mark.svg';
 import './index.css';
 import './style.css';
@@ -47,6 +47,10 @@ function App() {
   useEffect(() => {
     rememberPage(page);
   }, [page]);
+
+  useEffect(() => {
+    void initializePrivacyPreference();
+  }, []);
 
   const isCompact = prefs.sidebarLayout === 'compact';
 
@@ -79,11 +83,11 @@ function App() {
             </button>
           </div>
           <nav aria-label={t('主要页面')}>
-            {(['quick', 'vps', 'cleaner', 'usage', 'browser', 'system', 'help', 'settings'] as const).map(p => {
+            {(['quick', 'browser', 'system', 'vps', 'cleaner', 'usage', 'help', 'settings'] as const).map(p => {
               const Icon = icons[p];
               return (
                 <Fragment key={p}>
-                  {(p === 'vps' || p === 'help') && <hr className="nav-divider" />}
+                  {(p === 'browser' || p === 'cleaner' || p === 'help') && <hr className="nav-divider" />}
                   <NavButton
                     className={`workspace-nav${p === 'help' ? ' nav-utility-first' : ''}${p === 'settings' ? ' nav-settings-item' : ''}`}
                     active={page === p}

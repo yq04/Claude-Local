@@ -25,6 +25,7 @@ export async function testIdentityOperation(browser:Browser,base:string) {
  let checks=0;
  try {
   await page.goto(base+'/tests/identities.html');
+  await page.evaluate(async()=>{const prefs=await import('/src/settings-model.ts');await prefs.synchronizePrivacyPreference(false);});
   await page.getByText('fixture@example.invalid',{exact:true}).waitFor();
   const operation=page.locator('.identity-operation');
   const stages=()=>operation.locator('.identity-operation-step').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('data-stage')));

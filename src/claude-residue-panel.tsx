@@ -60,10 +60,10 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
    <div>
     <div className="claude-residue-head-row">
      <h2>{t('Claude 文件残留')}</h2>
-     <span className="identity-policy-mode ok">{t('切号已自动清理')}</span>
+     <span className="identity-policy-mode ok">{t('identitySafety.cacheBadge')}</span>
     </div>
     <span className="identity-caption" role="status">
-     {action==='scan'?t('正在检查文件…'):action==='clean'?t('正在处理…'):scan?t('{v0} 项 · {v1}',{v0:all.length,v1:formatBytes(bytes(all))}):t('日常切号已自动清理日志并脱敏，无需手动操作；仅在需释放磁盘空间或排查异常时按需检查')}
+     {action==='scan'?t('正在检查文件…'):action==='clean'?t('正在处理…'):scan?t('{v0} 项 · {v1}',{v0:all.length,v1:formatBytes(bytes(all))}):t('identitySafety.cacheHint')}
     </span>
    </div>
    <Button variant="secondary" size="small" disabled={locked} loading={action==='scan'} leftIcon={<Refresh aria-hidden size={15}/>} onClick={()=>void check()}>{t(scan?'重新检查':'检查残留')}</Button>

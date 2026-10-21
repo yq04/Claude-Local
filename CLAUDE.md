@@ -16,6 +16,7 @@ browser-runtime/ - Pinned browser metadata, licenses and ignored local engine fi
 assets/ - Independent CL marks and retained third-party notices.
 vendor/ - Existing UI components with separate attribution/license boundaries in NOTICE.md.
 docs/ - Local development, data boundaries and distribution documentation.
+docs/plans/2026-10-21-usage-account-safety/ - Pending owner-review proposal, source evidence and phased usage/account-safety optimization plan; no implementation authorization before confirmation.
 .github/workflows/ - Credential-free Windows checks and explicitly dispatched private build artifacts.
 HANDOFF.md - Current work, verified results, remaining validation and compatibility pitfalls; private machine details stay in ignored .local/.
 </directory>
@@ -33,3 +34,4 @@ User-requested Claude Code CLI maintenance is separate from application releases
 docs/RELEASE_NOTES_0.1.1.md - Owner-requested manual private prerelease notes; shared packages exclude personal usage-attribution seeds.
 docs/RELEASE_NOTES_0.1.2.md - Quick setup cold-start/database concurrency fixes, shared UI consistency and effective browser targets; manual private delivery only.
 docs/RELEASE_NOTES_0.1.3.md - Cromma SegmentedControl/Switch/Disclosure adoption, truthful version settings, reduced-motion wiring and the registered-install upgrade sequence; manual private delivery only.
+docs/RELEASE_NOTES_0.1.4.md - Quota observation order fix, native privacy preference bridge, environment-first navigation, task handoff notes, and device-identifier preservation; manual private delivery only.

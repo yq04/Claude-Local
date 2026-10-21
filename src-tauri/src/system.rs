@@ -4,9 +4,9 @@
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #[cfg(target_os = "linux")]
 use crate::linux::*;
+use crate::native::decode;
 #[cfg(target_os = "windows")]
 use crate::windows::*;
-use crate::native::decode;
 #[cfg(target_os = "macos")]
 use std::ffi::c_char;
 use std::ffi::CString;
@@ -66,7 +66,9 @@ mod tests {
     fn reads_native_state_and_rejects_invalid_inputs_without_mutation() {
         let state: serde_json::Value = decode(unsafe { rf_system_read() }).unwrap();
         assert!(state["timezone"].as_str().is_some());
-        assert!(state["timezones"].as_array().unwrap().len() > if cfg!(windows) { 30 } else { 100 });
+        assert!(
+            state["timezones"].as_array().unwrap().len() > if cfg!(windows) { 30 } else { 100 }
+        );
         assert!(state["languages"].is_array());
         assert!(state["location_enabled"].is_boolean() || state["location_enabled"].is_null());
         let invalid = CString::new("Invalid/Zone; touch /tmp/rf-injected").unwrap();

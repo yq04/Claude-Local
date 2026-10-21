@@ -4,7 +4,16 @@
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
 pub(super) fn launch_locked(app: &tauri::AppHandle, log: &Reporter) -> Result<Snapshot, String> {
+    launch_with_urls_locked(app, log, &[])
+}
+
+pub(super) fn launch_with_urls_locked(
+    app: &tauri::AppHandle,
+    log: &Reporter,
+    urls: &[&str],
+) -> Result<Snapshot, String> {
     let state = app.state::<Browser>();
+    workspaces::ready(&root(app)?)?;
     workspaces::ensure(&root(app)?)?;
     *app.state::<Browser>().warning.lock().unwrap() = None;
     log.log(
@@ -29,6 +38,46 @@ pub(super) fn launch_locked(app: &tauri::AppHandle, log: &Reporter) -> Result<Sn
         return Err("内置浏览器引擎不可用。".into());
     }
     write_launch_args(&root, &config, &machine, &profile, &version(&engine))?;
+
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(settings.join("engine.log"))
+        .map_err(|_| "浏览器诊断日志不可用。")?;
+
+    let has_session = state.session.lock().unwrap().is_some();
+    if running && has_session && !urls.is_empty() {
+        log.log(
+            "browser",
+            "running",
+            "浏览器正在运行：沿用当前会话与资料打开目标页面。",
+            0,
+            None,
+        );
+        let mut cmd_args = config::arguments(&config, &machine, &profile, "", &version(&engine));
+        cmd_args.pop();
+        for url in urls {
+            cmd_args.push((*url).to_string());
+        }
+        let mut child = Command::new(binary)
+            .args(cmd_args)
+            .stdin(Stdio::null())
+            .stdout(file.try_clone().map_err(|_| "浏览器日志不可用。")?)
+            .stderr(file)
+            .spawn()
+            .map_err(|_| "无法在已运行的伴生浏览器中打开目标页面。")?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        let ok_msg = if urls.iter().any(|u| *u == USAGE_SETTINGS_URL) {
+            "已请求打开官方用量页。"
+        } else {
+            "目标页面已调起。"
+        };
+        log.log("browser", "ok", ok_msg, 1, Some(1));
+        return snapshot(app);
+    }
+
     if !running {
         profile::preferences(&profile, &config, &machine)?;
     } else {
@@ -42,19 +91,12 @@ pub(super) fn launch_locked(app: &tauri::AppHandle, log: &Reporter) -> Result<Sn
     }
     *state.host.lock().unwrap() = None;
     let page = open_session(app, &config, &machine, version(&engine))?;
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(settings.join("engine.log"))
-        .map_err(|_| "浏览器诊断日志不可用。")?;
+    let mut cmd_args = config::arguments(&config, &machine, &profile, &page, &version(&engine));
+    for url in urls {
+        cmd_args.push((*url).to_string());
+    }
     let mut child = Command::new(binary)
-        .args(config::arguments(
-            &config,
-            &machine,
-            &profile,
-            &page,
-            &version(&engine),
-        ))
+        .args(cmd_args)
         .stdin(Stdio::null())
         .stdout(file.try_clone().map_err(|_| "浏览器日志不可用。")?)
         .stderr(file)
@@ -62,13 +104,12 @@ pub(super) fn launch_locked(app: &tauri::AppHandle, log: &Reporter) -> Result<Sn
         .map_err(|_| "浏览器启动失败。")?;
     for _ in 0..100 {
         if profile::running(&profile)? {
-            log.log(
-                "browser",
-                "ok",
-                "浏览器已启动，等待起始页上报真实指纹与出口。",
-                0,
-                None,
-            );
+            let ok_msg = if urls.iter().any(|u| *u == USAGE_SETTINGS_URL) {
+                "已请求打开官方用量页。"
+            } else {
+                "浏览器已启动，等待起始页上报真实指纹与出口。"
+            };
+            log.log("browser", "ok", ok_msg, 0, None);
             std::thread::spawn(move || {
                 let _ = child.wait();
             });

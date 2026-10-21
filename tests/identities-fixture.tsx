@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Tauri 官方 mockIPC、真实身份/浏览器组件与虚构的内存状态。
- * [OUTPUT]: 40 个虚构身份、残留清单、可显式释放的 IPC 与官方 Channel 事件，供无头浏览器验证真实进度/失败；browser 模式检查仅缓存与全清理确认，不触碰磁盘资料。
+ * [OUTPUT]: 40 个虚构身份、残留清单、可显式释放的 IPC 与官方 Channel 事件，供无头浏览器验证真实进度/失败、额度官网入口与隐私偏好 IPC；browser 模式检查仅缓存与全清理确认，不触碰磁盘资料。
  * [POS]: 独立测试入口；没有原生命令、真实目录、账号或网络，生产 rollup 不包含此入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -58,6 +58,9 @@ mockIPC((command,args:any)=>{
  return execute(command,args);
 });
 function execute(command:string,args:any){
+ if(command==='quota_setup_status')return {state:'not_configured',collector_bundled:false,has_statusline:false};
+  if(command==='ui_privacy_read')return (window as any).__privacyPreference ?? null;
+ if(command==='ui_privacy_write'){(window as any).__privacyPreference=args.masked;return;}
  if(command==='plugin:event|listen')return 1;
  if(command==='plugin:event|unlisten')return;
  if(fail===command){fail='';throw Error('fixture operation failed');}
@@ -65,6 +68,7 @@ function execute(command:string,args:any){
  if(browserMode&&command==='browser_default_read')return {is_default:true,http:'fixture',https:'fixture',installed:true,app:'Claude-Local Browser'};
  if(browserMode&&command==='browser_clear'){browserState.cache=[];return structuredClone(browserState);}
  if(command==='identities_browser'){state.browser.enabled=args.enabled;if(args.enabled&&!state.browser.bound_ids.includes(state.active))state.browser.bound_ids.push(state.active);return structuredClone(state);}
+ if(command==='browser_open_usage')return structuredClone(browserState);
  if(command==='browser_launch'){state.browser_warning=null;return {};}
  if(command==='identities_read'){identityReads++;return structuredClone(state);}
  if(command==='claude_residue_scan'){

@@ -1,5 +1,5 @@
 // [INPUT]: 身份保险库与临时文件系统样本。
-// [OUTPUT]: SQLite 策略持久化、完整认证归档与真实阶段/局部完成计数/回滚事件回归，不读取真实 Claude 凭据。
+// [OUTPUT]: SQLite 策略持久化、完整认证归档、原始历史恢复、持久恢复检查点与真实阶段/局部完成计数/回滚事件回归，不读取真实 Claude 凭据。
 // [POS]: 身份管理的离线验证入口；平台真实登入需用户验收。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -9,41 +9,99 @@ use dunce::canonicalize;
 use std::fs::canonicalize;
 fn fixture_write(path: impl AsRef<std::path::Path>, bytes: impl AsRef<[u8]>) -> Result<(), String> {
     private::write(path.as_ref(), bytes.as_ref())?;
-    assert_eq!(canonicalize(path.as_ref()).unwrap(), path.as_ref(), "fixture must use canonical paths");
+    assert_eq!(
+        canonicalize(path.as_ref()).unwrap(),
+        path.as_ref(),
+        "fixture must use canonical paths"
+    );
     Ok(())
 }
 #[test]
 fn operation_progress_tracks_completed_sources_and_explicit_rollback() {
-    let folder = canonicalize(std::env::temp_dir()).unwrap().join(format!("baga-progress-{}", new_id().unwrap()));
+    let folder = canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("baga-progress-{}", new_id().unwrap()));
     let home = folder.join("home");
     private::directory(&home.join(".claude/cache")).unwrap();
     fixture_write(home.join(".claude/cache/entry"), "fixture").unwrap();
-    fixture_write(home.join(".claude.json"), r#"{"oauthAccount":{"accountUuid":"fixture-account"}}"#).unwrap();
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"fixture-account"}}"#,
+    )
+    .unwrap();
+    let raw_session = br#"{"type":"attachment","attachment":{"type":"credential_org","organizationUuid":"foreign-org"}}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"preserve","signature":"foreign-signature"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"dangling"}]}}"#;
+    private::directory(&home.join(".claude/projects/demo")).unwrap();
+    fixture_write(
+        home.join(".claude/projects/demo/sess-rollback.jsonl"),
+        raw_session,
+    )
+    .unwrap();
     let mut store = store::Store::open(&folder.join("vault"), &home).unwrap();
     let reporter = Reporter::channel(None);
-    store.switch("empty", "Fixture", &Policy::default(), &reporter).unwrap();
-    let events = reporter.events().into_iter().map(|event| serde_json::to_value(event).unwrap()).collect::<Vec<_>>();
-    let position = |stage: &str, status: &str| events.iter().position(|event| event["stage"] == stage && event["status"] == status).unwrap();
+    store
+        .switch("empty", "Fixture", &Policy::default(), &reporter)
+        .unwrap();
+    let events = reporter
+        .events()
+        .into_iter()
+        .map(|event| serde_json::to_value(event).unwrap())
+        .collect::<Vec<_>>();
+    let position = |stage: &str, status: &str| {
+        events
+            .iter()
+            .position(|event| event["stage"] == stage && event["status"] == status)
+            .unwrap()
+    };
     assert!(position("compress", "running") < position("compress", "ok"));
     assert!(position("compress", "ok") < position("verify_archive", "running"));
     assert!(position("verify_archive", "running") < position("verify_archive", "ok"));
     assert!(position("verify_archive", "ok") < position("clear", "running"));
     assert!(position("clear", "ok") < position("commit", "ok"));
     assert!(position("commit", "ok") < position("verify", "ok"));
-    let completed = events.iter().find(|event| event["stage"] == "archive" && event["status"] == "ok").unwrap();
+    let completed = events
+        .iter()
+        .find(|event| event["stage"] == "archive" && event["status"] == "ok")
+        .unwrap();
     let total = completed["total"].as_u64().unwrap();
     assert!(total >= 2);
     assert_eq!(completed["current"].as_u64(), Some(total));
-    let archived = events.iter().filter(|event| event["stage"] == "archive" && event["status"] == "running" && event["current"].as_u64().unwrap_or(0) > 0).map(|event| event["current"].as_u64().unwrap()).collect::<Vec<_>>();
+    let archived = events
+        .iter()
+        .filter(|event| {
+            event["stage"] == "archive"
+                && event["status"] == "running"
+                && event["current"].as_u64().unwrap_or(0) > 0
+        })
+        .map(|event| event["current"].as_u64().unwrap())
+        .collect::<Vec<_>>();
     assert_eq!(archived, (1..=total).collect::<Vec<_>>());
-    let target = store.records().into_iter().find(|record| !record.empty).unwrap().id;
+    let target = store
+        .records()
+        .into_iter()
+        .find(|record| !record.empty)
+        .unwrap()
+        .id;
     store.fail_after_clear = true;
     let failed = Reporter::channel(None);
-    assert!(store.switch(&target, "Empty", &Policy::default(), &failed).is_err());
+    assert!(store
+        .switch(&target, "Empty", &Policy::default(), &failed)
+        .is_err());
     let events = failed.events();
-    assert!(events.iter().any(|event| event.stage() == "rollback" && event.status() == "running"));
-    assert!(events.iter().any(|event| event.stage() == "rollback" && event.status() == "ok"));
-    assert!(!events.iter().any(|event| event.stage() == "verify" && event.status() == "ok"));
+    assert!(events
+        .iter()
+        .any(|event| event.stage() == "rollback" && event.status() == "running"));
+    assert!(events
+        .iter()
+        .any(|event| event.stage() == "rollback" && event.status() == "ok"));
+    assert!(!events
+        .iter()
+        .any(|event| event.stage() == "verify" && event.status() == "ok"));
+    assert_eq!(
+        std::fs::read(home.join(".claude/projects/demo/sess-rollback.jsonl")).unwrap(),
+        raw_session
+    );
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
@@ -129,11 +187,7 @@ fn empty_identity_and_saved_identity_preserve_user_choices() {
         .switch("empty", "包含技能", &choice, &reporter)
         .unwrap();
     assert!(!home.join(".claude/skills").exists());
-    let with_skills = store
-        .records()
-        .into_iter()
-        .find(|r| r.id == id)
-        .unwrap();
+    let with_skills = store.records().into_iter().find(|r| r.id == id).unwrap();
     store
         .switch(&with_skills.id, "空身份", &choice, &reporter)
         .unwrap();
@@ -162,6 +216,37 @@ fn interrupted_switch_can_recover_and_preserves_pre_recovery_state() {
         r#"{"claudeAiOauth":{"accessToken":"original fixture"}}"#,
     )
     .unwrap();
+    fixture_write(
+        home.join(".claude.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "oauthAccount": {
+                "accountUuid": "fixture-account",
+                "organizationUuid": "fixture-org"
+            },
+            "s1mAccessCache": {
+                "fixture-org": {"eligible": true},
+                "foreign-org": {"eligible": false}
+            },
+            "projects": {
+                "D:/fixture": {
+                    "lastSessionId": "sess-recovery",
+                    "lastCost": 3.5,
+                    "lastModelUsage": {"fixture-model": {"costUSD": 3.5}}
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let raw_session = br#"{"type":"attachment","attachment":{"type":"credential_org","organizationUuid":"foreign-org"}}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"preserve","signature":"foreign-signature"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"dangling"}]}}"#;
+    private::directory(&home.join(".claude/projects/demo")).unwrap();
+    fixture_write(
+        home.join(".claude/projects/demo/sess-recovery.jsonl"),
+        raw_session,
+    )
+    .unwrap();
     let mut store = store::Store::open(&folder.join("vault"), &home).unwrap();
     let reporter = Reporter::channel(None);
     let mut policy = Policy::default();
@@ -186,6 +271,26 @@ fn interrupted_switch_can_recover_and_preserves_pre_recovery_state() {
     );
     assert!(store.records().iter().any(|r| r.name == "恢复前状态"));
     assert!(store.db.get("recovery").unwrap().is_none());
+    assert_eq!(
+        std::fs::read(home.join(".claude/projects/demo/sess-recovery.jsonl")).unwrap(),
+        raw_session
+    );
+    let recovered_config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.join(".claude.json")).unwrap()).unwrap();
+    assert!(recovered_config["s1mAccessCache"]
+        .get("fixture-org")
+        .is_some());
+    assert!(recovered_config["s1mAccessCache"]
+        .get("foreign-org")
+        .is_none());
+    assert_eq!(
+        recovered_config["projects"]["D:/fixture"]["lastSessionId"],
+        "sess-recovery"
+    );
+    assert_eq!(recovered_config["projects"]["D:/fixture"]["lastCost"], 3.5);
+    assert!(recovered_config["projects"]["D:/fixture"]
+        .get("lastModelUsage")
+        .is_some());
     drop(stage);
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();

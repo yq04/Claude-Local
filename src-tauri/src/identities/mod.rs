@@ -6,23 +6,23 @@ mod archive;
 pub(crate) mod browser_link;
 #[cfg(test)]
 mod browser_link_tests;
-#[cfg(test)]
-mod database_tests;
 mod catalog;
 mod codec;
 mod compression;
 mod credentials;
 pub(crate) mod database;
 #[cfg(test)]
+mod database_tests;
+#[cfg(test)]
 mod optimization_tests;
 pub(crate) mod private;
 mod profile;
 mod store;
+#[cfg(test)]
+mod tests;
 pub(crate) mod usage;
 #[cfg(test)]
 mod usage_tests;
-#[cfg(test)]
-mod tests;
 use crate::progress::{Progress, Reporter};
 use serde::{Deserialize, Serialize};
 use tauri::{ipc::Channel, Manager};

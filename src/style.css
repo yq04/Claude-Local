@@ -1699,6 +1699,17 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 :root[data-reduce-motion="true"] .identity-card:hover { transform: none; }
 @media (prefers-reduced-motion: reduce) { .identity-card:hover { transform: none; } }
 .identity-card:not(.empty) .identity-card-head { min-height: 26px; }
+.identity-quota-stack.identity-quota-open { cursor: pointer; border-radius: 8px; } .identity-quota-stack.identity-quota-open:focus-visible { outline: 2px solid var(--local-accent); outline-offset: 2px; }
+.identity-quota-details { display: grid; gap: 12px; }
+.identity-quota-details > h3, .identity-quota-details > p { margin: 0; overflow-wrap: anywhere; }
+.identity-quota-details .identity-quota-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.identity-quota-details .identity-quota-window { padding: 8px; }
+.identity-quota-note { color: var(--muted-foreground); font-size: 12px; line-height: 1.6; }
+.task-handoff { display: grid; gap: 12px; }
+.task-handoff > p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--muted-foreground); }
+.task-handoff > label { display: grid; gap: 5px; font-size: 12px; }
+.task-handoff > div:last-child { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.task-handoff-preview { margin: 0; padding: 12px; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; }
 .identity-card:not(.empty) .identity-avatar { width: 26px; height: 26px; }
 .identity-card:not(.empty) h3 {
   display: flex;

@@ -957,7 +957,11 @@ pub(super) fn read_at(
 }
 
 pub(super) fn read_at_with_fallback(
-    vault: &Path, home: &Path, period: &str, account_id: Option<&str>, offset: i32,
+    vault: &Path,
+    home: &Path,
+    period: &str,
+    account_id: Option<&str>,
+    offset: i32,
     fallback_name: Option<&str>,
 ) -> Result<UsageSnapshot, String> {
     let ledger_path = vault.join("usage.sqlite");
@@ -1106,17 +1110,33 @@ pub(super) fn read_at_with_fallback(
     }
     // Persist only a stable catalog ID. A private build preference seeds the first
     // selection; renaming never redirects history to a different account.
-    let saved_fallback: Option<String> = conn.query_row(
-        "SELECT value FROM meta WHERE key='fallback_account_id'", [], |r| r.get(0)
-    ).optional().map_err(|_| "usage attribution unavailable")?;
-    let candidates: Vec<_> = account_map.values().filter(|a| Some(a.name.as_str()) == fallback_name).collect();
+    let saved_fallback: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key='fallback_account_id'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| "usage attribution unavailable")?;
+    let candidates: Vec<_> = account_map
+        .values()
+        .filter(|a| Some(a.name.as_str()) == fallback_name)
+        .collect();
     if saved_fallback.is_none() && candidates.len() == 1 {
-        conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('fallback_account_id',?1)",
-            [&candidates[0].id]).map_err(|_| "usage attribution unavailable")?;
+        conn.execute(
+            "INSERT OR IGNORE INTO meta(key,value) VALUES('fallback_account_id',?1)",
+            [&candidates[0].id],
+        )
+        .map_err(|_| "usage attribution unavailable")?;
     }
-    let fallback_id: Option<String> = conn.query_row(
-        "SELECT value FROM meta WHERE key='fallback_account_id'", [], |r| r.get(0)
-    ).optional().map_err(|_| "usage attribution unavailable")?;
+    let fallback_id: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key='fallback_account_id'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| "usage attribution unavailable")?;
     let fallback_id = fallback_id.filter(|id| account_map.values().any(|a| &a.id == id));
     let snapshot_now = now();
     let start = offset_start(period, snapshot_now, offset)?;
@@ -1163,7 +1183,10 @@ pub(super) fn read_at_with_fallback(
         if start.is_some_and(|s| ts < s) || ts > snapshot_now {
             continue;
         }
-        let id = key_to_id.get(&owner).cloned().or_else(|| fallback_id.clone());
+        let id = key_to_id
+            .get(&owner)
+            .cloned()
+            .or_else(|| fallback_id.clone());
         if owner.is_empty() && id.is_none() {
             add_row(&mut unknown, i, o, c, r, reason);
         } else if let Some(id) = id.as_ref() {

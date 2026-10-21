@@ -31,7 +31,7 @@ export const defaultPreferences: UiPreferences = {
   sidebarLayout: 'classic',
   surfaceStyle: 'cockpit',
   quotaDisplay: 'remaining',
-  privacyMask: false,
+  privacyMask: true,
 };
 
 function sanitizePreferences(raw: unknown): UiPreferences {
@@ -64,7 +64,14 @@ function loadPreferences(): UiPreferences {
   }
 }
 
-let currentPreferences: UiPreferences = loadPreferences();
+const initialPreferences = loadPreferences();
+const legacyPrivacyMask = initialPreferences.privacyMask;
+const hasNativePrivacy = () => typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+let currentPreferences: UiPreferences = {...initialPreferences, privacyMask: hasNativePrivacy() ? true : initialPreferences.privacyMask};
+let privacyRevision = 0;
+let privacyQueue: Promise<void> = Promise.resolve();
+let privacyInitialization: Promise<boolean> | undefined;
+let privacyError: string | null = null;
 const listeners = new Set<() => void>();
 const darkMedia = typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
@@ -95,32 +102,61 @@ export function getPreferences(): UiPreferences {
   return currentPreferences;
 }
 
-export function updatePreferences(patch: Partial<UiPreferences>): UiPreferences {
-  currentPreferences = sanitizePreferences({...currentPreferences, ...patch});
+function publishPreferences(next: UiPreferences): void {
+  currentPreferences = sanitizePreferences(next);
   if (typeof window !== 'undefined') {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(currentPreferences));
-    } catch {
-      /* Storage unavailable; keep in-memory state. */
-    }
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(currentPreferences)); } catch { /* Keep the in-memory view. */ }
   }
   applyPreferencesToDom(currentPreferences);
   listeners.forEach(listener => listener());
+}
+
+export function synchronizePrivacyPreference(masked: boolean): Promise<boolean> {
+  const revision = ++privacyRevision;
+  privacyError = null;
+  if (!hasNativePrivacy()) {
+    publishPreferences({...currentPreferences, privacyMask: masked});
+    return Promise.resolve(masked);
+  }
+  // Enabling hides immediately; disabling waits for persistence. Writes are serialized.
+  publishPreferences({...currentPreferences, privacyMask: masked || currentPreferences.privacyMask});
+  privacyQueue = privacyQueue.then(async () => {
+    try {
+      const {invoke} = await import('@tauri-apps/api/core');
+      await invoke('ui_privacy_write', {masked});
+      if (revision === privacyRevision) {
+        privacyError = null;
+        publishPreferences({...currentPreferences, privacyMask: masked});
+      }
+    } catch {
+      if (revision === privacyRevision) {
+        privacyError = 'privacy.saveFailed';
+        publishPreferences({...currentPreferences, privacyMask: true});
+      }
+    }
+  });
+  return privacyQueue.then(() => currentPreferences.privacyMask);
+}
+
+export function updatePreferences(patch: Partial<UiPreferences>): UiPreferences {
+  if (hasNativePrivacy() && typeof patch.privacyMask === 'boolean') {
+    const {privacyMask, ...viewPatch} = patch;
+    publishPreferences({...currentPreferences, ...viewPatch});
+    void synchronizePrivacyPreference(privacyMask);
+  } else {
+    publishPreferences({...currentPreferences, ...patch});
+  }
   return currentPreferences;
 }
 
 export function resetPreferences(): UiPreferences {
-  currentPreferences = {...defaultPreferences};
-  if (typeof window !== 'undefined') {
-    try {
-      window.localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      /* Ignore storage error. */
-    }
-  }
-  applyPreferencesToDom(currentPreferences);
-  listeners.forEach(listener => listener());
+  // Resetting appearance never silently disables the native privacy preference.
+  publishPreferences({...defaultPreferences, privacyMask: hasNativePrivacy() ? currentPreferences.privacyMask : defaultPreferences.privacyMask});
   return currentPreferences;
+}
+
+export function usePrivacySyncError(): string | null {
+  return useSyncExternalStore(subscribe, () => privacyError, () => null);
 }
 
 function subscribe(listener: () => void): () => void {
@@ -138,9 +174,55 @@ export function maskEmailAddress(email: string | null | undefined, mask: boolean
   if (!email) return '';
   if (!mask) return email;
   const atIndex = email.indexOf('@');
-  if (atIndex <= 1) return email;
+  if (atIndex < 0) return '***';
+  if (atIndex === 0) return "***" + email;
   const local = email.slice(0, atIndex);
   const domain = email.slice(atIndex);
+  if (local.length <= 1) {
+    return "*" + domain;
+  }
   const visible = local.slice(0, Math.min(3, Math.max(1, Math.floor(local.length / 2))));
-  return `${visible}***${domain}`;
+  return visible + "***" + domain;
+}
+
+export function maskDisplayName(name: string | null | undefined, email: string | null | undefined, mask: boolean): string {
+  if (!name) return email ? maskEmailAddress(email, mask) : "";
+  if (!mask) return name;
+  if (name.includes("@")) return maskEmailAddress(name, true);
+  if (email) {
+    const at = email.indexOf("@");
+    const local = at > 0 ? email.slice(0, at) : email;
+    if (name.toLowerCase() === local.toLowerCase()) {
+      return maskEmailAddress(email, true);
+    }
+  }
+  return name;
+}
+
+export function initializePrivacyPreference(): Promise<boolean> {
+  if (!hasNativePrivacy()) return Promise.resolve(currentPreferences.privacyMask);
+  if (privacyInitialization) return privacyInitialization;
+  const revision = privacyRevision;
+  publishPreferences({...currentPreferences, privacyMask: true});
+  privacyQueue = privacyQueue.then(async () => {
+    try {
+      const {invoke} = await import('@tauri-apps/api/core');
+      const native = await invoke<boolean | null>('ui_privacy_read');
+      if (revision !== privacyRevision) return;
+      if (native !== null && typeof native !== 'boolean') throw new Error('Invalid privacy preference');
+      const masked = native === null ? legacyPrivacyMask : native;
+      if (native === null) await invoke('ui_privacy_write', {masked});
+      if (revision === privacyRevision) {
+        privacyError = null;
+        publishPreferences({...currentPreferences, privacyMask: masked});
+      }
+    } catch {
+      if (revision === privacyRevision) {
+        privacyError = 'privacy.saveFailed';
+        publishPreferences({...currentPreferences, privacyMask: true});
+      }
+    }
+  });
+  privacyInitialization = privacyQueue.then(() => currentPreferences.privacyMask);
+  return privacyInitialization;
 }

@@ -22,6 +22,8 @@ export function BrowserPanel({ onBusy }: {
     const gate = useRef(false), live = useRef(true);
     const [accepted, setAccepted] = useState(false), [advancedOpen, setAdvancedOpen] = useState(false);
     const activity = useCleanupActivity();
+    const [clock, setClock] = useState(Date.now);
+    useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30000); return () => window.clearInterval(timer); }, []);
     const [preferred, setPreferred] = useState<DefaultBrowser | null>(null), [asking, setAsking] = useState(false), [defaultNote, setDefaultNote] = useState('');
     useEffect(() => { onBusy?.(!!busy); return () => onBusy?.(false); }, [busy, onBusy]);
     async function readDefault() {
@@ -124,6 +126,7 @@ export function BrowserPanel({ onBusy }: {
     const checks = state?.checks || [];
     const allChecksOk = checks.length > 0 && checks.every(x => x.status === 'ok');
     const hasMismatch = checks.some(x => x.status === 'mismatch');
+    const isStale = !!state?.report_received_at && (clock - state.report_received_at > 10 * 60 * 1000);
     function edit<K extends keyof BrowserConfig>(key: K, value: BrowserConfig[K]) { setDraft(old => old ? { ...old, [key]: value } : old); }
     return <section className="system-page browser-page">
         <div className="cleanup-title">
@@ -145,8 +148,13 @@ export function BrowserPanel({ onBusy }: {
                             </span>
                         </div>
                         <p className="network-action-desc">
-                            {t("当前身份已自动绑定专属浏览器存档与防关联指纹。打开浏览器（通过全部环境验证后）登录已充值的 Claude 网页版账号，设为默认浏览器后进入 Claude Code CLI 即可自动 Login。")}
+                            {t("browserSafety.heroDescription")}
                         </p>
+                        {state?.identity?.name && (
+                            <p className="identity-policy-hint">
+                                {t("browserSafety.boundIdentity", { name: state.identity.name }) || `绑定本地身份：${state.identity.name}`}{state.identity.email ? ` (${state.identity.email})` : ''}
+                            </p>
+                        )}
                     </div>
                     <div className="network-action-buttons">
                         <Button variant="ink" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
@@ -168,8 +176,14 @@ export function BrowserPanel({ onBusy }: {
                 <div className="browser-checks-head">
                     <div className="network-action-head">
                         <h2>{t("{v0} · 实际观测", { v0: t(state?.region?.label || "自定义环境") })}</h2>
-                        <span className="identity-policy-mode">
-                            {state?.report_received_at ? t("已连接 · 回报 {v0}", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') }) : state?.running ? t("等待浏览器回报") : t("浏览器未运行")}
+                        <span className={`identity-policy-mode ${isStale ? 'attention' : ''}`}>
+                            {state?.report_received_at
+                                ? isStale
+                                    ? t("browserSafety.reportStale", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') }) || `检测已过时（>10分钟）· 上次回报 ${new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US')}`
+                                    : t("已连接 · 回报 {v0}", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })
+                                : state?.running
+                                    ? t("等待浏览器回报")
+                                    : t("浏览器未运行")}
                         </span>
                     </div>
                     <div className="network-action-buttons">
@@ -177,13 +191,15 @@ export function BrowserPanel({ onBusy }: {
                         <Button variant="secondary" size="small" disabled={disabled || state?.running || !!changed} onClick={() => setConfirm('align')}>{t("对齐美国系统环境")}</Button>
                     </div>
                 </div>
-                <div className={`browser-check-summary ${allChecksOk ? 'ok' : hasMismatch ? 'warn' : ''}`}>
+                <div className={`browser-check-summary ${allChecksOk && !isStale ? 'ok' : (hasMismatch || isStale) ? 'warn' : ''}`}>
                     <span>
-                        {allChecksOk
-                            ? t("全部验证已通过：出口 IP、时区与语言均已对齐目标地区，可直接在内置浏览器登录已充值的 Claude 网页版账号。")
-                            : hasMismatch
-                                ? t("检测到环境项未对齐：建议点击右上角「对齐美国系统环境」一键同步本机时区与语言，或检查代理路由。")
-                                : t("点击上方「打开浏览器并实测」，浏览器启动后将自动核验美国出口 IP、时区与语言是否全部达标。")}
+                        {isStale
+                            ? t("browserSafety.staleSummary")
+                            : allChecksOk
+                                ? t("全部验证已通过：出口 IP、时区与语言均已对齐目标地区，可直接在内置浏览器登录已充值的 Claude 网页版账号。")
+                                : hasMismatch
+                                    ? t("检测到环境项未对齐：建议点击右上角「对齐美国系统环境」一键同步本机时区与语言，或检查代理路由。")
+                                    : t("browserSafety.checkInstruction")}
                     </span>
                 </div>
                 <div className="browser-check-grid">
@@ -205,7 +221,7 @@ export function BrowserPanel({ onBusy }: {
             <div className="network-action-card">
                 <div className="network-action-head">
                     <h2>{t("浏览器数据")}</h2>
-                    <span className="identity-policy-mode ok">{t("按身份自动隔离")}</span>
+                    <span className="identity-policy-mode ok">{t("browserSafety.isolatedProfile")}</span>
                 </div>
                 <div className="browser-data-scenarios">
                     <div className="browser-scenario-card">
@@ -236,8 +252,8 @@ export function BrowserPanel({ onBusy }: {
             </div>
 
             <Disclosure className="identity-policy browser-advanced-panel" triggerClassName="identity-policy-trigger" open={advancedOpen || !!changed} onOpenChange={setAdvancedOpen}
-                summary={<><strong>{t("指纹与代理设置")}</strong><span className="identity-policy-hint">{t("已按身份自动生成稳定指纹并跟随 TUN 路由，日常无需手动改动")}</span></>}
-                aside={<span className="identity-policy-mode ok">{draft?.proxy ? draft.proxy : t("自动托管")}</span>}>
+                summary={<><strong>{t("browserSafety.settingsTitle")}</strong><span className="identity-policy-hint">{t("browserSafety.settingsHint")}</span></>}
+                aside={<span className="identity-policy-mode ok">{draft?.proxy ? draft.proxy : t("browserSafety.proxyManaged")}</span>}>
                 <div className="browser-advanced-body">
                     <div className="browser-advanced-grid">
                         <div>
