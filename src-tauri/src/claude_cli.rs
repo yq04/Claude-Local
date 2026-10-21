@@ -545,10 +545,10 @@ mod update_tests {
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             for response in [
-                "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n2.1.10\n".to_string(),
-                "HTTP/1.1 302 Found\r\nLocation: https://example.invalid\r\nContent-Length: 0\r\n\r\n".to_string(),
-                "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nOops".to_string(),
-                format!("HTTP/1.1 200 OK\r\nContent-Length: 65\r\n\r\n{}", "2".repeat(65)),
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 7\r\n\r\n2.1.10\n".to_string(),
+                "HTTP/1.1 302 Found\r\nConnection: close\r\nLocation: https://example.invalid\r\nContent-Length: 0\r\n\r\n".to_string(),
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 4\r\n\r\nOops".to_string(),
+                format!("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 65\r\n\r\n{}", "2".repeat(65)),
             ] {
                 let (mut stream, _) = listener.accept().unwrap();
                 stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
@@ -563,6 +563,7 @@ mod update_tests {
                 assert!(!request.to_lowercase().contains("authorization:"));
                 assert!(!request.to_lowercase().contains("cookie:"));
                 stream.write_all(response.as_bytes()).unwrap();
+                let _ = stream.flush();
             }
         });
         tauri::async_runtime::block_on(async {
