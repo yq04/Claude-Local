@@ -22,11 +22,11 @@
 
 Claude-Local 是独立维护的 Windows x64 产品，主程序 `claude-local.exe`，标识 `ai.local.claude-local`。React/TypeScript 负责界面，Tauri/Rust 负责原生操作，Python 是外部额度账本的唯一写入方。可选的 Claude-Local Browser 仅由明确用户操作或 `--browser` 启动。
 
-本次用户报告快速配置中的浏览器状态无法读取，身份信息似乎依赖先访问身份管理。已在临时目录复现两个 `Database::open` 并发首次建库时，一个调用因独占创建失败。身份与浏览器读取共用身份 SQLite，旧初始化还存在 DEFERRED 事务读后升级竞争。
+本次用户报告快速配置中的浏览器状态无法读取，身份信息似乎依赖先访问身份管理。已在临时目录复现两个 `Database::open` 并发首次建库时，一个调用因独占创建失败。身份与浏览器读取共用身份 SQLite，旧初始化还存在 DEFERRED 事务读后升级竞争。后续 CI 暴露了创建句柄尚持有时，另一连接被 SQLite 降为只读的 Windows 文件共享窗口；临时 Barrier 样本复现 schema 阶段的 SQLite ReadOnly（扩展码 8）。
 
 0.1.2 包含：
 
-- 并发创建同一安全、当前用户拥有目录/数据库时重新校验目标；schema、版本迁移和默认状态写入置于 SQLite IMMEDIATE 事务中。保留 `user_version=3`、已有身份、显式浏览器联动选择和种子规则。
+- 串行保护整个短生命周期的文件创建、连接打开与初始化；并发创建同一安全、当前用户拥有目录/数据库时重新校验目标，schema、版本迁移和默认状态写入置于 SQLite IMMEDIATE 事务中。锁不跨越 Database 生命周期，保留嵌套读取、`user_version=3`、已有身份、显式浏览器联动选择和种子规则。
 - 快速配置的身份、浏览器、电脑环境和 CLI 各自读取完成即展示，单项慢读或失败不拖住其他状态；显示具体失败项和原生原因，支持手动刷新。
 - 浏览器配置启用“跟随电脑”时，概览与浏览器核验共用有效时区/语言解析；配置目标不冒充实际浏览器观测。
 - 侧栏与六个配置入口共用图标映射，保留原有用量图形；复用现有 Cromma Button 加载与尺寸、卡片、双主题及错误色，按可用内容宽度适配布局。没有新增第三方依赖或大幅改版。
@@ -36,10 +36,10 @@ Claude-Local 是独立维护的 Windows x64 产品，主程序 `claude-local.exe
 
 使用既有 `.local/tools/complete-local-update.ps1`，在新的中性 Cargo 根构建 `custom-protocol` Release 和全新 NSIS 安装包。沿用原有 13 项私密标记，102 个解包文件，零发现；只解包检查，没有执行安装器或卸载器。
 
-完整备份后替换 9 个变化文件，验证 95 个安装文件和主程序启动窗口。三个 Claude Code 进程的更新前后 PID 一致，`missingClaudePids` 为空。没有结束 Claude Code 或配套浏览器，没有重新配置个人 Token 归属规则。
+首次完整备份后替换 9 个变化文件；CI 暴露的 Windows 首建共享窗口修复后，又从全新中性根重新构建、审计，并备份更新了 1 个主程序文件。最终验证 95 个安装文件和启动窗口。两次更新中三个 Claude Code 进程的 PID 均保持一致，`missingClaudePids` 为空。没有结束 Claude Code 或配套浏览器，没有重新配置个人 Token 归属规则。
 
-- 安装包 SHA-256：`df8406fb573928b0bdc25c6be55332c2c0158e9a23d5084887150ff963842d98`。
-- 已安装主程序 SHA-256：`6ffd3e392090356bd06828605347a8537b88c1c12bd9ed116df25c04598aa305`。
+- 安装包 SHA-256：`59ce86f3918a0282754d0026157452ef0a2c289545661ca82e02b807d65602d4`。
+- 已安装主程序 SHA-256：`b35916557c92bf1358d5d0d89398dd46074899ea1dd84ab44af513890fff2078`。
 
 实际安装目录、中性构建目录、备份及安装包路径只从私有回执读取，不加入受跟踪文档。
 
@@ -55,7 +55,7 @@ Claude-Local 是独立维护的 Windows x64 产品，主程序 `claude-local.exe
 
 ## 5. 验证与仍有的边界
 
-本次源码改动已通过 3 项 Rust 数据库并发初始化/迁移测试、9 项 Bun 本地化/浏览器核验测试、16 组隔离快速配置 GUI 检查、TypeScript/Vite 构建；新发布脚本的五组合成 Git/假 GitHub 续跑测试通过。新 Release 构建和 13 标记解包审计及本地文件替换也有独立回执。完整 Windows CI 只在临时托管 runner 执行，最终结果从发布回执和 GitHub 读取。
+本次源码改动已通过 3 项 Rust 数据库并发初始化/迁移测试（含 24 轮 Barrier 首建争用）、9 项 Bun 本地化/浏览器核验测试、16 组隔离快速配置 GUI 检查、TypeScript/Vite 构建；新发布脚本的五组合成 Git/假 GitHub 续跑测试通过。修正后的新 Release 构建、13 标记解包审计和本地文件替换有独立回执。首次 CI 的 124 通过/1 失败/1 忽略结果已促成本次完整打开边界修复，不绕过失败发布；完整 Windows CI 只在临时托管 runner 执行，最终成功结果从发布回执和 GitHub 读取。
 
 GUI 证据位于忽略的 `.local/preview/quick-setup-20261021/`。针对快速配置使用 `node scripts/test-usage-statistics.mjs <output> --quick-only`，复用原有隔离 IPC/浏览器环境，不运行无关全库检查。
 

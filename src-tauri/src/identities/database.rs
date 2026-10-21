@@ -1,10 +1,11 @@
 // [INPUT]: rusqlite/内嵌 SQLite、私有保险库目录和脱敏身份元数据与本机加盐的账号索引。
-// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、SQLite v3 浏览器绑定与持久切换/恢复状态和身份移除事务；初始化并发串行化。
-// [POS]: 保险库的索引事务；v3 schema 初始化以 IMMEDIATE 事务保护版本迁移与默认状态，凭据和会话正文仅进入加密归档。
+// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、SQLite v3 浏览器绑定与持久切换/恢复状态和身份移除事务；文件创建到初始化提交的进程内串行化。
+// [POS]: 保险库的索引事务；短期 Mutex 保护打开边界，IMMEDIATE 事务保护跨连接版本迁移与默认状态，凭据和会话正文仅进入加密归档。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, time::Duration};
+use std::{path::Path, sync::Mutex, time::Duration};
+static DATABASE_OPEN: Mutex<()> = Mutex::new(());
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
     pub id: String,
@@ -25,6 +26,13 @@ pub(super) fn error(_: rusqlite::Error) -> String {
 }
 impl Database {
     pub fn open(root: &Path) -> Result<Self, String> {
+        // A Windows private::create handle shares reads only until it is closed. A competing
+        // SQLite open can silently fall back to read-only before BEGIN IMMEDIATE runs.
+        // Serialize the entire creation/open/initialization boundary, including PRAGMAs;
+        // release this guard before returning so normal Store operations can open other DBs.
+        let _open_guard = DATABASE_OPEN
+            .lock()
+            .map_err(|_| "身份数据库初始化锁不可用；未提交身份切换。")?;
         if let Err(error) = super::private::directory(root) {
             // Another opener may have won the same create_new directory race.
             // Accept only the same safe, owned directory after validating it again.
