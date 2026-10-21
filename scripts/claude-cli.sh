@@ -1,11 +1,11 @@
 #!/bin/zsh
-# [INPUT]: 宿主限定的 read/uninstall/reinstall 动作、当前登录终端 PATH 与真实用户目录 CC_CLI_USER_DIR。
-# [OUTPUT]: Claude Code 安装状态标记与官方卸载/重装；仅删除 CLI 程序，保留配置、技能、会话和项目；原生重装可捕获失败时恢复原文件。
+# [INPUT]: 宿主限定的 read/update/兼容维护动作、登录终端 PATH 与真实用户目录 CC_CLI_USER_DIR。
+# [OUTPUT]: CLI 来源/版本与原安装方式更新；更新不卸载、不运行远程安装器，不修改配置、身份与项目。
 # [POS]: 宿主内嵌的本机包管理边界；兼容原生、Homebrew 和终端/nvm 全局 npm，多重安装先去重。
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -eu
 action=${1:-read}
-case "$action" in read|uninstall|reinstall) ;; *) exit 2 ;; esac
+case "$action" in read|update|uninstall|reinstall) ;; *) exit 2 ;; esac
 root=${CC_CLI_USER_DIR:?}
 native_dir="$root/.local/share/claude"
 launcher="$root/.local/bin/claude"
@@ -61,6 +61,30 @@ if [[ "$action" == read && -n "$cli" ]]; then
   version=$(DISABLE_AUTOUPDATER=1 "$cli" --version 2>/dev/null) || version=''
 fi
 if [[ "$action" == read ]]; then
+  print -r -- "CC_CLI_METHOD=${(j: / :)methods}"
+  print -r -- "CC_CLI_PATH=$cli"
+  print -r -- "CC_CLI_VERSION=$version"
+  print -r -- 'CC_CLI_DONE=1'
+  exit 0
+fi
+if [[ "$action" == update ]]; then
+  [[ -n "$cli" && ${#methods} == 1 ]] || fail 'cli.error.multipleInstalls'
+  step 'cli.progress.updating'
+  if (( native )); then
+    [[ "$cli" == "$launcher" && "${cli:A}" == "$native_dir"/versions/* ]] || fail 'cli.error.unsupported'
+    "$cli" update >/dev/null 2>&1 || fail 'cli.error.updateFailed'
+  elif (( ${#npm_commands} == 1 )); then
+    npm=$npm_commands[1]
+    [[ "${cli:h:A}" == "${npm:h:A}" ]] || fail 'cli.error.unsupported'
+    PATH="${npm:h}:$PATH" "$npm" install -g "$package@latest" --registry=https://registry.npmjs.org >/dev/null 2>&1 || fail 'cli.error.updateFailed'
+  elif (( ${#casks} == 1 )); then
+    HOMEBREW_NO_AUTO_UPDATE=1 "$brew" upgrade --cask "$casks[1]" >/dev/null 2>&1 || fail 'cli.error.updateFailed'
+  else
+    fail 'cli.error.unsupported'
+  fi
+  step 'cli.progress.verifying'
+  version=$(DISABLE_AUTOUPDATER=1 "$cli" --version 2>/dev/null) || fail 'cli.error.verifyFailed'
+  [[ "$version" == *'Claude Code'* ]] || fail 'cli.error.verifyFailed'
   print -r -- "CC_CLI_METHOD=${(j: / :)methods}"
   print -r -- "CC_CLI_PATH=$cli"
   print -r -- "CC_CLI_VERSION=$version"

@@ -1,5 +1,5 @@
-// [INPUT]: 平台内嵌 claude-cli.sh/ps1、当前用户平台环境、清理事务互斥锁及真实进度通道。
-// [OUTPUT]: Claude Code CLI 只读安装状态、一键卸载/重装与版本核验，配置和个人资产不在删除范围。
+// [INPUT]: 平台内嵌 claude-cli.sh/ps1、用户手动更新检查、固定公开版本元数据、事务锁及真实进度通道。
+// [OUTPUT]: CLI 本地安装/运行状态、真实最新版本对比及原安装方式的一键更新；运行中拒绝修改，不结束 Claude 会话。
 // [POS]: 本机程序安装边界；Windows 子进程丢弃继承的 PSModulePath，避免 PowerShell 7 模块污染 5.1；固定动作/事务锁限制修改，输出只含脱敏协议，测试替身仅在 cfg(test) 中注入。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use crate::{
@@ -27,6 +27,42 @@ pub struct CliStatus {
     method: String,
     path: String,
     version: String,
+    running: bool,
+}
+#[derive(Debug, Serialize)]
+pub struct ClaudeCliUpdateStatus {
+    current: CliStatus,
+    latest_version: String,
+    update_available: bool,
+}
+const LATEST_VERSION_URL: &str = "https://downloads.claude.ai/claude-code-releases/latest";
+fn release_version(text: &str) -> Option<[u64; 3]> {
+    let parts: Vec<_> = text.trim().split('.').collect();
+    if parts.len() != 3 { return None; }
+    let mut result = [0; 3];
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) || (part.len() > 1 && part.starts_with('0')) { return None; }
+        result[index] = part.parse().ok()?;
+    }
+    Some(result)
+}
+fn compare_release(current: &str, latest: &str) -> Result<bool, String> {
+    let current = current.split_whitespace().next().and_then(release_version)
+        .ok_or("cli.error.currentVersion")?;
+    let latest = release_version(latest).ok_or("cli.error.latestVersion")?;
+    Ok(latest > current)
+}
+async fn latest_release(mut response: reqwest::Response) -> Result<String, String> {
+    if response.status() != reqwest::StatusCode::OK { return Err("cli.error.checkFailed".into()); }
+    if response.content_length().is_some_and(|size| size > 64) { return Err("cli.error.latestVersion".into()); }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| "cli.error.checkFailed")? {
+        if chunk.len() > 64 - bytes.len() { return Err("cli.error.latestVersion".into()); }
+        bytes.extend_from_slice(&chunk);
+    }
+    let version = std::str::from_utf8(&bytes).map_err(|_| "cli.error.latestVersion")?.trim();
+    release_version(version).ok_or("cli.error.latestVersion")?;
+    Ok(version.to_string())
 }
 fn execute(command: Command, log: Arc<Reporter>, seconds: u64) -> Result<CliStatus, String> {
     execute_script(
@@ -129,6 +165,7 @@ fn execute_script(
         // 优先最后的回滚结论，仅显示脚本自有固定错误文案，不泄漏 shell/npm/Homebrew 输出中的配置或凭据。
         let message = errors.lines().rev().find(|line| {
             line.starts_with("Claude Code ")
+                || line.starts_with("cli.error.")
                 || line.starts_with("npm ")
                 || line.starts_with("Homebrew ")
                 || line.starts_with("无法读取 ")
@@ -187,10 +224,29 @@ fn command(action: &str) -> Result<Command, String> {
 #[tauri::command]
 pub async fn claude_cli_read() -> Result<CliStatus, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        execute(command("read")?, Arc::new(Reporter::channel(None)), 60)
+        let mut status = execute(command("read")?, Arc::new(Reporter::channel(None)), 60)?;
+        status.running = crate::cleaner::cli_running()?;
+        Ok(status)
     })
     .await
     .map_err(|_| "Claude Code 安装任务被中断。".to_string())?
+}
+#[tauri::command]
+pub async fn claude_cli_check(app: tauri::AppHandle) -> Result<ClaudeCliUpdateStatus, String> {
+    let current = claude_cli_read().await?;
+    if current.method.is_empty() { return Err("cli.error.notInstalled".into()); }
+    let proxy = tauri::async_runtime::spawn_blocking(move || crate::browser::configured_or_system_proxy(&app))
+        .await.map_err(|_| "cli.error.checkFailed")?;
+    let mut builder = reqwest::Client::builder().no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(12));
+    if !proxy.trim().is_empty() {
+        builder = builder.proxy(reqwest::Proxy::all(proxy.trim()).map_err(|_| "cli.error.checkFailed")?);
+    }
+    let client = builder.build().map_err(|_| "cli.error.checkFailed")?;
+    let latest_version = latest_release(client.get(LATEST_VERSION_URL).send().await.map_err(|_| "cli.error.checkFailed")?).await?;
+    let update_available = compare_release(&current.version, &latest_version)?;
+    Ok(ClaudeCliUpdateStatus { current, latest_version, update_available })
 }
 #[tauri::command]
 pub async fn claude_cli_manage(
@@ -198,7 +254,7 @@ pub async fn claude_cli_manage(
     action: String,
     on_progress: Channel<Progress>,
 ) -> Result<CliStatus, String> {
-    if !matches!(action.as_str(), "uninstall" | "reinstall") {
+    if !matches!(action.as_str(), "update" | "uninstall" | "reinstall") {
         return Err("无效的 Claude Code 安装操作。".into());
     }
     let state = app.state::<Cleaner>();
@@ -207,7 +263,7 @@ pub async fn claude_cli_manage(
         let log = Arc::new(Reporter::channel(Some(on_progress)));
         let result = (|| {
             if crate::cleaner::cli_running()? {
-                return Err("Claude Code 仍在运行，请先结束进程。".into());
+                return Err("cli.error.running".into());
             }
             execute(command(&action)?, log.clone(), 600)
         })();
@@ -419,5 +475,57 @@ mod windows_tests {
         assert!(command.get_envs().any(|(key, value)| {
             key.to_string_lossy().eq_ignore_ascii_case("PSModulePath") && value.is_none()
         }));
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+    #[test]
+    fn versions_compare_numerically_and_reject_untrusted_metadata() {
+        assert_eq!(compare_release("2.1.9 (Claude Code)", "2.1.10"), Ok(true));
+        assert_eq!(compare_release("2.1.10 (Claude Code)", "2.1.10"), Ok(false));
+        assert_eq!(compare_release("3.0.0 (Claude Code)", "2.1.10"), Ok(false));
+        for invalid in ["<html>2.1.10</html>", "2.1", "2.01.10", "2.1.10\nCC_CLI_DONE=1", "2.1.10-beta"] {
+            assert!(compare_release("2.1.9 (Claude Code)", invalid).is_err());
+        }
+        assert!(compare_release("unknown", "2.1.10").is_err());
+    }
+    #[test]
+    fn release_http_rejects_redirects_invalid_and_oversized_responses_without_credentials() {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for response in [
+                "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n2.1.10\n".to_string(),
+                "HTTP/1.1 302 Found\r\nLocation: https://example.invalid\r\nContent-Length: 0\r\n\r\n".to_string(),
+                "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nOops".to_string(),
+                format!("HTTP/1.1 200 OK\r\nContent-Length: 65\r\n\r\n{}", "2".repeat(65)),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                let mut request = String::new();
+                let mut reader = BufReader::new(&stream);
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    request.push_str(&line);
+                    if line == "\r\n" { break; }
+                }
+                assert!(!request.to_lowercase().contains("authorization:"));
+                assert!(!request.to_lowercase().contains("cookie:"));
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        tauri::async_runtime::block_on(async {
+            let client = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(3)).build().unwrap();
+            for index in 0..4 {
+                let response = client.get(format!("http://{address}/latest")).send().await.unwrap();
+                let result = latest_release(response).await;
+                if index == 0 { assert_eq!(result.unwrap(), "2.1.10"); } else { assert!(result.is_err()); }
+            }
+        });
+        server.join().unwrap();
     }
 }

@@ -1,4 +1,7 @@
-// Local-only screenshot helper. Run from PowerShell with Node; all account data is fictional.
+// [INPUT]: Main shell and fictional account/browser/system snapshots.
+// [OUTPUT]: Bilingual local-only shell and quick setup previews.
+// [POS]: Isolated fake IPC screenshot helper; no runtime data or native changes.
+// [PROTOCOL]: Update scripts/CLAUDE.md with changes.
 import {resolve,join} from 'node:path';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
@@ -28,6 +31,8 @@ mockIPC((command,args)=>{
   if(command==='ui_language_write'){locale=args.language;return;}
   if(command==='plugin:app|version')return '0.1.0';
   if(command==='identities_read')return structuredClone(state);
+  if(command==='system_read')return {timezone:'America/New_York',languages:['en-US']};
+  if(command==='browser_read')return {engine_ready:true,running:false,identity_linked:true,config:{timezone:'America/Los_Angeles',language:'en-US'}};
   if(command==='claude_cli_read')return {method:'',path:'',version:''};
   if(command==='plugin:event|listen')return 1;
   if(command==='plugin:event|unlisten')return;
@@ -59,9 +64,11 @@ try{
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(base+'/__local-preview.html');
  await page.getByRole('group',{name:'本地版本信息',exact:true}).waitFor();
+ await page.getByRole('button',{name:'快速配置',exact:true}).click();
+ await page.locator('.quick-overview[aria-busy="false"]').waitFor();
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'01-quick-zh.png'),fullPage:true});
- await page.getByRole('button',{name:'Claude 身份管理',exact:true}).click();
+ await page.getByRole('button',{name:'身份管理',exact:true}).click();
  await page.getByText('studio@example.invalid',{exact:true}).waitFor();
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'02-identities-zh.png'),fullPage:true});
@@ -72,6 +79,28 @@ try{
  await page.screenshot({path:join(output,'03-identities-en.png'),fullPage:true});
  await page.setViewportSize({width:900,height:800});
  await page.screenshot({path:join(output,'04-identities-compact-en.png'),fullPage:true});
+ await page.setViewportSize({width:1180,height:860});
+ await page.getByRole('button',{name:'CN',exact:true}).click();
+ await page.getByRole('button',{name:'软件设置',exact:true}).click();
+ await page.getByRole('heading',{name:'软件设置',exact:true}).waitFor();
+ await page.mouse.move(2,2);
+ await page.screenshot({path:join(output,'05-settings-zh.png'),fullPage:true});
+ await page.getByRole('button',{name:'网络环境',exact:true}).click();
+ await page.getByRole('heading',{name:'Claude 服务连通性',exact:true}).waitFor();
+ await page.mouse.move(2,2);
+ await page.screenshot({path:join(output,'08-network-zh.png'),fullPage:true});
+ await page.getByRole('button',{name:'软件设置',exact:true}).click();
+ await page.getByRole('button',{name:/月之暗面/}).click();
+ await page.mouse.move(2,2);
+ await page.screenshot({path:join(output,'06-settings-dark-zh.png'),fullPage:true});
+ await page.getByRole('button',{name:'身份管理',exact:true}).click();
+ await page.getByText('studio@example.invalid',{exact:true}).waitFor();
+ await page.mouse.move(2,2);
+ await page.screenshot({path:join(output,'07-identities-dark-zh.png'),fullPage:true});
+ await page.getByRole('button',{name:'网络环境',exact:true}).click();
+ await page.getByRole('heading',{name:'Claude 服务连通性',exact:true}).waitFor();
+ await page.mouse.move(2,2);
+ await page.screenshot({path:join(output,'09-network-dark-zh.png'),fullPage:true});
  const commands=await page.evaluate(()=>window.localPreviewCommands);
  if(commands.some(command=>/update|stop|switch|manage|delete|clean/.test(command)))throw Error('Unexpected mutation/update request: '+commands.join(','));
  const result={output,geometry,errors,commands:[...new Set(commands)]};

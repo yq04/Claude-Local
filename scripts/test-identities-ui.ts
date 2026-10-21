@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Node.js 标准管道、已锁定 playwright-core、固定引擎、Vite 与 tests/ 的虚构 Tauri IPC。
- * [OUTPUT]: 工牌、离线额度与最优推荐、浏览器/网络与全清理确认、残留清理与真实 Channel 阶段动画的 DOM 验收，覆盖双语、默认取消及失败重扫。
+ * [OUTPUT]: 单行本地保存名与长名称重命名、隐私提示、工牌/离线额度、浏览器/网络与清理确认及真实阶段动画的双语 DOM 验收。
  * [POS]: 发布前无头行为回归；无截图、无真实账号/文件修改，不加载原生宿主，不允许外网请求。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -38,11 +38,13 @@ try{
  await page.goto(base+'/tests/identities.html');
  const cards=page.locator('.identity-card');
  await page.getByText('fixture@example.invalid',{exact:true}).waitFor();
- assert.equal(await cards.count(),41);assert.equal(await cards.first().getByRole('heading').innerText(),'空身份');
+ assert.equal(await cards.count(),40);assert.equal(await page.getByRole('button',{name:'新身份',exact:true}).count(),1);
  assert.equal(await page.locator('.identity-switcher').count(),0);
  assert.equal(await page.getByText('上次使用',{exact:true}).count(),0);
- assert.equal(await cards.filter({has:page.getByRole('heading',{name:'Identity 1',exact:true})}).count(),0);
- assert.match(await cards.first().innerText(),/清空本地登录身份/);checks++;
+ assert.equal(await cards.filter({has:page.getByRole('heading',{name:'Identity 1',exact:true})}).count(),1);
+ assert.equal(await page.locator('.identity-card.current h3[data-identity-name] > strong').innerText(),'Identity 1','The current identity must prefer its local saved name');
+ assert.equal(await cards.locator('.identity-user-name,.identity-saved-name').count(),0,'Account names must not add a second visible title row');
+ assert.match(await page.locator('.identity-onboarding-bar').innerText(),/添加新号 3 步法/);checks++;
  const geometry=await cards.evaluateAll(nodes=>nodes.slice(0,3).map(node=>{const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}));
  assert.equal(geometry[0].y,geometry[2].y);assert(geometry[2].x+geometry[2].width<1040-150);assert(Math.abs(geometry[0].width/geometry[0].height-54/85.6)<.01);checks++;
  assert.equal(await page.getByRole('checkbox',{name:'联动浏览器',exact:true}).isChecked(),true);
@@ -60,8 +62,9 @@ try{
  await page.waitForFunction(()=>(window as any).identityFixture.state.browser.enabled===true);checks++;
  const current=page.locator('.identity-card.current');
  const light=await current.evaluate(node=>getComputedStyle(node,'::before').boxShadow);assert.match(light,/67, 228, 132/);
- await page.mouse.move(geometry[1].x+150,geometry[1].y+85);
- await page.waitForFunction(()=>document.querySelector('.identity-card.current')?.getAttribute('style')?.includes('rotate'));
+ await page.mouse.move(geometry[0].x+90,geometry[0].y+85);
+ await page.waitForFunction(()=>getComputedStyle(document.querySelector('.identity-card.current')!).transform!=='none');
+ assert.equal((await current.evaluate(node=>getComputedStyle(node).transform)).includes('matrix3d'),false);
  await page.mouse.move(10,10);checks++;
  const rail=page.locator('.identity-card-rail');
  await rail.hover();await page.mouse.wheel(0,800);
@@ -78,9 +81,14 @@ try{
  await page.mouse.click(3,3);assert.equal(await dialog.count(),1);
  await dialog.getByRole('button',{name:'取消'}).click();
  assert.equal(await page.evaluate(()=>((window as any).identityFixture.commands as any[]).filter(row=>row.command==='identities_delete').length),0);checks++;
- assert.match(await current.innerText(),/已备份/);assert.match(await current.innerText(),/Pro/);assert.match(await current.innerText(),/凭据有效/);assert.match(await current.innerText(),/5h 65% · 7d 60%/);
+ assert.match(await current.innerText(),/Pro/);assert.match(await current.innerText(),/凭据有效/);
+ assert.match(await current.locator('[data-quota-window="5h"]').innerText(),/剩余 65%/);
+ assert.match(await current.locator('[data-quota-window="7d"]').innerText(),/剩余 60%/);
  const savedSecond=cards.filter({has:page.getByRole('heading',{name:'Identity 2',exact:true})});
- assert.match(await savedSecond.innerText(),/user2@example\.invalid/);assert.match(await savedSecond.innerText(),/Org 2/);assert.match(await savedSecond.innerText(),/5h 80% · 7d 70%/);
+ assert.match(await savedSecond.innerText(),/user2@example\.invalid/);
+ assert.equal(await savedSecond.locator('.identity-organization').count(),0);
+ assert.match(await savedSecond.locator('[data-quota-window="5h"]').innerText(),/剩余 80%/);
+ assert.match(await savedSecond.locator('[data-quota-window="7d"]').innerText(),/剩余 70%/);
  assert.equal(await page.getByRole('button',{name:'切到最优号',exact:true}).count(),1);
  await current.getByRole('button',{name:'更新备份',exact:true}).click();
  dialog=page.getByRole('dialog');await dialog.waitFor();
@@ -90,16 +98,17 @@ try{
  assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);checks++;
  await page.getByText('保留在工作区',{exact:true}).click();
  await page.getByRole('checkbox',{name:'Skills 与命令'}).uncheck();
- await cards.first().getByRole('button',{name:'使用空身份'}).click();
+ await page.getByRole('button',{name:'新身份',exact:true}).click();
  dialog=page.getByRole('dialog');await dialog.waitFor();await dialog.getByLabel('当前身份保存为').fill('First archive');
  await dialog.getByRole('button',{name:'确认暂存并切换'}).click();
  await page.waitForFunction(()=>!(window as any).identityFixture.state.current.present);
  assert.equal(await page.locator('.identity-card.current').count(),0);
+ assert.equal(await cards.first().getByRole('heading').innerText(),'新身份');
  const request=await page.evaluate(()=>((window as any).identityFixture.commands as any[]).find(row=>row.command==='identities_switch').args);
  assert.equal(request.policy.skills,false);assert.equal(request.targetId,'empty');assert.equal(request.currentName,'First archive');checks++;
  const target=page.locator('.identity-card:not(.current)').filter({has:page.getByRole('heading',{name:'Identity 3',exact:true})});
  await target.getByRole('button',{name:'切换',exact:true}).click();
- await page.getByRole('dialog').getByRole('button',{name:'确认暂存并切换'}).click();await page.getByText('Fixture team',{exact:true}).waitFor();checks++;
+ await page.getByRole('dialog').getByRole('button',{name:'确认暂存并切换'}).click();await page.locator('.identity-card.current').getByRole('heading',{name:'Identity 3',exact:true}).waitFor();checks++;
  assert.equal(await target.count(),0);checks++;
  const bound=cards.filter({has:page.getByRole('heading',{name:'Identity 1',exact:true})});
  await bound.getByRole('button',{name:'删除',exact:true}).click();
@@ -107,18 +116,40 @@ try{
  assert.equal(await browserDeletion.getByRole('checkbox',{name:'同时永久删除关联浏览器资料'}).isChecked(),false);
  await browserDeletion.getByRole('button',{name:'取消',exact:true}).click();checks++;
  const other=page.locator('.identity-card:not(.current)').filter({has:page.getByRole('heading',{name:'Identity 4',exact:true})});
+ const beforeRename=await other.evaluate(node=>{const card=node.getBoundingClientRect(),heading=node.querySelector('h3')!.getBoundingClientRect(),email=node.querySelector('.identity-email')!.getBoundingClientRect();return {width:card.width,height:card.height,headingHeight:heading.height,emailOffset:email.top-card.top};});
+ const renamedLabel='Renamed fixture — synthetic long local account archive name';
  await other.getByRole('button',{name:'重命名',exact:true}).click();
- await page.getByRole('dialog').getByRole('textbox',{name:'身份名称'}).fill('Renamed fixture');
+ await page.getByRole('dialog').getByRole('textbox',{name:'身份名称'}).fill(renamedLabel);
  await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click();
- const renamed=cards.filter({has:page.getByRole('heading',{name:'Renamed fixture',exact:true})});await renamed.waitFor();
+ const renamed=cards.filter({has:page.getByRole('heading',{name:renamedLabel,exact:true})});await renamed.waitFor();
+ const renamedTitle=renamed.locator('h3[data-identity-name] > strong');
+ assert.equal(await renamedTitle.innerText(),renamedLabel);
+ assert.match(await renamedTitle.getAttribute('title')||'',/Identity 4/);
+ assert.match(await renamed.locator('h3[data-identity-name]').getAttribute('aria-description')||'',/Identity 4/);
+ assert.equal(await renamed.locator('.identity-user-name,.identity-saved-name').count(),0);
+ assert.equal(await renamed.locator('.identity-email').count(),1);
+ const afterRename=await renamed.evaluate(node=>{const card=node.getBoundingClientRect(),heading=node.querySelector('h3')!.getBoundingClientRect(),email=node.querySelector('.identity-email')!.getBoundingClientRect(),title=getComputedStyle(node.querySelector('h3 > strong')!);return {width:card.width,height:card.height,headingHeight:heading.height,emailOffset:email.top-card.top,whiteSpace:title.whiteSpace,overflow:title.overflow,textOverflow:title.textOverflow};});
+ assert.deepEqual({width:afterRename.width,height:afterRename.height},{width:180,height:286});
+ assert.equal(afterRename.headingHeight,beforeRename.headingHeight,'A long rename must not grow the title row');
+ assert.equal(afterRename.emailOffset,beforeRename.emailOffset,'Renaming must not push the email or quota content down');
+ assert.equal(afterRename.whiteSpace,'nowrap');assert.equal(afterRename.overflow,'hidden');assert.equal(afterRename.textOverflow,'ellipsis');
+ const renamedSummary=await page.evaluate(()=>(window as any).identityFixture.state.summaries['00000000000000000000000000000004']);
+ assert.equal(renamedSummary.display_name,'Identity 4','Renaming a local archive must preserve its account metadata');
+ await page.evaluate(async()=>{const {updatePreferences}=await import('/src/settings-model.ts');updatePreferences({privacyMask:true});});
+ await page.waitForFunction(label=>{const heading=Array.from(document.querySelectorAll('h3[data-identity-name]')).find(node=>node.textContent===label);return heading&&!heading.getAttribute('aria-description')?.includes('Identity 4');},renamedLabel);
+ assert.equal((await renamedTitle.getAttribute('title')||'').includes('Identity 4'),false);
+ assert.equal((await renamed.locator('h3[data-identity-name]').getAttribute('aria-description')||'').includes('Identity 4'),false);
+ assert.equal((await renamed.locator('.identity-email').getAttribute('title')||'').includes('user4@example.invalid'),false);
+ await page.evaluate(async()=>{const {updatePreferences}=await import('/src/settings-model.ts');updatePreferences({privacyMask:false});});
+ checks++;
  await renamed.getByRole('button',{name:'删除',exact:true}).click();dialog=page.getByRole('alertdialog');
  await dialog.getByRole('checkbox',{name:'我知道此操作无法撤销'}).check();
  await dialog.getByRole('button',{name:'确认直接删除'}).click();await renamed.waitFor({state:'detached'});
  assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);checks++;
  await page.evaluate(()=>{(window as any).identityFixture.language('en');});
- await cards.first().getByRole('button',{name:'Use empty identity'}).waitFor();assert.match(await cards.first().innerText(),/local sign-in/);checks++;
+ await page.getByRole('button',{name:'New identity',exact:true}).waitFor();assert.match(await page.locator('.identity-onboarding-bar').innerText(),/Add a new account in 3 steps/);checks++;
  await page.evaluate(()=>{(window as any).identityFixture.setFailure('identities_switch');});
- await cards.first().getByRole('button',{name:'Use empty identity'}).click();
+ await page.getByRole('button',{name:'New identity',exact:true}).click();
  await page.getByRole('dialog').getByRole('button',{name:'Archive & switch'}).click();
  await page.getByText(/fixture operation failed/).first().waitFor();assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);checks++;
  await page.evaluate(()=>{(window as any).identityFixture.recover();});

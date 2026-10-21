@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 目录、用户策略、白名单源、已验收归档代次、认证加密与平台凭据桥。
-// [OUTPUT]: 已验证身份归档、先暂存后切换、恢复后跨账号残留消毒、持久恢复记录、原位配置合并、直接删除与清除/恢复/凭据/提交/回滚真实进度。
+// [OUTPUT]: 已验证身份归档、先暂存后切换、恢复后跨账号残留消毒、旧归档会话历史无损合并、持久恢复记录、原位配置合并、直接删除与清除/恢复/凭据/提交/回滚真实进度。
 // [POS]: 身份的文件事务；SQLite 与文件系统由恢复日志协调，不能假装是同一原子事务。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -319,6 +319,9 @@ impl Store {
                 Some(sources.len()),
             );
         }
+        if phase != "rollback" {
+            self.merge_kept_history(stage, policy)?;
+        }
         reporter.log(
             phase,
             "ok",
@@ -335,6 +338,71 @@ impl Store {
         reporter.log(phase, "running", "正在恢复本地登录凭据。", 0, None);
         self.keys(&stage.manifest.credentials, true, policy)?;
         reporter.log(phase, "ok", "本地登录凭据已恢复。", 1, Some(1));
+        Ok(())
+    }
+    fn merge_kept_history(&self, stage: &Stage, policy: &Policy) -> Result<(), String> {
+        if policy.projects {
+            let claude_json = self.home.join(".claude.json");
+            if let Some((n, _)) = stage
+                .manifest
+                .sources
+                .iter()
+                .enumerate()
+                .find(|(_, s)| s.path == claude_json)
+            {
+                let data = stage.path.join(format!("data/{n}"));
+                if data.is_file() {
+                    if let Ok(bytes) = fs::read(&data) {
+                        if let Ok(saved) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                            let _ = identity::merge_kept_projects(&claude_json, &saved);
+                        }
+                    }
+                }
+            }
+        }
+        if !policy.history {
+            return Ok(());
+        }
+        for (n, source) in stage.manifest.sources.iter().enumerate() {
+            if !source.keys.is_empty() || source.category != "history" {
+                continue;
+            }
+            if !identity::allowed(&self.home, source) {
+                continue;
+            }
+            let data = stage.path.join(format!("data/{n}"));
+            if !data.exists() {
+                continue;
+            }
+            self.stopped()?;
+            private::parents(source.path.parent().unwrap())?;
+            if source.path.exists() {
+                private::safe(&source.path)?;
+            }
+            if data.is_dir() {
+                walk(&data, &data, &mut |path, relative, directory| {
+                    self.during_io()?;
+                    let target = source.path.join(relative);
+                    if directory {
+                        private::directory(&target)
+                    } else if !target.exists() {
+                        private::directory(target.parent().unwrap())?;
+                        let mut dest = private::create(&target)?;
+                        io::copy(&mut fs::File::open(path).map_err(problem)?, &mut dest)
+                            .map_err(problem)?;
+                        dest.sync_all().map_err(problem)
+                    } else {
+                        Ok(())
+                    }
+                })?;
+            } else if !source.path.exists() {
+                private::directory(source.path.parent().unwrap())?;
+                let mut output = private::create(&source.path)?;
+                io::copy(&mut fs::File::open(data).map_err(problem)?, &mut output)
+                    .map_err(problem)?;
+                output.sync_all().map_err(problem)?;
+            }
+        }
         Ok(())
     }
     pub fn delete(&mut self, id: &str, policy: &Policy, reporter: &Reporter) -> Result<(), String> {
@@ -434,6 +502,11 @@ impl Store {
             .set_summary(&record.id, &super::profile::summarize_stage(&stage));
         self.db.complete(&record.id)?;
         self.db.compact()?;
+        super::usage::commit_switch_boundary(
+            &self.vault,
+            &self.home,
+            record.account_key.as_deref().filter(|key| !key.is_empty()),
+        );
         let _ = self.collect_generations();
         reporter.log("commit", "ok", "身份保险库与浏览器绑定已更新。", 1, Some(1));
         reporter.log(
@@ -531,6 +604,9 @@ impl Store {
                 outgoing.manifest.sources.len(),
                 Some(outgoing.manifest.sources.len()),
             );
+            // Capture outgoing requests against the verified live HMAC identity before
+            // cleanup can rewrite shared project-session attribution markers.
+            super::usage::collect_before_switch(&self.vault, &self.home, live_key.as_deref());
             mutated = true;
             self.clear(&current, reporter, "clear")?;
             identity::clear_stale_locks(&self.home);
@@ -559,6 +635,8 @@ impl Store {
                 Some(1),
             );
             self.db.complete(target)?;
+            let next_account = if target == "empty" { None } else { self.record(target)?.account_key };
+            super::usage::commit_switch_boundary(&self.vault, &self.home, next_account.as_deref());
             if !record.empty {
                 let _ = self
                     .db
@@ -730,6 +808,11 @@ impl Store {
                 .set_summary(&record.id, &super::profile::summarize_stage(&outgoing));
         }
         self.db.compact()?;
+        super::usage::commit_switch_boundary(
+            &self.vault,
+            &self.home,
+            record.account_key.as_deref().filter(|key| !key.is_empty()),
+        );
         let _ = self.collect_generations();
         reporter.log("commit", "ok", "恢复后的身份选择已提交。", 1, Some(1));
         reporter.log("verify", "ok", "原身份已恢复。", 1, Some(1));

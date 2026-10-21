@@ -275,13 +275,15 @@ fn synthetic_switch_and_compression_benchmark() {
         );
     }
     let mut s = store::Store::open(&f.vault, &f.home).unwrap();
+    let mut bench_policy = Policy::default();
+    bench_policy.history = false;
     let start = Instant::now();
-    s.switch("empty", "A", &Policy::default(), &Reporter::channel(None))
+    s.switch("empty", "A", &bench_policy, &Reporter::channel(None))
         .unwrap();
     let stash = start.elapsed();
     let id = s.records().into_iter().find(|r| !r.empty).unwrap().id;
     let start = Instant::now();
-    s.switch(&id, "empty", &Policy::default(), &Reporter::channel(None))
+    s.switch(&id, "empty", &bench_policy, &Reporter::channel(None))
         .unwrap();
     let restore = start.elapsed();
     eprintln!("synthetic {} bytes: gzip={} bytes {:?}; zstd={} bytes {:?}; 500-file stash {:?}; restore {:?}",data.len(),gzip.len(),gz_time,zstd.len(),zs_time,stash,restore);
@@ -764,4 +766,247 @@ fn in_place_save_and_summary_backfill_and_lock_cleanup() {
     assert_eq!(sum2.proxy.as_deref(), Some("http://127.0.0.1:7897"));
     assert_eq!(sum2.quota_5h_used, Some(25));
     assert_eq!(sum2.quota_7d_used, Some(40));
+}
+
+#[test]
+fn cross_account_session_resume_merges_legacy_history_and_sanitizes_risk_vectors() {
+    let f = Fixture::new();
+    let r = Reporter::channel(None);
+    let mut s = store::Store::open(&f.vault, &f.home).unwrap();
+
+    // Step 1: Account A has a session and subagent session, stashed with legacy policy (history: false)
+    f.write(
+        ".claude.json",
+        &serde_json::to_vec(&serde_json::json!({
+            "oauthAccount": {
+                "accountUuid": "acct-a",
+                "organizationUuid": "org-a",
+                "emailAddress": "a@example.invalid",
+                "displayName": "Account A"
+            },
+            "projects": {
+                "D:/demo": {
+                    "lastSessionId": "sess-a"
+                }
+            }
+        }))
+        .unwrap(),
+    );
+    f.write(
+        ".claude/.credentials.json",
+        br#"{"claudeAiOauth":{"accessToken":"tok-a"}}"#,
+    );
+    let sess_a_lines = [
+        r#"{"type":"attachment","attachment":{"type":"credential_org","organizationUuid":"org-a"}}"#,
+        r#"{"type":"attachment","attachment":{"type":"session_context","context":{"userEmail":"The user's email address is a@example.invalid. Use it only to identify the user, such as for authorship."},"rendered":[{"content":"<system-reminder>\nThe user's email address is a@example.invalid. Use it only to identify the user, such as for authorship.\n</system-reminder>"}]}}"#,
+        r#"{"type":"assistant","uuid":"u1","message":{"content":[{"type":"thinking","thinking":"secret-a","signature":"sig-org-a"}]}}"#,
+        r#"{"type":"assistant","uuid":"u2","parentUuid":"u1","message":{"content":[{"type":"thinking","thinking":"secret-a2","signature":"sig-org-a"},{"type":"text","text":"unfinished work on A"}]}}"#,
+    ]
+    .join("\n")
+        + "\n";
+    f.write(".claude/projects/demo/sess-a.jsonl", sess_a_lines.as_bytes());
+    f.write(
+        ".claude/projects/demo/sess-a/subagents/agent-1.jsonl",
+        b"{\"type\":\"assistant\",\"uuid\":\"sub1\",\"message\":{\"content\":[{\"type\":\"thinking\",\"thinking\":\"sub-secret\",\"signature\":\"sig-org-a\"},{\"type\":\"text\",\"text\":\"subagent output\"}]}}\n",
+    );
+
+    let mut legacy_policy = Policy::default();
+    legacy_policy.history = false;
+    s.switch("empty", "Account A", &legacy_policy, &r).unwrap();
+    assert!(!f.home.join(".claude/projects/demo/sess-a.jsonl").exists());
+    let a_id = s.records().into_iter().find(|rec| !rec.empty).unwrap().id;
+
+    // Step 2: Account B logs in and creates sess-b.jsonl, switches to A (merging legacy sess-a.jsonl),
+    // and then switches back to B while working on sess-a with default Policy (history: true)
+    f.write(
+        ".claude.json",
+        &serde_json::to_vec(&serde_json::json!({
+            "oauthAccount": {
+                "accountUuid": "acct-b",
+                "organizationUuid": "org-b",
+                "emailAddress": "b@example.invalid",
+                "displayName": "Account B"
+            },
+            "projects": {
+                "D:/demo": {
+                    "lastSessionId": "sess-b"
+                }
+            }
+        }))
+        .unwrap(),
+    );
+    f.write(
+        ".claude/.credentials.json",
+        br#"{"claudeAiOauth":{"accessToken":"tok-b"}}"#,
+    );
+    f.write(
+        ".claude/projects/demo/sess-b.jsonl",
+        b"{\"type\":\"attachment\",\"attachment\":{\"type\":\"credential_org\",\"organizationUuid\":\"org-b\"}}\n",
+    );
+
+    let default_policy = Policy::default();
+    assert!(default_policy.history);
+    s.switch(&a_id, "Account B", &default_policy, &r).unwrap();
+    // Now Account A is active and sess-a.jsonl has been merged onto disk; simulate Account A active on sess-a
+    let mut cfg_on_a: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    cfg_on_a["projects"]["D:/demo"]["lastSessionId"] = serde_json::json!("sess-a");
+    f.write(".claude.json", &serde_json::to_vec(&cfg_on_a).unwrap());
+
+    let b_id = s
+        .records()
+        .into_iter()
+        .find(|rec| !rec.empty && rec.id != a_id)
+        .unwrap()
+        .id;
+    s.switch(&b_id, "Account A", &default_policy, &r).unwrap();
+
+    // Both sess-a.jsonl (merged from legacy archive) and sess-b.jsonl must exist on disk
+    assert!(f.home.join(".claude/projects/demo/sess-a.jsonl").exists());
+    assert!(f.home.join(".claude/projects/demo/sess-b.jsonl").exists());
+
+    // sess-a.jsonl must be sanitized for Account B (org-b, b@example.invalid, thinking blocks stripped)
+    let sanitized_a = fs::read_to_string(f.home.join(".claude/projects/demo/sess-a.jsonl")).unwrap();
+    assert!(!sanitized_a.contains("org-a"));
+    assert!(sanitized_a.contains("\"organizationUuid\":\"org-b\""));
+    assert!(!sanitized_a.contains("a@example.invalid"));
+    assert!(sanitized_a.contains("The user's email address is b@example.invalid. Use it only to identify the user"));
+    assert!(!sanitized_a.contains("sig-org-a"));
+    assert!(sanitized_a.contains("[Thinking removed]"));
+    assert!(sanitized_a.contains("unfinished work on A"));
+
+    // Subagent file under sess-a/subagents/ must also have its foreign thinking block stripped
+    let sanitized_sub =
+        fs::read_to_string(f.home.join(".claude/projects/demo/sess-a/subagents/agent-1.jsonl"))
+            .unwrap();
+    assert!(!sanitized_sub.contains("sig-org-a"));
+    assert!(sanitized_sub.contains("subagent output"));
+
+    // lastSessionId in .claude.json is preserved because sess-a.jsonl is present in .claude/projects/demo/
+    let claude_cfg: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(claude_cfg["projects"]["D:/demo"]["lastSessionId"], "sess-a");
+}
+
+#[test]
+fn cross_account_tool_pair_self_healing_and_replay_blob_sanitization() {
+    let f = Fixture::new();
+    let r = Reporter::channel(None);
+    let mut s = store::Store::open(&f.vault, &f.home).unwrap();
+    let p = Policy::default();
+
+    // Account A hits a 5h limit mid-turn leaving:
+    // 1. api-request-blob with hidden foreign thinking signature & SHA-256 replay hash
+    // 2. bridge-session with bridgeOwnerAccountUuid / bridgeOwnerOrganizationUuid
+    // 3. An orphaned tool_result (no matching tool_use)
+    // 4. An interrupted tool_use at the end of the session (no matching tool_result)
+    f.write(
+        ".claude.json",
+        &serde_json::to_vec(&serde_json::json!({
+            "oauthAccount": {
+                "accountUuid": "acct-a",
+                "organizationUuid": "org-a",
+                "emailAddress": "a@example.invalid",
+                "displayName": "Account A"
+            },
+            "projects": {
+                "D:/demo-OnlyInA": {
+                    "lastSessionId": "sess-only-a"
+                },
+                "D:/demo": {
+                    "lastSessionId": "sess-interrupted",
+                    "lastCost": 4.25,
+                    "lastDuration": 180000,
+                    "lastModelUsage": {"claude-opus-4-7": {"costUSD": 4.25}}
+                }
+            },
+            "githubRepoPaths": {
+                "owner/repo-a": ["D:/demo-OnlyInA"]
+            }
+        }))
+        .unwrap(),
+    );
+    f.write(
+        ".claude/.credentials.json",
+        br#"{"claudeAiOauth":{"accessToken":"tok-a"}}"#,
+    );
+    let interrupted_lines = [
+        r#"{"type":"attachment","attachment":{"type":"credential_org","organizationUuid":"org-a"}}"#,
+        r#"{"type":"api-request-blob","hash":"deadbeef","value":{"content":[{"type":"thinking","thinking":"blob-secret","signature":"sig-blob-org-a"}]}}"#,
+        r#"{"type":"api-request-shape","hash":"cafebabe","messages":[]}"#,
+        r#"{"type":"bridge-session","bridgeOwnerAccountUuid":"acct-a","bridgeOwnerOrganizationUuid":"org-a"}"#,
+        r#"{"type":"user","uuid":"u-orphan","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_missing","content":"orphan output"}]}}"#,
+        r#"{"type":"assistant","uuid":"a-dangling","parentUuid":"u-orphan","message":{"role":"assistant","content":[{"type":"thinking","thinking":"think-before-429","signature":"sig-org-a"},{"type":"tool_use","id":"toolu_interrupted_429","name":"Bash","input":{"command":"cargo test"}}]}}"#,
+    ]
+    .join("\n")
+        + "\n";
+    f.write(
+        ".claude/projects/demo/sess-interrupted.jsonl",
+        interrupted_lines.as_bytes(),
+    );
+    let mut legacy_p = p.clone();
+    legacy_p.projects = false;
+    s.save_current("Account A", &legacy_p, &r).unwrap();
+    let a_id = s.records()[0].id.clone();
+
+    // Account B logs in and is stashed
+    f.write(
+        ".claude.json",
+        &serde_json::to_vec(&serde_json::json!({
+            "oauthAccount": {
+                "accountUuid": "acct-b",
+                "organizationUuid": "org-b",
+                "emailAddress": "b@example.invalid",
+                "displayName": "Account B"
+            },
+            "projects": {
+                "D:/demo": {
+                    "lastSessionId": "sess-interrupted",
+                    "lastCost": 4.25,
+                    "lastDuration": 180000,
+                    "lastModelUsage": {"claude-opus-4-7": {"costUSD": 4.25}}
+                }
+            }
+        }))
+        .unwrap(),
+    );
+    f.write(
+        ".claude/.credentials.json",
+        br#"{"claudeAiOauth":{"accessToken":"tok-b"}}"#,
+    );
+    s.save_current("Account B", &p, &r).unwrap();
+    let b_id = s.records().into_iter().find(|rec| rec.id != a_id).unwrap().id;
+
+    // Switch to Account A, then switch to Account B (simulating 5h limit relay from A -> B)
+    s.switch(&a_id, "Account B", &p, &r).unwrap();
+    s.switch(&b_id, "Account A", &p, &r).unwrap();
+
+    let healed =
+        fs::read_to_string(f.home.join(".claude/projects/demo/sess-interrupted.jsonl")).unwrap();
+    // 1. api-request-blob, api-request-shape, and bridge-session are completely stripped
+    assert!(!healed.contains("api-request-blob"));
+    assert!(!healed.contains("sig-blob-org-a"));
+    assert!(!healed.contains("api-request-shape"));
+    assert!(!healed.contains("bridge-session"));
+    assert!(!healed.contains("bridgeOwnerAccountUuid"));
+    // 2. Orphaned tool_result and dangling tool_use are healed in-place preserving uuid/parentUuid
+    assert!(!healed.contains("toolu_missing"));
+    assert!(healed.contains("[Orphaned tool result removed due to conversation resume]"));
+    assert!(!healed.contains("toolu_interrupted_429"));
+    assert!(healed.contains("[Tool use interrupted]"));
+    assert!(healed.contains("\"parentUuid\":\"u-orphan\""));
+
+    // 3. Foreign lastSessionId is preserved for seamless resume, while lastCost/lastDuration are stripped to disarm tengu_exit
+    let cfg_b: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(
+        cfg_b["projects"]["D:/demo"]["lastSessionId"],
+        "sess-interrupted"
+    );
+    assert!(cfg_b["projects"]["D:/demo"].get("lastCost").is_none());
+    assert!(cfg_b["projects"]["D:/demo"].get("lastDuration").is_none());
+    assert!(cfg_b["projects"]["D:/demo"].get("lastModelUsage").is_none());
+    // 4. Missing project & githubRepoPaths from Account A were merged into Account B
+    assert!(cfg_b["projects"].get("D:/demo-OnlyInA").is_some());
+    assert!(cfg_b["githubRepoPaths"].get("owner/repo-a").is_some());
 }

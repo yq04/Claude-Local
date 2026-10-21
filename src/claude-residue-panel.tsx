@@ -10,7 +10,7 @@ import {Refresh} from 'cromma-ui/pika';
 import {invoke} from '@tauri-apps/api/core';
 import {AppDialog} from './dialog';
 import type {ActivityController} from './cleaner-activity';
-import {deselectItems,effectiveItems,formatBytes,riskLabels,type CleanResult,type Scan} from './cleaner-model';
+import {deselectItems,effectiveItems,formatBytes,presetIds,riskLabels,type CleanResult,type Scan} from './cleaner-model';
 import {useI18n} from './i18n';
 
 export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:{activity:ActivityController;blocked:boolean;revision:number;onBusy:(busy:boolean)=>void;onChanged:()=>Promise<void>}){
@@ -20,6 +20,8 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
  const [error,setError]=useState('');
  const items=scan?.items??[],available=items.filter(item=>item.exact);
  const selected=effectiveItems(items,ids),all=effectiveItems(available,available.map(item=>item.id));
+ const safeOnlySelected=selected.length>0&&selected.every(item=>item.risk==='safe');
+ const hasHighRiskSelected=selected.some(item=>item.risk!=='safe');
  const bytes=(rows:typeof items)=>rows.reduce((sum,item)=>sum+item.bytes,0);
  const locked=blocked||!!action;
  useEffect(()=>{onBusy(!!action||review);return()=>onBusy(false);},[action,review,onBusy]);
@@ -54,11 +56,35 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
  }
 
  return <section className="claude-residue" aria-label={t('Claude 文件残留')}>
-  <div className="identity-section-head"><div><h2>{t('Claude 文件残留')}</h2><span className="identity-caption" role="status">{action==='scan'?t('正在检查文件…'):action==='clean'?t('正在处理…'):scan?t('{v0} 项 · {v1}',{v0:all.length,v1:formatBytes(bytes(all))}):t('尚未检查')}</span></div><Button variant="secondary" size="small" disabled={locked} loading={action==='scan'} leftIcon={<Refresh aria-hidden size={15}/>} onClick={()=>void check()}>{t(scan?'重新检查':'检查残留')}</Button></div>
+  <div className="identity-section-head">
+   <div>
+    <div className="claude-residue-head-row">
+     <h2>{t('Claude 文件残留')}</h2>
+     <span className="identity-policy-mode ok">{t('切号已自动清理')}</span>
+    </div>
+    <span className="identity-caption" role="status">
+     {action==='scan'?t('正在检查文件…'):action==='clean'?t('正在处理…'):scan?t('{v0} 项 · {v1}',{v0:all.length,v1:formatBytes(bytes(all))}):t('日常切号已自动清理日志并脱敏，无需手动操作；仅在需释放磁盘空间或排查异常时按需检查')}
+    </span>
+   </div>
+   <Button variant="secondary" size="small" disabled={locked} loading={action==='scan'} leftIcon={<Refresh aria-hidden size={15}/>} onClick={()=>void check()}>{t(scan?'重新检查':'检查残留')}</Button>
+  </div>
   {error&&<p role="alert" className="cleanup-feedback error">{t(error)}</p>}
   {scan&&<>
    {scan.warnings.length>0&&<details className="claude-residue-warnings"><summary>{t('{v0} 条扫描提示',{v0:scan.warnings.length})}</summary><ul>{scan.warnings.map((warning,i)=><li key={i}>{t(warning)}</li>)}</ul></details>}
    {items.length===0?<div className="claude-residue-empty" role="status">{t(scan.warnings.length?'部分路径未能检查，请查看扫描提示。':'未发现白名单内的可清理文件。')}</div>:<>
+    <div className={`claude-residue-smart-bar ${safeOnlySelected?'safe':hasHighRiskSelected?'warn':'idle'}`}>
+     <span>
+      {safeOnlySelected
+       ?t('已智能勾选安全缓存（不影响登录状态与对话历史，可直接点击下方「清理所选」释放空间）')
+       :hasHighRiskSelected
+       ?t('已包含登录凭据或历史记录（清理后需重新登录或会删除本地历史，请谨慎确认）')
+       :t('未勾选任何项目（可点击右侧「仅选安全缓存」一键勾选无损缓存）')}
+     </span>
+     <div className="claude-residue-presets">
+      <Button variant="secondary" size="small" disabled={locked||available.length===0} onClick={()=>setIds(presetIds(available,'cache'))}>{t('仅选安全缓存（推荐）')}</Button>
+      <Button variant="ghost" size="small" disabled={locked||available.length===0} onClick={()=>setIds(presetIds(available,'reset'))}>{t('选入异常登录项')}</Button>
+     </div>
+    </div>
     <div className="claude-residue-toolbar"><Checkbox label={t('全选可清理项')} checked={available.length>0&&available.every(item=>ids.includes(item.id))} indeterminate={ids.length>0&&!available.every(item=>ids.includes(item.id))} disabled={locked||available.length===0} onCheckedChange={checked=>setIds(checked?available.map(item=>item.id):[])}/><span>{t('已选 {v0} 项',{v0:selected.length})}</span></div>
     <ul className="claude-residue-list">{items.map(item=><li key={item.id} className={`claude-residue-row${!item.exact?' unavailable':''}`}>
      <Checkbox aria-label={`${t(item.title)} · ${item.path}`} checked={ids.includes(item.id)} disabled={locked||!item.exact} onCheckedChange={checked=>setIds(old=>checked?[...old,item.id]:deselectItems(items,old,[item.id]))}/>

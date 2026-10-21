@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Tauri 本机应用版本与共享 YAML 界面语言。
- * [OUTPUT]: 侧栏只读的本地定制版标识与版本号；读取失败保留标识，不发起更新检查或网络请求。
+ * [OUTPUT]: 侧栏只读的本机版本号徽章；读取失败保持静默，不发起更新检查或网络请求。
  * [POS]: Claude-Local 的静态版本呈现，不参与任务锁、下载、安装或重启。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -17,7 +17,6 @@ export function LocalEdition(){
     return()=>{live=false;};
   },[]);
   return <div className="local-edition" role="group" aria-label={t('localEdition.info')}>
-    <span className="local-edition-label"><i aria-hidden="true"/><strong>{t('localEdition.label')}</strong></span>
     {version&&<small>{t('localEdition.version',{version})}</small>}
   </div>;
 }

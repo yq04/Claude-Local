@@ -38,11 +38,15 @@ $sourceHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
 if ((Get-FileHash -LiteralPath (Join-Path $installRoot 'claude-local.exe') -Algorithm SHA256).Hash -ne $sourceHash) { throw 'Installed binary hash mismatch.' }
 $desktop = [Environment]::GetFolderPath('Desktop')
 $shortcutShell = New-Object -ComObject WScript.Shell
-foreach ($entry in @(@('Claude-Local', ''), @('Claude-Local Browser', '--browser'))) {
+foreach ($entry in @(
+    @('Claude-Local', '', (Join-Path $installRoot 'claude-local.exe')),
+    @('Claude-Local Browser', '--browser', (Join-Path $installRoot 'browser-runtime\icons\browser.ico'))
+)) {
     $shortcut = $shortcutShell.CreateShortcut((Join-Path $desktop ($entry[0] + '.lnk')))
     $shortcut.TargetPath = Join-Path $installRoot 'claude-local.exe'
     $shortcut.Arguments = $entry[1]
     $shortcut.WorkingDirectory = $installRoot
+    $shortcut.IconLocation = "$($entry[2]),0"
     $shortcut.Description = 'Independent local Claude-Local edition'
     $shortcut.Save()
 }

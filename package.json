@@ -1,12 +1,12 @@
 {
   "name": "claude-local",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "build:windows": "bun run build && bun run tauri build --config src-tauri/tauri.windows.conf.json --features custom-protocol",
+    "build:windows": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-share.ps1",
     "tauri": "tauri",
     "test": "bun test",
     "test:windows": "python scripts/test-windows.py",

@@ -1,5 +1,5 @@
-// [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 订阅/过期时间戳、.claude/projects 会话账单增量、本地 settings.json 代理环境变量、只读外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据。
-// [OUTPUT]: 当前本地身份与已保存身份的脱敏摘要（用户名/邮箱/组织/套餐档位/OAuth有效状态/专属代理/离线5h与7d额度及重置时间戳）及有界活动会话列表；不输出令牌、不联网验证账号。
+// [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话账单增量、本地 settings.json 代理环境变量、只读外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据；当前无可信订阅到期来源。
+// [OUTPUT]: 当前本地身份与已保存身份的脱敏摘要（用户名/邮箱/组织/套餐档位/OAuth有效状态/可选订阅到期/专属代理/离线5h与7d额度及重置时间戳）及有界活动会话列表；不输出令牌、不联网验证账号。
 // [POS]: 身份卡片的只读展示边界；不读取钥匙串、Cookie 正文或任意项目源码文件。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,8 @@ pub struct Current {
     pub quota_7d_used: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quota_7d_reset_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subscription_expires_at: Option<u64>,
 }
 pub const CURRENT_QUOTA_VERSION: u8 = 3;
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +73,8 @@ pub struct Summary {
     pub quota_version: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_expires_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscription_expires_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_has_refresh: Option<bool>,
 }
@@ -119,6 +123,7 @@ impl Summary {
             quota_checked: Some(true),
             quota_version: Some(CURRENT_QUOTA_VERSION),
             auth_expires_at: None,
+            subscription_expires_at: cur.subscription_expires_at,
             auth_has_refresh: None,
         }
     }
@@ -462,6 +467,7 @@ fn extract_quota(
     projects_dir: Option<&Path>,
     plan: Option<&str>,
     now_sec: u64,
+    active_since: u64,
 ) -> (Option<u8>, Option<u64>, Option<u8>, Option<u64>) {
     let plan_lower = plan.unwrap_or("pro").to_ascii_lowercase();
     let mult = if plan_lower.contains("20x") {
@@ -568,7 +574,7 @@ fn extract_quota(
                     r += 7 * 86400;
                 }
                 eff_reset_7d = Some(r);
-                let cycle_start = r.saturating_sub(7 * 86400);
+                let cycle_start = r.saturating_sub(7 * 86400).max(active_since);
                 let cost_in_cycle: f64 = slices
                     .iter()
                     .filter(|(ts, _)| *ts >= cycle_start)
@@ -576,27 +582,30 @@ fn extract_quota(
                     .sum();
                 Some(((cost_in_cycle / usd_per_pct_7d).round() as i64).clamp(0, 100) as u8)
             } else {
+                let floor_7d = win_start_7d.max(active_since);
                 let cost_after_snap: f64 = slices
                     .iter()
-                    .filter(|(ts, _)| *ts > snap_sec.saturating_add(5) && *ts >= win_start_7d)
+                    .filter(|(ts, _)| *ts > snap_sec.saturating_add(5) && *ts >= floor_7d)
                     .map(|(_, c)| *c)
                     .sum();
                 let extra_pct = cost_after_snap / usd_per_pct_7d;
                 Some(((raw + extra_pct).round() as i64).clamp(0, 100) as u8)
             }
         } else {
+            let floor_7d = fallback_7d_start.max(active_since);
             let cost_after_snap: f64 = slices
                 .iter()
-                .filter(|(ts, _)| *ts > snap_sec.saturating_add(5) && *ts >= fallback_7d_start)
+                .filter(|(ts, _)| *ts > snap_sec.saturating_add(5) && *ts >= floor_7d)
                 .map(|(_, c)| *c)
                 .sum();
             let extra_pct = cost_after_snap / usd_per_pct_7d;
             Some(((raw + extra_pct).round() as i64).clamp(0, 100) as u8)
         }
     } else {
+        let floor_7d = fallback_7d_start.max(active_since);
         let cost_7d: f64 = slices
             .iter()
-            .filter(|(ts, _)| *ts >= fallback_7d_start)
+            .filter(|(ts, _)| *ts >= floor_7d)
             .map(|(_, c)| *c)
             .sum();
         Some(((cost_7d / usd_per_pct_7d).round() as i64).clamp(0, 100) as u8)
@@ -605,7 +614,7 @@ fn extract_quota(
     let mut eff_reset_5h = reset_5h;
     let used_5h = if let Some(raw) = raw_5h {
         if reset_5h.is_none_or(|r| now_sec >= r) {
-            let after_sec = reset_5h.unwrap_or(fallback_7d_start);
+            let after_sec = reset_5h.unwrap_or(fallback_7d_start).max(active_since);
             let (block_cost, active_end) = walk_5h_blocks(&slices, after_sec, now_sec);
             eff_reset_5h = active_end;
             Some(((block_cost / usd_per_pct_5h).round() as i64).clamp(0, 100) as u8)
@@ -614,14 +623,17 @@ fn extract_quota(
             let floor_ts = snap_sec.saturating_add(5).max(win_start_5h);
             let cost_after_snap_5h: f64 = slices
                 .iter()
-                .filter(|(ts, _)| *ts > floor_ts && now_sec.saturating_sub(*ts) <= 5 * 3600)
+                .filter(|(ts, _)| {
+                    *ts > floor_ts && *ts >= active_since && now_sec.saturating_sub(*ts) <= 5 * 3600
+                })
                 .map(|(_, c)| *c)
                 .sum();
             let extra_pct = cost_after_snap_5h / usd_per_pct_5h;
             Some(((raw + extra_pct).round() as i64).clamp(0, 100) as u8)
         }
     } else {
-        let (block_cost, active_end) = walk_5h_blocks(&slices, fallback_7d_start, now_sec);
+        let (block_cost, active_end) =
+            walk_5h_blocks(&slices, fallback_7d_start.max(active_since), now_sec);
         eff_reset_5h = active_end;
         Some(((block_cost / usd_per_pct_5h).round() as i64).clamp(0, 100) as u8)
     };
@@ -889,6 +901,7 @@ fn parse(bytes: &[u8]) -> Result<Current, serde_json::Error> {
             quota_5h_reset_at: None,
             quota_7d_used: None,
             quota_7d_reset_at: None,
+            subscription_expires_at: None,
         },
         None => Current {
             present: config.api_key.is_some(),
@@ -957,11 +970,30 @@ fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
         {
             current.plan = Some(resolved_plan);
         }
-        if let (Some(cj), Some(app_dir)) = (claude_val.as_mut(), app_dir) {
-            if let Some(ledger) =
-                read_bounded_json(&app_dir.join("quota_ledger.json"), 8 * 1024 * 1024)
-            {
-                merge_server_anchor(cj, &ledger);
+        let mut active_since = 0u64;
+        if let Some(app_dir) = app_dir {
+            if let Some(cj) = claude_val.as_mut() {
+                if let Some(ledger) =
+                    read_bounded_json(&app_dir.join("quota_ledger.json"), 8 * 1024 * 1024)
+                {
+                    merge_server_anchor(cj, &ledger);
+                }
+            }
+            let db_path = app_dir.join("identity-vault/identities.sqlite");
+            if db_path.is_file() {
+                if let Ok(conn) = rusqlite::Connection::open_with_flags(
+                    &db_path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                        | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+                ) {
+                    if let Ok(raw) = conn.query_row(
+                        "SELECT value FROM state WHERE key='active_since'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    ) {
+                        active_since = raw.parse::<u64>().unwrap_or(0);
+                    }
+                }
             }
         }
         if let Some(ref cj) = claude_val {
@@ -971,6 +1003,7 @@ fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
                 proj_dir.is_dir().then_some(proj_dir.as_path()),
                 current.plan.as_deref(),
                 now_epoch_sec(),
+                active_since,
             );
             current.quota_5h_used = q5;
             current.quota_5h_reset_at = r5;
@@ -1089,6 +1122,7 @@ pub(super) fn summarize_stage(stage: &super::archive::Stage) -> Summary {
             projects_slot_path.as_deref(),
             summary.plan.as_deref(),
             now_epoch_sec(),
+            0,
         );
         summary.quota_5h_used = q5;
         summary.quota_5h_reset_at = r5;
@@ -1198,6 +1232,30 @@ mod tests {
         );
     }
     #[test]
+    fn oauth_expiry_is_never_subscription_expiry_and_old_summaries_still_load() {
+        let credentials = serde_json::json!({
+            "claudeAiOauth": {
+                "accessToken": "synthetic-access",
+                "refreshToken": "synthetic-refresh",
+                "expiresAt": 1_900_000_000_000i64
+            }
+        });
+        let (_, _, _, oauth_expires_at, _) = extract_credentials_meta(&credentials);
+        assert_eq!(oauth_expires_at, Some(1_900_000_000_000));
+
+        let current = parse(br#"{"oauthAccount":{"displayName":"Fixture"}}"#).unwrap();
+        assert_eq!(current.subscription_expires_at, None);
+        let summary = Summary::from_current(&current);
+        assert_eq!(summary.subscription_expires_at, None);
+
+        let legacy: Summary = serde_json::from_value(serde_json::json!({
+            "auth_expires_at": 1_900_000_000_000i64
+        }))
+        .unwrap();
+        assert_eq!(legacy.auth_expires_at, Some(1_900_000_000_000));
+        assert_eq!(legacy.subscription_expires_at, None);
+    }
+    #[test]
     fn iso_timestamp_and_delta_quota_calibration_are_accurate() {
         assert_eq!(
             parse_iso_epoch_sec("2026-10-17T06:59:59.697586+00:00"),
@@ -1218,13 +1276,13 @@ mod tests {
                 }
             }
         });
-        let (q5, r5, q7, r7) = extract_quota(&cj, None, Some("Pro"), 1792201000);
+        let (q5, r5, q7, r7) = extract_quota(&cj, None, Some("Pro"), 1792201000, 0);
         assert_eq!(q5, Some(40));
         assert_eq!(r5, Some(1792220399));
         assert_eq!(q7, Some(50));
         assert_eq!(r7, Some(1792310399));
         // After reset timestamp passes, utilization automatically resets to 0%
-        let (q5_after, _, q7_after, _) = extract_quota(&cj, None, Some("Pro"), 1792320000);
+        let (q5_after, _, q7_after, _) = extract_quota(&cj, None, Some("Pro"), 1792320000, 0);
         assert_eq!(q5_after, Some(0));
         assert_eq!(q7_after, Some(0));
     }

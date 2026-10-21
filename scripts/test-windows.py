@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# [INPUT]: Windows PowerShell 5.1、Rust 样本程序、可丢弃安装目录与离线官方安装器响应样本。
-# [OUTPUT]: CLI 来源保留重装、PATH 外 npm 检测、安装器字节/文本响应、下载失败保护与个人资产保留回归。
+# [INPUT]: PowerShell 7、Rust 样本程序、可丢弃安装目录与离线安装器响应样本。
+# [OUTPUT]: 原生/npm/WinGet 无卸载更新、WinGet 精确无更新码、错误不报成功及个人资产保留的合成回归。
 # [POS]: Windows 平台行为测试；子进程丢弃继承的 PSModulePath，90 秒冷启动预算与逐项日志保留全部安全断言；仅操作临时样本。
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 import json
@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parent.parent
-POWERSHELL=Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
+POWERSHELL=Path(shutil.which('pwsh.exe') or shutil.which('pwsh') or 'pwsh.exe')
 SCRIPT=(ROOT/'scripts/claude-cli.ps1').read_text(encoding='utf-8-sig')
 
 class CliTests(unittest.TestCase):
@@ -26,8 +26,15 @@ let target=std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join
 match std::env::args().nth(1).as_deref() {
 Some("uninstall") => { std::fs::remove_file(target).unwrap(); },
 Some("install") => { std::fs::copy(std::env::var("CC_FIXTURE_WINGET_PAYLOAD").unwrap(),target).unwrap(); },
+Some("upgrade") => {
+if let Ok(code)=std::env::var("CC_FIXTURE_WINGET_EXIT") { std::process::exit(code.parse().unwrap()); }
+std::fs::write(std::path::PathBuf::from(std::env::var("CC_FIXTURE_ROOT").unwrap()).join("updated"),"winget upgrade").unwrap();
+},
 _ => std::process::exit(9)
 } return;
+} if std::env::args().nth(1).as_deref()==Some("update") {
+if std::env::var_os("CC_FIXTURE_FAIL").is_some() { std::process::exit(19); }
+std::fs::write(std::path::PathBuf::from(std::env::var("CC_FIXTURE_ROOT").unwrap()).join("updated"),"claude update").unwrap();
 } println!("2.1.0 (Claude Code)");
 }''',encoding='utf-8')
         cls.binary=source.with_suffix('.exe')
@@ -167,6 +174,54 @@ throw 'private fixture diagnostic'"""
         self.npm();result=self.invoke('reinstall')
         self.assertEqual(result.returncode,0,result.stderr);self.assertIn('CC_CLI_METHOD=npm',result.stdout);self.assertIn('CC_CLI_VERSION=2.2.0',result.stdout)
         result=self.invoke('uninstall');self.assertEqual(result.returncode,0,result.stderr);self.assertFalse((self.bin/'claude.cmd').exists());self.assets()
+    def test_native_update_uses_cli_without_uninstall_or_installer(self):
+        binary,version=self.native();original=binary.read_bytes()
+        result=self.invoke('update')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual((self.home/'updated').read_text(),'claude update')
+        self.assertEqual(binary.read_bytes(),original);self.assertEqual(version.read_bytes(),original)
+        self.assertIn('CC_CLI_DONE=1',result.stdout);self.assets()
+    def test_failed_native_update_keeps_program_and_never_reports_success(self):
+        binary,version=self.native();original=binary.read_bytes();self.env['CC_FIXTURE_FAIL']='1'
+        result=self.invoke('update')
+        self.assertNotEqual(result.returncode,0);self.assertNotIn('CC_CLI_DONE=1',result.stdout)
+        self.assertIn('cli.error.updateFailed',result.stderr)
+        self.assertEqual(binary.read_bytes(),original);self.assertEqual(version.read_bytes(),original);self.assets()
+    def test_npm_update_preserves_existing_package_and_personal_assets(self):
+        self.npm();marker=self.file('bin/node_modules/@anthropic-ai/claude-code/keep','original-package')
+        result=self.invoke('update')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(marker.read_text(),'original-package')
+        self.assertIn('CC_CLI_VERSION=2.2.0',result.stdout);self.assertIn('CC_CLI_DONE=1',result.stdout);self.assets()
+    def test_winget_update_never_uninstalls(self):
+        destination=self.local/'Microsoft/WinGet/Packages/Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe/claude.exe'
+        destination.parent.mkdir(parents=True);shutil.copyfile(self.binary,destination)
+        shutil.copyfile(self.binary,self.bin/'winget.exe')
+        result=self.invoke('update')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual((self.home/'updated').read_text(),'winget upgrade')
+        self.assertTrue(destination.exists());self.assertIn('CC_CLI_DONE=1',result.stdout);self.assets()
+    def test_ambiguous_update_is_rejected_without_mutating_either_install(self):
+        binary,version=self.native();self.npm()
+        result=self.invoke('update')
+        self.assertNotEqual(result.returncode,0);self.assertIn('cli.error.multipleInstalls',result.stderr)
+        self.assertTrue(binary.exists());self.assertTrue(version.exists());self.assertTrue((self.bin/'claude.cmd').exists());self.assets()
+    def test_winget_no_applicable_update_verifies_existing_program(self):
+        destination=self.local/'Microsoft/WinGet/Packages/Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe/claude.exe'
+        destination.parent.mkdir(parents=True);shutil.copyfile(self.binary,destination)
+        shutil.copyfile(self.binary,self.bin/'winget.exe');original=destination.read_bytes()
+        for code in [-1978335189,19]:
+            with self.subTest(code=code):
+                self.env['CC_FIXTURE_WINGET_EXIT']=str(code)
+                result=self.invoke('update')
+                if code==-1978335189:
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('CC_CLI_STEP=cli.progress.noUpdate',result.stdout)
+                    self.assertIn('CC_CLI_VERSION=2.1.0',result.stdout);self.assertIn('CC_CLI_DONE=1',result.stdout)
+                else:
+                    self.assertNotEqual(result.returncode,0);self.assertNotIn('CC_CLI_DONE=1',result.stdout)
+                    self.assertIn('cli.error.updateFailed',result.stderr)
+                self.assertEqual(destination.read_bytes(),original);self.assets()
     def test_npm_detects_global_shim_outside_path(self):
         self.npm()
         prefix=self.home/'global-prefix';prefix.mkdir()

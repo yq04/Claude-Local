@@ -1,8 +1,8 @@
-# [INPUT]: 固定 CLI 动作、当前用户根目录与官方原生/npm/bun/WinGet 程序位置。
-# [OUTPUT]: 安装来源/版本和真实完成协议；原生安装器预检失败保留旧程序，可捕获安装/核验失败时从唯一备份恢复并核对哈希。
+# [INPUT]: 固定 read/update/兼容维护动作、当前用户根目录与原生/npm/bun/WinGet 程序位置。
+# [OUTPUT]: 来源/版本和真实完成协议；原方式更新，WinGet 精确无更新码仍核验版本，不卸载、不修改个人资料。
 # [POS]: Windows CLI 程序边界；包管理器仅按 PATH 外部程序发现，拒绝链接目录/自定义启动器，保留配置、技能、会话和项目。
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
-param([ValidateSet('read','uninstall','reinstall')][string]$action='read')
+param([ValidateSet('read','update','uninstall','reinstall')][string]$action='read')
 $ErrorActionPreference='Stop'
 $env:PSModulePath=(Join-Path $PSHOME 'Modules')+';'+$env:PSModulePath
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
@@ -148,7 +148,25 @@ function RollbackNative {
 
 try {
     $state=Status
-    if ($action -ne 'read') {
+    if ($action -eq 'update') {
+        if (-not $state.known -or -not $state.version) { Fail 'cli.error.notInstalled' }
+        if ($state.methods.Count -ne 1) { Fail 'cli.error.multipleInstalls' }
+        Step 'cli.progress.updating'
+        $method=$state.methods[0]
+        $global:LASTEXITCODE=0
+        if ($method -eq 'native') { & $state.cli update 2>$null | Out-Null }
+        elseif ($method -eq 'npm') { & $state.npm install -g "$package@latest" --registry=https://registry.npmjs.org 2>$null | Out-Null }
+        elseif ($method -eq 'bun') { & $state.bun install -g "$package@latest" --registry=https://registry.npmjs.org 2>$null | Out-Null }
+        elseif ($method -eq 'winget') { & $state.winget upgrade --id Anthropic.ClaudeCode --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity 2>$null | Out-Null }
+        else { Fail 'cli.error.unsupported' }
+        # WinGet APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE is a normal no-update result.
+        if ($method -eq 'winget' -and $LASTEXITCODE -eq [int]0x8A15002B) {
+            Step 'cli.progress.noUpdate'
+        } elseif ($LASTEXITCODE -ne 0) { Fail 'cli.error.updateFailed' }
+        Step 'cli.progress.verifying'
+        $state=Status
+        if (-not $state.known -or -not $state.version) { Fail 'cli.error.verifyFailed' }
+    } elseif ($action -ne 'read') {
         if ($state.cli -and -not $state.known) { Fail '检测到自定义 Claude 启动器，未删除或重装。' }
         $method=if($state.methods.Count){$state.methods[0]}else{'native'}
         $installer=$null

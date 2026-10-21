@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Tailwind 4 与本地 Cromma UI 主题。
- * [OUTPUT]: 应用共用的系统字体、Laper 中性黑白页面底色、浅色基础主题与控件扫描入口。
+ * [OUTPUT]: 含 Windows 中文 UI 回退的共用系统字体、中性黑白页面底色、浅色基础主题与控件扫描入口。
  * [POS]: 两个前端入口的基础样式；业务布局在 style.css，不包含官网营销样式。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -9,7 +9,7 @@
 @source "../vendor/cromma-ui/src";
 :root {
   --ground: #f8f8f6;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans', sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei UI', 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans', sans-serif;
   color-scheme: light;
 }
 @theme inline { --color-ground: var(--ground); --font-sans: var(--font-sans); }

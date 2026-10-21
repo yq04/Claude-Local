@@ -267,6 +267,31 @@ impl Database {
     pub fn complete(&mut self, active: &str) -> Result<(), String> {
         let tx = self.connection.transaction().map_err(error)?;
         super::browser_link::complete(&tx, active)?;
+        let pending_target: Option<String> = tx
+            .query_row("SELECT value FROM state WHERE key='target'", [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(error)?;
+        let pending_recovery: Option<String> = tx
+            .query_row("SELECT value FROM state WHERE key='recovery'", [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(error)?;
+        if pending_target.as_deref() == Some(active)
+            && pending_recovery.as_deref() != Some(active)
+        {
+            let now_sec = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            tx.execute(
+                "INSERT OR REPLACE INTO state VALUES('active_since',?1)",
+                [now_sec.to_string()],
+            )
+            .map_err(error)?;
+        }
         tx.execute("INSERT OR REPLACE INTO state VALUES('active',?1)", [active])
             .map_err(error)?;
         tx.execute("DELETE FROM state WHERE key IN ('recovery','target')", [])

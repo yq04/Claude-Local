@@ -156,6 +156,188 @@ class LocalQuotaTests(unittest.TestCase):
             self.assertEqual(account["server_anchor"]["utilization"]["seven_day"]["utilization"], 90)
             self.assertEqual((home / ".claude.json").read_text(encoding="utf-8"), source)
 
+    def test_active_since_isolates_shared_session_turns_across_account_switch(self):
+        now = datetime.fromtimestamp(1_792_202_000, tz=timezone.utc)
+        snap_ms = 1_792_200_000 * 1000
+        active_since = datetime.fromtimestamp(1_792_201_000, tz=timezone.utc)
+        cj = {
+            "oauthAccount": {"accountUuid": "acct-b"},
+            "cachedUsageUtilization": {
+                "accountUuid": "acct-b",
+                "fetchedAtMs": snap_ms,
+                "utilization": {
+                    "five_hour": {"utilization": 0, "resets_at": 1_792_210_000},
+                    "seven_day": {"utilization": 10, "resets_at": 1_792_300_000},
+                },
+            },
+        }
+        # Turn at 1_792_200_500 belongs to Account A (before switch at 1_792_201_000)
+        # Turn at 1_792_201_500 belongs to Account B (after switch at 1_792_201_000)
+        slices = [
+            (datetime.fromtimestamp(1_792_200_500, tz=timezone.utc), 16.0),
+            (datetime.fromtimestamp(1_792_201_500, tz=timezone.utc), 3.2),
+        ]
+        res = quota.evaluate_quota(cj, slices, slices[-1][0], "Pro", now, active_since_dt=active_since)
+        self.assertEqual(res["used_5h"], 10)
+
+    def test_select_best_relay_candidate_consume_first_and_hysteresis(self):
+        now_sec = 1_792_200_000
+        # 1. Hysteresis: current has 75% (> 20%), saved has 80% (+5% < 10% threshold) -> stay
+        rec_stay = quota.select_best_relay_candidate(
+            [
+                {
+                    "role": "current",
+                    "name": "Acct-A",
+                    "auth_status": "valid",
+                    "effective_rem": 75,
+                    "rem_5h": 75,
+                    "rem_7d": 80,
+                    "reset_7d_ts": now_sec + 5 * 86400,
+                },
+                {
+                    "role": "saved",
+                    "id": "id-b",
+                    "name": "Acct-B",
+                    "auth_status": "valid",
+                    "effective_rem": 80,
+                    "rem_5h": 80,
+                    "rem_7d": 80,
+                    "reset_7d_ts": now_sec + 5 * 86400,
+                },
+            ],
+            now_sec,
+        )
+        self.assertEqual(rec_stay["action"], "stay")
+        self.assertEqual(rec_stay["target"], "Acct-A")
+
+        # 2. Consume-first: among saved candidates within 15% of max_saved_eff and rem_5h >= 50,
+        # pick the one whose 7d window resets sooner even if its effective_rem is slightly lower.
+        rec_cf = quota.select_best_relay_candidate(
+            [
+                {
+                    "role": "current",
+                    "name": "Acct-A",
+                    "auth_status": "valid",
+                    "effective_rem": 0,
+                    "rem_5h": 0,
+                    "rem_7d": 50,
+                    "reset_5h_ts": now_sec + 7200,
+                    "reset_7d_ts": now_sec + 4 * 86400,
+                },
+                {
+                    "role": "saved",
+                    "id": "id-b",
+                    "name": "Acct-B-LaterReset",
+                    "auth_status": "valid",
+                    "effective_rem": 90,
+                    "rem_5h": 100,
+                    "rem_7d": 90,
+                    "reset_7d_ts": now_sec + 6 * 86400,
+                },
+                {
+                    "role": "saved",
+                    "id": "id-c",
+                    "name": "Acct-C-SoonerReset",
+                    "auth_status": "valid",
+                    "effective_rem": 82,
+                    "rem_5h": 95,
+                    "rem_7d": 82,
+                    "reset_7d_ts": now_sec + 1 * 86400,
+                },
+            ],
+            now_sec,
+        )
+        self.assertEqual(rec_cf["action"], "switch")
+        self.assertEqual(rec_cf["target"], "Acct-C-SoonerReset")
+        self.assertEqual(rec_cf["reason"], "consume_first_7d")
+
+        # 3. All exhausted -> fastest bottleneck reset account identified
+        rec_wait = quota.select_best_relay_candidate(
+            [
+                {
+                    "role": "current",
+                    "name": "Acct-A",
+                    "auth_status": "valid",
+                    "effective_rem": 0,
+                    "rem_5h": 0,
+                    "rem_7d": 40,
+                    "reset_5h_ts": now_sec + 7200,
+                    "reset_7d_ts": now_sec + 86400,
+                },
+                {
+                    "role": "saved",
+                    "name": "Acct-B",
+                    "auth_status": "valid",
+                    "effective_rem": 0,
+                    "rem_5h": 0,
+                    "rem_7d": 50,
+                    "reset_5h_ts": now_sec + 1800,
+                    "reset_7d_ts": now_sec + 86400,
+                },
+            ],
+            now_sec,
+        )
+        self.assertEqual(rec_wait["action"], "wait")
+        self.assertEqual(rec_wait["target"], "Acct-B")
+        self.assertEqual(rec_wait["fastest_reset_eta_sec"], 1800)
+
+    def test_statusline_emits_relay_alert_when_low_or_exhausted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            home.mkdir()
+            app.mkdir(parents=True)
+            now = int(datetime.now(timezone.utc).timestamp())
+            (home / ".claude.json").write_text(
+                json.dumps(
+                    {
+                        "oauthAccount": {
+                            "accountUuid": "uuid-a",
+                            "emailAddress": "a@example.invalid",
+                            "displayName": "Acct-A",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (app / "quota_ledger.json").write_text(
+                json.dumps(
+                    {
+                        "accounts": {
+                            "b@example.invalid": {
+                                "display_name": "Acct-B",
+                                "auth_status": "valid",
+                                "quota_5h_used": 10,
+                                "quota_5h_reset_at": now + 3600,
+                                "quota_7d_used": 20,
+                                "quota_7d_reset_at": now + 86400,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = {
+                "model": {"display_name": "Opus 4.7"},
+                "context_window": {"used_percentage": 33},
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 100, "resets_at": now + 3600},
+                    "seven_day": {"used_percentage": 30, "resets_at": now + 86400},
+                },
+            }
+            buf = io.StringIO()
+            with patch.dict(os.environ, {"USERPROFILE": str(home), "APPDATA": str(appdata)}, clear=True), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                    contextlib.redirect_stdout(buf):
+                quota.handle_statusline()
+            out = buf.getvalue().strip()
+            self.assertTrue(out.startswith("Opus 4.7 (Ctx 33%) │ Acct-B:80%"))
+            self.assertNotIn("Acct-A", out)
+            self.assertNotIn("5h:", out)
+            self.assertNotIn("7d:", out)
+            self.assertIn("🚨 额度耗尽→切[Acct-B:80%]后 /resume", out)
+
 
 if __name__ == "__main__":
     unittest.main()

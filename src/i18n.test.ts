@@ -51,3 +51,20 @@ test('原生错误、参数和原始路径可切换语言，未知消息原样�
   setLocale('en');expect(translate('时区已核验。{v0}',{v0:'首选语言与地区格式已保存，部分应用需重启或注销。'})).toBe('Time zone verified. Preferred language and region saved. Some apps require restarting or signing out.');
   setLocale('zh');
 });
+test('YAML 目录中无重复顶级键',()=>{
+  for(const file of ['zh.yaml','en.yaml']){
+    const raw=readFileSync(new URL(`./locales/${file}`,import.meta.url),'utf8');
+    const seen=new Set<string>(),dupes:string[]=[];
+    for(const line of raw.split(/\r?\n/)){
+      const trimmed=line.trim();
+      if(!trimmed||trimmed.startsWith('#'))continue;
+      const match=trimmed.match(/^("([^"]+)"|([a-zA-Z0-9_.-]+)):/);
+      if(match){
+        const key=match[2]!==undefined?match[2]:match[3];
+        if(seen.has(key))dupes.push(key);
+        seen.add(key);
+      }
+    }
+    expect(dupes).toEqual([]);
+  }
+});

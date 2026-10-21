@@ -30,7 +30,7 @@ export async function testIdentityOperation(browser:Browser,base:string) {
   const stages=()=>operation.locator('.identity-operation-step').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('data-stage')));
   assert.equal(await operation.count(),0);
   await page.evaluate(()=>(window as any).identityFixture.defer('identities_stop','identities_switch'));
-  await page.getByRole('button',{name:'使用空身份',exact:true}).click();
+  await page.getByRole('button',{name:'新身份',exact:true}).click();
   await page.getByRole('dialog').getByRole('button',{name:'确认暂存并切换',exact:true}).click();
   await pending(page,'identities_stop');await operation.waitFor();
   assert.equal(await operation.evaluate(node=>node.previousElementSibling?.classList.contains('identity-card-rail')),true);
@@ -95,7 +95,7 @@ export async function testIdentityOperation(browser:Browser,base:string) {
 
   // ----- 失败事件与回滚不能被百分比或已完成样式掩盖 -----
   await page.evaluate(()=>(window as any).identityFixture.defer('identities_switch'));
-  await page.getByRole('button',{name:'使用空身份',exact:true}).click();
+  await page.getByRole('button',{name:'新身份',exact:true}).click();
   await page.getByRole('dialog').getByRole('button',{name:'确认暂存并切换',exact:true}).click();
   await pending(page,'identities_switch');
   await emit(page,'identities_switch',{stage:'archive',status:'error',message:'fixture archive verification failed',current:1,total:4});

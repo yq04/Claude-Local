@@ -363,6 +363,7 @@ def evaluate_quota(
     latest_dt: datetime | None,
     plan_str: str,
     now_utc: datetime,
+    active_since_dt: datetime | None = None,
 ) -> dict:
     acc_uuid = ((cj.get("oauthAccount") or {}).get("accountUuid") or "") if isinstance(cj, dict) else ""
     raw_cu = cj.get("cachedUsageUtilization", {}) if isinstance(cj, dict) else {}
@@ -417,6 +418,8 @@ def evaluate_quota(
         while now_utc >= reset_7d_dt:
             reset_7d_dt += timedelta(days=7)
         cycle_start_7d = reset_7d_dt - timedelta(days=7)
+        if active_since_dt is not None and active_since_dt > cycle_start_7d:
+            cycle_start_7d = active_since_dt
         cost_in_cycle = sum(c for dt, c in slices if dt >= cycle_start_7d)
         used_7d = min(100, int(round(cost_in_cycle / usd_per_pct_7d)))
         rem_7d = max(0, 100 - used_7d)
@@ -428,6 +431,8 @@ def evaluate_quota(
             note_7d = f"{format_duration(diff_7d)} ({local_7d}) [新周期实时流 ${cost_in_cycle:.2f}]"
     elif raw_7d_used is not None and reset_7d_dt:
         win_start_7d = reset_7d_dt - timedelta(days=7)
+        if active_since_dt is not None and active_since_dt > win_start_7d:
+            win_start_7d = active_since_dt
         cost_after_snap = sum(
             c for dt, c in slices if dt > snap_dt + timedelta(seconds=5) and dt >= win_start_7d
         )
@@ -441,6 +446,8 @@ def evaluate_quota(
             note_7d += f" [实时会话流 +${cost_after_snap:.2f} ≈ +{max(1, int(round(extra_7d_pct)))}%]"
     else:
         win_start_7d = now_utc - timedelta(days=7)
+        if active_since_dt is not None and active_since_dt > win_start_7d:
+            win_start_7d = active_since_dt
         cost_7d = sum(c for dt, c in slices if dt >= win_start_7d)
         used_7d = min(100, int(round(cost_7d / usd_per_pct_7d)))
         rem_7d = max(0, 100 - used_7d)
@@ -450,6 +457,8 @@ def evaluate_quota(
     eff_reset_5h_dt = reset_5h_dt
     if raw_5h_used is None or reset_5h_dt is None or now_utc >= reset_5h_dt:
         after_dt = reset_5h_dt if reset_5h_dt is not None else (now_utc - timedelta(days=7))
+        if active_since_dt is not None and active_since_dt > after_dt:
+            after_dt = active_since_dt
         block_cost, active_block_end = walk_5h_blocks(slices, after_dt, now_utc)
         eff_reset_5h_dt = active_block_end
         used_5h = min(100, int(round(block_cost / usd_per_pct_5h)))
@@ -466,7 +475,9 @@ def evaluate_quota(
         cost_after_snap_5h = sum(
             c
             for dt, c in slices
-            if dt > floor_dt and (now_utc - dt).total_seconds() <= 5 * 3600
+            if dt > floor_dt
+            and (active_since_dt is None or dt >= active_since_dt)
+            and (now_utc - dt).total_seconds() <= 5 * 3600
         )
         extra_5h_pct = cost_after_snap_5h / usd_per_pct_5h
         used_5h = min(100, int(round(raw_5h_used + extra_5h_pct)))
@@ -481,7 +492,12 @@ def evaluate_quota(
         note_5h = "⛔ 受 7d 周限额耗尽锁死 (即使 5h 重置也无法调用)"
 
     # --- Last 1 hour burn rate ---
-    cost_last_1h = sum(c for dt, c in slices if 0 <= (now_utc - dt).total_seconds() <= 3600)
+    cost_last_1h = sum(
+        c
+        for dt, c in slices
+        if 0 <= (now_utc - dt).total_seconds() <= 3600
+        and (active_since_dt is None or dt >= active_since_dt)
+    )
     burn_pct_5h_per_hr = (cost_last_1h / usd_per_pct_5h) if usd_per_pct_5h > 0 else 0.0
 
     effective_rem = min(rem_5h, rem_7d)
@@ -490,7 +506,13 @@ def evaluate_quota(
         if fetched_ms
         else "纯会话流推算"
     )
-    last_active_dt = max([dt for dt, _ in slices] + ([latest_dt] if latest_dt else []), default=None)
+    if active_since_dt is not None:
+        acct_dts = [dt for dt, _ in slices if dt >= active_since_dt]
+        if fetched_ms:
+            acct_dts.append(snap_dt)
+        last_active_dt = max(acct_dts, default=None)
+    else:
+        last_active_dt = max([dt for dt, _ in slices] + ([latest_dt] if latest_dt else []), default=None)
     last_active_str = (
         last_active_dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
         if last_active_dt
@@ -527,6 +549,7 @@ def format_account(
     slices: list[tuple[datetime, float]],
     latest_dt: datetime | None,
     now_utc: datetime,
+    active_since_dt: datetime | None = None,
 ) -> dict:
     acc = cj.get("oauthAccount", {}) if isinstance(cj, dict) else {}
     oa = cred.get("claudeAiOauth", {}) if isinstance(cred, dict) else {}
@@ -560,7 +583,7 @@ def format_account(
         auth_str = "🔴 需重新登录"
         auth_status = "expired"
 
-    q = evaluate_quota(cj, slices, latest_dt, plan, now_utc)
+    q = evaluate_quota(cj, slices, latest_dt, plan, now_utc, active_since_dt=active_since_dt)
     if q["effective_rem"] == 0:
         avail_badge = "🔴 额度已耗尽 (不可用)"
     elif q["effective_rem"] <= 20:
@@ -1018,39 +1041,55 @@ def handle_statusline() -> None:
             now_utc,
         )
 
-    parts = [f"⚡ {acct_name}"]
     m_part = model_name
     if ctx_pct is not None:
         m_part += f" (Ctx {int(round(float(ctx_pct)))}%)"
-    parts.append(m_part)
-    q_parts = []
-    if used5 is not None:
-        rem5 = max(0, 100 - used5)
-        eta5 = format_compact_eta(r5_int - now_sec) if (r5_int and r5_int > now_sec) else ""
-        clk5 = (
-            datetime.fromtimestamp(r5_int, tz=timezone.utc).astimezone().strftime("%H:%M")
-            if (r5_int and r5_int > now_sec)
-            else ""
-        )
-        q_parts.append(f"5h:{rem5}%" + (f"({eta5}·{clk5})" if eta5 else ""))
-    if used7 is not None:
-        rem7 = max(0, 100 - used7)
-        eta7 = format_compact_eta(r7_int - now_sec) if (r7_int and r7_int > now_sec) else ""
-        clk7 = (
-            datetime.fromtimestamp(r7_int, tz=timezone.utc).astimezone().strftime("%H:%M")
-            if (r7_int and r7_int > now_sec)
-            else ""
-        )
-        q_parts.append(f"7d:{rem7}%" + (f"({eta7}·{clk7})" if eta7 else ""))
-    if q_parts:
-        parts.append(" · ".join(q_parts))
+    parts = [m_part]
 
-    # Show staged peer accounts from quota_ledger.json with real-time rollover
+    curr_rem7 = max(0, 100 - used7) if used7 is not None else None
+    curr_rem5 = (0 if curr_rem7 == 0 else max(0, 100 - used5)) if used5 is not None else None
+    if curr_rem5 is not None and curr_rem7 is not None:
+        curr_eff = min(curr_rem5, curr_rem7)
+    elif curr_rem5 is not None:
+        curr_eff = curr_rem5
+    else:
+        curr_eff = curr_rem7
+
+    # Resolve saved identity custom names from identities.sqlite when available
+    saved_name_by_email = {}
+    db_path = os.path.join(vault_dir, "identities.sqlite")
+    if os.path.isfile(db_path):
+        try:
+            conn = sqlite3.connect(db_path, timeout=1.5)
+            rows = conn.execute(
+                "SELECT i.name, s.summary FROM identities i "
+                "JOIN identity_summaries s ON i.id = s.id WHERE i.empty = 0"
+            ).fetchall()
+            conn.close()
+            for ident_name, sjson in rows:
+                try:
+                    sobj = json.loads(sjson)
+                    semail = (sobj.get("email") or "").strip().lower()
+                    if semail and ident_name:
+                        saved_name_by_email[semail] = str(ident_name)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Show only other (non-active) accounts from quota_ledger.json in a compact format
     peer_parts = []
+    best_peer = None  # (tier_consume_first, -r7, p_eff, p_rem7, p_rem5, p_name)
     for k_email, le in ledger.get("accounts", {}).items():
-        if email and k_email == email.lower():
+        k_lower = k_email.strip().lower()
+        if email and k_lower == email.lower():
             continue
-        p_name = le.get("display_name") or k_email.split("@")[0]
+        le_anchor = le.get("server_anchor") if isinstance(le.get("server_anchor"), dict) else {}
+        if acct_uuid and le_anchor.get("accountUuid") == acct_uuid:
+            continue
+        if saved_name_by_email and k_lower not in saved_name_by_email:
+            continue
+        p_name = saved_name_by_email.get(k_lower) or le.get("display_name") or k_email.split("@")[0]
         p_u5 = le.get("quota_5h_used")
         p_r5 = le.get("quota_5h_reset_at")
         p_u7 = le.get("quota_7d_used")
@@ -1071,19 +1110,142 @@ def handle_statusline() -> None:
         p_rem7 = max(0, 100 - p_u7_i)
         p_rem5 = 0 if p_rem7 == 0 else max(0, 100 - p_u5_i)
         p_eff = min(p_rem5, p_rem7)
+        if le.get("auth_status") != "expired" and p_eff > 0:
+            cand_key = (
+                1 if (p_rem5 >= 50 and p_r7_i and p_r7_i > now_sec) else 0,
+                -(p_r7_i or (now_sec + 30 * 86400)) if p_rem5 >= 50 else 0,
+                p_eff,
+                p_rem7,
+                p_rem5,
+                p_name,
+            )
+            if best_peer is None or cand_key > best_peer:
+                best_peer = cand_key
         p_bottleneck_r = p_r7_i if p_rem7 <= p_rem5 else (p_r5_i or p_r7_i)
         if p_bottleneck_r and p_bottleneck_r > now_sec and p_eff < 100:
             p_eta = format_compact_eta(p_bottleneck_r - now_sec)
-            p_clk = datetime.fromtimestamp(p_bottleneck_r, tz=timezone.utc).astimezone().strftime("%H:%M")
-            peer_parts.append(f"⏸ {p_name}:{p_eff}%({p_eta}·{p_clk})")
+            peer_parts.append(f"{p_name}:{p_eff}%({p_eta})")
         else:
-            peer_parts.append(f"⏸ {p_name}:{p_eff}%")
+            peer_parts.append(f"{p_name}:{p_eff}%")
     if peer_parts:
-        parts.append(" ".join(peer_parts))
+        parts.append(" · ".join(peer_parts))
 
-    if sess_cost is not None and float(sess_cost) > 0:
-        parts.append(f"${float(sess_cost):.2f}")
+    if curr_eff is not None and curr_eff <= 15 and best_peer is not None and best_peer[2] >= 30:
+        bp_eff = best_peer[2]
+        bp_name = best_peer[5]
+        if curr_eff <= 0:
+            parts.append(f"🚨 额度耗尽→切[{bp_name}:{bp_eff}%]后 /resume")
+        else:
+            parts.append(f"⚠️ 仅余{curr_eff}%→可切[{bp_name}:{bp_eff}%]")
+
     print(" │ ".join(parts))
+
+
+def select_best_relay_candidate(valid_accounts: list[dict], now_sec: int, hysteresis_pct: int = 10) -> dict:
+    """
+    Multi-account quota relay selector combining:
+    1. Consume-first 7d reset awareness: among healthy candidates (rem_5h >= 50% and within 15% of max_eff),
+       prioritize the account whose 7d weekly quota resets sooner so expiring weekly budget is used first.
+    2. Hysteresis (default 10% when current effective_rem > 20%, 0% when <= 20%): avoids noisy ping-pong
+       recommendations when accounts have similar remaining quota.
+    3. Fastest-reset recovery forecast when all accounts are exhausted.
+    """
+    curr = next((a for a in valid_accounts if a.get("role") == "current"), None)
+    saved_ready = [
+        a
+        for a in valid_accounts
+        if a.get("role") == "saved"
+        and a.get("auth_status") != "expired"
+        and int(a.get("effective_rem") or 0) > 0
+    ]
+
+    max_saved_eff = max((int(a.get("effective_rem") or 0) for a in saved_ready), default=0)
+
+    def candidate_sort_key(a: dict) -> tuple:
+        eff = int(a.get("effective_rem") or 0)
+        rem5 = int(a.get("rem_5h") or 0)
+        rem7 = int(a.get("rem_7d") or 0)
+        r7 = a.get("reset_7d_ts")
+        r7_int = int(r7) if r7 and int(r7) > now_sec else None
+        in_consume_first_tier = (
+            rem5 >= 50 and (max_saved_eff - eff) <= 15 and r7_int is not None
+        )
+        return (
+            1 if in_consume_first_tier else 0,
+            -r7_int if in_consume_first_tier and r7_int else 0,
+            eff,
+            rem7,
+            rem5,
+        )
+
+    best_saved = max(saved_ready, key=candidate_sort_key) if saved_ready else None
+    curr_ready = (
+        curr is not None
+        and curr.get("auth_status") != "expired"
+        and int(curr.get("effective_rem") or 0) > 0
+    )
+    curr_eff = int(curr.get("effective_rem") or 0) if curr_ready else 0
+
+    if best_saved is not None:
+        bs_eff = int(best_saved.get("effective_rem") or 0)
+        bs_r7 = best_saved.get("reset_7d_ts")
+        curr_r7 = curr.get("reset_7d_ts") if curr else None
+        consume_first_urgent = (
+            curr_ready
+            and int(best_saved.get("rem_5h") or 0) >= 60
+            and bs_eff >= curr_eff - 5
+            and bs_r7
+            and curr_r7
+            and int(bs_r7) > now_sec
+            and (int(curr_r7) - int(bs_r7)) >= 24 * 3600
+        )
+        threshold = 0 if curr_eff <= 20 else hysteresis_pct
+        if not curr_ready or bs_eff >= curr_eff + threshold or consume_first_urgent:
+            reason = (
+                "consume_first_7d"
+                if (consume_first_urgent or (bs_r7 and int(best_saved.get("rem_5h") or 0) >= 50 and max_saved_eff - bs_eff <= 15))
+                else "higher_headroom"
+            )
+            return {
+                "action": "switch",
+                "target": best_saved.get("name"),
+                "target_id": best_saved.get("id"),
+                "target_effective_rem": bs_eff,
+                "current_effective_rem": curr_eff,
+                "reason": reason,
+            }
+
+    if curr_ready:
+        return {
+            "action": "stay",
+            "target": curr.get("name"),
+            "target_effective_rem": curr_eff,
+            "current_effective_rem": curr_eff,
+            "reason": "current_optimal",
+        }
+
+    # All accounts exhausted: find the account whose bottleneck window resets earliest
+    fastest_acc = None
+    fastest_reset_ts = None
+    for a in valid_accounts:
+        rem7 = int(a.get("rem_7d") or 0)
+        rem5 = int(a.get("rem_5h") or 0)
+        r7 = a.get("reset_7d_ts")
+        r5 = a.get("reset_5h_ts")
+        bottleneck_ts = r7 if rem7 <= rem5 else (r5 or r7)
+        if bottleneck_ts and int(bottleneck_ts) > now_sec:
+            bts = int(bottleneck_ts)
+            if fastest_reset_ts is None or bts < fastest_reset_ts:
+                fastest_reset_ts = bts
+                fastest_acc = a
+
+    return {
+        "action": "wait",
+        "target": fastest_acc.get("name") if fastest_acc else None,
+        "fastest_reset_ts": fastest_reset_ts,
+        "fastest_reset_eta_sec": (fastest_reset_ts - now_sec) if fastest_reset_ts else None,
+        "reason": "all_exhausted",
+    }
 
 
 def is_pid_alive(pid: int) -> bool:
@@ -1161,6 +1323,18 @@ def main():
     active_sessions = detect_active_sessions(home)
     accounts_out = []
 
+    db_path = os.path.join(vault, "identities.sqlite")
+    live_active_since_dt = None
+    if os.path.isfile(db_path):
+        try:
+            conn_as = sqlite3.connect(db_path, timeout=2.0)
+            row_as = conn_as.execute("SELECT value FROM state WHERE key='active_since'").fetchone()
+            conn_as.close()
+            if row_as and row_as[0] and str(row_as[0]).isdigit() and int(row_as[0]) > 0:
+                live_active_since_dt = datetime.fromtimestamp(int(row_as[0]), tz=timezone.utc)
+        except Exception:
+            pass
+
     if live_email:
         le_anchor = (ledger_accounts.get(live_email) or {}).get("server_anchor")
         if isinstance(le_anchor, dict):
@@ -1171,12 +1345,13 @@ def main():
                 live_cj["cachedUsageUtilization"] = le_anchor
         proj_root = os.path.join(home, ".claude", "projects")
         live_slices, live_latest = collect_session_slices_from_dir(proj_root)
-        info = format_account(live_cj, live_cred, live_slices, live_latest, now_utc)
+        info = format_account(
+            live_cj, live_cred, live_slices, live_latest, now_utc, active_since_dt=live_active_since_dt
+        )
         info["role"] = "current"
         info["name"] = info["display"]
         accounts_out.append(info)
 
-    db_path = os.path.join(vault, "identities.sqlite")
     key_path = os.path.join(vault, "key.bin")
     if os.path.isfile(db_path) and os.path.isfile(key_path):
         with open(key_path, "rb") as kf:
@@ -1281,8 +1456,25 @@ def main():
     # Persist multi-account ledger and synchronize identities.sqlite summaries
     save_ledger_and_sync_sqlite(app_dir, vault, accounts_out, now_utc)
 
+    valid_accounts = [a for a in accounts_out if a.get("role") in ("current", "saved")]
+    relay_rec = (
+        select_best_relay_candidate(valid_accounts, int(now_utc.timestamp()))
+        if valid_accounts
+        else None
+    )
+
     if as_json:
-        print(json.dumps({"active_sessions": active_sessions, "accounts": accounts_out}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "active_sessions": active_sessions,
+                    "accounts": accounts_out,
+                    "relay_recommendation": relay_rec,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return
 
     print("=" * 84)
@@ -1304,23 +1496,39 @@ def main():
         print(f"  5h 滑窗  : [{render_bar(item['rem_5h'])}] 剩余 {item['rem_5h']:>3}%  | {item['note_5h']}")
         print(f"  7d 周限额: [{render_bar(item['rem_7d'])}] 剩余 {item['rem_7d']:>3}%  | {item['note_7d']}")
         if is_curr and item["burn_1h_usd"] > 0:
-            print(f"  近1h速率 : 消耗 ${item['burn_1h_usd']:.2f}/h (约合 5h 滑窗 {item['burn_5h_pct_hr']:.1f}%/h)")
+            tte_note = ""
+            if item.get("burn_5h_pct_hr", 0) > 0 and item.get("rem_5h", 0) > 0:
+                tte_sec = int(round((item["rem_5h"] / item["burn_5h_pct_hr"]) * 3600))
+                tte_note = f" · 按当前速率预计可续航 ~{format_compact_eta(tte_sec)}"
+            print(f"  近1h速率 : 消耗 ${item['burn_1h_usd']:.2f}/h (约合 5h 滑窗 {item['burn_5h_pct_hr']:.1f}%/h{tte_note})")
         if is_curr:
             print(f"  最近活跃 : {item['last_active_str']}  (服务端锚点: {item['fetched_str']} · statusLine 实时回写)")
         else:
             print(f"  最后活跃 : {item['last_active_str']}  (归档时间: {item['saved_str']})")
 
-    valid_accounts = [a for a in accounts_out if a.get("role") in ("current", "saved")]
-    if valid_accounts:
-        best = max(valid_accounts, key=lambda a: (a["effective_rem"], a["rem_7d"], a["rem_5h"]))
-        curr = next((a for a in valid_accounts if a["role"] == "current"), None)
+    if valid_accounts and relay_rec:
         print("\n" + "-" * 84)
-        if curr and curr["effective_rem"] >= best["effective_rem"] and curr["effective_rem"] > 0:
-            print(f" 💡 调度建议 : 当前账号 [{curr['name']}] 即为最优可用账号 (可用 {curr['effective_rem']}%)，无需切换。")
-        elif best["effective_rem"] > 0:
-            print(f" ⭐ 调度建议 : 建议在 Claude-Local 中一键切换至暂存账号 [{best['name']}] (可用 {best['effective_rem']}%)。")
+        act = relay_rec["action"]
+        if act == "stay":
+            print(
+                f" 💡 调度建议 : 当前账号 [{relay_rec['target']}] 无需切换 "
+                f"(可用 {relay_rec['current_effective_rem']}% · 含10%防抖阈值保护)。"
+            )
+        elif act == "switch":
+            reason_tag = " [周限额优先消纳/Consume-First]" if relay_rec.get("reason") == "consume_first_7d" else ""
+            print(
+                f" ⭐ 调度建议 : 建议在 Claude-Local 中一键接力切换至暂存账号 [{relay_rec['target']}] "
+                f"(可用 {relay_rec['target_effective_rem']}%){reason_tag}，切换后执行 claude --resume 无缝续接会话。"
+            )
         else:
-            print(" ⛔ 调度建议 : 全部账号当前额度均已耗尽，请等待最快重置窗口解封。")
+            eta_sec = relay_rec.get("fastest_reset_eta_sec")
+            if relay_rec.get("target") and eta_sec:
+                print(
+                    f" ⛔ 调度建议 : 全部账号当前额度均已耗尽，最快恢复账号为 [{relay_rec['target']}] "
+                    f"(预计 {format_compact_eta(eta_sec)} 后解封)。"
+                )
+            else:
+                print(" ⛔ 调度建议 : 全部账号当前额度均已耗尽，请等待最快重置窗口解封。")
     print("=" * 84)
 
 

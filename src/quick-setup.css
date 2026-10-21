@@ -1,0 +1,33 @@
+/* [INPUT]: Existing theme, spacing and typography tokens.
+ * [OUTPUT]: Responsive read-only overview and six quick configuration cards.
+ * [POS]: Quick page only; shared themes, compact sidebar and reduced-motion preferences remain authoritative.
+ * [PROTOCOL]: Update src/CLAUDE.md with changes. */
+.quick-header { justify-content: space-between; gap: 12px; }
+.quick-content { padding: 0 0 4px; display: grid; gap: 16px; }
+.quick-overview { padding: 18px; }
+.quick-overview-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.quick-overview-heading h2 { margin: 0; font-size: 15px; font-weight: 650; }
+.quick-overview-heading > span { font-size: 12px; color: var(--muted-foreground); }
+.quick-state-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.quick-state-grid > div { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.quick-state-grid span, .quick-state-grid small { font-size: 12px; color: var(--muted-foreground); }
+.quick-state-grid strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.quick-target { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.quick-target > span { font-size: 12px; color: var(--muted-foreground); }
+.quick-target > strong { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.quick-target > small { width: 100%; font-size: 12px; color: var(--muted-foreground); line-height: 1.6; }
+.quick-content > .settings-group-heading { margin: 2px 0 -4px; }
+.quick-setup-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.quick-setup-card { display: flex; flex-direction: column; align-items: flex-start; padding: 18px; min-width: 0; }
+.quick-card-title { display: flex; align-items: center; gap: 10px; }
+.quick-card-title h3 { font-size: 14px; font-weight: 650; margin: 0; }
+.quick-setup-card p { color: var(--muted-foreground); font-size: 12px; line-height: 1.7; margin: 12px 0 16px; flex: 1; }
+.quick-setup-card > button { max-width: 100%; white-space: normal; text-align: start; height: auto; min-height: 32px; }
+@media (max-width: 960px) {
+  .quick-setup-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-state-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .quick-setup-grid { grid-template-columns: minmax(0, 1fr); }
+  .quick-overview-heading { align-items: flex-start; flex-direction: column; }
+}

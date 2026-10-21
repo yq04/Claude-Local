@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 真实网络页、Tauri mockIPC 与四类虚构诊断结果（四个固定域名，含 Cloudflare 浏览器质询可达）。
- * [OUTPUT]: 可控的成功/部分失败/命令异常/缺失结果与调用记录，检测期间由测试显式释放。
+ * [OUTPUT]: 可控诊断成功/部分失败/命令异常/缺失结果、复制拒绝开关与调用记录，检测期间由测试显式释放。
  * [POS]: 无真实连接、密钥或外部导航的 GUI 回归样本。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -12,10 +12,17 @@ import {setLocale} from '../src/i18n';
 import '../src/index.css';
 import '../src/style.css';
 let mode='success';
+let copyFailure=false;
 let release=()=>{};
 const commands:string[]=[];
-Object.assign(window,{networkFixture:{commands,setMode:(value:string)=>{mode=value;},finish:()=>release(),language:setLocale}});
-mockIPC(command=>{
+const copied:string[]=[];
+Object.assign(window,{networkFixture:{commands,copied,setMode:(value:string)=>{mode=value;},setCopyFailure:(value:boolean)=>{copyFailure=value;},finish:()=>release(),language:setLocale}});
+mockIPC((command,args)=>{
+ if(command==='copy_result'){
+  if(copyFailure)throw Error('fixture native clipboard denied');
+  copied.push(String((args as {text?:string})?.text??''));
+  return;
+ }
  commands.push(command);
  if(command!=='network_diagnose_domains')throw Error(`Unexpected fixture command: ${command}`);
  return new Promise((resolve,reject)=>{release=()=>{

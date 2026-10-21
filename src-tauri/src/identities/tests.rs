@@ -68,9 +68,10 @@ fn database_metadata_and_recovery_are_transactional() {
     let list = db.records().unwrap();
     assert_eq!(list.len(), 1);
     assert!(list[0].policy.skills);
-    assert!(!list[0].policy.history);
+    assert!(list[0].policy.history);
     db.complete("empty").unwrap();
     assert_eq!(db.get("active").unwrap().as_deref(), Some("empty"));
+    assert!(db.get("active_since").unwrap().is_some());
     assert!(db.get("recovery").unwrap().is_none());
     drop(db);
     std::fs::remove_dir_all(folder).unwrap();
@@ -163,10 +164,12 @@ fn interrupted_switch_can_recover_and_preserves_pre_recovery_state() {
     .unwrap();
     let mut store = store::Store::open(&folder.join("vault"), &home).unwrap();
     let reporter = Reporter::channel(None);
-    let (saved, stage) = store.save("原身份", &Policy::default(), &reporter).unwrap();
+    let mut policy = Policy::default();
+    policy.history = false;
+    let (saved, stage) = store.save("原身份", &policy, &reporter).unwrap();
     store.db.pending(&saved, "empty").unwrap();
     store
-        .clear(&store::Store::selected(&stage, &Policy::default()), &reporter, "clear")
+        .clear(&store::Store::selected(&stage, &policy), &reporter, "clear")
         .unwrap();
     fixture_write(
         home.join(".claude/history.jsonl"),

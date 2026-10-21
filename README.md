@@ -1,67 +1,75 @@
 # Claude-Local
 
-独立维护、优先适配 Windows 的 Claude 本地工作台。把身份备份、账号切换、额度观察、可选浏览器和环境诊断放在一个本机工具中。
+面向 Windows x64 的 Claude 本地管理工具，集中管理身份备份、账号切换、用量分析和可选的隔离浏览器。使用 Tauri、Rust、React、TypeScript 与 Python，独立维护产品和版本。
 
-**自己的产品、自己的版本与维护路线。** 无上游同步、官方更新提示、购买推广或外部 Skill 安装引导。当前版本为 0.1.0，支持 Windows 11 / Windows 10 x64。
+当前源码版本：**0.1.1**。支持 Windows 10 / 11 x64；安装包包含 Claude-Local 与 Claude-Local Browser 两个入口。[本版更新](docs/RELEASE_NOTES_0.1.1.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md)
 
-## 日常使用
+## 主要功能
 
-- **身份管理**：原地加密备份、暂存/恢复、空身份、保留策略、会话预览与保护确认。
-- **额度观察**：被动接收 Claude Code statusLine 数据，结合本地记录估算 5h / 7d 使用情况；一小时或手动刷新，可推荐剩余额度较多的已保存身份。
-- **可选浏览器**：Claude-Local Browser 是独立资料的配套组件，按身份绑定资料和稳定种子；宿主普通启动不打开浏览器，需要时再启动。
-- **服务连通性**：手动检测四个固定 Claude 服务域名，展示实际状态、延迟与失败原因；连接对端地址不等同于出口IP。
-- **本机环境**：读取并按用户选择调整时区、语言、地区及定位相关设置。
+- **身份管理**：本地加密备份与恢复、账号切换、会话预览和保留策略。卡片优先显示本地保存名，统一额度与时间排版，支持隐私遮罩。
+- **额度观察**：被动接收 Claude Code statusLine 数据，结合本地记录展示 5h / 7d 使用量；每小时或手动刷新。
+- **用量分析**：按今天、近 7 天、近 30 天或全部历史查看 Token、缓存与模型分布。支持账号筛选、图表／数据切换、排序和分页；未确认归属的记录可通过私有设置计入指定账号，个人归属配置不随安装包分发。
+- **快速配置**：按需读取身份、浏览器、系统语言与 CLI 状态，提供六类设置入口，区分当前状态与目标草稿。
+- **网络环境**：手动检测固定 Claude 服务的连通性，复制预置 iKuuu / Kookeey 推广链接及精简配置提示词；不自动打开外部网站。
+- **电脑环境**：分项展示时区、语言与定位状态，定位采用紧凑布局；系统修改由用户明确触发。
+- **可选浏览器**：按身份保存隔离资料与稳定种子，仅在用户操作或 `--browser` 时启动。
+- **CLI 维护**：手动检查并按原安装方式更新 Claude Code CLI；运行中的 Claude Code 会话不会被自动结束。
 
-默认进入身份页，记住上次页面和界面语言。主应用 **Claude-Local** 与配套 **Claude-Local Browser** 使用一个 Windows 安装包，不再使用 A/B 产品名。
+## 获取与安装
 
-## 开发与安装
+本仓库按私有开发和审阅范围维护。手动发布的测试包应附带 SHA-256、隐私审计报告、资源清单及更新说明；CI 仅执行检查和可选的私有构建产物，不自动创建 Release 或更新源。
 
-需要 Bun、Rust MSVC、Python 和 Visual Studio C++ Build Tools；完整流程见 [开发说明](docs/DEVELOPMENT.md)。
+安装包使用当前用户 NSIS 安装，尚未签名。构建与解包校验不等于安装、升级和卸载验证；第三方组件的公开分发许可仍以 [分发说明](docs/DISTRIBUTION.md) 为准。
+
+主程序：`claude-local.exe`；应用标识：`ai.local.claude-local`；浏览器注册：`Claude-Local-Browser`。主程序默认进入身份管理，正常启动不会打开浏览器。
+
+## 从源码构建
+
+准备 Bun、Rust MSVC、Python、Visual Studio C++ Build Tools 和 WebView2 Runtime，使用现有锁文件：
 
 ```powershell
 bun install --frozen-lockfile
-python -m pip install -r requirements-dev.txt
-bun test
+python -m pip install -r scripts/requirements-ci.txt
+bun test src
 bun run build
-cargo test --locked --manifest-path src-tauri/Cargo.toml -- --test-threads=1
+cargo test --locked --manifest-path src-tauri/Cargo.toml usage_tests
 ```
 
-浏览器引擎不进入源码仓库。只在准备浏览器/安装包时运行固定版本、校验摘要的准备工具：
+构建完整安装包还需固定版本的浏览器引擎和已有的 7-Zip：
 
 ```powershell
 python scripts/fetch-browser.py
 bun run build:windows
 ```
 
-本机开发部署可使用 `bun run build:local` 与 `bun run deploy:local`。部署默认写入当前用户的 `LocalAppData/Programs/Claude-Local`，可显式指定独立目录；不写入身份资料，不调用上游安装器。
+`build:windows` 在工作区和用户目录之外创建全新的中性 Cargo 构建目录，仅复制 crates.io 索引与归档缓存，保留原有缓存及 Rustup。正式构建启用 `custom-protocol`，完成 NSIS 只读解包、资源路径与 SHA-256 校验后，输出唯一的 `.local/artifacts/<id>/` 目录。可通过 `-BuildRoot` 指定满足相同边界的新目录，通过 `-SevenZipPath` 指定已有 7-Zip，通过 `-PrivateMarkersFile` 提供仓库之外的私密审计标记。
 
-## 数据与行为边界
+开发用本地编译可使用 `bun run build:local`；文件式部署默认写入当前用户的 `LocalAppData/Programs/Claude-Local`。已有安装的更新应先备份、核对进程和文件，再以可回滚方式替换；安装程序和个人资料不应成为构建输入。
 
-- 应用标识：`ai.local.claude-local`；宿主程序：`claude-local.exe`。
-- 配套浏览器注册：`Claude-Local-Browser`，由宿主 `--browser` 入口启动。
-- 用户资料：`%APPDATA%/ai.local.claude-local`；独立保险库、SQLite、额度账本与浏览器资料。
-- 管理对象仍是当前用户默认的 Claude 工作区。这不是操作系统沙箱；请勿同时让多个身份管理程序切换或清理同一工作区。
-- `.claude.json` 对额度采集器保持只读；Python 是外部额度账本唯一写入方，锁内拒绝旧锚点覆盖新数据，Rust 在内存合并最新同账号锚点。
-- 本地切换/清理不删除服务端记录；需要结束 Claude 的操作保留明确确认。开发、部署和测试不得中断用户的 Claude 会话。
+## 数据边界
 
-首次从旧版迁移时，用 `scripts/migrate-local-data.py` 显式传入源/目标。该工具拒绝目标覆盖、链接、活跃程序、SQLite日志及待恢复事务，私有复制并完整验收后才公开新目录。**源资料保留，首次迁移后不要重复覆盖。** 对沙箱限制读取的可再生缓存，可显式加 `--exclude-browser-caches`；仅跳过标准浏览器缓存目录，保留 Cookie、登录、配置及原缓存不动。
-
-个人账号、归档、凭据、浏览器资料、代理配置和运行日志不会进入仓库。机器专用笔记请放到被忽略的 `.local/`。可分享构建、CI与第三方许可边界见 [分发说明](docs/DISTRIBUTION.md)。
+- 应用数据按用户存放在 `%APPDATA%/ai.local.claude-local`，包含身份库、密钥、额度／用量账本及浏览器资料，不随安装包或源码分发。
+- 身份切换管理当前用户默认 Claude 工作区；独立应用目录不等于操作系统沙箱。破坏性操作保留明确确认、进程检查和回滚。
+- 额度采集不轮询 OAuth 用量接口，不写入 `.claude.json`。Python 是外部额度账本的唯一写入方，用量统计使用独立账本。
+- 开发、测试和本地更新不得中断运行中的 `claude.exe`；自动测试使用虚构数据和隔离环境。
+- 迁移只复制到新的私有目标并校验完整性、哈希与身份数量，保留源资料。兼容现有 `.baga` 格式、账号 HMAC 和浏览器种子。
 
 ## 验证
 
 ```powershell
-bun run test:identities
+python scripts/browser_ui.py dist
 python scripts/test-claude-quota-local.py
 python scripts/test-migrate-local-data.py
 python scripts/test-fetch-browser.py
+python scripts/test-audit-windows-package.py
 node scripts/test-local-shell.mjs
+node scripts/test-usage-statistics.mjs
 ```
 
-测试使用虚构身份与临时目录。普通CI只检查源码，不使用个人账号、不下载引擎、不发布；安装包构建通过工作流手动触发，仅保存私有构建产物，不创建公开Release或更新源。
+系统修改、安装／升级／卸载测试仅在临时 Windows 环境执行，不能在个人工作机上运行 CI 专用系统测试。
 
-## 项目与许可
+## 许可与归属
 
-源码在本仓库独立演进，未关联为 GitHub fork，不依赖旧仓库远程、提交历史或发布权限。承接的 MIT 代码保留原始版权与来源归属；第三方引擎、组件和图标各自适用其许可，见 [LICENSE](LICENSE) 与 [NOTICE.md](NOTICE.md)。保留格式兼容常量是为了导入现有本地资料，不代表继续同步旧项目。
+保留原 CCBaga 贡献者的 MIT 版权及第三方声明，详见 [LICENSE](LICENSE) 与 [NOTICE.md](NOTICE.md)。应用代码的 MIT 声明不替代第三方组件、图标或浏览器的许可。当前 Cromma UI 复制树的独立许可及 Chromium 完整声明清单仍需核实，公开源码或二进制分发必须遵守这些边界。
 
-Claude-Local 为社区开发的本地管理工具，与 Anthropic 无隶属关系。软件与账号应在本人授权范围内使用。
+Claude-Local 独立于 Anthropic，不提供上游同步、官方应用更新端点或自动公开发布流程。

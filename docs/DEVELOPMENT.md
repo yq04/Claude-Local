@@ -29,7 +29,11 @@ bun run build:local
 bun run build:windows
 ```
 
-The native executable is under `src-tauri/target/release/claude-local.exe`. The installer is under `src-tauri/target/release/bundle/nsis/`. `build:windows` runs `scripts/package-browser.ps1`, which fetches the engine if absent and checks its version. The engine download is excluded from Git. Never substitute a browser folder that contains a user's profile or credentials.
+The native executable is under `src-tauri/target/release/claude-local.exe`; the internal NSIS build output remains under `src-tauri/target/release/bundle/nsis/`. `build:windows` calls `scripts/build-windows-share.ps1`, which requires an existing `7z.exe` on PATH or in a standard Program Files installation. To use a portable copy, run `pwsh -NoProfile -File scripts/build-windows-share.ps1 -SevenZipPath '<path-to-7z.exe>'`. Optional `-PrivateMarkersFile '<external-json-path>'` accepts private markers kept outside the repository.
+
+The wrapper builds once in a fresh neutral Cargo home/target under `<workspace-drive>:/ClaudeLocalBuild/<id>/`, outside the workspace and `USERPROFILE`, so native assertion paths cannot embed a personal Cargo source directory. Optional `-BuildRoot '<new-neutral-directory>'` chooses another new location outside both boundaries. It copies only crates.io registry index/archive caches with links rejected, never Cargo root config, credentials, executables or `registry/src`; original caches and Rustup home are preserved. Existing Rust flags are retained, workspace/user-profile/neutral paths are remapped and changed process environment variables are restored. Previous fixed outputs are backed up before the new host/setup are copied from the neutral target to the conventional repository locations.
+
+The existing `package-browser.ps1` hook fetches a missing pinned engine and verifies its version and build-input privacy boundary. After building, the wrapper uses 7z to extract the installer without executing it, verifies exact payload paths/hashes and privacy rules, and only after a passing audit creates a unique ignored `.local/artifacts/<id>/` containing the installer, SHA-256 and two audit JSON files. Use the final JSON output to find that share directory instead of manually collecting the internal NSIS output. The engine download is excluded from Git; personal identities, usage, logs and browser profiles are never packaging inputs. Never substitute a browser folder containing user data. This process does not run installation/uninstallation or establish that a particular final build passed; inspect its reports and the signing/license limitations in [Distribution](DISTRIBUTION.md).
 
 For UI development, `bun run dev` starts Vite. `bun run tauri dev --config src-tauri/tauri.windows.conf.json` starts the native development host. Native actions can change the current user's Claude workspace, browser registration or system settings; use synthetic fixtures for automated checks.
 
@@ -42,20 +46,24 @@ python scripts/browser_ui.py dist
 python scripts/test-fetch-browser.py
 python scripts/test-claude-quota-local.py
 python scripts/test-migrate-local-data.py
-python scripts/test-windows.py
+# Windows system-changing tests run only on disposable CI, not a personal machine.
 ```
 
 Run native unit tests using only the public static build resources when the full browser engine is absent:
 
 ```powershell
 $env:TAURI_CONFIG = '{"bundle":{"resources":["../dist/","../browser-runtime/version.txt","../browser-runtime/LICENSE.fingerprint-chromium"]}}'
-cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol -- --test-threads=1
+cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol usage_tests
 Remove-Item Env:TAURI_CONFIG
 ```
 
 The quota and migration tests create fictional ledgers, identities and browser files in temporary directories. The Windows CLI tests use a temporary installer and executable fixtures. Do not run the real quota collector, migration command, local deployment or proxy configuration as CI checks.
 
 The browser interaction scripts use `playwright-core` with the pinned engine and mock IPC. After explicitly fetching the engine, run their Node or Bun entry points to exercise the UI. `scripts/test-local-shell.mjs` accepts an optional output directory for fictional screenshots; keep generated images and reports outside Git. These tests do not replace an installed application smoke test.
+
+For Usage analytics and Quick setup, run `bun test src`, the native tests filtered by `usage_tests`, and `node scripts/test-usage-statistics.mjs`. The harness uses the actual React shell with fictional IPC, blocked external requests and a controlled clock. It verifies hourly/future slots, 7/30-day and full-history spans, sequential polling/visibility/unmount behavior, partial status failures, all six quick destinations and bilingual narrow layouts. Previews default to ignored `.local/preview/ui-refinements`; pass a separate output directory for each delivery. Native tests use temporary homes and databases, never the real collector or an actual identity switch.
+
+The refined Usage analytics/compact-sidebar/computer/CLI controls are covered by that same fake-IPC harness; current previews are under `.local/preview/ui-refinements`. CLI checks use the Rust `claude_cli` test filter. Windows update regression cases are the update-specific methods under `CliTests` in `scripts/test-windows.py`; select those synthetic fixtures directly, never the system-mutating `SystemTests` on a personal machine.
 
 ## GitHub Actions
 

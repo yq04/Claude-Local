@@ -1,4 +1,4 @@
-# [INPUT]: 原生白名单传入的语言/区域环境变量与 Windows International 模块。
+﻿# [INPUT]: 原生白名单传入的语言/区域环境变量与 Windows International 模块。
 # [OUTPUT]: 当前用户首选语言和区域格式的真实写入核验；显示语言需要登录会话重新载入。
 # [POS]: 电脑环境的内嵌执行层；保留其他语言和输入法，不修改系统账户、定位或系统策略。
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

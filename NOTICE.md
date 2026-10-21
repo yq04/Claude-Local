@@ -1,5 +1,5 @@
 <!--
-[INPUT]: 原创项目 MIT 授权、现有 Chromium 许可与本地 UI 与 AI SVG 来源记录。
+[INPUT]: 原创项目 MIT 授权、现有 Chromium 许可、本地 UI 与 AI SVG 来源记录及 Token 统计开源设计参考。
 [OUTPUT]: 英文第三方归属和分发边界；未发现的许可不推断为 MIT。
 [POS]: LICENSE 的第三方补充说明，供 README 和发布包引用。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -31,6 +31,12 @@ Tauri, React, Radix UI, Motion, Tailwind CSS, Vite, YAML and the Rust dependenci
 Claude cleanup discovery was informed by the [claude-cleanup skill](https://github.com/suyuan2022/suyuan-skill/tree/main/claude-cleanup). Its upstream license and attribution must be reviewed for any redistributed material.
 
 The CL monogram and current desktop/browser application marks were created for Claude-Local and replace the inherited application artwork. Anthropic, Claude, Apple, Chromium and other third-party names remain the property of their respective owners. Their mention does not imply sponsorship or endorsement.
+
+## Usage accounting references
+
+The local usage accounting design was informed by [ccusage](https://github.com/ccusage/ccusage), Copyright (c) 2025 ryoppippi, and [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor), both published under MIT licenses at the versions documented in [USAGE_STATISTICS.md](docs/USAGE_STATISTICS.md). Claude-Local implements the native integration independently; these tools are not bundled or invoked as application dependencies. Preserve the applicable upstream MIT notices if code from either project is incorporated in a future change.
+
+The Usage analytics visual hierarchy was also informed by the MIT-licensed [CPA-Manager-Plus (CPAMP)](https://github.com/seakee/CPA-Manager-Plus), at the reference revision documented above. Claude-Local uses independently implemented theme-aware components and SVG charts; CPAMP assets and runtime code are not bundled.
 
 ## Windows timezone data
 

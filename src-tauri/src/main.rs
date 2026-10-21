@@ -1,5 +1,5 @@
-// [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统、固定网络资源导航与独立界面语言命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
-// [OUTPUT]: Claude-Local 独立窗口、托盘、SQLite 本地身份暂存/恢复、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、固定网络入口与 CI 固定启动诊断。
+// [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统、固定网络资源导航、独立界面语言与本地 Token 统计命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
+// [OUTPUT]: Claude-Local 独立窗口、托盘、SQLite 本地身份暂存/恢复、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、固定网络入口与 CI 固定启动诊断。
 // [POS]: 应用编排层；不注册翻译快捷键，不读取翻译设置或 API 密钥。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -136,6 +136,7 @@ fn main() {
             cleaner::residue::claude_residue_scan,
             cleaner::residue::claude_residue_clean,
             identities::identities_read,
+            identities::usage::usage_statistics_read,
             identities::identities_browser,
             identities::identities_stop,
             identities::identities_save,
@@ -143,6 +144,7 @@ fn main() {
             identities::identities_rename,
             identities::identities_delete,
             claude_cli::claude_cli_read,
+            claude_cli::claude_cli_check,
             claude_cli::claude_cli_manage,
             regions::get_regions,
             system::system_read,

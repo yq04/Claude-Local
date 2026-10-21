@@ -16,6 +16,9 @@ mod optimization_tests;
 pub(crate) mod private;
 mod profile;
 mod store;
+pub(crate) mod usage;
+#[cfg(test)]
+mod usage_tests;
 #[cfg(test)]
 mod tests;
 use crate::progress::{Progress, Reporter};
@@ -40,7 +43,7 @@ impl Default for Policy {
             mcp: true,
             settings: true,
             projects: true,
-            history: false,
+            history: true,
             cache: false,
         }
     }

@@ -1,25 +1,103 @@
 /**
- * [INPUT]: 原生 CLI 状态/管理命令、精确进程结束、共享确认窗和任务日志。
- * [OUTPUT]: 紧凑 CLI 安装状态、卸载/重装与确认后执行。
- * [POS]: 身份管理页的程序维护区域；程序管理保留身份保险库与用户资料。
+ * [INPUT]: 原生 CLI 本地状态、用户手动最新版本检查与更新命令和真实任务日志。
+ * [OUTPUT]: 紧凑品牌维护卡片、当前/最新版本、检查更新与一键更新；运行中明确阻断更新。
+ * [POS]: 身份页 CLI 程序维护区域；首次挂载只读本地状态，不联网、不结束会话、不修改身份或配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {useEffect,useState} from 'react';
+import {useEffect, useState} from 'react';
 import {Button} from 'cromma-ui';
 import {invoke} from '@tauri-apps/api/core';
+import appLogo from '../assets/claude-local-mark.svg';
 import {useI18n} from './i18n';
-import {AppDialog} from './dialog';
-import {CleanupActivity,useCleanupActivity} from './cleaner-activity';
-type Status={method:string;path:string;version:string};
-type Action='uninstall'|'reinstall';
-export function ClaudeCliPanel({blocked,onBusy}:{blocked:boolean;onBusy:(busy:boolean)=>void}){
- const {t}=useI18n();const [status,setStatus]=useState<Status|null>(null),[loading,setLoading]=useState(true),[action,setAction]=useState<Action|null>(null),[review,setReview]=useState<Action|null>(null),[error,setError]=useState('');const activity=useCleanupActivity();
- useEffect(()=>{void read();},[]);
- useEffect(()=>{onBusy(!!action||!!review);return()=>onBusy(false);},[action,review,onBusy]);
- async function read(){setLoading(true);try{setStatus(await invoke<Status>('claude_cli_read'));}catch(e){setError(String(e));}finally{setLoading(false);}}
- async function run(){if(!review)return;const selected=review;setReview(null);setAction(selected);setError('');const onProgress=activity.start('cli');try{
-  await invoke('identities_stop');
-  setStatus(await invoke<Status>('claude_cli_manage',{action:selected,onProgress}));activity.finish(true,selected==='uninstall'?'Claude Code CLI 已卸载。':'Claude Code CLI 已重装，版本核验通过。');
- }catch(e){setError(String(e));activity.finish(false,String(e));await read();}finally{setAction(null);}}
- return <section className="identity-cli"><div className="identity-section-head"><div><h2>{t('Claude Code CLI')}</h2><span className="identity-caption">{loading?t('正在检查安装状态…'):status?.method?status.version||t('已安装'):t('未安装')}</span></div><div className="cleanup-title-actions"><Button size="small" variant="secondary" disabled={blocked||loading||!!action||!status?.method} onClick={()=>setReview('uninstall')}>{t('一键卸载')}</Button><Button size="small" variant="secondary" disabled={blocked||loading||!!action} onClick={()=>setReview('reinstall')}>{t('一键重装')}</Button></div></div>{error&&<p role="alert" className="cleanup-feedback error">{t(error)}</p>}<CleanupActivity activity={activity.state}/><AppDialog open={!!review} onOpenChange={open=>{if(!open)setReview(null);}} title={review==='uninstall'?t('卸载 Claude Code CLI'):t('重装 Claude Code CLI')} description={t('将结束已识别的 Claude 进程；程序维护保留身份暂存与个人资料。')} footer={<><Button variant="secondary" onClick={()=>setReview(null)}>{t('取消')}</Button><Button variant="ink" onClick={()=>void run()}>{t('确认')}</Button></>}><div/></AppDialog></section>;
+import {CleanupActivity, useCleanupActivity} from './cleaner-activity';
+
+type Status = {method: string; path: string; version: string; running: boolean};
+type UpdateStatus = {current: Status; latest_version: string; update_available: boolean};
+type Action = 'check' | 'update';
+
+export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (busy: boolean) => void}) {
+  const {t} = useI18n();
+  const [status, setStatus] = useState<Status | null>(null),
+    [loading, setLoading] = useState(true),
+    [action, setAction] = useState<Action | null>(null),
+    [update, setUpdate] = useState<UpdateStatus | null>(null),
+    [error, setError] = useState('');
+  const activity = useCleanupActivity();
+  useEffect(() => {
+    void read();
+  }, []);
+  useEffect(() => {
+    onBusy(!!action);
+    return () => onBusy(false);
+  }, [action, onBusy]);
+  async function read() {
+    setLoading(true);
+    try {
+      setStatus(await invoke<Status>('claude_cli_read'));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function run(selected: Action) {
+    if (blocked || loading || action) return;
+    setAction(selected);
+    setError('');
+    const onProgress = activity.start('cli');
+    try {
+      if (selected === 'check') {
+        setUpdate(null);
+        const result = await invoke<UpdateStatus>('claude_cli_check');
+        setStatus(result.current);
+        setUpdate(result);
+        activity.finish(true, result.update_available ? 'cli.available' : 'cli.current');
+      } else {
+        setUpdate(null);
+        const result = await invoke<Status>('claude_cli_manage', {action: 'update', onProgress});
+        setStatus(result);
+        activity.finish(true, 'cli.updated');
+      }
+    } catch (e) {
+      setError(String(e));
+      activity.finish(false, String(e));
+      await read();
+    } finally {
+      setAction(null);
+    }
+  }
+  return (
+    <section className="identity-cli">
+      <div className="identity-section-head">
+        <div className="cli-app-row-info">
+          <img src={appLogo} width={34} height={34} alt="" aria-hidden="true" className="cli-app-icon" />
+          <div>
+            <div className="cli-title-cluster">
+              <h2>{t('Claude Code CLI')}</h2>
+              <span className={`cli-status-pill ${status?.method ? 'installed' : 'missing'}`}>
+                {loading ? t('正在检查安装状态…') : status?.method ? status.version || t('已安装') : t('未安装')}
+              </span>
+            </div>
+            {status?.path && <code className="cli-path-code">{status.path}</code>}
+          </div>
+        </div>
+        <div className="cleanup-title-actions">
+          <Button size="small" variant="secondary" disabled={blocked || loading || !!action || !status?.method} onClick={() => void run('check')}>
+            {t(action === 'check' ? 'cli.checking' : 'cli.check')}
+          </Button>
+          <Button size="small" variant="secondary" disabled={blocked || loading || !!action || !status?.method || status.running || (!!update && !update.update_available)} onClick={() => void run('update')}>
+            {t(action === 'update' ? 'cli.updating' : 'cli.update')}
+          </Button>
+        </div>
+      </div>
+      <p className="cleanup-feedback">{t(status?.running ? 'cli.running' : 'cli.scope')}</p>
+      {update && <p className="cleanup-feedback" role="status">{t('cli.versions', {current: update.current.version, latest: update.latest_version})} · {t(update.update_available ? 'cli.available' : 'cli.current')}</p>}
+      {error && (
+        <p role="alert" className="cleanup-feedback error">
+          {t(error)}
+        </p>
+      )}
+      <CleanupActivity activity={activity.state} />
+    </section>
+  );
 }

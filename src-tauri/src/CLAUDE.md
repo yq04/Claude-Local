@@ -1,10 +1,10 @@
 # src/
 > L2 | 父级: ../CLAUDE.md
 清理在本机执行；网络页仅提供用户触发的固定 Claude 服务连通性诊断，没有供应商导航或 Skill 依赖。生产命令提供身份压缩暂存、空身份切换、恢复、独立确认的直接删除及当前默认 Claude 文件残留维护。用户选择保留或随身份暂存，文件残留另经扫描和选择清理，系统设置独立。
-identities/ - SQLite 身份目录、用户保留策略、加密压缩暂存、空身份切换、恢复与选择性直接删除；见其 CLAUDE.md。
-cleaner_identity.rs: 身份目标与保留策略适配（含个人设置下的独立代理环境变量与项目记录下的 githubRepoPaths 隔离）、跨账号混杂残留清理（含 plugins/synced、model-catalog、groveConfigCache 与异号 .claude.json 备份隔离）及死进程会话锁清理；测试显式断言规范源路径，复用白名单、完整快照与窄 JSON 键操作，不扫描源码。
+identities/ - SQLite 身份目录、用户保留策略、加密压缩暂存、空身份切换、恢复、选择性直接删除与独立本地 Token 统计账本；见其 CLAUDE.md。
+cleaner_identity.rs: 身份目标与保留策略适配（含个人设置下的独立代理环境变量与项目记录下的 githubRepoPaths 隔离与无损合并）、跨账号混杂残留清理（含 plugins/synced、model-catalog、groveConfigCache、异号 .claude.json 备份隔离、共享会话 credential_org/userEmail/thinking 签名与 api-request-blob/bridge-session 脱敏、跨账号中断 tool_use/孤儿 tool_result 成对自愈修复、异号会话 tengu_exit 遥测拆弹）及协作式 Claude 进程锁年龄协议清理；测试显式断言规范源路径，复用白名单、完整快照与窄 JSON 键操作，不扫描源码。
 local_edition_tests.rs: 独立应用标识/产品/二进制与无更新插件、权限、配置的离线回归，不读取真实数据。
-main.rs: 无官方更新/重启插件的本地版 Tauri 生命周期、双语托盘和文件残留扫描/选择清理、身份/CLI/浏览器/固定网络入口命令注册；仅 --browser 显式请求时启动 Claude-Local Browser，退出删除 start.url；发布缺少 custom-protocol 时编译失败，防止安装包依赖开发服务；Windows 正式宿主使用 GUI 子系统，CI 仅记录固定启动阶段定位实际运行阻塞，不记录参数或用户资料。
+main.rs: 本地版 Tauri 生命周期、双语托盘、身份/文件残留/CLI 手动检查与更新/用量分析/浏览器/网络命令注册；普通启动不打开浏览器，发布必须 custom-protocol，Windows GUI 子系统和固定脱敏启动诊断；无官方应用更新或重启插件。
 local_runtime.rs: 启动参数明确门控配套浏览器，普通启动不启动引擎；含纯输入策略回归。
 ui_language.rs: 受 zh/en 白名单限制的界面偏好，原子持久化后发布内存状态；本地版托盘菜单，独立于电脑与浏览器语言。
 browser/: 指纹浏览器、资料与缓存边界、真实浏览器回报及目标地区环境核验；见其 CLAUDE.md。
@@ -15,7 +15,7 @@ windows_process.rs: 当前用户 Toolhelp/MSIX 固定 Claude 包族（含 cowork
 system.rs: 电脑环境查询、独立修改命令与目录限定的地区时区/语言/区域应用；后台执行原生操作，错误后重新读取系统状态。
 native.rs: 剪贴板、辅助功能设置、进程编号与凭据解锁桥；旧扫描只读凭据属性，已移除旧批量单项凭据删除包装；身份快照/恢复仅原生可用，默认服务正文不送 UI。
 cleaner.rs: 共享精确进程停止、文件扫描/快照保护/只读进程状态与独立残留扫描计划；Windows 外置 AppData 只允许同一目标白名单与受限旧组织会话且复核规范路径/用户所有权；原生 CLI 识别当前用户官方 versions 下的精确数字版本程序；结束全部已识别的 Claude 进程时逐轮核验与收敛；CLI/身份/残留修改共用事务锁，各调用独立进度通道。
-claude_cli.rs: Windows 子进程清除继承 PSModulePath，避免 PowerShell 7 模块污染 5.1；原生重装失败回滚/阻断恢复回归；优先最后的固定恢复结论，测试脚本替身不成为生产环境入口。内嵌脚本的只读状态与 CLI 程序卸载/重装，登录终端加载 nvm 环境，固定动作与原生互斥锁限制修改；真实阶段沿用进度通道，超时结束本次子进程组或 Job Object；Windows 完成时先回收本次子进程树再读取完整协议，成功要求完整回报；临时目录测试清空继承环境并在 zsh 启动后固定样本 PATH，验证版本、卸载、资产保留和失败不报成功，不能探测或卸载真实安装。
+claude_cli.rs: 本地安装方式/路径/版本/运行状态，用户手动固定公开版本检查与安全原位更新；限制元数据大小、重定向和超时，通过既有代理读取但不发送账号凭据；更新前拒绝运行中的 CLI，不自动结束会话，经原安装方式更新并核验。旧管理脚本/失败回滚与隔离测试保留兼容，Windows 子进程清理继承 PSModulePath，测试不操作真实安装。
 cleaner_folder.rs: 用户所选目录内的 Claude 白名单发现；不跟随链接、不扫描目录外、不处理项目权限或凭据。
 progress.rs: 有序脱敏阶段事件与有界内存日志；供清理与浏览器共享，只读取事务传入的计数和状态。
 cleaner_transaction.rs: 文件残留和隔离历史样本共用删除/窄 JSON 改写引擎；全体快照预检后逐项复核进程，失败停止并报告部分完成，拒绝钥匙串操作。
