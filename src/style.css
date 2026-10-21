@@ -1,6 +1,6 @@
 /**
  * [INPUT]: index.css 的系统字体、Cromma UI 控件、Cockpit Tools / CC Switch 座舱卡片与胶囊导航几何、settings-model 主题/强调色/布局/动效属性。
- * [OUTPUT]: 双主题/四色强调色、紧凑侧栏、同字体身份卡及固定行高额度排版、网络页复制反馈、自然高度的电脑设置与紧凑定位行；用量专属样式由 usage-statistics.css 提供。
+ * [OUTPUT]: 双主题/四色强调色与可读错误色、紧凑侧栏、同字体身份卡及固定行高额度排版、网络页复制反馈、自然高度的电脑设置与紧凑定位行；用量专属样式由 usage-statistics.css 提供。
  * [POS]: 应用布局与视觉渲染层；保持 180×286（54:85.6 标准工牌比例）身份工牌几何、#43e484 顶部绿光与 #ac3025 错误色等自动化测试契约。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -12,6 +12,7 @@
   --ring: var(--local-accent);
   --foreground: #141413;
   --muted-foreground: #6b665d;
+  --error-foreground: #b42318;
   --border: #e4dfd5;
   --panel: #ffffff;
   --card-elevated: #fffefb;
@@ -62,6 +63,7 @@
 :root.dark {
   --foreground: #f2f0ea;
   --muted-foreground: #9ca0aa;
+  --error-foreground: #fca5a5;
   --border: #2b2d35;
   --panel: #1b1d22;
   --card-elevated: #202329;
@@ -797,7 +799,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .system-hint { color: var(--muted-foreground); font-size: 12px; line-height: 1.6; margin: 4px 0 12px; overflow-wrap: anywhere; }
 .system-feedback, .cleanup-feedback { margin: 10px 0; font-size: 12px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .system-page .cleanup-activity { margin-top: 12px; }
-.error { color: #b42318; font-weight: 600; }
+.error { color: var(--error-foreground); font-weight: 600; }
 
 .browser-sections {
   display: grid;

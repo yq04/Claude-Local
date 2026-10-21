@@ -1,8 +1,8 @@
 // [INPUT]: rusqlite/内嵌 SQLite、私有保险库目录和脱敏身份元数据与本机加盐的账号索引。
-// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、SQLite v3 浏览器绑定与持久切换/恢复状态和身份移除事务。
-// [POS]: 保险库的索引事务；凭据和会话正文仅进入加密归档，不进入数据库。
+// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、SQLite v3 浏览器绑定与持久切换/恢复状态和身份移除事务；初始化并发串行化。
+// [POS]: 保险库的索引事务；v3 schema 初始化以 IMMEDIATE 事务保护版本迁移与默认状态，凭据和会话正文仅进入加密归档。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, time::Duration};
 #[derive(Clone, Serialize, Deserialize)]
@@ -25,17 +25,29 @@ pub(super) fn error(_: rusqlite::Error) -> String {
 }
 impl Database {
     pub fn open(root: &Path) -> Result<Self, String> {
-        super::private::directory(root)?;
+        if let Err(error) = super::private::directory(root) {
+            // Another opener may have won the same create_new directory race.
+            // Accept only the same safe, owned directory after validating it again.
+            match std::fs::symlink_metadata(root) {
+                Ok(meta) if meta.is_dir() && !crate::cleaner::linked(&meta) => {
+                    super::private::safe(root)?;
+                }
+                _ => return Err(error),
+            }
+        }
         super::private::protect(root)?;
         let path = root.join("identities.sqlite");
         if !path.exists() {
-            super::private::create(&path)?
-                .sync_all()
-                .map_err(|_| "无法创建身份数据库。")?;
+            match super::private::create(&path) {
+                Ok(file) => file.sync_all().map_err(|_| "无法创建身份数据库。")?,
+                // A concurrent opener can win the exclusive create between exists() and create_new().
+                Err(_error) if path.exists() => super::private::protect(&path)?,
+                Err(error) => return Err(error),
+            }
         }
         super::private::parents(root)?;
         super::private::protect(&path)?;
-        let connection = Connection::open_with_flags(
+        let mut connection = Connection::open_with_flags(
             &path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
@@ -43,12 +55,20 @@ impl Database {
         connection
             .busy_timeout(Duration::from_secs(5))
             .map_err(error)?;
-        connection.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;
-            CREATE TABLE IF NOT EXISTS identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, archive TEXT NOT NULL, saved_at INTEGER NOT NULL, bytes INTEGER NOT NULL, policy TEXT NOT NULL,empty INTEGER NOT NULL);
+        connection
+            .execute_batch(
+                "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",
+            )
+            .map_err(error)?;
+        // Acquire the write reservation before reading user_version so concurrent first-open
+        // and migration callers cannot both make decisions from the same stale schema version.
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(error)?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, archive TEXT NOT NULL, saved_at INTEGER NOT NULL, bytes INTEGER NOT NULL, policy TEXT NOT NULL,empty INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS identity_summaries(id TEXT PRIMARY KEY,summary TEXT NOT NULL);
 ").map_err(error)?;
-        let tx = connection.unchecked_transaction().map_err(error)?;
         let version: i64 = tx
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(error)?;

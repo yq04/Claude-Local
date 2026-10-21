@@ -6,6 +6,8 @@ mod archive;
 pub(crate) mod browser_link;
 #[cfg(test)]
 mod browser_link_tests;
+#[cfg(test)]
+mod database_tests;
 mod catalog;
 mod codec;
 mod compression;

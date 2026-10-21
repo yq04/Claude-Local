@@ -1,5 +1,5 @@
 // [INPUT]: Main React shell, fake IPC aggregates and an isolated local browser context.
-// [OUTPUT]: Compact account filters without historical/scope clutter, usage chart/data views, identity/privacy and hidden-link copies, plus responsive read-only system cards with verified draft/current state and persistent light/dark preferences.
+// [OUTPUT]: Compact account filters without historical/scope clutter, usage chart/data views, identity/privacy and hidden-link copies, plus responsive read-only system cards with verified draft/current state and persistent light/dark preferences; supports --quick-only for focused quick-setup validation.
 // [POS]: Synthetic UI verification; no live identities, external requests or native mutations.
 // [PROTOCOL]: Update this header and scripts/CLAUDE.md when changing this harness.
 import assert from 'node:assert/strict';
@@ -11,8 +11,11 @@ import {fileURLToPath} from 'node:url';
 import {createServer} from 'vite';
 import {chromium} from 'playwright-core';
 
+const args = process.argv.slice(2);
+const quickOnly = args.includes('--quick-only');
+const outArg = args.find(a => a !== '--quick-only');
 const root = fileURLToPath(new URL('../', import.meta.url));
-const output = resolve(process.argv[2] || join(root, '.local', 'preview', 'ui-refinements'));
+const output = resolve(outArg || join(root, '.local', 'preview', quickOnly ? 'quick-setup-refinements' : 'ui-refinements'));
 await mkdir(output, {recursive: true});
 const privateHome = await mkdtemp(join(tmpdir(), 'claude-local-usage-ui-'));
 await mkdir(join(privateHome, 'config'));
@@ -30,7 +33,30 @@ const empty = totals(0,0,0,0);
 alpha.requests = 48; beta.requests = 72; all.requests = 120; unknown.requests = 14; empty.requests = 0;
 const accounts = [{id:id(1),name:'Alpha workspace',email:'alpha@example.invalid',current:true,totals:alpha},{id:id(2),name:'Beta workspace',email:'beta@example.invalid',current:false,totals:beta}];
 accounts.push({id:id(3),name:'Gamma workspace',email:'gamma@example.invalid',current:false,totals:empty});
-window.usageFixture = {requests:[],commands:[],copied:[],fail:false,empty:false,warnings:[],cliRunning:false,failedRead:'',hold:false,pendingReads:[],longNames:false};
+window.usageFixture = {
+  requests:[],commands:[],copied:[],fail:false,empty:false,warnings:[],
+  cliRunning:false,failedRead:'',failedReads:[],
+  hold:false,pendingReads:[],
+  holdBrowser:false,browserPendingResolvers:[],
+  holdIdentity:false,identityPendingResolvers:[],
+  longNames:false,
+  browserConfig:{
+    seed:123456,proxy:'',follow_machine:false,language:'en-US',timezone:'America/Los_Angeles',native_graphics:true
+  },
+  browserMachine:{
+    platform:'windows',version:'15.0.0',cores:8,timezone:'America/New_York',languages:['en-US'],locale:'en-US',location_enabled:false,timezones:['America/New_York','America/Los_Angeles']
+  }
+};
+window.usageFixture.releaseBrowser=function(){
+  window.usageFixture.holdBrowser=false;
+  const resolvers=window.usageFixture.browserPendingResolvers.splice(0);
+  for(const r of resolvers)r();
+};
+window.usageFixture.releaseIdentity=function(){
+  window.usageFixture.holdIdentity=false;
+  const resolvers=window.usageFixture.identityPendingResolvers.splice(0);
+  for(const r of resolvers)r();
+};
 window.usageFixture.systemState={platform:'windows',timezone:'America/New_York',timezones:['America/New_York','America/Los_Angeles','Asia/Shanghai'],automatic_timezone:false,languages:['en-US'],location_enabled:false,accessibility:true};
 let cliVersion = '2.1.303';
 const cliStatus = () => ({method:'native',path:'C:/fixture/claude.exe',version:cliVersion,running:window.usageFixture.cliRunning});
@@ -67,11 +93,11 @@ Object.assign(identityState.summaries[id(2)],{display_name:'Beta account owner',
 Object.assign(identityState.summaries[id(3)],{display_name:'Gamma account owner',plan:'Max 20x',proxy:'http://proxy.example.invalid:7890',quota_5h_used:null,quota_7d_used:null});
 window.usageFixture.identityState=identityState;
 let locale = 'zh';
-localStorage.setItem('claude-local.page.v1','usage');
+localStorage.setItem('claude-local.page.v1', ${JSON.stringify(quickOnly ? 'quick' : 'usage')});
 localStorage.setItem('claude-local.kookeey-referral.v1','https://legacy.example.invalid/referral');
 mockIPC(async (command,args)=>{
   window.usageFixture.commands.push({command,args:structuredClone(args)});
-  if(command===window.usageFixture.failedRead)throw Error('Synthetic status read failure');
+  if(command===window.usageFixture.failedRead || (window.usageFixture.failedReads&&window.usageFixture.failedReads.includes(command)))throw Error('Synthetic status read failure: '+command);
   if(command==='copy_result'){window.usageFixture.copied.push(args.text);return;}
   if(command==='network_diagnose_domains')return ['claude.ai','api.anthropic.com','platform.claude.com','downloads.claude.ai'].map(domain=>({domain,ok:true,status_code:200,latency_ms:30,ip:'203.0.113.1',message:'连接正常'}));
   if(command==='usage_statistics_read'){
@@ -84,17 +110,23 @@ mockIPC(async (command,args)=>{
   }
   if(command==='ui_language_read')return locale;
   if(command==='ui_language_write'){locale=args.language;return;}
-  if(command==='plugin:app|version')return '0.1.0';
+  if(command==='plugin:app|version')return '0.1.2';
   if(command==='get_regions')return [{id:'us-west',label:'United States',language:'en-US',locale:'en_US',timezone:'America/Los_Angeles'}];
-  if(command==='identities_read')return structuredClone(identityState);
+  if(command==='identities_read'){
+    if(window.usageFixture.holdIdentity)await new Promise(resolve=>window.usageFixture.identityPendingResolvers.push(resolve));
+    return structuredClone(identityState);
+  }
   if(command==='browser_default_read')return {is_default:false,http:'',https:'',installed:true,app:'Claude-Local Browser'};
-  if(command==='browser_read')return {
-    engine_ready:true,running:false,profile:'synthetic-profile',identity_linked:true,identity:{linked:true,status:'linked',name:'Alpha workspace',email:null,organization:null},
-    ui_language:locale,exit_services:[],region:{id:'us-west',label:'United States',country:'US',language:'en-US',locale:'en_US',timezone:'America/Los_Angeles'},
-    config:{seed:123456,proxy:'',follow_machine:false,language:'en-US',timezone:'America/Los_Angeles',native_graphics:true},
-    machine:{platform:'windows',version:'15.0.0',cores:8,timezone:'America/New_York',languages:['en-US'],locale:'en-US',location_enabled:false,timezones:['America/New_York','America/Los_Angeles']},
-    engine_version:'150.0.0.0',cache:[],cache_error:'',report:null,report_received_at:null,machine_exit:null,checks:[]
-  };
+  if(command==='browser_read'){
+    if(window.usageFixture.holdBrowser)await new Promise(resolve=>window.usageFixture.browserPendingResolvers.push(resolve));
+    return {
+      engine_ready:true,running:false,profile:'synthetic-profile',identity_linked:true,identity:{linked:true,status:'linked',name:'Alpha workspace',email:null,organization:null},
+      ui_language:locale,exit_services:[],region:{id:'us-west',label:'United States',country:'US',language:'en-US',locale:'en_US',timezone:'America/Los_Angeles'},
+      config:structuredClone(window.usageFixture.browserConfig),
+      machine:structuredClone(window.usageFixture.browserMachine),
+      engine_version:'150.0.0.0',cache:[],cache_error:'',report:null,report_received_at:null,machine_exit:null,checks:[]
+    };
+  }
   if(command==='claude_cli_read')return cliStatus();
   if(command==='claude_cli_check')return {current:cliStatus(),latest_version:'2.1.304',update_available:cliVersion!=='2.1.304'};
   if(command==='claude_cli_manage' && args.action==='update') {if(window.usageFixture.cliRunning)throw Error('cli.error.running');cliVersion='2.1.304';return cliStatus();}
@@ -204,10 +236,14 @@ try {
       }
     }
   };
-  await page.clock.install({time: new Date('2026-10-20T10:35:00-04:00')});
   page.setDefaultTimeout(15000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  if (quickOnly) {
+    const {runQuickSetupChecks} = await import('./quick-setup-checks.mjs');
+    await runQuickSetupChecks({page, context, output, base, errors});
+  } else {
+    await page.clock.install({time: new Date('2026-10-20T10:35:00-04:00')});
   await page.goto(base + '/__usage-fixture.html');
   await page.getByRole('heading', {name: '用量分析', exact: true}).waitFor();
   await page.getByText('claude-test-model', {exact: true}).waitFor();
@@ -622,6 +658,7 @@ try {
   const result = {checks: ['navigation', 'period/account filters', '24 hourly slots and future gaps', '81-day complete history', '7/30 day spans and hover reset', 'chart/data switching without IPC reread', 'elapsed-hour table pagination and accessible sorting', 'three-model totals and distribution', '1440-wide and 720-narrow layouts with both sidebar modes', 'English dark long-model-name layout', '30-second polling and hidden pause', 'pending read serialization and unmount cleanup', 'read-only quick setup snapshots and six destinations', 'partial status failure and recovery', 'bilingual quick setup and narrow dark layout', 'refresh error and recovery', 'uniform metric cards', 'fixed publisher URLs and prompt copy', 'legacy URL override ignored', 'manual service diagnostics', 'total-only chart and consistent colors', 'K/M/B labels', 'two quota blocks and independent resets', 'single-line current/saved aliases and preserved summaries', 'long-name card/quota/subscription/footer geometry', 'bilingual 12px sans quota/reset/countdown typography', 'accessible reset dates and compact countdowns', 'known/unknown subscription and quota', 'used/remaining preference and all-card masked tooltips', 'CLI check/update and active-session block', 'natural-height system cards and compact location row', 'system current observations stay separate from unapplied drafts', 'unknown location is not shown as disabled', 'bilingual dark/narrow system layouts and read-only refresh', 'compact sidebar hitboxes', 'English dark compact layout', 'empty state', 'isolated IPC'], geometry, wideGeometry,narrowClassicGeometry,narrowCompactGeometry,longNameClassicGeometry,compactGeometry,cardGeometry,cardGeometryEnglish,quickGeometry,systemGeometry,systemNarrowClassicGeometry,systemNarrowCompactGeometry,systemEnglishGeometry,systemEnglishNarrowCompactGeometry,systemEnglishNarrowClassicGeometry, requests: requests.length, screenshots: output};
   await writeFile(join(output, 'usage-ui-results.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
+  }
 } finally {
   await browser?.close();
   await server.close();

@@ -14,4 +14,4 @@ tauri.conf.json: 本地独立产品名 Claude-Local、窗口、ai.local.claude-l
 tauri.macos.conf.json / tauri.linux.conf.json / tauri.windows.conf.json: 分平台资源与打包配置；macOS 保持双应用归档，Linux 使用 PNG 和 /usr/libexec/Claude-Local Browser 隔离引擎，防止 linuxdeploy 递归改写厂商 ELF；默认 Tauri 构建 deb/AppImage，RPM 配置的依赖由原生 rpmbuild 消费；Windows 使用当前用户 NSIS、内嵌浏览器引擎、独立 Claude-Local-Browser 启动项，无自动更新；build.rs 只在 macOS 编译 Objective-C。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
-Release metadata: 0.1.1 is synchronized across package.json, tauri.conf.json, Cargo.toml and Cargo.lock.
+Release metadata: 0.1.2 is synchronized across package.json, tauri.conf.json, Cargo.toml and Cargo.lock.

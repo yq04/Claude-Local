@@ -1,19 +1,10 @@
 /**
- * [INPUT]: A 品牌图、Cockpit Tools / CC Switch 座舱壳与侧栏参数、Cromma UI、共享 YAML 界面语言、身份/浏览器/系统/设置页面及快捷操作、网络资源入口与只读本地版本标识。
+ * [INPUT]: A 品牌图、Cockpit Tools / CC Switch 座舱壳与侧栏参数、Cromma UI、共享页面图标与 YAML 界面语言、身份/浏览器/系统/设置页面及快捷操作、网络资源入口与只读本地版本标识。
  * [OUTPUT]: Claude-Local 品牌与可折叠座舱侧栏：紧凑态标志与展开按钮分层，底部语言和版本分区显示；主导航全四字标头（快速配置/网络环境/身份管理/用量分析/浏览环境/电脑环境/使用说明/软件设置）与页面路由按产品页面组织。
  * [POS]: 独立产品编排层；默认身份页并记住安全页面枚举，任务运行时锁定导航；快速配置仅按需挂载、读取状态和导航。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {Panel, NavButton, MotionRoot, TooltipProvider} from 'cromma-ui';
-import {
-  ShieldCheck as IdentityIcon,
-  HomeDefault as HomeIcon,
-  WindowBrowser as BrowserIcon,
-  Server as SystemIcon,
-  Share01 as NetworkIcon,
-  FolderDefault as HelpIcon,
-  Settings01 as SettingsIcon,
-} from 'cromma-ui/pika';
 import {Fragment, useState, useEffect} from 'react';
 import {useI18n} from './i18n';
 import {createRoot} from 'react-dom/client';
@@ -26,6 +17,7 @@ import {VpsPanel} from './vps';
 import {LanguageSwitch} from './language-switch';
 import {LocalEdition} from './local-edition';
 import {readPage, rememberPage, type Page} from './navigation';
+import {pageIcons as icons} from './page-icons';
 import {HelpPanel} from './help';
 import {SettingsPanel} from './settings';
 import {UsageStatisticsPanel} from './usage-statistics';
@@ -34,12 +26,6 @@ import appLogo from '../assets/claude-local-mark.svg';
 import './index.css';
 import './style.css';
 import './usage-statistics.css';
-
-const UsageIcon: typeof HomeIcon = ({size = 18, ...props}) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...props}>
-    <path d="M4 4v16h16M8 15v-4m5 4V6m5 9V9" />
-  </svg>
-);
 
 const titles: Record<Page, string> = {
   quick: '快速配置',
@@ -50,17 +36,6 @@ const titles: Record<Page, string> = {
   vps: '网络环境',
   help: '使用说明',
   settings: '软件设置',
-};
-
-const icons: Record<Page, typeof HomeIcon> = {
-  quick: HomeIcon,
-  cleaner: IdentityIcon,
-  usage: UsageIcon,
-  browser: BrowserIcon,
-  system: SystemIcon,
-  vps: NetworkIcon,
-  help: HelpIcon,
-  settings: SettingsIcon,
 };
 
 function App() {

@@ -5,7 +5,7 @@ Independent Windows desktop application: Tauri/Rust native operations, React/Typ
 <directory>
 src/ - Main application, browser verification page, shared UI and bilingual catalogs.
 src/identities.tsx - Single-line local identity aliases and consistent quota/time typography, with original account names confined to non-private hints.
-src/quick-actions.tsx - On-demand read-only environment overview and six configuration destinations.
+src/quick-actions.tsx - On-demand independent environment reads, scoped recovery and six configuration destinations using shared page icons and effective browser targets.
 src/usage-statistics.tsx - Scoped token analytics with responsive trend/model panels, sortable period details and visible-page refresh; separate from hourly quota refresh.
 src/vps.tsx - Fixed referral copies without rendered URLs/codes, concise agent setup prompts and truthful clipboard feedback.
 src/system.tsx - Natural-height computer settings, observed values separate from draft controls and a compact location action row.
@@ -30,3 +30,4 @@ User-requested Claude Code CLI maintenance is separate from application releases
 [PROTOCOL]: Update source headers and directory maps with changes. Preserve both locale catalogs and run scoped tests.
 
 docs/RELEASE_NOTES_0.1.1.md - Owner-requested manual private prerelease notes; shared packages exclude personal usage-attribution seeds.
+docs/RELEASE_NOTES_0.1.2.md - Quick setup cold-start/database concurrency fixes, shared UI consistency and effective browser targets; manual private delivery only.

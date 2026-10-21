@@ -1,3 +1,8 @@
+<!--
+[INPUT]: Locked source, Windows toolchain and synthetic test fixtures.
+[OUTPUT]: Build and scoped verification commands with private-data and system-mutation boundaries.
+[POS]: Developer workflow; quick overview checks reuse the existing isolated shell harness.
+-->
 # Development
 
 Claude-Local is a Windows-first private desktop product. The host is `claude-local.exe`, the product is `Claude-Local`, and its application identifier is `ai.local.claude-local`. Its companion browser is registered as `Claude-Local-Browser`. One current-user NSIS installer contains the host, frontend and companion browser engine.
@@ -60,6 +65,8 @@ Remove-Item Env:TAURI_CONFIG
 The quota and migration tests create fictional ledgers, identities and browser files in temporary directories. The Windows CLI tests use a temporary installer and executable fixtures. Do not run the real quota collector, migration command, local deployment or proxy configuration as CI checks.
 
 The browser interaction scripts use `playwright-core` with the pinned engine and mock IPC. After explicitly fetching the engine, run their Node or Bun entry points to exercise the UI. `scripts/test-local-shell.mjs` accepts an optional output directory for fictional screenshots; keep generated images and reports outside Git. These tests do not replace an installed application smoke test.
+
+For a change limited to the quick setup overview, run `node scripts/test-usage-statistics.mjs .local/preview/quick-setup --quick-only`. This reuses the shell harness with a direct quick-page cold start, independent slow/failing reads, manual recovery, effective browser targets and bilingual responsive previews. It uses fictional IPC and an isolated browser context. Database initialization regressions can be selected with the same public-resource `TAURI_CONFIG` above and the Rust filter `identities::database_tests`; they use temporary SQLite databases only.
 
 For Usage analytics and Quick setup, run `bun test src`, the native tests filtered by `usage_tests`, and `node scripts/test-usage-statistics.mjs`. The harness uses the actual React shell with fictional IPC, blocked external requests and a controlled clock. It verifies hourly/future slots, 7/30-day and full-history spans, sequential polling/visibility/unmount behavior, partial status failures, all six quick destinations and bilingual narrow layouts. Previews default to ignored `.local/preview/ui-refinements`; pass a separate output directory for each delivery. Native tests use temporary homes and databases, never the real collector or an actual identity switch.
 

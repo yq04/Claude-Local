@@ -1,5 +1,5 @@
 # [INPUT]: 页面与原生层的源文案及命名插槽。
-# [OUTPUT]: 中文界面、身份名称、精简网络复制入口、电脑状态与目标设置、快速配置及用量文案，保持双语键与插槽一致。
+# [OUTPUT]: 中文界面、身份名称、精简网络复制入口、电脑状态与目标设置、快速配置独立读取/局部错误及用量文案，保持双语键与插槽一致。
 # [POS]: 共享呈现目录；不包含路径改写或业务判断。
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 "Claude-Local": "Claude-Local"
@@ -18,7 +18,9 @@ quick.observed: "本机状态快照"
 quick.checking: "读取中…"
 quick.unavailable: "无法读取"
 quick.unknown: "未知"
-quick.partialFailure: "部分状态读取失败，其他结果仍可查看。可重试刷新或前往对应页面检查。"
+quick.readFailed: "读取失败，请刷新重试。"
+quick.failedChecks: "暂时无法读取：{sections}"
+quick.partialFailure: "其他状态已单独显示。可刷新重试，或前往对应页面检查。"
 quick.recovery: "需要恢复确认"
 quick.identityPresent: "当前身份已检测"
 quick.identityEmpty: "尚未检测到身份"
@@ -32,6 +34,7 @@ quick.cliRunning: "CLI 会话运行中"
 quick.cliInstalled: "CLI 已安装"
 quick.cliMissing: "CLI 未安装"
 quick.browserTarget: "浏览器配置"
+quick.followsMachine: "跟随电脑"
 quick.targetNote: "配置值仅作参考；实际出口、时区与语言请在浏览环境中核验。"
 quick.networkHint: "准备代理与配置提示词，手动检测 Claude 服务连通性。"
 quick.identityHint: "管理账号备份、离线额度与切换，并检查或更新 Claude Code CLI。"

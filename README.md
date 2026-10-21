@@ -2,14 +2,14 @@
 
 面向 Windows x64 的 Claude 本地管理工具，集中管理身份备份、账号切换、用量分析和可选的隔离浏览器。使用 Tauri、Rust、React、TypeScript 与 Python，独立维护产品和版本。
 
-当前源码版本：**0.1.1**。支持 Windows 10 / 11 x64；安装包包含 Claude-Local 与 Claude-Local Browser 两个入口。[本版更新](docs/RELEASE_NOTES_0.1.1.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md)
+当前源码版本：**0.1.2**。支持 Windows 10 / 11 x64；安装包包含 Claude-Local 与 Claude-Local Browser 两个入口。[本版更新](docs/RELEASE_NOTES_0.1.2.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md)
 
 ## 主要功能
 
 - **身份管理**：本地加密备份与恢复、账号切换、会话预览和保留策略。卡片优先显示本地保存名，统一额度与时间排版，支持隐私遮罩。
 - **额度观察**：被动接收 Claude Code statusLine 数据，结合本地记录展示 5h / 7d 使用量；每小时或手动刷新。
 - **用量分析**：按今天、近 7 天、近 30 天或全部历史查看 Token、缓存与模型分布。支持账号筛选、图表／数据切换、排序和分页；未确认归属的记录可通过私有设置计入指定账号，个人归属配置不随安装包分发。
-- **快速配置**：按需读取身份、浏览器、系统语言与 CLI 状态，提供六类设置入口，区分当前状态与目标草稿。
+- **快速配置**：按需独立读取身份、浏览环境、电脑环境与 CLI 状态，显示具体异常并支持手动刷新；提供六类设置入口，按“跟随电脑”规则显示浏览器配置目标。
 - **网络环境**：手动检测固定 Claude 服务的连通性，复制预置 iKuuu / Kookeey 推广链接及精简配置提示词；不自动打开外部网站。
 - **电脑环境**：分项展示时区、语言与定位状态，定位采用紧凑布局；系统修改由用户明确触发。
 - **可选浏览器**：按身份保存隔离资料与稳定种子，仅在用户操作或 `--browser` 时启动。

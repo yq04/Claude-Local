@@ -11,3 +11,4 @@ identity.* / identityCard.*: 身份工牌本地保存名优先、原账号名的
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 usage.allAccounts: concise All label in both catalogs.
+quick.readFailed / quick.failedChecks / quick.followsMachine: 独立读取失败、具体分区与跟随电脑配置的同键同插槽双语提示。

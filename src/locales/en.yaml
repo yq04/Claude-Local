@@ -1,5 +1,5 @@
 # [INPUT]: 页面与原生层的源文案及命名插槽。
-# [OUTPUT]: English UI, identity names, concise network copy actions, computer status and target settings, quick setup and usage analytics; keys match Chinese.
+# [OUTPUT]: English UI, identity names, concise network copy actions, computer targets, independent quick setup reads and scoped errors; keys match Chinese.
 # [POS]: 共享呈现目录；不包含路径改写或业务判断。
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 "Claude-Local": "Claude-Local"
@@ -18,7 +18,9 @@ quick.observed: "Local state snapshot"
 quick.checking: "Reading…"
 quick.unavailable: "Unavailable"
 quick.unknown: "Unknown"
-quick.partialFailure: "Some status checks failed. Available results remain visible. Refresh to retry or open the relevant page."
+quick.readFailed: "Unable to read this status. Refresh to retry."
+quick.failedChecks: "Unable to read: {sections}"
+quick.partialFailure: "Other results remain visible. Refresh to retry, or open the relevant page."
 quick.recovery: "Recovery confirmation needed"
 quick.identityPresent: "Current identity detected"
 quick.identityEmpty: "No identity detected"
@@ -32,6 +34,7 @@ quick.cliRunning: "CLI session running"
 quick.cliInstalled: "CLI installed"
 quick.cliMissing: "CLI not installed"
 quick.browserTarget: "Browser configuration"
+quick.followsMachine: "Follows computer"
 quick.targetNote: "These are configured values. Verify the actual exit, timezone and language on the Browser page."
 quick.networkHint: "Prepare your proxy and configuration prompt, then check Claude service connectivity."
 quick.identityHint: "Manage account backups, offline quotas and switching; check or update Claude Code CLI."

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生浏览器配置、机器快照和起始页实际观测。
- * [OUTPUT]: 不含令牌的绑定身份摘要与两个前端入口共享的目标地区、出口服务目录与界面语言与带接收时间的观测数据契约与三平台真实设备核验；区分目标设置与已测状态，标识当前独立资料是否随身份联动。
+ * [OUTPUT]: 不含令牌的绑定身份摘要、按跟随电脑规则解析的有效时区/语言、两个前端入口共享的观测数据契约与三平台真实设备核验；区分目标设置与已测状态，标识当前独立资料是否随身份联动。
  * [POS]: 浏览器页面与宿主的边界，不持有凭据或执行清理。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -12,6 +12,15 @@ export type BrowserIdentity={linked:boolean;status:'linked'|'draft'|'empty'|'unl
 export type BrowserContext={identity?:BrowserIdentity;ui_language:'zh'|'en';exit_services:string[];region:{id:string;label:string;country:string;language:string;locale:string;timezone:string}|null;config:BrowserConfig;machine:Machine;engine_version:string};
 export type BrowserState=BrowserContext&{engine_ready:boolean;running:boolean;profile:string;identity_linked?:boolean;cache:{path:string;bytes:number;login:boolean}[];cache_error:string;report:Report|null;report_received_at:number|null;machine_exit:Exit|null;checks:{title:string;status:'ok'|'mismatch'|'pending';detail:string}[]};
 export type DefaultBrowser={is_default:boolean;http:string;https:string;installed:boolean;app:string};
+
+export function effectiveBrowserTarget({config, machine}: Pick<BrowserContext, 'config' | 'machine'>) {
+    if (!config.follow_machine) return {timezone: config.timezone, language: config.language};
+    const first = machine.languages[0] || 'en-US';
+    return {
+        timezone: machine.timezone,
+        language: first === 'en' ? 'en-US' : first,
+    };
+}
 
 export function matchesDevice(machine: Pick<Machine, 'platform'|'version'|'cores'>, report: Pick<Report, 'platform'|'platform_version'|'cores'>) {
     const platform=report.platform.toLowerCase();
