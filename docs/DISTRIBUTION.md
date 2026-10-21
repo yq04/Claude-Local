@@ -1,3 +1,9 @@
+<!--
+[INPUT]: Owner-selected unsigned distribution, current-user NSIS hooks and audited build outputs.
+[OUTPUT]: Private distribution, retained-data upgrade workflow and third-party license boundaries.
+[POS]: Distribution policy; installer execution tests require disposable Windows environments.
+[PROTOCOL]: Distinguish future source changes from immutable published release assets.
+-->
 # Private Windows distribution
 
 Claude-Local currently targets private development and review. Its source repository and Actions artifacts are private. This status is an access boundary, and it does not establish permission to redistribute third-party code or artwork. No general permission to publish the complete application is asserted.
@@ -26,7 +32,17 @@ Run the `Build private Windows share artifact` workflow manually from the select
 
 Download the `Claude-Local-windows-x64-<run ID>` artifact from that workflow run. It includes the installer, SHA-256 checksums, a product/engine manifest, the root license and notices, and retained third-party license files. The artifact is retained for 14 days. Its workflow has read-only repository permissions and creates no GitHub Release, tag, automatic update manifest or signed update package. No upstream signing key is required or used.
 
-The local installer and Actions artifact are unsigned. They have not acquired Windows publisher trust, and archive extraction/privacy checks do not test actual installation, upgrade or uninstall. Review the selected artifact's checksums and test it in a disposable Windows account or machine before using it with valuable data. A build artifact is a review package, not a claim of production certification.
+The owner has chosen unsigned distribution. The local installer and Actions artifact remain unsigned; no certificate or signing-service dependency is added. Archive extraction/privacy checks do not test actual installation, upgrade or uninstall. Review the selected artifact's checksums and validate installation behavior in a disposable Windows account or machine. A build artifact is a review package, not a claim of production certification.
+
+## Interactive upgrade and retained data
+
+Future installer builds check the current user's registered Claude-Local installation before displaying the new welcome page. If an installation exists, the user first confirms removing the previous program. The prompt states that accounts, encrypted vaults, quota/usage history, browser profiles and settings are retained. The old uninstaller is awaited synchronously in its data-preserving update mode. The new installation wizard appears only after removal succeeds; cancellation, a launch error, a nonzero return code or a remaining old executable blocks installation.
+
+This changes the installer sequence, not the location or ownership of application data. The upgrade does not clear `%APPDATA%/ai.local.claude-local`, the default Claude workspace or unrelated applications. Running Claude-Local and its companion browser must be closed by the user before removal; the upgrade must not terminate Claude Code sessions.
+
+Detection uses the product's current-user install/uninstall registration. A manually copied portable folder has no standard uninstall record and is not discovered by scanning personal disks or guessing paths. Such a folder is not automatically removed. Installing the managed application retains the same independent app-data root; subsequent registered-install upgrades use the sequence above.
+
+The change ships from the 0.1.3 installer onward. Published 0.1.2 release assets remain unchanged, and a file-based local replacement does not exercise this installer sequence. Real installation/uninstallation regression runs belong on a disposable Windows runner; local checks only compile synthetic NSIS fixtures and inspect the generated script.
 
 ## Browser engine provenance
 

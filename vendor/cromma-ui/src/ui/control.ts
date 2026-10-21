@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 无依赖，纯常量。
- * [OUTPUT]: 提供 ControlSize、CONTROL_HEIGHT、CONTROL_RADIUS、CONTROL_DEFAULT_SIZE、ICON_TILE。CONTROL_HEIGHT是三档高度，Laper SIZE_CONFIG 原值。ICON_TILE是图标砖的圆角方。
- * [POS]: cromma-ui的控件几何唯一真相源：Button、Input、Select、Chip、Meter 等共用，同 size 外沿必然齐平同弧，消费方不再手写 h-*、rounded-*。
+ * [OUTPUT]: 提供 ControlSize、CONTROL_HEIGHT、CONTROL_RADIUS、CONTROL_DEFAULT_SIZE、ICON_TILE、SEGMENT_TRACK、SEGMENT_ITEM。CONTROL_HEIGHT是三档高度，Laper SIZE_CONFIG 原值。ICON_TILE是图标砖的圆角方。SEGMENT_* 是分段轨道与滑块的共用皮。
+ * [POS]: cromma-ui的控件几何唯一真相源：Button、Input、Select、Tabs、SegmentedControl 等共用，同 size 外沿必然齐平同弧，消费方不再手写 h-*、rounded-*。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
@@ -28,3 +28,9 @@ export const CONTROL_DEFAULT_SIZE: ControlSize = 'small';
 /** 图标砖（应用图标、连接器标）的圆角方：写成 class，theme.css 的 squircle 才吃得到；40% 才是 iOS 图标那种饱满的连续圆角。
  *  头像不用它——一切露脸走 Avatar 的舷窗 */
 export const ICON_TILE = 'rounded-[40%]';
+
+/** 分段轨道：Tabs 的 segmented 与 SegmentedControl 共用同一条底槽 */
+export const SEGMENT_TRACK = 'inline-flex bg-muted p-0.5 rounded-2xl';
+
+/** 分段滑块的静态皮；选中态由各原语按自身 data-state（Tabs 为 active，ToggleGroup 为 on）补上同一组 bg-card / font-medium / text-foreground / shadow-sm */
+export const SEGMENT_ITEM = 'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl px-3 text-base text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50';

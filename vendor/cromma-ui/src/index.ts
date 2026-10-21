@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 本机 cromma-web 依赖的 cromma-ui 原版控件、cn 与 motion。
- * [OUTPUT]: 本应用使用的组件（含 Radix 分段 Tabs）、根提示上下文、主题配套工具与动效预设。
+ * [OUTPUT]: 本应用使用的组件（含 Radix 分段 Tabs、分段单选 SegmentedControl、开关 Switch 与折叠区 Disclosure）、根提示上下文、主题配套工具与动效预设。
  * [POS]: 本地复制组件库的唯一入口，只保留实际使用组件的依赖闭包。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -19,3 +19,6 @@ export * from "./ui/pressable";
 export * from "./ui/loader";
 export * from "./ui/tooltip";
 export * from "./ui/tabs";
+export * from "./ui/segmented";
+export * from "./ui/switch";
+export * from "./ui/collapsible";

@@ -110,7 +110,7 @@ mockIPC(async (command,args)=>{
   }
   if(command==='ui_language_read')return locale;
   if(command==='ui_language_write'){locale=args.language;return;}
-  if(command==='plugin:app|version')return '0.1.2';
+  if(command==='plugin:app|version')return '0.1.3';
   if(command==='get_regions')return [{id:'us-west',label:'United States',language:'en-US',locale:'en_US',timezone:'America/Los_Angeles'}];
   if(command==='identities_read'){
     if(window.usageFixture.holdIdentity)await new Promise(resolve=>window.usageFixture.identityPendingResolvers.push(resolve));
@@ -302,10 +302,10 @@ try {
   await page.screenshot({path:join(output,'usage-hourly-zh-light.png'),fullPage:true});
 
   // Switching presentation, sorting and paging uses the existing snapshot only.
-  const view=page.getByRole('group',{name:'趋势视图',exact:true});
+  const view=page.getByRole('tablist',{name:'趋势视图',exact:true});
   const beforeView=await page.evaluate(()=>window.usageFixture.requests.length);
-  await view.getByRole('button',{name:'数据',exact:true}).click();
-  assert.equal(await view.getByRole('button',{name:'数据',exact:true}).getAttribute('aria-pressed'),'true');
+  await view.getByRole('tab',{name:'数据',exact:true}).click();
+  assert.equal(await view.getByRole('tab',{name:'数据',exact:true}).getAttribute('aria-selected'),'true');
   const trendTable=page.locator('.usage-trend-table');
   await trendTable.getByRole('table',{name:'按时段用量',exact:true}).waitFor();
   assert.equal(await trendTable.locator('tbody tr').count(),10,'The first hourly page must contain ten elapsed hours');
@@ -330,9 +330,9 @@ try {
   await trendTable.scrollIntoViewIfNeeded();
   await page.mouse.move(2,2);
   await page.screenshot({path:join(output,'usage-table-zh.png'),fullPage:true});
-  await view.getByRole('button',{name:'图表',exact:true}).click();
+  await view.getByRole('tab',{name:'图表',exact:true}).click();
   await page.locator('.usage-trend').waitFor();
-  assert.equal(await view.getByRole('button',{name:'图表',exact:true}).getAttribute('aria-pressed'),'true');
+  assert.equal(await view.getByRole('tab',{name:'图表',exact:true}).getAttribute('aria-selected'),'true');
   assert.equal(await page.evaluate(()=>window.usageFixture.requests.length),beforeView,'Chart/data switching, paging and sorting must not reread native usage');
   await page.getByRole('tab',{name:'近30天',exact:true}).click();
   await page.locator('[data-usage-bucket-count="30"]').waitFor();
@@ -562,7 +562,7 @@ try {
   await page.getByRole('button',{name:'用量分析',exact:true}).click();
   await page.getByText('claude-test-model',{exact:true}).waitFor();
 
-  await page.getByRole('button', {name: 'EN', exact: true}).click();
+  await page.getByRole('radio', {name: 'EN', exact: true}).click();
   await page.getByRole('heading', {name: 'Usage analytics', exact: true}).waitFor();
   await page.evaluate(async()=>{const prefs=await import('/src/settings-model.ts');prefs.updatePreferences({theme:'dark'});});
   await page.setViewportSize({width: 900, height: 720});
@@ -572,7 +572,7 @@ try {
   await page.setViewportSize({width:720,height:720});
   const quickGeometry=await page.locator('.quick-page').evaluate(node=>({width:node.clientWidth,scrollWidth:node.scrollWidth}));
   assert.ok(quickGeometry.scrollWidth<=quickGeometry.width+1,'Quick setup must fit a narrow compact window');
-  assert.equal(await page.getByRole('button',{name:'CN',exact:true}).innerText(),'CN');
+  assert.equal(await page.getByRole('radio',{name:'CN',exact:true}).innerText(),'CN');
   await page.screenshot({path:join(output,'quick-setup-en-dark-narrow.png'),fullPage:true});
   await page.setViewportSize({width:900,height:720});
   await page.getByRole('button',{name:'Identity management',exact:true}).click();
@@ -591,12 +591,12 @@ try {
   await page.screenshot({path: join(output, 'usage-analytics-en-dark-compact.png'), fullPage: true});
   const geometry = await page.locator('.usage-page').evaluate(node => ({width: node.clientWidth, scrollWidth: node.scrollWidth}));
   assert.ok(geometry.scrollWidth <= geometry.width + 1, 'Usage page must not overflow horizontally');
-  const englishView=page.getByRole('group',{name:'Trend view',exact:true});
-  assert.equal(await englishView.getByRole('button',{name:'Chart',exact:true}).getAttribute('aria-pressed'),'true');
+  const englishView=page.getByRole('tablist',{name:'Trend view',exact:true});
+  assert.equal(await englishView.getByRole('tab',{name:'Chart',exact:true}).getAttribute('aria-selected'),'true');
   const beforeEnglishView=await page.evaluate(()=>window.usageFixture.requests.length);
-  await englishView.getByRole('button',{name:'Data',exact:true}).click();
+  await englishView.getByRole('tab',{name:'Data',exact:true}).click();
   await page.locator('.usage-trend-table').getByRole('table',{name:'Usage by period',exact:true}).waitFor();
-  await englishView.getByRole('button',{name:'Chart',exact:true}).click();
+  await englishView.getByRole('tab',{name:'Chart',exact:true}).click();
   assert.equal(await page.evaluate(()=>window.usageFixture.requests.length),beforeEnglishView,'English view switching must also reuse the existing snapshot');
   await page.evaluate(()=>{window.usageFixture.longNames=true;});
   await page.getByRole('button',{name:'Refresh',exact:true}).click();

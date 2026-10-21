@@ -39,7 +39,7 @@ export async function testClaudeResidue(browser:Browser,base:string) {
   assert.equal(await cache().isChecked(),true);
   assert.equal(await history().isChecked(),false);assert.equal(await account().isChecked(),false);
   assert.equal(await incomplete().isChecked(),false);assert.equal(await incomplete().isDisabled(),true);
-  await panel.locator('.claude-residue-warnings summary').click();
+  await panel.locator('.claude-residue-warnings-trigger').click();
   assert.match(await panel.innerText(),/虚构警告：部分目录无法完整统计/);
   assert.match(await panel.innerText(),/oauthAccount/);checks++;
 

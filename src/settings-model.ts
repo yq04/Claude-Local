@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 浏览器本地存储（可选）与操作系统深色/减弱动态媒体查询。
- * [OUTPUT]: 响应式界面偏好（主题明暗、强调色、减少动画、侧栏布局、表面纹理、额度显示模式、隐私打码、默认终端与版本检查状态）。
+ * [OUTPUT]: 响应式界面偏好（主题明暗、强调色、减少动画、侧栏布局、表面纹理、额度显示模式、隐私打码）；只保留确有界面消费者的选项，旧版无效键在读取时丢弃。
  * [POS]: 纯前端视图偏好层；不保存任何账号凭据或个人路径，存储不可用时安全回退默认值。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -11,8 +11,6 @@ export type AccentTone = 'terracotta' | 'cockpit' | 'emerald' | 'violet';
 export type SidebarLayout = 'classic' | 'compact';
 export type SurfaceStyle = 'cockpit' | 'hatched';
 export type QuotaDisplayMode = 'remaining' | 'used';
-export type TerminalKind = 'pwsh' | 'powershell' | 'wt' | 'cmd';
-export type ReleaseChannel = 'stable' | 'local';
 
 export type UiPreferences = {
   theme: ThemeMode;
@@ -21,12 +19,7 @@ export type UiPreferences = {
   sidebarLayout: SidebarLayout;
   surfaceStyle: SurfaceStyle;
   quotaDisplay: QuotaDisplayMode;
-  showDashboardKpi: boolean;
   privacyMask: boolean;
-  defaultTerminal: TerminalKind;
-  startupCheckUpdate: boolean;
-  releaseChannel: ReleaseChannel;
-  lastUpdateCheck: number | null;
 };
 
 const STORAGE_KEY = 'claude-local.preferences.v1';
@@ -38,12 +31,7 @@ export const defaultPreferences: UiPreferences = {
   sidebarLayout: 'classic',
   surfaceStyle: 'cockpit',
   quotaDisplay: 'remaining',
-  showDashboardKpi: true,
   privacyMask: false,
-  defaultTerminal: 'pwsh',
-  startupCheckUpdate: false,
-  releaseChannel: 'stable',
-  lastUpdateCheck: null,
 };
 
 function sanitizePreferences(raw: unknown): UiPreferences {
@@ -54,8 +42,6 @@ function sanitizePreferences(raw: unknown): UiPreferences {
   const sidebarLayout: SidebarLayout = input.sidebarLayout === 'classic' || input.sidebarLayout === 'compact' ? input.sidebarLayout : defaultPreferences.sidebarLayout;
   const surfaceStyle: SurfaceStyle = input.surfaceStyle === 'cockpit' || input.surfaceStyle === 'hatched' ? input.surfaceStyle : defaultPreferences.surfaceStyle;
   const quotaDisplay: QuotaDisplayMode = input.quotaDisplay === 'remaining' || input.quotaDisplay === 'used' ? input.quotaDisplay : defaultPreferences.quotaDisplay;
-  const defaultTerminal: TerminalKind = input.defaultTerminal === 'pwsh' || input.defaultTerminal === 'powershell' || input.defaultTerminal === 'wt' || input.defaultTerminal === 'cmd' ? input.defaultTerminal : defaultPreferences.defaultTerminal;
-  const releaseChannel: ReleaseChannel = input.releaseChannel === 'stable' || input.releaseChannel === 'local' ? input.releaseChannel : defaultPreferences.releaseChannel;
   return {
     theme,
     accent,
@@ -63,12 +49,7 @@ function sanitizePreferences(raw: unknown): UiPreferences {
     sidebarLayout,
     surfaceStyle,
     quotaDisplay,
-    showDashboardKpi: typeof input.showDashboardKpi === 'boolean' ? input.showDashboardKpi : defaultPreferences.showDashboardKpi,
     privacyMask: typeof input.privacyMask === 'boolean' ? input.privacyMask : defaultPreferences.privacyMask,
-    defaultTerminal,
-    startupCheckUpdate: typeof input.startupCheckUpdate === 'boolean' ? input.startupCheckUpdate : defaultPreferences.startupCheckUpdate,
-    releaseChannel,
-    lastUpdateCheck: typeof input.lastUpdateCheck === 'number' && Number.isFinite(input.lastUpdateCheck) ? input.lastUpdateCheck : null,
   };
 }
 

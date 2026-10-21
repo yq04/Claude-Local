@@ -16,7 +16,7 @@ The browser bundle contains Chromium and additional dependencies with their own 
 
 ## Vendored interface
 
-`vendor/cromma-ui` is a local copy of Cromma UI, including its Pika icon subset. The copied tree does not currently contain an independent upstream license notice. Confirm its redistribution terms and restore any required notices before publishing these components. The top-level MIT declaration is not evidence of permission from other copyright holders.
+`vendor/cromma-ui` is a local copy of Cromma UI, including its Pika icon subset. The copied tree does not currently contain an independent upstream license notice. Confirm its redistribution terms and restore any required notices before publishing these components. The top-level MIT declaration is not evidence of permission from other copyright holders. `ui/segmented.tsx`, `ui/switch.tsx` and `ui/collapsible.tsx`/`collapsible.css` inside that tree were added in this repository; they only compose the separately licensed Radix primitives with the copied tokens and do not change the unresolved terms of the copied files.
 
 ## AI tool icons
 

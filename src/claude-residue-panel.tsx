@@ -5,7 +5,7 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect,useState} from 'react';
-import {Button,Checkbox} from 'cromma-ui';
+import {Button,Checkbox,Disclosure} from 'cromma-ui';
 import {Refresh} from 'cromma-ui/pika';
 import {invoke} from '@tauri-apps/api/core';
 import {AppDialog} from './dialog';
@@ -70,7 +70,7 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
   </div>
   {error&&<p role="alert" className="cleanup-feedback error">{t(error)}</p>}
   {scan&&<>
-   {scan.warnings.length>0&&<details className="claude-residue-warnings"><summary>{t('{v0} 条扫描提示',{v0:scan.warnings.length})}</summary><ul>{scan.warnings.map((warning,i)=><li key={i}>{t(warning)}</li>)}</ul></details>}
+   {scan.warnings.length>0&&<Disclosure className="claude-residue-warnings" triggerClassName="claude-residue-warnings-trigger" summary={t('{v0} 条扫描提示',{v0:scan.warnings.length})}><ul>{scan.warnings.map((warning,i)=><li key={i}>{t(warning)}</li>)}</ul></Disclosure>}
    {items.length===0?<div className="claude-residue-empty" role="status">{t(scan.warnings.length?'部分路径未能检查，请查看扫描提示。':'未发现白名单内的可清理文件。')}</div>:<>
     <div className={`claude-residue-smart-bar ${safeOnlySelected?'safe':hasHighRiskSelected?'warn':'idle'}`}>
      <span>

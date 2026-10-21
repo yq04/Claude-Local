@@ -1,12 +1,12 @@
 /**
  * [INPUT]: Native numeric usage aggregates, shared locale and display/privacy preferences.
- * [OUTPUT]: Compact account filters, fallback-attributed metrics, responsive trend/model panels and sortable time-bucket detail views.
+ * [OUTPUT]: Compact account filters, fallback-attributed metrics, responsive trend/model panels and sortable time-bucket detail views; period and chart/data switches use Cromma Tabs, the method note uses Disclosure.
  * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh, no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
 import {useEffect, useState, type ReactNode} from 'react';
 import {invoke} from '@tauri-apps/api/core';
-import {Button, Select} from 'cromma-ui';
+import {Button, Disclosure, Select, Tabs} from 'cromma-ui';
 import {Refresh} from 'cromma-ui/pika';
 import {useI18n} from './i18n';
 import {maskEmailAddress, usePreferences} from './settings-model';
@@ -100,18 +100,11 @@ export function UsageStatisticsPanel() {
         <div className="settings-card usage-filter-card">
         <div className="usage-toolbar">
           <div className="usage-period-filter"><span className="usage-filter-label">{t('usage.periodFilter')}</span>
-          <div className="cockpit-capsule-bar usage-periods" role="tablist" aria-label={t('usage.periodFilter')}>
-            {periods.map(([value, label], index) => <button key={value} type="button" role="tab" aria-selected={period === value} tabIndex={period === value ? 0 : -1} className={`cockpit-capsule-tab${period === value ? ' active' : ''}`} onClick={() => setPeriod(value)} onKeyDown={event => {
-              const next = event.key === 'ArrowRight' ? (index + 1) % periods.length : event.key === 'ArrowLeft' ? (index + periods.length - 1) % periods.length : event.key === 'Home' ? 0 : event.key === 'End' ? periods.length - 1 : -1;
-              if (next < 0) return;
-              event.preventDefault(); setPeriod(periods[next][0]);
-              (event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next])?.focus();
-            }}>{t(label)}</button>)}
-          </div>
+          <Tabs aria-label={t('usage.periodFilter')} className="usage-periods" value={period} onValueChange={value => setPeriod(value as UsagePeriod)} tabs={periods.map(([value, label]) => ({value, label: t(label)}))} />
           </div>
           <div className="usage-account-filter"><span className="usage-filter-label">{t('usage.accountFilter')}</span><Select aria-label={t('usage.accountFilter')} size="medium" value={account} onValueChange={setAccount} items={[{value: 'all', label: t('usage.allAccounts')}, ...accounts.map(row => ({value: row.id, label: row.name}))]} /></div>
         </div>
-        <div className="usage-filter-footer"><div className="usage-context"><strong>{range}</strong></div>{(period !== 'all' || account !== 'all') && <button type="button" className="usage-reset" onClick={() => {setPeriod('all'); setAccount('all');}}>{t('usage.resetFilters')}</button>}</div>
+        <div className="usage-filter-footer"><div className="usage-context"><strong>{range}</strong></div>{(period !== 'all' || account !== 'all') && <Button variant="ghost" size="small" onClick={() => {setPeriod('all'); setAccount('all');}}>{t('usage.resetFilters')}</Button>}</div>
         </div>
 
         {error && <p role="alert" className="system-feedback error usage-error">{t('usage.readFailed')} {t(error)}</p>}
@@ -137,7 +130,7 @@ export function UsageStatisticsPanel() {
         {snapshot && <>
           <div className="usage-analysis-grid" data-trend-view={trendView}>
           <section className="settings-card usage-chart-card">
-            <div className="usage-panel-header"><div><GroupTitle>{t('usage.daily')}</GroupTitle><p>{period === 'today' ? t('usage.hourly') : period === 'all' ? t('usage.fullHistory') : t('usage.localDays')}</p></div><div className="usage-view-switch" role="group" aria-label={t('usage.trendView')}><button type="button" aria-pressed={trendView === 'chart'} onClick={() => setTrendView('chart')}>{t('usage.chartView')}</button><button type="button" aria-pressed={trendView === 'data'} onClick={() => setTrendView('data')}>{t('usage.dataView')}</button></div></div>
+            <div className="usage-panel-header"><div><GroupTitle>{t('usage.daily')}</GroupTitle><p>{period === 'today' ? t('usage.hourly') : period === 'all' ? t('usage.fullHistory') : t('usage.localDays')}</p></div><Tabs aria-label={t('usage.trendView')} size="small" value={trendView} onValueChange={value => setTrendView(value as 'chart' | 'data')} tabs={[{value: 'chart', label: t('usage.chartView')}, {value: 'data', label: t('usage.dataView')}]} /></div>
             <div className="usage-chart-summary" title={t('usage.averageHint')}><div><span>{t(period === 'today' ? 'usage.averageHour' : 'usage.averageDay')}</span><strong title={num(trend.average)}>{num(trend.average, true)}<small>Token</small></strong></div><div><span>{t(period === 'today' ? 'usage.peakHour' : 'usage.peakDay')}</span><strong title={num(trend.peak?.totals.total_tokens)}>{num(trend.peak?.totals.total_tokens, true)}<small>{peakLabel}</small></strong></div></div>
             {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={period === 'today'} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={period === 'today'} />}
             <div className="usage-chart-caption"><span><i aria-hidden="true" />{t('usage.total')}</span><span>{t(trendView === 'chart' ? 'usage.trendHint' : 'usage.tableHint')}</span></div>
@@ -160,7 +153,7 @@ export function UsageStatisticsPanel() {
             </div>
           </section>
         </>}
-        <details className="usage-method settings-card"><summary>{t('usage.method')}</summary><div><p>{t('usage.logCounters')}</p><p>{t('usage.totalFormula')}</p><p>{t('usage.cacheFormula')}</p><p>{t('usage.timezoneNote')}</p></div></details>
+        <Disclosure className="usage-method settings-card" triggerClassName="usage-method-trigger" summary={t('usage.method')}><div className="usage-method-body"><p>{t('usage.logCounters')}</p><p>{t('usage.totalFormula')}</p><p>{t('usage.cacheFormula')}</p><p>{t('usage.timezoneNote')}</p></div></Disclosure>
       </div>
     </section>
   );

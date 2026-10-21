@@ -1,71 +1,54 @@
 <!--
-[INPUT]: Owner-authorized 0.1.2 delivery, verified local installation, scoped source checks and version-specific publication receipts.
-[OUTPUT]: Current project handoff with completed local deployment and explicit evidence rules for the GitHub prerelease.
-[POS]: Repository handoff; workstation paths, private probes and publication receipts remain ignored under .local/.
-[PROTOCOL]: Read the 0.1.2 receipts before interpreting historical 0.1.1 records; never republish merely to refresh documentation.
+[INPUT]: Owner requests, Git/worktree state, delivered 0.1.2 receipts, the 0.1.3 frontend unification and installer upgrade sources, and their verification reports.
+[OUTPUT]: Standalone session handoff: delivered baseline, 0.1.3 scope and delivery gates, validation limits, next actions and non-repeatable pitfalls.
+[POS]: Repository handoff; private paths, proxies, identities, receipts and machine-specific notes stay ignored under .local/.
+[PROTOCOL]: Separate published artifacts from later working-tree changes and from out-of-repo environment work. Do not rebuild, republish, clean or deploy merely to refresh this document.
 -->
 # Claude-Local 会话交接
 
-当前交付版本：**0.1.2**。记录时间：2026-10-21 UTC。本文件记录已核验的源码与本地替换；GitHub 最终状态以对应发布回执和 Release 实时状态为准。
+更新日期：2026-10-21（本机时区 America/New_York，回执用 UTC）。写给没有上文的新会话。
 
-## 1. 先确认最新交付证据
+## 1. 当前状态
 
-- `.local/last-local-update.json`：本地替换结果；本次状态为 `updated`，安装包文件名含 `0.1.2`。
-- `.local/release-0.1.2/independent-delivery-verification.json`：独立复核安装版本为 0.1.2，95 个文件无哈希差异，安装包和主程序哈希匹配，13 项私密标记审计通过。
-- `.local/release-0.1.2/published-receipt.json`：GitHub 发布最终回执。只有状态为 `updated-and-published` 才能认定提交、推送、CI、附件校验与私有预发布全部完成；提交 SHA 和 URL 从此读取。
-- `.local/release-0.1.2/final-handoff-verification.json`：发布后对远程提交、标签、附件和本地交付的最终核对记录。
-- 若最终发布回执存在且状态正确，0.1.2 的交付任务已经结束，不要重新构建、替换或覆盖 Release。没有最终回执时，只能认定已由本地回执证明的阶段完成，使用 `-PublishOnly` 续跑前先查明实际远程状态。
+- **0.1.2 已交付**：发布提交 `34408efbad890358eb3f6b589df5bc95c11659c8`，CI Run `39555056373` 成功，私有预发布 `v0.1.2` 的 8 个附件已独立下载核验。安装包 SHA-256 `59ce86f3918a0282754d0026157452ef0a2c289545661ca82e02b807d65602d4`。不要重跑或覆盖 0.1.2。
+- **0.1.3 由所有者授权全权交付**（版本号 0.1.3）。范围是下面第 2 节的两部分源码。交付链沿用 0.1.2：中性 Cargo 根 + `custom-protocol` 构建 → 原 13 标记解包隐私审计 → 本机文件事务替换（只重启 Claude-Local 主程序，不结束 Claude Code 或浏览器）→ 审阅快照提交 → 非强制推送 → 同提交 CI → 私有预发布 8 附件下载核验。**是否已完成以 `.local/last-local-update.json`、`.local/release-0.1.3/published-receipt.json` 和 GitHub Release 状态为准，不以本文件为准。**
+- 用户机器上的外部代理配置事故（不属于本仓库）的记录已移到 `.local/handoff-archive/HANDOFF-before-0.1.3-20261021T092525Z.md`。本仓库不包含代理、节点、分流或号池功能，也不提供此类配置。
 
-0.1.1 已完成的发布与回执仍保留作为历史记录。旧交接原文已备份至 `.local/release-0.1.2/handoff-before-0.1.2.md`；它不代表当前版本待办。
+## 2. 0.1.3 的内容
 
-## 2. 项目内容与本次修复
+### 2.1 前端交互统一
 
-Claude-Local 是独立维护的 Windows x64 产品，主程序 `claude-local.exe`，标识 `ai.local.claude-local`。React/TypeScript 负责界面，Tauri/Rust 负责原生操作，Python 是外部额度账本的唯一写入方。可选的 Claude-Local Browser 仅由明确用户操作或 `--browser` 启动。
+- `vendor/cromma-ui` 新增三件只组合已装 Radix 的原语：`SegmentedControl`（ToggleGroup 单选，radio 语义）、`Switch`、`Disclosure`（Collapsible + 行尾 ChevronGlyph + base 档高度动效）。Tabs 与 SegmentedControl 共用 `control.ts` 的分段皮。`MotionRoot` 可接收 `reducedMotion="always"`，并转出 `useSpring`／`useReducedMotionConfig`。没有新增 npm 依赖，`bun.lock` 未变。
+- 设置页分栏／分段／开关、侧栏 CN／EN、用量时段与图表／数据、帮助／身份保留策略／浏览器缓存与高级设置／残留提示／用量口径的折叠区全部改用这些原语；删除手写 tablist 方向键、`aria-pressed` 分段、手写开关、emoji 图标与约 190 行重复 CSS。页面切换用 `MOTION.base` 淡入。
+- 「减少动画」偏好现在同时驱动 Motion 与 Cromma `--motion-*`。设置页原「检查更新」只是 420ms 定时器后宣称已是最新，已与无消费者的启动检查、更新通道、默认终端一起移除，改为只读版本说明；旧偏好键读取时丢弃。
 
-本次用户报告快速配置中的浏览器状态无法读取，身份信息似乎依赖先访问身份管理。已在临时目录复现两个 `Database::open` 并发首次建库时，一个调用因独占创建失败。身份与浏览器读取共用身份 SQLite，旧初始化还存在 DEFERRED 事务读后升级竞争。后续 CI 暴露了创建句柄尚持有时，另一连接被 SQLite 降为只读的 Windows 文件共享窗口；临时 Barrier 样本复现 schema 阶段的 SQLite ReadOnly（扩展码 8）。
+### 2.2 安装器升级顺序
 
-0.1.2 包含：
+`src-tauri/windows/installer-hooks.nsh` 通过 `MUI_CUSTOMFUNCTION_GUIINIT → ClaudeLocalUpgradeBeforeWelcome` 在欢迎页前校验当前用户已登记的旧版，确认（默认“否”）后用 Restart Manager **只读**检查占用，再同步调用固定的 `"<旧目录>\uninstall.exe" /UPDATE _?=<旧目录>`，核对返回码 0、旧 exe 消失、四个登记值清空后才进入新版向导；取消、占用、无法验证或失败都直接 `Quit`，不覆盖安装。新卸载器在升级模式下保留浏览器注册名称空间。
 
-- 串行保护整个短生命周期的文件创建、连接打开与初始化；并发创建同一安全、当前用户拥有目录/数据库时重新校验目标，schema、版本迁移和默认状态写入置于 SQLite IMMEDIATE 事务中。锁不跨越 Database 生命周期，保留嵌套读取、`user_version=3`、已有身份、显式浏览器联动选择和种子规则。
-- 快速配置的身份、浏览器、电脑环境和 CLI 各自读取完成即展示，单项慢读或失败不拖住其他状态；显示具体失败项和原生原因，支持手动刷新。
-- 浏览器配置启用“跟随电脑”时，概览与浏览器核验共用有效时区/语言解析；配置目标不冒充实际浏览器观测。
-- 侧栏与六个配置入口共用图标映射，保留原有用量图形；复用现有 Cromma Button 加载与尺寸、卡片、双主题及错误色，按可用内容宽度适配布局。没有新增第三方依赖或大幅改版。
-- 应用版本已同步到 package.json、Tauri 配置、Cargo 清单与锁文件；README、开发说明和 `docs/RELEASE_NOTES_0.1.2.md` 已更新。
+**只有源码与合成编译证据**：`scripts/test-installer-upgrade.ps1` 三语警告即错误编译通过（`installerExecuted=false`）。真实安装／升级／卸载从未执行过；本机是手工部署、无卸载登记，文件替换也不会走这条流程。旧 0.1.2 卸载器仍会删除浏览器注册，发行说明已提示升级后需重新设置默认浏览器。
 
-## 3. 已核验的本地替换
+## 3. 已验证（全部为虚构数据）
 
-使用既有 `.local/tools/complete-local-update.ps1`，在新的中性 Cargo 根构建 `custom-protocol` Release 和全新 NSIS 安装包。沿用原有 13 项私密标记，102 个解包文件，零发现；只解包检查，没有执行安装器或卸载器。
+`tsc`、`bun test` 31 项、`bun run build` + `browser_ui.py`、`cargo metadata --locked`、Python 合成测试（浏览器准备、额度、迁移、打包审计）、`test-usage-statistics.mjs` 全量与 `--quick-only`、`test-identities-ui.ts` 60 项、`test-local-shell.mjs`、安装器三语合成编译。GUI 中工牌仍 180×286，只发生只读 IPC。完整 Rust 原生测试只在 CI 的一次性 runner 上跑（隔离 HOME/APPDATA），本机未跑。
 
-首次完整备份后替换 9 个变化文件；CI 暴露的 Windows 首建共享窗口修复后，又从全新中性根重新构建、审计，并备份更新了 1 个主程序文件。最终验证 95 个安装文件和启动窗口。两次更新中三个 Claude Code 进程的 PID 均保持一致，`missingClaudePids` 为空。没有结束 Claude Code 或配套浏览器，没有重新配置个人 Token 归属规则。
+## 4. 下一步
 
-- 安装包 SHA-256：`59ce86f3918a0282754d0026157452ef0a2c289545661ca82e02b807d65602d4`。
-- 已安装主程序 SHA-256：`b35916557c92bf1358d5d0d89398dd46074899ea1dd84ab44af513890fff2078`。
+1. 若 0.1.3 交付中断：先读 `.local/release-0.1.3/` 下回执与日志，用 `.local/tools/finish-release-0.1.3.ps1` 的 `-ValidateOnly` / `-PublishOnly` 续跑；不要强推、不要覆盖已发布 Release。
+2. 在一次性 Windows 环境（托管 runner、虚拟机或临时账户）用虚构账号验证：首次安装、已登记 0.1.2 → 0.1.3 升级、拒绝／取消、占用重试、失败退出与资料哈希／身份数量保留、浏览器注册状态。不要在本机真实安装或卸载。
 
-实际安装目录、中性构建目录、备份及安装包路径只从私有回执读取，不加入受跟踪文档。
+## 5. 工作区与归属
 
-## 4. GitHub 发布约定
+- `AGENTS.md` 是用户自己的规则改动，不随版本提交。
+- `--help/`、`.planning/`、`.rivet/`、`docs/superpowers/` 不属于产品源码，不移动、不删除、不暂存。
+- `.local/`、外部代理配置、凭据、安装包与回执永远不进 Git。
 
-目标仓库保持私有：`yq04/Claude-Local`；手动发布版本 `v0.1.2`。用户明确授权源码提交、上传、新安装包和本机替换，不需要重复询问同一操作。用户已拒绝 GitHub 插件，使用现有 GitHub CLI。
+## 6. 踩过的坑
 
-发布工具为 `.local/tools/finish-release-0.1.2.ps1`。它只暂存审阅清单内的源码/文档，非强制推送到 main，等待同一提交的 `Windows source checks` 成功，再创建私有草稿并上传八个附件；下载全部附件逐个核对 SHA-256 后才转为预发布并写最终回执。不会改变仓库可见性、旧版 Release、自动更新源或现有远程配置。
-
-八个附件：新安装包、SHA256SUMS.txt、privacy-audit.json、resource-manifest.json、RELEASE_NOTES_0.1.2.md、Claude-Local_0.1.2-source.zip、LICENSE、NOTICE.md。源码快照清单与获准暂存对象见 `.local/release-0.1.2/source-snapshot.json`。
-
-`gh run watch` 在本地等待远程 CI；Rust 编译需要时间，依据实际步骤与结果判断，不因旧截图或短时无输出认定卡死。中断本地等待会中断后续发布，续跑前检查当前回执、暂存对象和远程状态，不清理用户工作区。
-
-## 5. 验证与仍有的边界
-
-本次源码改动已通过 3 项 Rust 数据库并发初始化/迁移测试（含 24 轮 Barrier 首建争用）、9 项 Bun 本地化/浏览器核验测试、16 组隔离快速配置 GUI 检查、TypeScript/Vite 构建；新发布脚本的五组合成 Git/假 GitHub 续跑测试通过。修正后的新 Release 构建、13 标记解包审计和本地文件替换有独立回执。首次 CI 的 124 通过/1 失败/1 忽略结果已促成本次完整打开边界修复，不绕过失败发布；完整 Windows CI 只在临时托管 runner 执行，最终成功结果从发布回执和 GitHub 读取。
-
-GUI 证据位于忽略的 `.local/preview/quick-setup-20261021/`。针对快速配置使用 `node scripts/test-usage-statistics.mjs <output> --quick-only`，复用原有隔离 IPC/浏览器环境，不运行无关全库检查。
-
-既有边界仍保留：历史固定 UTC 偏移未完整处理夏令时；JSONL 头部/边界采样不能保证检测任意中段改写；真实 NSIS 安装/升级/卸载需临时 Windows 环境验证；安装包未签名；第三方许可和完整 Chromium 声明仍以 NOTICE.md、docs/DISTRIBUTION.md 为准。私有仓库不构成公开分发许可。
-
-## 6. 工作区和后续纪律
-
-- AGENTS.md 的既有用户修改保留；`--help/`、`.planning/`、`docs/superpowers/` 等无关未跟踪目录不暂存、不移动、不删除。
-- 只读了解或定位问题不等于获准清理。禁止 git clean、hard reset、仓库范围 restore、递归 worktree 删除及终止真实 Claude 会话。
-- 更新保留真实保险库、浏览器资料、个人配置和源数据；不写 .claude.json，不轮询 OAuth 用量，Python 继续独占额度账本写入。
-- 保留 BAGAID01、.baga 编码、SQLite v3、账号 HMAC 与旧浏览器种子域字符串，不因升级再生成密钥/身份/种子。
-- `.local/`、安装器、运行时资产、账本、数据库、身份归档、私密标记和机器专用路径不进入 Git。正式构建使用新的中性 Cargo 根，不复制 Cargo 凭据、根配置或 registry/src。
-- 后续修改先读相关 CLAUDE.md 与源码头，保持双语目录完整，只运行针对性合成测试；深色 GUI 检查使用真实偏好 API，SQLite 测试显式关闭连接后清理临时目录。
+- **Vite 预打包缓存**：`node_modules/cromma-ui` 是安装副本。增删 vendor 文件后要 `bun install`，并让 Vite 以 `--force` 重建一次，否则页面空白且报缺少新导出；依赖哈希只看锁文件，不会自动失效。
+- **GUI 选择器语义**：CN／EN 与主题等分段选择是 `radio`；趋势视图与时段是 `tab`／`aria-selected`；折叠区是带 `aria-expanded` 的按钮，不再是 `summary`。
+- **SQLite 的 Windows 竞争发生在事务之前**：不要删掉 `Database::open` 的短锁，也不要把它延长成 Database 生命周期锁。
+- **NSIS**：`/UPDATE` 只给旧卸载器；`_?=<旧目录>` 必须是最后一个参数；占用检查不能用带 Shutdown 的宏；合成编译产物立即退出，绝不能上传或冒充发行包。
+- **发布必须依据同一提交的 CI 结果**；失败要修根因，不能重试碰运气或弱化测试。
+- **不要中断运行中的 `claude.exe`**；测试只用合成数据与隔离浏览器；Windows 上用 pwsh 7。
+- **保护格式边界**：BAGAID01、`.baga`、SQLite `user_version=3`、账号 HMAC 与旧浏览器种子域保持不变；Python 是额度账本唯一写入者；不写 `.claude.json`、不轮询 OAuth。

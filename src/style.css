@@ -1,6 +1,6 @@
 /**
  * [INPUT]: index.css 的系统字体、Cromma UI 控件、Cockpit Tools / CC Switch 座舱卡片与胶囊导航几何、settings-model 主题/强调色/布局/动效属性。
- * [OUTPUT]: 双主题/四色强调色与可读错误色、紧凑侧栏、同字体身份卡及固定行高额度排版、网络页复制反馈、自然高度的电脑设置与紧凑定位行；用量专属样式由 usage-statistics.css 提供。
+ * [OUTPUT]: 双主题/四色强调色与可读错误色、紧凑侧栏、同字体身份卡及固定行高额度排版、网络页复制反馈、自然高度的电脑设置与紧凑定位行；用量专属样式由 usage-statistics.css 提供。分段、页签、开关与折叠区的皮肤归 Cromma UI 原语，这里只给布局类（settings-tabs、language-switch、*-trigger）。
  * [POS]: 应用布局与视觉渲染层；保持 180×286（54:85.6 标准工牌比例）身份工牌几何、#43e484 顶部绿光与 #ac3025 错误色等自动化测试契约。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -100,7 +100,12 @@
   --local-accent-soft: rgba(139, 92, 246, 0.18);
 }
 
-/* ----- 软件内「减少动画」开关及系统减弱动态全局生效 ----- */
+/* ----- 软件内「减少动画」开关及系统减弱动态全局生效（同时把 Cromma 的 --motion-* 三档归零） ----- */
+:root[data-reduce-motion="true"] {
+  --motion-quick: 0ms;
+  --motion-base: 0ms;
+  --motion-panel: 0ms;
+}
 :root[data-reduce-motion="true"],
 :root[data-reduce-motion="true"] *,
 :root[data-reduce-motion="true"] *::before,
@@ -308,38 +313,6 @@ code, input { user-select: text; }
 }
 .language-switch {
   order: 1;
-  display: inline-flex;
-  gap: 2px;
-  padding: 2.5px;
-  border: 1px solid var(--panel-outline);
-  border-radius: 8px;
-  background: var(--muted);
-}
-.language-switch button {
-  min-width: 42px;
-  height: 25px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted-foreground);
-  font: 500 11.5px var(--font-sans);
-  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
-}
-.language-switch button:hover:not([aria-pressed="true"]) { color: var(--foreground); }
-.language-switch button[aria-pressed="true"] {
-  background: var(--panel);
-  color: var(--foreground);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(20, 20, 19, 0.1), 0 0 0 1px rgba(20, 20, 19, 0.05);
-}
-:root.dark .language-switch {
-  background: #121418;
-  border-color: #2a2d36;
-}
-:root.dark .language-switch button[aria-pressed="true"] {
-  background: #2b2f3a;
-  color: #f5f3ed;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 1px 3px rgba(0, 0, 0, 0.45);
 }
 
 /* ----- 紧凑图标侧边栏状态（.sidebar-compact） ----- */
@@ -388,14 +361,8 @@ code, input { user-select: text; }
   margin-left: 0;
 }
 .app-shell.sidebar-compact .local-edition small { max-width: 100%; padding: 3px 4px; font-size: 9px; }
-.app-shell.sidebar-compact .language-switch { order: 1; display: grid; grid-template-columns: 1fr; gap: 3px; padding: 3px; }
-.app-shell.sidebar-compact .language-switch button {
-  min-width: 0;
-  width: 100%;
-  height: 29px;
-  font-size: 11px;
-  padding-inline: 3px;
-}
+.app-shell.sidebar-compact .language-switch { order: 1; display: grid; grid-template-columns: 1fr; gap: 3px; }
+.app-shell.sidebar-compact .language-switch-item { width: 100%; min-width: 0; padding-inline: 3px; }
 
 /* ----- 主工作区容器 ----- */
 .workspace {
@@ -860,11 +827,11 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   font-size: 11.5px;
   color: var(--muted-foreground);
 }
-.browser-cache-details summary {
-  cursor: pointer;
+.browser-cache-trigger {
   padding: 2px 0;
-  user-select: none;
+  color: var(--muted-foreground);
 }
+.browser-cache-trigger:hover { color: var(--foreground); }
 .browser-cache { max-height: 140px; overflow: auto; margin-top: 6px; }
 .browser-cache > div { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); font: 11px var(--font-mono); }
 .browser-cache small { flex-shrink: 0; color: var(--muted-foreground); }
@@ -1263,11 +1230,8 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   box-shadow: var(--card-shadow);
 }
 .help-details + .help-details { border-top: 1px solid var(--landing-line); }
-.help-details summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; cursor: pointer; list-style: none; font-size: 12.5px; font-weight: 600; transition: color 150ms ease; }
-.help-details summary::-webkit-details-marker { display: none; }
-.help-details summary > span::before { content: '+'; font: 17px var(--font-mono); color: var(--local-accent); }
-.help-details[open] summary > span::before { content: '−'; }
-.help-details summary:hover { color: var(--local-accent); }
+.help-details-trigger { padding: 13px 0; font-size: 12.5px; font-weight: 600; }
+.help-details-trigger:hover { color: var(--local-accent); }
 .help-details .help-copy, .help-appeal { margin: 0; padding-bottom: 14px; }
 .help-appeal { padding-left: 20px; color: var(--muted-foreground); font-size: 12px; line-height: 1.75; user-select: text; }
 .help-appeal li + li { margin-top: 5px; }
@@ -1360,21 +1324,12 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   overflow-wrap: anywhere;
 }
 
-.identity-policy summary {
+.identity-policy-trigger {
   padding: 11px 18px;
-  cursor: pointer;
   font-size: 12.5px;
-  transition: background-color 150ms ease;
 }
-.identity-policy summary:hover { background: color-mix(in srgb, var(--muted) 55%, transparent); }
-.identity-policy-summary-main {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin-left: 6px;
-}
-.identity-policy summary strong { font-weight: 600; color: var(--foreground); }
+.identity-policy-trigger:hover { background: color-mix(in srgb, var(--muted) 55%, transparent); }
+.identity-policy-trigger strong { font-weight: 600; color: var(--foreground); }
 .identity-policy-hint {
   font-size: 11.5px;
   color: var(--muted-foreground);
@@ -1401,7 +1356,6 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   color: #6ee7b7;
   border-color: rgba(52, 211, 153, 0.34);
 }
-.identity-policy summary:focus-visible { outline: 2px solid var(--local-accent); outline-offset: -4px; }
 .identity-policy-body {
   border-top: 1px solid var(--landing-line);
 }
@@ -1997,7 +1951,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .claude-residue-footer > button { flex-shrink: 0; }
 .claude-residue-empty { padding: 0 18px 16px; font-size: 12px; color: var(--muted-foreground); }
 .claude-residue-warnings { margin: 0 18px 12px; padding: 10px 12px; border: 1px solid #e6d4ab; border-radius: 8px; background: #fffaf0; color: #6b4c00; font-size: 11px; line-height: 1.6; }
-.claude-residue-warnings summary { cursor: pointer; font-weight: 550; }
+.claude-residue-warnings-trigger { font-weight: 550; }
 .claude-residue-warnings ul { padding-left: 16px; margin: 8px 0 0; overflow-wrap: anywhere; }
 .claude-residue-review { margin: 0; padding: 0; list-style: none; max-height: 200px; overflow-y: auto; }
 .claude-residue-review li { display: grid; gap: 5px; padding: 10px 0; border-top: 1px solid var(--landing-line); font-size: 11px; }
@@ -2024,52 +1978,14 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .settings-page {
   padding-bottom: 24px;
 }
-.settings-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-.update-status-caption {
-  font-size: 11.5px;
-  color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums;
-}
 
-/* Cockpit Tools 风格顶部悬浮胶囊导航栏 */
-.cockpit-capsule-bar {
+/* 设置分栏：Cromma Tabs 分段皮，这里只负责居中与间距 */
+.settings-tabs {
   display: flex;
-  align-items: center;
-  justify-content: center;
   flex-wrap: wrap;
-  gap: 4px;
   width: fit-content;
+  max-width: 100%;
   margin: 0 auto 14px;
-  padding: 5px;
-  border-radius: 999px;
-  border: 1px solid var(--landing-line);
-  background: var(--panel);
-  box-shadow: var(--capsule-shadow);
-}
-.cockpit-capsule-tab {
-  height: 32px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted-foreground);
-  font: 550 12.5px var(--font-sans);
-  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
-}
-.cockpit-capsule-tab:hover:not(.active) {
-  color: var(--foreground);
-  background: color-mix(in srgb, var(--muted) 65%, transparent);
-}
-.cockpit-capsule-tab.active {
-  background: var(--local-accent-soft);
-  color: var(--local-accent-ink);
-  font-weight: 650;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--local-accent) 24%, transparent);
 }
 
 .settings-sections {
@@ -2215,119 +2131,17 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   flex-shrink: 0;
 }
 
-/* CC Switch 风格分段选择器（明暗 / 额度显示 / 布局） */
-.cc-segmented {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px;
-  border-radius: 10px;
-  border: 1px solid var(--landing-line);
-  background: var(--muted);
-}
-.cc-segment-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 11px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted-foreground);
-  font: 500 12px var(--font-sans);
-  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
-}
-.cc-segment-btn:hover:not(.active) {
-  color: var(--foreground);
-}
-.cc-segment-btn.active {
-  background: var(--panel);
-  color: var(--foreground);
-  font-weight: 600;
-  box-shadow: 0 1px 3px rgba(20, 20, 19, 0.1), 0 0 0 1px rgba(20, 20, 19, 0.05);
-}
-:root.dark .cc-segmented {
-  background: #121418;
-  border-color: #2a2d36;
-}
-:root.dark .cc-segment-btn.active {
-  background: #2b2f3a;
-  color: #f5f3ed;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 1px 3px rgba(0, 0, 0, 0.45);
-}
-.cc-segment-icon {
-  font-size: 12px;
-  line-height: 1;
-}
 
-/* 主题强调色色板按钮组 */
-.accent-swatch-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.accent-swatch-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 8px;
-  border: 1px solid var(--landing-line);
-  background: var(--background);
-  color: var(--muted-foreground);
-  font: 500 11.5px var(--font-sans);
-  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
-}
-.accent-swatch-pill > i {
-  width: 11px;
-  height: 11px;
+/* 强调色分段项内的色点 */
+.accent-dot {
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
 }
-.accent-swatch-pill.active {
-  border-color: var(--local-accent);
-  background: var(--local-accent-soft);
-  color: var(--local-accent-ink);
-  font-weight: 600;
-}
 
-/* Cockpit Tools / CC Switch 风格拨动开关 */
-.cc-switch-toggle {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  width: 42px;
-  height: 24px;
-  padding: 2px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 999px;
-  background: #d8d3c8;
-  transition: background-color 160ms ease, border-color 160ms ease;
-}
-:root.dark .cc-switch-toggle:not(.checked) {
-  background: #2b2f3a;
-  border-color: #3a3f4d;
-}
-.cc-switch-toggle.checked {
-  background: var(--local-accent);
-  border-color: transparent;
-}
-.cc-switch-thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
-  transform: translateX(0);
-  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-.cc-switch-toggle.checked .cc-switch-thumb {
-  transform: translateX(18px);
-}
 
-/* 关于与更新英雄行与规格三列卡 */
+/* 版本信息英雄行与规格三列卡 */
 .settings-about-brand {
   display: flex;
   align-items: center;

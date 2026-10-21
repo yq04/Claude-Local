@@ -4,7 +4,7 @@
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { Button, Input, Select, Checkbox } from 'cromma-ui';
+import { Button, Input, Select, Checkbox, Disclosure } from 'cromma-ui';
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from './i18n';
 import { invoke } from '@tauri-apps/api/core';
@@ -20,7 +20,7 @@ export function BrowserPanel({ onBusy }: {
     const { t, locale } = useI18n();
     const [state, setState] = useState<BrowserState | null>(null), [draft, setDraft] = useState<BrowserConfig | null>(null), [busy, setBusy] = useState(''), [error, setError] = useState(''), [confirm, setConfirm] = useState<'reset' | 'align' | null>(null);
     const gate = useRef(false), live = useRef(true);
-    const [accepted, setAccepted] = useState(false);
+    const [accepted, setAccepted] = useState(false), [advancedOpen, setAdvancedOpen] = useState(false);
     const activity = useCleanupActivity();
     const [preferred, setPreferred] = useState<DefaultBrowser | null>(null), [asking, setAsking] = useState(false), [defaultNote, setDefaultNote] = useState('');
     useEffect(() => { onBusy?.(!!busy); return () => onBusy?.(false); }, [busy, onBusy]);
@@ -230,20 +230,14 @@ export function BrowserPanel({ onBusy }: {
                     </div>
                 </div>
                 {state?.cache_error && <p role="alert">{t(state.cache_error)}</p>}
-                <details className="browser-cache-details">
-                    <summary>{t("查看底层缓存目录明细")} ({cache.length})</summary>
+                <Disclosure className="browser-cache-details" triggerClassName="browser-cache-trigger" summary={`${t("查看底层缓存目录明细")} (${cache.length})`}>
                     <div className="browser-cache">{state?.cache.length ? state.cache.map(x => <div key={x.path}><span>{x.path}</span><small>{x.login ? t("站点数据") : formatBytes(x.bytes)}</small></div>) : <p>{t("未发现缓存项目。")}</p>}</div>
-                </details>
+                </Disclosure>
             </div>
 
-            <details className="identity-policy browser-advanced-panel" open={!!changed}>
-                <summary>
-                    <div className="identity-policy-summary-main">
-                        <strong>{t("指纹与代理设置")}</strong>
-                        <span className="identity-policy-hint">{t("已按身份自动生成稳定指纹并跟随 TUN 路由，日常无需手动改动")}</span>
-                    </div>
-                    <span className="identity-policy-mode ok">{draft?.proxy ? draft.proxy : t("自动托管")}</span>
-                </summary>
+            <Disclosure className="identity-policy browser-advanced-panel" triggerClassName="identity-policy-trigger" open={advancedOpen || !!changed} onOpenChange={setAdvancedOpen}
+                summary={<><strong>{t("指纹与代理设置")}</strong><span className="identity-policy-hint">{t("已按身份自动生成稳定指纹并跟随 TUN 路由，日常无需手动改动")}</span></>}
+                aside={<span className="identity-policy-mode ok">{draft?.proxy ? draft.proxy : t("自动托管")}</span>}>
                 <div className="browser-advanced-body">
                     <div className="browser-advanced-grid">
                         <div>
@@ -276,7 +270,7 @@ export function BrowserPanel({ onBusy }: {
                         <Button variant="ink" size="small" disabled={disabled || state?.running || !changed} loading={busy === 'browser_save'} onClick={() => draft && void act('browser_save', { config: draft })}>{t("保存设置")}</Button>
                     </div>
                 </div>
-            </details>
+            </Disclosure>
         </div>
 
         <CleanupActivity activity={activity.state} />

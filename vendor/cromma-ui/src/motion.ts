@@ -1,15 +1,15 @@
 /**
  * [INPUT]: 依赖 Motion 的布局与无障碍动效，motion-tokens 的通用三档与 media-viewer-tokens 的专用媒体参数。
- * [OUTPUT]: 提供 MOTION、MOTION_EASE、PUSH、MotionRoot、useLayoutTransition（显式布局过渡也尊重减弱动态效果），转出 motion、AnimatePresence、LayoutGroup、useIsPresent、useReducedMotion 与类型 Transition。MOTION是web 动效系统的预设。PUSH是推入推出的交叉滑编舞。MotionRoot是根上的 MotionConfig。
+ * [OUTPUT]: 提供 MOTION、MOTION_EASE、PUSH、MotionRoot（可由应用偏好强制减弱）、useLayoutTransition（显式布局过渡也尊重根上的减弱设置），转出 motion、AnimatePresence、LayoutGroup、useIsPresent、useReducedMotion、useReducedMotionConfig、useSpring 与类型 Transition。MOTION是web 动效系统的预设。PUSH是推入推出的交叉滑编舞。MotionRoot是根上的 MotionConfig。
  * [POS]: web 动效的唯一真相源：一条曲线（键盘曲线 7的贝塞尔，搜索态那一条）× 三档时长（手机全局三档 × web的 speed）。见 docs/09「动效」CSS 过渡读同值的 --motion-quick、--motion-base、--motion-panel 与 ease-motion，JS 动画只取这里的 MOTION.*，不另写时长与曲线。Motion 只经本文件进 cromma-ui的入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createElement, type ReactNode } from 'react';
-import { MotionConfig, useReducedMotion, type Transition } from 'motion/react';
+import { MotionConfig, useReducedMotionConfig, type Transition } from 'motion/react';
 import { MOTION_TOKENS as T } from './motion-tokens';
 import { MEDIA_VIEWER as MEDIA } from './media-viewer-tokens';
 
-export { AnimatePresence, LayoutGroup, motion, useIsPresent, useReducedMotion } from 'motion/react';
+export { AnimatePresence, LayoutGroup, motion, useIsPresent, useReducedMotion, useReducedMotionConfig, useSpring } from 'motion/react';
 export type { Transition } from 'motion/react';
 
 /** web 唯一的曲线：快起、长尾、零过冲（y ≤ 1），CSS 侧是 ease-motion */
@@ -55,13 +55,14 @@ export const PUSH = {
 
 /**
  * 根上挂一次：缺省过渡 = layout（layout 动画不写 transition 也同一个手感），系统「减弱动态效果」打开时位移与形变直接到位、只留透明度。
+ * 应用内另有「减少动画」偏好时传 reducedMotion="always"，与系统设置同一条路径生效。
  * 壳的 main 与每个 Cromma App 的根各包一层；CSS 侧的减弱动效在 theme.css 把 --motion-* 归零
  */
-export function MotionRoot({ children }: { children: ReactNode }) {
-  return createElement(MotionConfig, { reducedMotion: 'user', transition: MOTION.layout }, children);
+export function MotionRoot({ children, reducedMotion = 'user' }: { children: ReactNode; reducedMotion?: 'user' | 'always' }) {
+  return createElement(MotionConfig, { reducedMotion, transition: MOTION.layout }, children);
 }
 
-/** 显式 width / 位移动画也尊重系统减弱动态效果，不只依赖 MotionConfig 的 transform 处理。 */
+/** 显式 width / 位移动画也尊重减弱动态效果（系统设置或 MotionRoot 强制），不只依赖 MotionConfig 的 transform 处理。 */
 export function useLayoutTransition(): Transition {
-  return useReducedMotion() ? MOTION.instant : MOTION.layout;
+  return useReducedMotionConfig() ? MOTION.instant : MOTION.layout;
 }

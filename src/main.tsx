@@ -1,10 +1,10 @@
 /**
  * [INPUT]: A 品牌图、Cockpit Tools / CC Switch 座舱壳与侧栏参数、Cromma UI、共享页面图标与 YAML 界面语言、身份/浏览器/系统/设置页面及快捷操作、网络资源入口与只读本地版本标识。
  * [OUTPUT]: Claude-Local 品牌与可折叠座舱侧栏：紧凑态标志与展开按钮分层，底部语言和版本分区显示；主导航全四字标头（快速配置/网络环境/身份管理/用量分析/浏览环境/电脑环境/使用说明/软件设置）与页面路由按产品页面组织。
- * [POS]: 独立产品编排层；默认身份页并记住安全页面枚举，任务运行时锁定导航；快速配置仅按需挂载、读取状态和导航。
+ * [POS]: 独立产品编排层；默认身份页并记住安全页面枚举，任务运行时锁定导航；快速配置仅按需挂载、读取状态和导航。根 MotionRoot 读取「减少动画」偏好，页面切换只用 Cromma MOTION.base 淡入，不另写动画参数。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {Panel, NavButton, MotionRoot, TooltipProvider} from 'cromma-ui';
+import {Panel, NavButton, MotionRoot, TooltipProvider, MOTION, motion} from 'cromma-ui';
 import {Fragment, useState, useEffect} from 'react';
 import {useI18n} from './i18n';
 import {createRoot} from 'react-dom/client';
@@ -107,52 +107,31 @@ function App() {
           </div>
         </aside>
         <Panel frame className="workspace">
-          {page === 'quick' && <div className="cleaner-slot"><QuickSetupPanel onNavigate={setPage} /></div>}
-          {page === 'cleaner' && (
-            <div className="cleaner-slot">
-              <IdentityPanel onBusy={setAdvancedBusy} />
-            </div>
-          )}
-          {page === 'browser' && (
-            <div className="cleaner-slot">
-              <BrowserPanel onBusy={setAdvancedBusy} />
-            </div>
-          )}
-          {page === 'usage' && (
-            <div className="cleaner-slot">
-              <UsageStatisticsPanel />
-            </div>
-          )}
-          {page === 'system' && (
-            <div className="cleaner-slot">
-              <SystemPanel onBusy={setAdvancedBusy} />
-            </div>
-          )}
-          {page === 'vps' && (
-            <div className="cleaner-slot">
-              <VpsPanel />
-            </div>
-          )}
-          {page === 'help' && (
-            <div className="cleaner-slot">
-              <HelpPanel />
-            </div>
-          )}
-          {page === 'settings' && (
-            <div className="cleaner-slot">
-              <SettingsPanel onNavigate={setPage} />
-            </div>
-          )}
+          <motion.div key={page} className="cleaner-slot" initial={{opacity: 0, y: 6}} animate={{opacity: 1, y: 0}} transition={MOTION.base}>
+            {page === 'quick' && <QuickSetupPanel onNavigate={setPage} />}
+            {page === 'cleaner' && <IdentityPanel onBusy={setAdvancedBusy} />}
+            {page === 'browser' && <BrowserPanel onBusy={setAdvancedBusy} />}
+            {page === 'usage' && <UsageStatisticsPanel />}
+            {page === 'system' && <SystemPanel onBusy={setAdvancedBusy} />}
+            {page === 'vps' && <VpsPanel />}
+            {page === 'help' && <HelpPanel />}
+            {page === 'settings' && <SettingsPanel onNavigate={setPage} />}
+          </motion.div>
         </Panel>
       </div>
     </>
   );
 }
 
-createRoot(document.getElementById('app')!).render(
-  <MotionRoot>
-    <TooltipProvider delayDuration={600} skipDelayDuration={300}>
-      <App />
-    </TooltipProvider>
-  </MotionRoot>,
-);
+function Root() {
+  const {reduceMotion} = usePreferences();
+  return (
+    <MotionRoot reducedMotion={reduceMotion ? 'always' : 'user'}>
+      <TooltipProvider delayDuration={600} skipDelayDuration={300}>
+        <App />
+      </TooltipProvider>
+    </MotionRoot>
+  );
+}
+
+createRoot(document.getElementById('app')!).render(<Root />);

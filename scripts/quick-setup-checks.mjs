@@ -171,7 +171,7 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
   }
 
   // 7. English, Dark Theme, 720px narrow window, sidebar modes & geometry
-  await page.getByRole('button', {name: 'EN', exact: true}).click();
+  await page.getByRole('radio', {name: 'EN', exact: true}).click();
   await page.getByRole('heading', {name: 'Quick setup', exact: true}).waitFor();
   await page.evaluate(async () => {
     const prefs = await import('/src/settings-model.ts');
@@ -243,7 +243,7 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
   // Restore sidebar, viewport, locale and theme
   await page.getByRole('button', {name: 'Expand sidebar', exact: true}).click();
   await page.setViewportSize({width: 1040, height: 820});
-  await page.getByRole('button', {name: 'CN', exact: true}).click();
+  await page.getByRole('radio', {name: 'CN', exact: true}).click();
   await page.getByRole('heading', {name: '快速配置', exact: true}).waitFor();
   await page.evaluate(async () => {
     const prefs = await import('/src/settings-model.ts');

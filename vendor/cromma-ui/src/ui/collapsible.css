@@ -1,0 +1,30 @@
+/* Disclosure 的展开/收起：高度来自 Radix 量好的 --radix-collapsible-content-height，时长与曲线读 web 动效 base 档；减弱动效时令牌归零即直接到位 */
+.cromma-disclosure-content {
+  overflow: hidden;
+}
+.cromma-disclosure-content[data-state='open'] {
+  animation: cromma-disclosure-open var(--motion-base) var(--ease-motion);
+}
+.cromma-disclosure-content[data-state='closed'] {
+  animation: cromma-disclosure-close var(--motion-base) var(--ease-motion);
+}
+@keyframes cromma-disclosure-open {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+}
+@keyframes cromma-disclosure-close {
+  from {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}

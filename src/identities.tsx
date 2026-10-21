@@ -1,13 +1,12 @@
 /**
- * [INPUT]: 原生身份命令、保留策略、离线 5h/7d 额度与重置时间戳、订阅到期摘要、Motion 弹簧/浏览器媒体订阅、settings-model 视图偏好、共享确认窗/进度、文件残留与 CLI 维护。
+ * [INPUT]: 原生身份命令、保留策略、离线 5h/7d 额度与重置时间戳、订阅到期摘要、经 Cromma 入口的 Motion 弹簧与根级减弱动效（系统设置或「减少动画」偏好）、settings-model 视图偏好、共享确认窗/进度、文件残留与 CLI 维护。
  * [OUTPUT]: 180×286 身份工牌统一以本地保存名为单行主标题，原账号名仅在非隐私提示中保留；同字体双额度/重置时间/订阅信息、最优账号切换及原有确认与真实操作进度。
  * [POS]: 身份管理 GUI；只呈现脱敏元数据与离线额度，身份正文留在原生保险库；可选浏览器绑定/旧资料采用确认与重开重试，关联浏览器资料删除单独选择。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {useEffect, useRef, useState, useSyncExternalStore, type ReactNode} from 'react';
-import {Button, Checkbox, Input} from 'cromma-ui';
+import {useEffect, useRef, useState, type ReactNode} from 'react';
+import {Button, Checkbox, Disclosure, Input, useReducedMotionConfig, useSpring} from 'cromma-ui';
 import {ShieldCheck, Refresh} from 'cromma-ui/pika';
-import {motion, useSpring} from 'motion/react';
 import {invoke} from '@tauri-apps/api/core';
 import {useI18n} from './i18n';
 import {AppDialog} from './dialog';
@@ -141,7 +140,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
     [accepted, setAccepted] = useState(false);
   const activity = useCleanupActivity();
   const rail = useRef<HTMLDivElement>(null);
-  const reduceMotion = useIdentityReducedMotion();
+  const reduceMotion = useReducedMotionConfig() ?? false;
   const scrollSpring = useSpring(0, {stiffness: 170, damping: 25, mass: 0.8});
   const scrollTarget = useRef(0);
   const locked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!deletion || browserReview !== null;
@@ -574,18 +573,19 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
         </div>
         <IdentityOperationProgress activity={activity.state} />
       </section>
-      <details className="identity-policy">
-        <summary>
-          <div className="identity-policy-summary-main">
+      <Disclosure
+        className="identity-policy"
+        triggerClassName="identity-policy-trigger"
+        summary={
+          <>
             <strong>{t('保留在工作区')}</strong>
             <span className="identity-policy-hint">{t('切号已自动保留对话历史与配置、自动清理遥测日志，日常无需改动')}</span>
-          </div>
-          <span className={`identity-policy-mode ${isDefaultPolicy ? 'ok' : ''}`}>
-            {isDefaultPolicy ? t('智能默认') : `${kept.length} / ${policyRows.length}`}
-          </span>
-        </summary>
+          </>
+        }
+        aside={<span className={`identity-policy-mode ${isDefaultPolicy ? 'ok' : ''}`}>{isDefaultPolicy ? t('智能默认') : `${kept.length} / ${policyRows.length}`}</span>}
+      >
         {options}
-      </details>
+      </Disclosure>
       {state?.browser_warning && (
         <div className="identity-recovery" role="alert">
           <span>{t(state.browser_warning)}</span>
@@ -859,20 +859,4 @@ function IdentityCard({className, children, label, title}: {className: string; c
       {children}
     </article>
   );
-}
-
-// ----- 原生媒体订阅与软件内「减少动画」设置双重联动 -----
-const motionPreference = typeof window === 'undefined' ? null : window.matchMedia('(prefers-reduced-motion: reduce)');
-const subscribeMotion = (notify: () => void) => {
-  motionPreference?.addEventListener('change', notify);
-  return () => motionPreference?.removeEventListener('change', notify);
-};
-function useIdentityReducedMotion() {
-  const osReduced = useSyncExternalStore(
-    subscribeMotion,
-    () => motionPreference?.matches ?? true,
-    () => true,
-  );
-  const prefs = usePreferences();
-  return osReduced || prefs.reduceMotion;
 }

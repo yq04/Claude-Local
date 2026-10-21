@@ -18,7 +18,6 @@ test('settings model updates, sanitizes and resets preferences safely', () => {
     sidebarLayout: 'compact',
     quotaDisplay: 'used',
     privacyMask: true,
-    defaultTerminal: 'wt',
   });
   expect(updated.theme).toBe('dark');
   expect(updated.accent).toBe('cockpit');
@@ -26,7 +25,10 @@ test('settings model updates, sanitizes and resets preferences safely', () => {
   expect(updated.sidebarLayout).toBe('compact');
   expect(updated.quotaDisplay).toBe('used');
   expect(updated.privacyMask).toBe(true);
-  expect(updated.defaultTerminal).toBe('wt');
+
+  // 旧版无界面消费者的偏好键（版本检查、通道、终端）读取后被丢弃，不再回写。
+  const legacy = updatePreferences({startupCheckUpdate: true, releaseChannel: 'local', defaultTerminal: 'wt'} as never);
+  expect(Object.keys(legacy).sort()).toEqual(Object.keys(defaultPreferences).sort());
 
   const masked = maskEmailAddress('studio@example.invalid', true);
   expect(masked).toBe('stu***@example.invalid');

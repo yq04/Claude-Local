@@ -73,14 +73,14 @@ try{
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'02-identities-zh.png'),fullPage:true});
  const geometry=await page.locator('.identity-card').evaluateAll(nodes=>nodes.slice(0,4).map(node=>{const box=node.getBoundingClientRect();return {width:box.width,height:box.height,scrollWidth:node.scrollWidth,clientWidth:node.clientWidth};}));
- await page.getByRole('button',{name:'EN',exact:true}).click();
+ await page.getByRole('radio',{name:'EN',exact:true}).click();
  await page.getByRole('group',{name:'Local build information',exact:true}).waitFor();
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'03-identities-en.png'),fullPage:true});
  await page.setViewportSize({width:900,height:800});
  await page.screenshot({path:join(output,'04-identities-compact-en.png'),fullPage:true});
  await page.setViewportSize({width:1180,height:860});
- await page.getByRole('button',{name:'CN',exact:true}).click();
+ await page.getByRole('radio',{name:'CN',exact:true}).click();
  await page.getByRole('button',{name:'软件设置',exact:true}).click();
  await page.getByRole('heading',{name:'软件设置',exact:true}).waitFor();
  await page.mouse.move(2,2);
@@ -90,7 +90,7 @@ try{
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'08-network-zh.png'),fullPage:true});
  await page.getByRole('button',{name:'软件设置',exact:true}).click();
- await page.getByRole('button',{name:/月之暗面/}).click();
+ await page.getByRole('radio',{name:'月之暗面',exact:true}).click();
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'06-settings-dark-zh.png'),fullPage:true});
  await page.getByRole('button',{name:'身份管理',exact:true}).click();

@@ -1,6 +1,6 @@
 /*
  * [INPUT]: Shared application theme variables and Usage analytics components.
- * [OUTPUT]: Compact account selector and filter console, uniform metrics, responsive analysis panels and accessible sortable period tables.
+ * [OUTPUT]: Compact account selector and filter console, uniform metrics, responsive analysis panels and accessible sortable period tables; segmented tabs and the method disclosure take their skin from Cromma UI and only receive layout here.
  * [POS]: Usage page styles; respects accent, dark theme, compact sidebar and shared margins.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -13,15 +13,13 @@
 .usage-toolbar { flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; }
 .usage-period-filter, .usage-account-filter { display: grid; gap: 7px; }
 .usage-filter-label { color: var(--usage-secondary); font-size: 11px; font-weight: 600; }
-.usage-periods.cockpit-capsule-bar { margin: 0; padding: 3px; border-radius: 9px; box-shadow: none; background: var(--background); }
-.usage-periods .cockpit-capsule-tab { font-size: 12px; height: 29px; min-height: 29px; padding-inline: 14px; border-radius: 6px; }
+.usage-periods { flex-wrap: wrap; max-width: 100%; }
 .usage-account-filter { width: clamp(160px, 22cqi, 240px); min-width: 0; }
 .usage-account-filter button { min-height: 36px; font-size: 13px; }
 .usage-account-filter > * { width: 100%; }
 .usage-filter-footer, .usage-filter-note { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 7px 14px; }
 .usage-filter-footer { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--landing-line); }
 .usage-filter-note { margin-top: 6px; font-size: 11px; line-height: 1.6; color: var(--usage-secondary); }
-.usage-reset { color: var(--local-accent-ink); font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
 .usage-context { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 11px; line-height: 1.6; color: var(--usage-secondary); min-width: 0; }
 .usage-context strong { color: var(--foreground); font-size: 12px; font-weight: 550; }
 .usage-context > span { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -44,9 +42,6 @@
 .usage-panel-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding: 15px 17px; border-bottom: 1px solid var(--landing-line); }
 .usage-panel-header > div:first-child { min-width: 0; }
 .usage-panel-header p { margin: 6px 0 0 12px; color: var(--usage-secondary); font-size: 11px; line-height: 1.5; }
-.usage-view-switch { display: inline-flex; padding: 3px; gap: 3px; border: 1px solid var(--landing-line); border-radius: 7px; background: var(--background); flex-shrink: 0; }
-.usage-view-switch button { border-radius: 4px; padding: 5px 11px; font-size: 11px; color: var(--usage-secondary); }
-.usage-view-switch button[aria-pressed="true"] { color: var(--foreground); background: var(--panel); box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 12%, transparent); font-weight: 600; }
 .usage-chart-summary { display: flex; flex-wrap: wrap; gap: 14px 32px; padding: 12px 18px 2px; }
 .usage-chart-summary > div { display: grid; gap: 4px; }
 .usage-chart-summary > div > span { color: var(--usage-secondary); font-size: 11px; }
@@ -114,8 +109,8 @@
 .usage-empty strong { color: var(--foreground); font-weight: 550; }
 .usage-model-empty { grid-column: 1 / -1; padding: 16px; font-size: 13px; color: var(--usage-secondary); text-align: center; }
 .usage-method { font-size: 12px; line-height: 1.8; }
-.usage-method summary { padding: 13px 16px; cursor: pointer; font-weight: 600; font-size: 13px; }
-.usage-method > div { display: grid; gap: 8px; padding: 0 16px 15px; color: var(--usage-secondary); }
+.usage-method-trigger { padding: 13px 16px; font-weight: 600; font-size: 13px; }
+.usage-method-body { display: grid; gap: 8px; padding: 0 16px 15px; color: var(--usage-secondary); }
 .usage-error { margin: 0; overflow-wrap: anywhere; }
 @container usage (min-width: 660px) {
   .usage-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -129,7 +124,6 @@
   .usage-account-filter { width: 100%; }
   .usage-toolbar { align-items: stretch; }
   .usage-period-filter { min-width: 0; }
-  .usage-periods .cockpit-capsule-tab { padding-inline: 11px; }
   .usage-models { grid-template-columns: minmax(0, 1fr); }
   .usage-panel-header { padding: 13px 14px; }
   .usage-chart-body { padding-inline: 9px; }

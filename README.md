@@ -1,8 +1,14 @@
+<!--
+[INPUT]: Independent product source, version metadata and current owner distribution requirements.
+[OUTPUT]: Product overview, build/verification entries and retained-data upgrade expectations.
+[POS]: Repository introduction; published artifacts retain their own versioned release notes.
+[PROTOCOL]: Keep private-data, compatibility and distribution boundaries in the linked project documents.
+-->
 # Claude-Local
 
 面向 Windows x64 的 Claude 本地管理工具，集中管理身份备份、账号切换、用量分析和可选的隔离浏览器。使用 Tauri、Rust、React、TypeScript 与 Python，独立维护产品和版本。
 
-当前源码版本：**0.1.2**。支持 Windows 10 / 11 x64；安装包包含 Claude-Local 与 Claude-Local Browser 两个入口。[本版更新](docs/RELEASE_NOTES_0.1.2.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md)
+当前源码版本：**0.1.3**。支持 Windows 10 / 11 x64；安装包包含 Claude-Local 与 Claude-Local Browser 两个入口。[本版更新](docs/RELEASE_NOTES_0.1.3.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md)
 
 ## 主要功能
 
@@ -19,7 +25,9 @@
 
 本仓库按私有开发和审阅范围维护。手动发布的测试包应附带 SHA-256、隐私审计报告、资源清单及更新说明；CI 仅执行检查和可选的私有构建产物，不自动创建 Release 或更新源。
 
-安装包使用当前用户 NSIS 安装，尚未签名。构建与解包校验不等于安装、升级和卸载验证；第三方组件的公开分发许可仍以 [分发说明](docs/DISTRIBUTION.md) 为准。
+安装包使用当前用户 NSIS 安装，按所有者决定继续保持未签名。构建与解包校验不等于安装、升级和卸载验证；第三方组件的公开分发许可仍以 [分发说明](docs/DISTRIBUTION.md) 为准。
+
+后续安装包会在显示新版安装向导前检查已登记的旧版，先提示卸载旧程序并保留账号、保险库、额度记录、浏览器资料与设置；卸载成功后再进入新版安装。取消或卸载失败时停止升级。手工复制的未登记程序目录不会被自动扫描或删除。该流程自 0.1.3 安装包起提供，已发布的 0.1.2 安装包保持原样。
 
 主程序：`claude-local.exe`；应用标识：`ai.local.claude-local`；浏览器注册：`Claude-Local-Browser`。主程序默认进入身份管理，正常启动不会打开浏览器。
 

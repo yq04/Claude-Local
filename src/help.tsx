@@ -1,9 +1,10 @@
 /**
  * [INPUT]: 共享 YAML 中英文目录与各页面的操作边界。
  * [OUTPUT]: 独立本地产品说明、新用户与添加新号三步法及身份/浏览器/额度/网络/电脑六项操作说明与折叠的应用使用和账号边界。
- * [POS]: 只读帮助页；沿用 Landing 细线排版和原生 details，不调用原生命令或读取用户数据。
+ * [POS]: 只读帮助页；沿用 Landing 细线排版，折叠说明复用 Cromma Disclosure，不调用原生命令或读取用户数据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
+import { Disclosure } from 'cromma-ui';
 import { useI18n } from './i18n';
 
 export function HelpPanel() {
@@ -46,31 +47,28 @@ export function HelpPanel() {
         </li>)}</ol>
         <div className="landing-section-band" aria-hidden="true"/>
         <div className="help-notes">
-            <details className="help-details">
-                <summary>{t('应用使用')}<span aria-hidden="true"/></summary>
+            <Disclosure className="help-details" triggerClassName="help-details-trigger" summary={t('应用使用')}>
                 <div className="help-copy">
                     <p>{t('关闭窗口后应用留在托盘；从托盘菜单退出应用。')}</p>
                     <p>{t('快捷操作中可选择地区，再执行缓存、指纹或电脑设置操作。')}</p>
                     <p>{t('主程序启动时不会自动打开浏览器；需要时从浏览环境页打开。')}</p>
                 </div>
-            </details>
-            <details className="help-details">
-                <summary>{t('账号与数据')}<span aria-hidden="true"/></summary>
+            </Disclosure>
+            <Disclosure className="help-details" triggerClassName="help-details-trigger" summary={t('账号与数据')}>
                 <div className="help-copy">
                     <p>{t('本地操作不删除服务端记录，也不保证匿名或账号可用。')}</p>
                     <p>{t('绿色结果仅表示本次已测项目匹配；DNS 和 WebRTC 需另行检查。')}</p>
                     <p>{t('账号使用仍须遵守 Anthropic 的条款和支持地区要求。')}</p>
                     <p>{t('密码、密钥和令牌不要放进公开日志或仓库。')}</p>
                 </div>
-            </details>
-            <details className="help-details">
-                <summary>{t('账号受限怎么办')}<span aria-hidden="true"/></summary>
+            </Disclosure>
+            <Disclosure className="help-details" triggerClassName="help-details-trigger" summary={t('账号受限怎么办')}>
                 <ol className="help-appeal">
                     <li>{t('保存页面提示和相关工单。')}</li>
                     <li>{t('用受影响的账号登录 claude.ai，按页面指引申诉。')}</li>
                     <li>{t('如页面提供导出入口，可下载数据；不要绕过限制。')}</li>
                 </ol>
-            </details>
+            </Disclosure>
         </div>
     </section>;
 }

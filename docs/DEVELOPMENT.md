@@ -1,7 +1,7 @@
 <!--
 [INPUT]: Locked source, Windows toolchain and synthetic test fixtures.
 [OUTPUT]: Build and scoped verification commands with private-data and system-mutation boundaries.
-[POS]: Developer workflow; quick overview checks reuse the existing isolated shell harness.
+[POS]: Developer workflow; scoped UI and installer compilation checks use synthetic fixtures without live system mutations.
 -->
 # Development
 
@@ -42,6 +42,8 @@ The existing `package-browser.ps1` hook fetches a missing pinned engine and veri
 
 For UI development, `bun run dev` starts Vite. `bun run tauri dev --config src-tauri/tauri.windows.conf.json` starts the native development host. Native actions can change the current user's Claude workspace, browser registration or system settings; use synthetic fixtures for automated checks.
 
+Interaction primitives come from the vendored `vendor/cromma-ui` source: Tabs for view switches, SegmentedControl for single-value choices, Switch for on/off preferences, Disclosure for expandable details, Select, Checkbox, Button, Dialog/ModalShell and the Motion presets in `motion.ts`. New primitives there only compose the already installed Radix behavior with existing tokens; pages add layout classes, not another skin or hand-written keyboard handling. `node_modules/cromma-ui` is an installed copy, so after adding or renaming files under `vendor/cromma-ui` run `bun install` (the lockfile stays unchanged) and start Vite once with `--force` (or `optimizeDeps.force`) so its dependency pre-bundle picks up the new exports.
+
 ## Tests
 
 ```powershell
@@ -65,6 +67,8 @@ Remove-Item Env:TAURI_CONFIG
 The quota and migration tests create fictional ledgers, identities and browser files in temporary directories. The Windows CLI tests use a temporary installer and executable fixtures. Do not run the real quota collector, migration command, local deployment or proxy configuration as CI checks.
 
 The browser interaction scripts use `playwright-core` with the pinned engine and mock IPC. After explicitly fetching the engine, run their Node or Bun entry points to exercise the UI. `scripts/test-local-shell.mjs` accepts an optional output directory for fictional screenshots; keep generated images and reports outside Git. These tests do not replace an installed application smoke test.
+
+For installer-hook changes, run `pwsh -NoProfile -File scripts/test-installer-upgrade.ps1` with an existing NSIS compiler (optional `-MakensisPath`). This compiles English, Simplified Chinese and Traditional Chinese with warnings as errors. Optional `-TauriScript '<selected-neutral-build>/target/release/nsis/x64/installer.nsi'` also compiles the actual generated Tauri/MUI template with synthetic payloads and checks its `/UPDATE` app-data guard. Both synthetic programs quit at initialization if accidentally opened. The check never executes an installer/uninstaller, writes registry entries or stops processes; real install/upgrade/uninstall verification remains restricted to disposable Windows environments.
 
 For a change limited to the quick setup overview, run `node scripts/test-usage-statistics.mjs .local/preview/quick-setup --quick-only`. This reuses the shell harness with a direct quick-page cold start, independent slow/failing reads, manual recovery, effective browser targets and bilingual responsive previews. It uses fictional IPC and an isolated browser context. Database initialization regressions can be selected with the same public-resource `TAURI_CONFIG` above and the Rust filter `identities::database_tests`; they use temporary SQLite databases only.
 

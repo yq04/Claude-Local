@@ -1,13 +1,13 @@
 /**
- * [INPUT]: 依赖 radix-ui 的 Tabs（方向键、roving focus、tablist 语义），.cn 的 cn，control 的 CONTROL_RADIUS。
- * [OUTPUT]: 提供 Tabs。Tabs是variant: segmented | underline；size: small | medium；tabs + value/onValueChange。
- * [POS]: cromma-ui的页签——Kumo Tabs 迁来。segmented 是一条轨道上的滑块，underline 是底边。行为归 Radix，这里只给两种长相。
+ * [INPUT]: 依赖 radix-ui 的 Tabs（方向键、roving focus、tablist 语义），.cn 的 cn，control 的 SEGMENT_TRACK / SEGMENT_ITEM。
+ * [OUTPUT]: 提供 Tabs。Tabs是variant: segmented | underline；size: small | medium；tabs + value/onValueChange；className 落在标签行，itemClassName 落在每个标签。
+ * [POS]: cromma-ui的页签——Kumo Tabs 迁来。segmented 是一条轨道上的滑块（与 SegmentedControl 同皮），underline 是底边。行为归 Radix，这里只给两种长相。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { ReactNode } from 'react';
 import { Tabs as TabsPrimitive } from 'radix-ui';
 import { cn } from '../cn';
-import { CONTROL_RADIUS } from './control';
+import { SEGMENT_ITEM, SEGMENT_TRACK } from './control';
 
 export type TabsVariant = 'segmented' | 'underline';
 export type TabsSize = 'small' | 'medium';
@@ -26,6 +26,8 @@ export function Tabs({
   size = 'medium',
   fill = false,
   className,
+  itemClassName,
+  'aria-label': ariaLabel,
 }: {
   tabs: TabsItem[];
   value?: string;
@@ -36,6 +38,8 @@ export function Tabs({
   /** underline 时每个 tab 等分整行（个人主页 / 频道那种通栏标签） */
   fill?: boolean;
   className?: string;
+  itemClassName?: string;
+  'aria-label'?: string;
 }) {
   const compact = size === 'small';
   const underline = variant === 'underline';
@@ -43,7 +47,8 @@ export function Tabs({
     // 只有标签行、没有面板：面板由调用方按 value 自己换；方向键在标签间移动并选中（Radix 的 roving focus）
     <TabsPrimitive.Root value={value} defaultValue={defaultValue ?? tabs[0]?.value} onValueChange={onValueChange}>
       <TabsPrimitive.List
-        className={cn(underline ? (fill ? 'grid w-full border-b border-border' : 'flex gap-1 border-b border-border') : cn('inline-flex bg-muted p-0.5', CONTROL_RADIUS), className)}
+        aria-label={ariaLabel}
+        className={cn(underline ? (fill ? 'grid w-full border-b border-border' : 'flex gap-1 border-b border-border') : SEGMENT_TRACK, className)}
         style={underline && fill ? { gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` } : undefined}
       >
         {tabs.map((t) => (
@@ -61,10 +66,11 @@ export function Tabs({
                     compact && 'py-1.5 text-sm',
                   )
                 : cn(
-                    'rounded-2xl px-3 text-base text-muted-foreground hover:text-foreground',
+                    SEGMENT_ITEM,
                     'data-[state=active]:bg-card data-[state=active]:font-medium data-[state=active]:text-foreground data-[state=active]:shadow-sm',
                     compact ? 'h-7 text-sm' : 'h-8',
                   ),
+              itemClassName,
             )}
           >
             {t.label}

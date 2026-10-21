@@ -10,6 +10,7 @@ src/usage-statistics.tsx - Scoped token analytics with responsive trend/model pa
 src/vps.tsx - Fixed referral copies without rendered URLs/codes, concise agent setup prompts and truthful clipboard feedback.
 src/system.tsx - Natural-height computer settings, observed values separate from draft controls and a compact location action row.
 src-tauri/ - Native commands, Windows boundaries, vault transactions, local quota consumers and installer configuration.
+src-tauri/windows/installer-hooks.nsh - Existing MUI pre-welcome upgrade confirmation, read-only process checks and synchronous data-preserving removal before the next install; owner-selected unsigned distribution.
 scripts/ - Windows build/deploy, audited NSIS share assembly, pinned engine preparation and synthetic verification tools.
 browser-runtime/ - Pinned browser metadata, licenses and ignored local engine files.
 assets/ - Independent CL marks and retained third-party notices.
@@ -31,3 +32,4 @@ User-requested Claude Code CLI maintenance is separate from application releases
 
 docs/RELEASE_NOTES_0.1.1.md - Owner-requested manual private prerelease notes; shared packages exclude personal usage-attribution seeds.
 docs/RELEASE_NOTES_0.1.2.md - Quick setup cold-start/database concurrency fixes, shared UI consistency and effective browser targets; manual private delivery only.
+docs/RELEASE_NOTES_0.1.3.md - Cromma SegmentedControl/Switch/Disclosure adoption, truthful version settings, reduced-motion wiring and the registered-install upgrade sequence; manual private delivery only.
