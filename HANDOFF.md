@@ -13,7 +13,7 @@
 - 产品版本 **0.1.4**，已彻底完成**全链路交付闭环**：
   - 本机已安装软件已平滑无感热替换至 0.1.4（目录 `D:\1_app\Claude-Local`，新进程 PID 79856 正常运行并暴露窗口，3 个运行中的 Claude Code 命令行会话全程未受任何干扰）。
   - 新安装包 `Claude-Local_0.1.4_x64-setup.exe`（133.40 MiB）已生成，并通过 102 个文件的完整解包与隐私白名单审计。
-  - GitHub 仓库源码已推送到 `origin/main`（最新提交为 `037518b`，父提交 `50a1157`）。
+  - GitHub 仓库源码已推送到 `origin/main`（最新提交为 `54c9d40`（功能交付 `50a1157`、TCP连接加固 `037518b`、交接文档 `54c9d40`））。
   - GitHub Actions CI（`checks.yml`，Run `39647325270`）全步骤通过（含 139 个原生测试与所有前端/Python 离线 fixture）。
   - GitHub Release：私有预发布 `https://github.com/yq04/Claude-Local/releases/tag/v0.1.4` 已正式发布（非草稿、预发布，8 个附件校验一致）。
   - **当前没有任何卡点或未完成的交付阻塞。**
