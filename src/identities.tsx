@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生身份命令、保留策略、带来源与观测时间的离线 5h/7d 额度、重置权益未知状态与固定官方用量入口、订阅到期摘要、经 Cromma 入口的 Motion 弹簧与根级减弱动效（系统设置或「减少动画」偏好）、settings-model 视图偏好、共享确认窗/进度、文件残留与 CLI 维护。
- * [OUTPUT]: 180×286 身份工牌统一以本地保存名为单行主标题，原账号名仅在非隐私提示中保留；同字体独立双额度、过期/未知不推荐、额度详情与官网权益入口、明确恢复/删除进程确认及真实操作进度。
+ * [OUTPUT]: 180×286 身份工牌统一以本地保存名为单行主标题，原账号名仅在非隐私提示中保留；逐窗口独立额度/来源/观测时间、过期/未知不推荐、额度详情与官网权益入口、明确恢复/删除进程确认及真实操作进度。
  * [POS]: 身份管理 GUI；只呈现脱敏元数据与离线额度，身份正文留在原生保险库；可选浏览器绑定/旧资料采用确认与重开重试，关联浏览器资料删除单独选择。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -611,8 +611,17 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
           <h3>{maskDisplayName(quotaDetails?.name, detailsSummary?.email, prefs.privacyMask)}</h3>
           {detailsSummary?.email && <p>{maskEmailAddress(detailsSummary.email, prefs.privacyMask)}</p>}
           <IdentityQuota quota={detailsQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} />
-          <div className="identity-confirm-target"><span>{t('quota.source')}</span><strong>{t(detailsSummary?.quota_source === 'server_anchor' ? 'quota.serverSnapshot' : detailsSummary?.quota_source === 'local_estimate' ? 'quota.estimated' : 'quota.unverified')}</strong></div>
-          <div className="identity-confirm-target"><span>{t('quota.observedAt')}</span><strong>{detailsSummary?.quota_observed_at_ms ? new Date(detailsSummary.quota_observed_at_ms).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') : t('identityCard.notProvided')}</strong></div>
+          {(['5h', '7d'] as const).map(window => {
+            const source = detailsQuota?.[window === '5h' ? 'source5h' : 'source7d'];
+            const observed = detailsSummary?.[`quota_${window}_source`] != null
+              ? detailsSummary[`quota_${window}_observed_at_ms`]
+              : detailsSummary?.quota_observed_at_ms;
+            return <div key={window}>
+              <div className="identity-confirm-target"><span>{window} · {t('quota.source')}</span><strong>{t(source === 'server_anchor' ? 'quota.serverSnapshot' : source === 'local_estimate' ? 'quota.estimated' : 'quota.unverified')}</strong></div>
+              <div className="identity-confirm-target"><span>{window} · {t('quota.observedAt')}</span><strong>{observed ? new Date(observed).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') : t('identityCard.notProvided')}</strong></div>
+            </div>;
+          })}
+          <p className="identity-quota-note">{t('quota.independentWindows')}</p>
           <div className="identity-confirm-target"><span>{t('quota.resetCount')}</span><strong>{t('identityCard.notProvided')}</strong></div>
           <div className="identity-confirm-target"><span>{t('quota.resetSchedule')}</span><strong>{t('identityCard.notProvided')}</strong></div>
           <p className="identity-quota-note">{t('quota.resetHint')}</p>

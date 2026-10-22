@@ -16,9 +16,9 @@ browser-runtime/ - Pinned browser metadata, licenses and ignored local engine fi
 assets/ - Independent CL marks and retained third-party notices.
 vendor/ - Existing UI components with separate attribution/license boundaries in NOTICE.md.
 docs/ - Local development, data boundaries and distribution documentation.
-docs/plans/2026-10-21-usage-account-safety/ - Pending owner-review proposal, source evidence and phased usage/account-safety optimization plan; no implementation authorization before confirmation.
+docs/plans/2026-10-21-usage-account-safety/ - Historical proposal, source evidence and phased account-safety plan implemented in 0.1.4; 0.1.5 fixes quota evidence compatibility and shares Rust window-state rules.
 .github/workflows/ - Credential-free Windows checks and explicitly dispatched private build artifacts.
-HANDOFF.md - Current work, verified results, remaining validation and compatibility pitfalls; private machine details stay in ignored .local/.
+HANDOFF.md - Context-free 0.1.5 mission, verified local delivery, source/CI/private release status, remaining work and pitfalls; private machine receipts stay in ignored .local/.
 </directory>
 
 Product Claude-Local / binary claude-local.exe / identifier ai.local.claude-local. Browser registration Claude-Local-Browser. All data is in the user's independent app-data root; the default Claude workspace is the managed integration boundary, not an OS sandbox. Ordinary startup does not open the browser. The network page bundles owner-approved fixed referral links with copy-only actions for recipients; there is no link editor, automatic vendor navigation or external Skill installation UI.
@@ -35,3 +35,4 @@ docs/RELEASE_NOTES_0.1.1.md - Owner-requested manual private prerelease notes; s
 docs/RELEASE_NOTES_0.1.2.md - Quick setup cold-start/database concurrency fixes, shared UI consistency and effective browser targets; manual private delivery only.
 docs/RELEASE_NOTES_0.1.3.md - Cromma SegmentedControl/Switch/Disclosure adoption, truthful version settings, reduced-motion wiring and the registered-install upgrade sequence; manual private delivery only.
 docs/RELEASE_NOTES_0.1.4.md - Quota observation order fix, native privacy preference bridge, environment-first navigation, task handoff notes, and device-identifier preservation; manual private delivery only.
+docs/RELEASE_NOTES_0.1.5.md - Independent quota evidence/legacy compatibility and shared Rust window-state core; audited local installation, no automatic remote release or statusLine migration.

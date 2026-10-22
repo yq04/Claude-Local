@@ -4,7 +4,8 @@
 identities/ - SQLite 身份目录、用户保留策略、加密压缩暂存、空身份切换、恢复、选择性直接删除与独立本地 Token 统计账本；见其 CLAUDE.md。
 cleaner_identity.rs: 身份目标与保留策略适配（含个人设置下的独立代理环境变量与项目记录下的 githubRepoPaths 隔离与无损合并）、跨账号混杂残留清理（含 plugins/synced、model-catalog、groveConfigCache、异号 .claude.json 备份隔离、共享会话 credential_org/userEmail/thinking 签名与 api-request-blob/bridge-session 脱敏、跨账号中断 tool_use/孤儿 tool_result 成对自愈修复、异号会话 tengu_exit 遥测拆弹）及协作式 Claude 进程锁年龄协议清理；测试显式断言规范源路径，复用白名单、完整快照与窄 JSON 键操作，不扫描源码。
 local_edition_tests.rs: 独立应用标识/产品/二进制与无更新插件、权限、配置的离线回归，不读取真实数据。
-main.rs: 本地版 Tauri 生命周期、双语托盘、身份/文件残留/CLI 手动检查与更新/用量分析/浏览器/网络命令注册；普通启动不打开浏览器，发布必须 custom-protocol，Windows GUI 子系统和固定脱敏启动诊断；无官方应用更新或重启插件。
+main.rs: 本地版 Tauri 生命周期、双语托盘、身份/文件残留/CLI 手动检查与更新/用量分析/浏览器/网络命令注册；--quota-core 在启动诊断与单实例之前执行纯 JSON 合并；普通启动不打开浏览器，发布必须 custom-protocol，Windows GUI 子系统和固定脱敏启动诊断；无官方应用更新或重启插件。
+quota_core.rs: GUI/Python writer 共用的纯逐窗来源、到期失效、观测顺序与同窗单调合并；schema 1 的 --quota-core stdin/stdout 有界协议（最多 1MiB / 256 窗口），不接路径、不读文件或用户资料、不联网，非法输入只报固定错误。
 local_runtime.rs: 启动参数明确门控配套浏览器，普通启动不启动引擎；含纯输入策略回归。
 ui_language.rs: 受 zh/en 白名单限制的界面偏好，原子持久化后发布内存状态；本地版托盘菜单，独立于电脑与浏览器语言。
 browser/: 指纹浏览器、资料与缓存边界、真实浏览器回报及目标地区环境核验；见其 CLAUDE.md。

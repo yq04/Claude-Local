@@ -96,3 +96,319 @@ fn quota_organization_slot_is_selected_without_overwriting_legacy_account() {
         100
     );
 }
+
+#[test]
+fn expired_five_hour_window_does_not_manufacture_zero_or_discard_weekly_window() {
+    let mut summary = Summary {
+        quota_source: Some(QuotaSource::LocalEstimate),
+        quota_5h_source: Some(QuotaSource::ServerAnchor),
+        quota_7d_source: Some(QuotaSource::LocalEstimate),
+        quota_5h_observed_at_ms: Some(100_000),
+        quota_7d_observed_at_ms: Some(90_000),
+        quota_5h_used: Some(100),
+        quota_5h_reset_at: Some(100),
+        quota_7d_used: Some(63),
+        quota_7d_reset_at: Some(700_000),
+        ..Summary::default()
+    };
+
+    summary.refresh_for_now(101);
+
+    assert_eq!(summary.quota_5h_used, None);
+    assert_eq!(summary.quota_5h_reset_at, None);
+    assert_eq!(summary.quota_7d_used, Some(63));
+    assert_eq!(summary.quota_7d_reset_at, Some(700_000));
+    assert!(summary.quota_5h_source == Some(QuotaSource::Unknown));
+    assert!(summary.quota_7d_source == Some(QuotaSource::LocalEstimate));
+}
+
+#[test]
+fn expired_raw_five_hour_anchor_does_not_mark_valid_seven_day_anchor_unknown() {
+    let now = 1_800_000_000;
+    let cj = serde_json::json!({
+        "oauthAccount": {"accountUuid": "a", "emailAddress": "fixture@example.invalid"},
+        "cachedUsageUtilization": {
+            "accountUuid": "a",
+            "fetchedAtMs": 1_799_999_000_000u64,
+            "utilization": {
+                "five_hour": {"utilization": 100, "resets_at": now - 1},
+                "seven_day": {"utilization": 42, "resets_at": now + 86_400}
+            }
+        }
+    });
+    let result = extract_quota(&cj, None, Some("Pro"), now, 0);
+    let mut summary = Summary::default();
+    summary.quota_5h_used = result.used_5h;
+    summary.quota_5h_reset_at = result.reset_5h;
+    summary.quota_7d_used = result.used_7d;
+    summary.quota_7d_reset_at = result.reset_7d;
+    set_summary_quota_evidence(&cj, &result, now, &mut summary);
+
+    assert_eq!(summary.quota_5h_used, None);
+    assert!(summary.quota_5h_source == Some(QuotaSource::Unknown));
+    assert_eq!(summary.quota_7d_used, Some(42));
+    assert!(summary.quota_7d_source == Some(QuotaSource::ServerAnchor));
+}
+
+#[test]
+fn incomplete_legacy_ledger_does_not_poison_trusted_summary() {
+    let root = std::env::temp_dir().join(format!(
+        "claude-local-quota-legacy-{}",
+        super::super::new_id().unwrap()
+    ));
+    fs::create_dir_all(root.join("identity-vault")).unwrap();
+    let account_id = identity("a", "org-a");
+    let ledger = serde_json::json!({"accounts": {"fixture@example.invalid": {
+        "quota_5h_used": 100,
+        "quota_5h_reset_at": 1_800_000_000,
+        "server_anchor": {
+            "accountUuid": "a",
+            "fetchedAtMs": 1_800_000_000_000u64,
+            "utilization": {
+                "five_hour": {"utilization": 100, "resets_at": 1_800_003_000}
+            }
+        }
+    }}});
+    fs::write(
+        root.join("quota_ledger.json"),
+        serde_json::to_vec(&ledger).unwrap(),
+    )
+    .unwrap();
+    let mut summary = Summary {
+        email: Some("fixture@example.invalid".into()),
+        quota_identity: Some(account_id),
+        quota_source: Some(QuotaSource::LocalEstimate),
+        quota_observed_at_ms: Some(1_799_999_000_000),
+        quota_5h_used: Some(40),
+        quota_5h_reset_at: Some(1_800_003_000),
+        quota_7d_used: Some(50),
+        quota_7d_reset_at: Some(1_800_604_800),
+        ..Summary::default()
+    };
+
+    apply_ledger_to_summary(&root.join("identity-vault"), &mut summary, 0, 1_800_000_001);
+
+    assert!(summary.quota_source == Some(QuotaSource::LocalEstimate));
+    assert_eq!(summary.quota_5h_used, Some(40));
+    assert_eq!(summary.quota_7d_used, Some(50));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn legacy_live_anchor_requires_matching_account_and_organization_and_merges_per_window() {
+    let mut live = serde_json::json!({
+        "oauthAccount": {
+            "accountUuid": "a",
+            "emailAddress": "fixture@example.invalid",
+            "organizationUuid": "org-uuid-a",
+            "organizationName": "Org A"
+        },
+        "cachedUsageUtilization": {
+            "accountUuid": "a",
+            "fetchedAtMs": 1000,
+            "utilization": {
+                "five_hour": {"utilization": 40, "resets_at": 1800003000},
+                "seven_day": {"utilization": 50, "resets_at": 1800604800}
+            }
+        }
+    });
+    let ledger = serde_json::json!({"accounts": {"fixture@example.invalid": {
+        "organization": "Org A",
+        "server_anchor_observed_windows": ["five_hour"],
+        "server_anchor": {
+            "accountUuid": "a",
+            "fetchedAtMs": 2000,
+            "utilization": {
+                "five_hour": {"utilization": 100, "resets_at": 1800003000, "fetchedAtMs": 2000}
+            }
+        }
+    }}});
+
+    merge_server_anchor(&mut live, &ledger);
+
+    assert_eq!(
+        live.pointer("/cachedUsageUtilization/utilization/five_hour/utilization")
+            .and_then(Value::as_u64),
+        Some(100)
+    );
+    assert_eq!(
+        live.pointer("/cachedUsageUtilization/utilization/seven_day/utilization")
+            .and_then(Value::as_u64),
+        Some(50)
+    );
+    assert_eq!(
+        live.pointer("/cachedUsageUtilization/utilization/five_hour/fetchedAtMs")
+            .and_then(Value::as_u64),
+        Some(2000)
+    );
+    assert_eq!(
+        live.pointer("/cachedUsageUtilization/utilization/seven_day/fetchedAtMs")
+            .and_then(Value::as_u64),
+        Some(1000)
+    );
+
+    live["oauthAccount"]["organizationName"] = Value::String("Org B".into());
+    let before = live["cachedUsageUtilization"].clone();
+    merge_server_anchor(&mut live, &ledger);
+    assert_eq!(live["cachedUsageUtilization"], before);
+
+    live["oauthAccount"]["organizationName"] = Value::String("Org A".into());
+    live["oauthAccount"]["organizationUuid"] = Value::String("org-uuid-b".into());
+    live["cachedUsageUtilization"] = serde_json::json!({
+        "accountUuid": "a",
+        "fetchedAtMs": 1000,
+        "utilization": {
+            "five_hour": {"utilization": 40, "resets_at": 1800003000},
+            "seven_day": {"utilization": 50, "resets_at": 1800604800}
+        }
+    });
+    let before_conflict = live["cachedUsageUtilization"].clone();
+    let mut conflicting_org = ledger;
+    conflicting_org["accounts"]["fixture@example.invalid"]["organization_uuid"] =
+        Value::String("org-uuid-a".into());
+    merge_server_anchor(&mut live, &conflicting_org);
+    assert_eq!(live["cachedUsageUtilization"], before_conflict);
+}
+
+#[test]
+fn ledger_merges_windows_independently_and_preserves_same_window_exhaustion() {
+    let root = std::env::temp_dir().join(format!(
+        "claude-local-quota-windows-{}",
+        super::super::new_id().unwrap()
+    ));
+    fs::create_dir_all(root.join("identity-vault")).unwrap();
+    let account_id = identity("a", "org-a");
+    let ledger = serde_json::json!({"accounts": {"fixture@example.invalid": {
+        "quota_identity": account_id,
+        "quota_source": "unknown",
+        "quota_5h_used": 100,
+        "quota_5h_reset_at": 1800003000,
+        "quota_5h_observed_at_ms": 2000,
+        "quota_7d_used": 65,
+        "quota_7d_reset_at": 1800604800,
+        "quota_7d_observed_at_ms": 3000,
+        "server_anchor": {
+            "accountUuid": "a",
+            "fetchedAtMs": 3000,
+            "utilization": {
+                "five_hour": {"utilization": 100, "resets_at": 1800003000, "fetchedAtMs": 2000},
+                "seven_day": {"utilization": 65, "resets_at": 1800604800, "fetchedAtMs": 3000}
+            }
+        }
+    }}});
+    fs::write(
+        root.join("quota_ledger.json"),
+        serde_json::to_vec(&ledger).unwrap(),
+    )
+    .unwrap();
+    let mut summary = Summary {
+        email: Some("fixture@example.invalid".into()),
+        quota_identity: Some(account_id),
+        quota_5h_source: Some(QuotaSource::LocalEstimate),
+        quota_7d_source: Some(QuotaSource::LocalEstimate),
+        quota_5h_observed_at_ms: Some(1000),
+        quota_7d_observed_at_ms: Some(1000),
+        quota_5h_used: Some(80),
+        quota_5h_reset_at: Some(1800003000),
+        quota_7d_used: Some(20),
+        quota_7d_reset_at: Some(1800604800),
+        ..Summary::default()
+    };
+
+    apply_ledger_to_summary(&root.join("identity-vault"), &mut summary, 0, 1_800_000_001);
+
+    assert_eq!(summary.quota_5h_used, Some(100));
+    assert_eq!(summary.quota_7d_used, Some(65));
+    assert!(summary.quota_5h_source == Some(QuotaSource::ServerAnchor));
+    assert!(summary.quota_7d_source == Some(QuotaSource::ServerAnchor));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn stale_unknown_ledger_does_not_replace_newer_local_estimate() {
+    let root = std::env::temp_dir().join(format!(
+        "claude-local-quota-stale-{}",
+        super::super::new_id().unwrap()
+    ));
+    fs::create_dir_all(root.join("identity-vault")).unwrap();
+    let account_id = identity("a", "org-a");
+    let ledger = serde_json::json!({"accounts": {"fixture@example.invalid": {
+        "quota_identity": account_id,
+        "quota_source": "unknown",
+        "quota_5h_used": 100,
+        "quota_5h_reset_at": 1800003000,
+        "quota_5h_observed_at_ms": 500,
+        "server_anchor": {
+            "accountUuid": "a",
+            "fetchedAtMs": 500,
+            "utilization": {
+                "five_hour": {"utilization": 100, "resets_at": 1800003000, "fetchedAtMs": 500}
+            }
+        }
+    }}});
+    fs::write(
+        root.join("quota_ledger.json"),
+        serde_json::to_vec(&ledger).unwrap(),
+    )
+    .unwrap();
+    let mut summary = Summary {
+        email: Some("fixture@example.invalid".into()),
+        quota_identity: Some(account_id),
+        quota_5h_source: Some(QuotaSource::LocalEstimate),
+        quota_5h_observed_at_ms: Some(1000),
+        quota_5h_used: Some(72),
+        quota_5h_reset_at: Some(1800003000),
+        ..Summary::default()
+    };
+
+    apply_ledger_to_summary(&root.join("identity-vault"), &mut summary, 0, 1_800_000_001);
+
+    assert_eq!(summary.quota_5h_used, Some(72));
+    assert!(summary.quota_5h_source == Some(QuotaSource::LocalEstimate));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rolled_legacy_zero_is_not_recovered_from_an_expired_anchor_window() {
+    let root = std::env::temp_dir().join(format!(
+        "claude-local-quota-rolled-{}",
+        super::super::new_id().unwrap()
+    ));
+    fs::create_dir_all(root.join("identity-vault")).unwrap();
+    let account_id = identity("a", "org-a");
+    let now = 1_800_000_001u64;
+    let ledger = serde_json::json!({"accounts": {"fixture@example.invalid": {
+        "quota_identity": account_id,
+        "quota_source": "unknown",
+        "quota_7d_used": 0,
+        "quota_7d_reset_at": now + 6 * 86400,
+        "server_anchor": {
+            "accountUuid": "a",
+            "fetchedAtMs": 1_800_000_000_000u64,
+            "utilization": {
+                "seven_day": {"utilization": 91, "resets_at": now - 1}
+            }
+        }
+    }}});
+    fs::write(
+        root.join("quota_ledger.json"),
+        serde_json::to_vec(&ledger).unwrap(),
+    )
+    .unwrap();
+    let mut summary = Summary {
+        email: Some("fixture@example.invalid".into()),
+        quota_identity: Some(account_id),
+        quota_7d_source: Some(QuotaSource::LocalEstimate),
+        quota_7d_observed_at_ms: Some(1_800_000_000_000),
+        quota_7d_used: Some(47),
+        quota_7d_reset_at: Some(now + 86_400),
+        ..Summary::default()
+    };
+
+    apply_ledger_to_summary(&root.join("identity-vault"), &mut summary, 0, now);
+
+    assert_eq!(summary.quota_7d_used, Some(47));
+    assert_eq!(summary.quota_7d_reset_at, Some(now + 86_400));
+    assert!(summary.quota_7d_source == Some(QuotaSource::LocalEstimate));
+    fs::remove_dir_all(root).unwrap();
+}

@@ -1,136 +1,111 @@
 <!--
-[INPUT]: 0.1.4 delivery receipts, the merged account-safety/quota/navigation implementation in 037518b, verified CI Run 39647325270, and release assets at v0.1.4.
-[OUTPUT]: Standalone session handoff for a context-free new session: mission, delivered 0.1.4 release, verified results, next steps and non-repeatable pitfalls.
-[POS]: Repository handoff; machine paths, local test receipts and private tokens stay under ignored .local/.
-[PROTOCOL]: Back up to .local/handoff-archive/ before rewriting. Do not clean or rebuild merely to refresh this document.
+[INPUT]: 0.1.5 quota regression fixes, shared Rust core, verified local deployment/package receipts, and the explicitly authorized source/CI/private-release workflow.
+[OUTPUT]: Context-free session handoff: product/task, delivered behavior, evidence, current publication state, next work and pitfalls.
+[POS]: Repository handoff; machine paths, process IDs, private markers and workstation receipts remain in ignored .local/.
+[PROTOCOL]: Back up to .local/handoff-archive/ and verify the copy before rewriting. Never rebuild or clean merely to refresh this document.
 -->
 # Claude-Local 会话交接
 
-更新日期：2026-10-21 约 13:55（本机时区 America/New_York；回执用 UTC）。写给完全没有上文的新会话。
+更新日期：2026-10-22，时区 America/New_York。写给完全没有上下文的新会话；以本文件顶部的 0.1.5 状态为准，不要把旧版回执当成本轮交付。
 
 ## 0. 三十秒现状
 
-- 产品版本 **0.1.4**，已彻底完成**全链路交付闭环**：
-  - 本机已安装软件已平滑无感热替换至 0.1.4（目录 `D:\1_app\Claude-Local`，新进程 PID 79856 正常运行并暴露窗口，3 个运行中的 Claude Code 命令行会话全程未受任何干扰）。
-  - 新安装包 `Claude-Local_0.1.4_x64-setup.exe`（133.40 MiB）已生成，并通过 102 个文件的完整解包与隐私白名单审计。
-  - GitHub 仓库源码已推送到 `origin/main`（最新提交为 `54c9d40`（功能交付 `50a1157`、TCP连接加固 `037518b`、交接文档 `54c9d40`））。
-  - GitHub Actions CI（`checks.yml`，Run `39647325270`）全步骤通过（含 139 个原生测试与所有前端/Python 离线 fixture）。
-  - GitHub Release：私有预发布 `https://github.com/yq04/Claude-Local/releases/tag/v0.1.4` 已正式发布（非草稿、预发布，8 个附件校验一致）。
-  - **当前没有任何卡点或未完成的交付阻塞。**
+- 产品版本 **0.1.5**，正式安装包已构建、审计，本机软件已从 0.1.4 安全更新并运行。
+- 已实机确认：有效的 5h/7d 额度恢复百分比，缺少新观测的单个 5h 仍显示未知；这不是未修复的整体未知故障。
+- 原生界面与随包 Python 脚本已复用 Rust 窗口状态核心；安装版 `--quota-backend` 实测为 `rust`。
+- **提交/发布正在收尾**：当前准备推送本轮源码并等待同提交 CI，随后发布私有预发布 `v0.1.5`。完成后必须把本段与第 4 节替换为真实提交、CI 与 Release 结果，不能提前声称发布成功。
+- 未中断运行中的 Claude Code 会话，未切换真实身份、清理保险库或浏览器资料。
 
-## 1. 我们在做什么
+## 1. 我们在做什么任务
 
-Claude-Local 是本仓库独立维护的 Windows x64 桌面产品（Tauri/Rust + React/TypeScript + Python）：本地加密身份备份与切换、额度观察、Token 用量分析、快速配置、电脑环境管理与可选隔离伴生浏览器。主程序 `claude-local.exe`，标识 `ai.local.claude-local`，资料在 `%APPDATA%/ai.local.claude-local`。
+Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，主程序 `claude-local.exe`，标识 `ai.local.claude-local`，用户数据在 `%APPDATA%/ai.local.claude-local`。核心功能包括加密身份备份/切换、离线额度观察、独立 Token 用量统计、环境配置与按需启动的伴生浏览器。
 
-本阶段的任务（根据用户原话与授权方案）：
-1. **解决切号后已耗尽额度回跳的问题（Q01）**：排查并修复归档创建时间被误当成额度观测时间、导致旧估计覆盖较新真实服务端耗尽状态的根本原因。
-2. **优化菜单栏导航顺序（Q03）**：按用户诉求调整左侧导航为“先环境配置后身份管理”流向：快速配置 → 浏览环境 → 电脑环境 → 网络环境 → 身份管理 → 用量分析 → 使用说明 → 软件设置。默认启动首页依然保持身份管理不变。
-3. **账号身份卡片与重置权益展示（Q02）**：调研 Claude/OpenAI 重置机制。官方对 Claude 订阅账号未提供常态化的“主动重置次数”，杜绝虚假按钮与本地账本模拟篡改；在卡片中新增“额度详情”弹窗，如实呈现来源、观测时间与“官方未提供主动重置次数”，并提供在当前身份伴生浏览器中打开官方用量页（`https://claude.ai/settings/usage`）的安全直达入口。
-4. **设备标识与诊断状态保护（S13）**：收缩账号清理白名单至 8 个核心凭据与必要缓存键，停止重置 `machineID`、`userID`、`anonymousId` 等设备与客户端标识，排除桌面 sentry 与 ant-did 诊断目标；兼容投影层确保旧版 68 键归档仍可完整读取，但不回灌设备标识。
-5. **额度采集自检（S14）**：新增 `quota_setup_status` 只读自检命令，可安全探测本机 `.claude/settings.json` 的 statusLine 状态，并在额度详情中给出透明说明与配置指引；不含自动覆写或未验证 Python 执行。
-6. **历史会话原样保留与单字符邮箱脱敏修复（S01-S03, S08）**：读路径与备份路径彻底停止自动调用会话 sanitizer；修复短邮箱打码漏洞；伴生浏览器同步原生隐私偏好桥（`ui_privacy_read/write`）；回环服务加强端口 Host、同源 Origin 校验与安全响应头；提供纯本地手写的任务交接模板（`task-handoff.tsx`）。
-7. **完整版本交付**：版本号升级为 0.1.4，完成编译构建、隐私审计、本地软件无感替换、提交推送、CI 检验与 GitHub Release 发布。
+技术栈为 Tauri/Rust 原生层、React/TypeScript 界面，以及 Python 被动采集/账本写入。Token 统计与 5h/7d 额度是不同数据链，不能混为一谈。伴生浏览器只由用户操作或 `--browser` 启动；普通启动默认身份管理页，没有上游同步或自动更新源。
 
-## 2. 已经完成了什么
+本轮用户先反馈“上一轮修复后所有身份额度未知”，要求调研修复并评估尽量 Rust 化；随后授权执行建议、全权交付，最后明确要求“完成更新、提交、发布，并更新交接”。本轮选择修复数据模型并收敛 Rust 核心，保留成熟界面，未承诺一次性把整个软件重写为 Rust。
 
-### 2.1 0.1.4 源码交付（已提交并推送远程 main）
+## 2. 已完成的源码与行为
 
-- **最新提交**：`037518b2611a2430ca04273c5286591054dfdbcb`（父提交 `50a1157` 为全功能交付，`037518b` 为 HTTP/1.1 测试加固），均带 Co-Authored-By。远程 `main` 已同步至 `037518b`。
-- **额度时序与模型修复（Rust & Python）**：
-  - 核心根因：此前切号保存时以归档时间 `saved_at` 作为账本比较门槛，且 Python 估计计算时间被当成新鲜度来源，导致刚保存的归档（时间晚于 statusLine 耗尽观测）覆盖了最新的 100% 耗尽账本。
-  - 修复：Rust `src-tauri/src/identities/profile.rs` 与 Python `scripts/claude_quota.py` 统一对比真实观测时间戳与窗口标识。同窗口旧估计不可覆盖最新服务端锚点。引入 `QuotaEvidence`（`quota_source`: `server_anchor` / `local_estimate` / `unknown`，`quota_observed_at_ms`）；过期或来源未知的窗口保守标为未知且排除推荐，不再虚构满额。
-  - 新增包装 `profile::summarize_stage_with_ledger`，Store 与 Catalog 的摘要回填均接入同账号最新账本合并。
-- **界面导航流向重排**：
-  - `src/main.tsx` 侧栏导航按“快速配置 → 浏览环境 → 电脑环境 → 网络环境 → 身份管理 → 用量分析 → 使用说明 → 软件设置”顺序排布，分割线对应移动至环境区与说明区。
-  - `src/navigation.ts` 保持原有 Page 枚举与记忆逻辑，默认首页依然安全回退到身份管理。
-- **原生隐私偏好桥与伴生页保护**：
-  - 新增 `src-tauri/src/ui_privacy.rs`，以受限私有文件存储布尔偏好，提供 `ui_privacy_read` 与 `ui_privacy_write` 命令。
-  - `src/settings-model.ts`：导出 `initializePrivacyPreference` 与 `synchronizePrivacyPreference`，启动时安全默认打码，未配置时平滑迁移旧 local 偏好；修复单字符邮箱（如 `a@example.com` 打码为 `*@example.com`）及显示名称脱敏函数 `maskDisplayName`。
-  - `src-tauri/src/browser/server.rs`：加强回环桥校验，强制匹配监听端口的 `Host` 与同源 `Origin`，拦截歧义标头；响应头注入 `no-store`、`no-referrer` 与 `frame-ancestors 'none'`。伴生起始页同步继承主程序隐私打码状态。
-- **额度详情与官方用量直达入口**：
-  - 身份工牌卡片上的额度堆叠区（`.identity-quota-stack`）支持无缝点击与键盘触发，弹出“额度与重置权益”对话框。
-  - 弹窗内如实展示额度来源、观测时间、以及“官方未提供主动重置次数”的权威澄清；杜绝虚假按钮，不改写本地账本。
-  - 新增 `browser_open_usage` 命令，复用已运行伴生浏览器的资料目录与安全启动链路，直达 `https://claude.ai/settings/usage`；仅允许当前身份触发，不接收前端任意 URL。
-- **设备标识与诊断保护（S13）**：
-  - `src-tauri/src/cleaner_config.rs`：`ACCOUNT_KEYS` 严格收缩至 8 个核心账号凭据与必要缓存键；停止重置 `machineID`、`userID`、`anonymousId` 等设备标识；`cleaner_targets.rs` 排除 sentry 与 ant-did 诊断目录。
-  - 投影机制 `identity::writable_source`：确保旧版 68 键归档仍可正常读取，但写入工作区时过滤设备和实验态键，防止回灌。
-- **额度采集自检（S14）**：
-  - 新增 `src-tauri/src/quota_setup.rs`，提供只读命令 `quota_setup_status`，安全探测 `.claude/settings.json` 的 statusLine 配置状态（`not_configured` / `custom_statusline` / `invalid_settings_*`）；不暴露路径或命令，不含未验证的自动覆写。
-- **会话历史保护与任务交接模板**：
-  - `Store::open` 与单纯保存彻底移除会话 sanitizer，工作区历史 JSONL 不再被静默改写；切换和恢复仅维护受控账号缓存。
-  - 新增 `src/task-handoff.tsx`，在使用说明页提供纯本地手写的任务交接骨架（目标、进展、下一步、约束），供换号时复制到新会话，不读取会话文件或凭据。
-- **版本元数据与双语字典**：
-  - 0.1.4 同步更新于 `package.json`、`tauri.conf.json`、`Cargo.toml`、`Cargo.lock`。
-  - `src/locales/zh.yaml` 与 `en.yaml` 补充全部 35+ 个新增键值对，测试断言双语一致。
-  - 新增 `docs/RELEASE_NOTES_0.1.4.md`，文档计划与采纳记录归档至 `docs/plans/2026-10-21-usage-account-safety/`。
+### 2.1 额度未知回归修复
 
-### 2.2 本机软件替换与安装包构建（已完成并独立复核）
+根因有两类：5h/7d 共用整体来源，任一窗口过期或缺失便隐藏两窗；旧账本缺少新身份标记时，读取分支会污染本已可信的摘要。另有部分单窗回传借用整体时间戳，导致另一窗旧数据被误认为新观测。
 
-- **本机已安装软件替换**：
-  - 目录：`D:_app\Claude-Local`。
-  - 回执：`.local/last-local-update.json`（UTC `2026-10-21T17:34:26Z`，`status=updated`）。
-  - 更新并校验 8 个差异文件，新主程序 SHA-256：`4220a596cc8cc615d54a948d49ce1b71fdd5c371b5eed11a9568387a2a03e857`。
-  - 启动验证通过：新进程 PID 79856 成功暴露窗口并运行。
-  - 3 个运行中的 Claude Code 命令行会话 PID `[21220, 34004, 59976]` 前后完全一致，`missingClaudePids` 为空。
-- **正式安装包**：
-  - 安装包：`Claude-Local_0.1.4_x64-setup.exe`（133.40 MiB）。
-  - 路径：`.local/artifacts/20261021T173426Z-0e7091b6e53c40b9829166f860fb260c/`。
-  - 安装包 SHA-256：`cdb24681aadf2859ca35e0aff764abe84970c8cbbe3792aed679da16cafe040b`。
-  - 隐私审计报告：`privacy-audit.json`（extracted-payload 模式，13 项私密标记，0 发现，102 个文件）。
+- `src-tauri/src/identities/profile.rs`：逐窗来源/实际观测时间、账号与组织隔离、旧格式兼容、原生只读账本合并；旧实时锚点仅在 UUID/组织匹配且无已知组织 UUID 冲突时使用。
+- `quota_5h_source` / `quota_7d_source` 与 `quota_5h_observed_at_ms` / `quota_7d_observed_at_ms` 独立传递，旧聚合字段保留兼容。
+- 单窗到期或无证据保持未知；不得写 0 用量、滚动假 reset 或虚构满额。另一窗有效数据继续显示。未知窗口不参与账号推荐。
+- 同窗口已用额度不回退，较新耗尽锚点优先；新窗口必须有新的真实观测，归档保存时间/计算时间不能充当观测时间。
+- `src/identity-quota.ts`、`identity-model.ts` 与 `identities.tsx` 对齐逐窗证据；详情分别显示来源/时间，保留 180×286 工牌和双语文案。
 
-### 2.3 验证结果（全绿）
+### 2.2 Rust 核心收敛与 Python 兼容
 
-- **前端测试**：`bun test` 38 项全部 pass（新增 identity-quota 测试 2 项、privacy-sync 测试 3 项、settings-model 测试 2 项等）。
-- **前端生产构建**：`bun run build` 成功（零错误，生产资源正确输出至 `dist/`）。
-- **Python 测试**：`python scripts/test-claude-quota-local.py` 18 项全部 pass（覆盖保存时间门槛、后算旧估计覆盖、回切消费、账号与组织隔离）。
-- **静态资源与迁移审计**：`browser_ui.py`、`test-migrate-local-data.py`、`test-fetch-browser.py`、`test-audit-windows-package.py` 全部 pass。
-- **GUI 模拟测试**：
-  - `node scripts/test-usage-statistics.mjs` 全部 38 项 checks 通过，卡片 180×286 几何与排版无横向溢出。
-  - `node scripts/test-local-shell.mjs` 完整壳预览与任务交接复制测试全部通过。
-  - `node --experimental-strip-types scripts/test-identities-ui.ts` 62 项身份与网络 UI 模拟测试全部通过。
-- **GitHub Actions CI**：
-  - Run ID: `39647325270`（commit `037518b`），全部 14 个 steps `success` 绿灯通过（含 139 个原生 Rust 单元测试与端到端 fixture）。
-- **GitHub Release**：
-  - URL: `https://github.com/yq04/Claude-Local/releases/tag/v0.1.4`。
-  - 标签 `v0.1.4` → `037518b`，非草稿、预发布，8 个附件（安装包、校验和、隐私审计、资源清单、更新说明、源码zip、LICENSE、NOTICE）全部下载验证 SHA-256 一致。
-  - 回执：`.local/release-0.1.4/published-receipt.json`（`status=updated-and-published`）。
+- 新增 `src-tauri/src/quota_core.rs`，规范化、到期失效、同窗合并、来源聚合等纯规则由 Rust 统一执行；原生 profile 调用同一个核心。
+- 主程序 `--quota-core` 在诊断、Tauri 与单实例初始化之前处理有界 JSON stdin/stdout。schema 1 / `merge_windows`，最多 1 MiB、256 项，仅接收额度数值、reset、source、observed_at_ms，不接受账号正文或路径，不读写文件/联网。
+- 随包 `scripts/claude_quota.py` 在持有跨进程锁、重新读取账本之后批量调用核心；超时/非法返回时，在写 ledger/SQLite 前中止，不静默换算法继续写。
+- **Python 仍是 quota_ledger 唯一写入者**，保留锁与 atomic replace；没有新增 Rust 桌面写入路径。独立旧脚本缺少固定 sibling 主程序时明确使用 `legacy_python`，安装包布局报告 `rust`。
+- Windows 仅新增单个公开脚本资源；未捆绑 Python/cryptography，未自动改现有 statusLine。脚本随包存在和后端可用，不代表旧外部 hook 已自动迁移。
+- React 界面、Python 会话采集/归档读取和部分计费计算继续保留。下一阶段若继续 Rust 化，应逐项迁移纯计算，不能增加第二账本写入者。
 
-## 3. 当前卡在哪
+### 2.3 不变的兼容边界
 
-**没有任何卡点，0.1.4 版本已完整交付闭环。**
+额度摘要版本为 5；SQLite `user_version=3`、BAGAID01、`.baga` 编码、账号 HMAC、归档密钥和 legacy 浏览器种子域保持不变。不要重生成身份 ID、密钥或浏览器种子。0.1.4 已交付的隐私桥、设备标识保护、历史会话不自动改写、环境优先导航等继续保留，默认首页仍是身份管理。
 
-- 本机软件、安装包、GitHub 提交推送、Actions CI 与 GitHub Release 已全部完成。
-- 工作区内仅保留了未跟踪的产品外设计文档与临时工具数据（`--help/`、`.planning/`、`.rivet/`、`docs/superpowers/`），符合既定规则。
+## 3. 已完成的验证与本机更新
 
-## 4. 下一步计划
+- Rust core 5 项、profile 14 项；Python 26 项（含真实 Rust 子进程、失败不写入与锁内合并）；前端额度 5 项、双语 4 项；包审计 9 项；更新器合成 8 组；隔离 GUI 9 项；TypeScript/Vite 生产构建全部通过。
+- 正式 Windows `custom-protocol` 中立构建通过，NSIS 包 **133.43 MiB**。解包审计 103 文件，原有 13 项私密标记零发现。
+- 安装包：`Claude-Local_0.1.5_x64-setup.exe`。
+- 安装包 SHA-256：`e97caf00f7d1e2811c1cffc829c8ea02ce67d1e69e131aa9f3a063fe21950ed5`。
+- 本机主程序 SHA-256：`e1be324b8196eb2e0aba20101d136559434ee0e939e5ab670178bc0500ee5854`；版本属性 0.1.5，启动窗口已核验。
+- release 管道在旧 GUI 仍运行时通过，随后备份并校验 96 安装文件，替换 8 个变更文件，重启主程序。3 个 Claude Code 会话前后 PID 一致；回执 `updated` / `quotaCoreSmoke=pass` / `missingClaudePids=[]`。
+- 已只读查看本机真实额度区域截图：两个身份双窗有百分比，另一个仅 7d 有效；截图裁掉名字/邮箱，不通过切换真实账号来验证。
 
-1. **安装器真实 Windows 环境验收**：在一次性 Windows 环境（虚拟机、临时机器或托管 runner）实测 0.1.3 → 0.1.4 的 NSIS 升级向导、确认卸载旧版、保留 `%APPDATA%/ai.local.claude-local` 资料及进程占用拦截。
-2. **额度采集器打包与受控分发（未来演进）**：若后续决定支持更自动化的一键接入 statusLine，需先解决受控 Python runtime 与 cryptography 依赖在当前用户目录下的安全分发与签名审计，再扩展 `quota_setup` 命令。
-3. **开源合规清点**：若后续用户决定将仓库转公开，需按 `docs/plans/2026-10-21-usage-account-safety/REVIEW_AND_ADDENDUM.md` 第七节完成 NOTICE 补充、声明不提供风控/地区规避，并确保 `.local/` 与临时抓取完全不入库。
+本地证据全在 ignored 目录：
 
-## 5. 工作区与归属
+- `.local/last-local-update.json`：安装更新回执、真实路径/进程、备份位置和哈希。
+- `.local/artifacts/20261022T032618Z-8a71bef456cb461c9d1a304b7fb74274/`：安装包、校验和、隐私审计、资源清单。
+- `.local/tasks/20261021-quota-regression/`：方案、进度、合成 GUI 脚本/报告及裁剪实机截图。
+- `.local/tools/complete-local-update.ps1`：已实测的中立构建、13 标记审计、release 管道预检、精确主程序替换/回滚流程；配套合成测试。不要为了结束会话重复构建或更新。
+- `.local/release-0.1.5/`：本轮提交快照、附件下载校验与发布回执（正在生成）。
 
-- `AGENTS.md` 为用户本地规则，**不随版本提交**。
-- `HANDOFF.md` 为交接文档，已更新至 0.1.4 状态。
-- 未跟踪 `--help/`、`.planning/`、`.rivet/`、`docs/superpowers/` 不属于产品，不移动、不删除、不暂存。
-- `.local/`、凭据、安装包、回执与机器路径永远不进 Git。
+## 4. 当前卡在哪、提交与发布状态
 
-## 6. 踩过的坑，绝对不要再踩
+本机交付没有阻塞；当前仅剩用户本次明确要求的源码提交、同提交 CI、私有 Release 发布以及本文件最终回填。
 
-### 6.1 0.1.4 时期新增经验与教训
+- 仓库：`yq04/Claude-Local`，私有，默认分支 `main`。
+- 原远端基线 `c4d722a`；此前最新发布为 `v0.1.4`，本轮不会修改旧标签或旧附件。
+- 目标发布：`https://github.com/yq04/Claude-Local/releases/tag/v0.1.5`，保持私有预发布，不转公开。
+- 发布流程：源码提交并非强制推送 → 等该源码提交的 `checks.yml` 成功 → 建草稿/上传 8 个附件 → 独立下载逐个 SHA-256 校验 → 取消草稿并保持预发布 → 写入真实回执与最终交接。
+- 八附件为安装包、SHA256SUMS、隐私审计、资源清单、0.1.5 更新说明、对应提交源码 ZIP、LICENSE、NOTICE。
+- 最终交接文档可在发布源码提交后另作仅文档提交；标签/CI 应明确指向功能源码提交，不能把文档 HEAD 当成另一次已构建产品。
 
-1. **卡片几何严格约束（180×286）**：工牌卡片宽度为固定的 180px，padding 左右各 10px，内部宽度只有 160px。在卡片内增加交互元素时（如额度详情），**绝对不要在 `.identity-card-head` 挤入任何带边距的 Button**，否则 `scrollWidth` 会超出 180px 导致测试断言失败。直接利用已有 `.identity-quota-stack` 增加点击与键盘响应是最好的方案。
-2. **HTTP/1.1 测试中的连接复用（WinError 10054）**：在 Windows 本地写 TCP mock HTTP 服务测试时，如果不输出 `Connection: close
-`，客户端（如 reqwest / hyper）会尝试连接复用，而服务端循环结束后关闭 socket 会向客户端发送 RST，在快速并发测试中引发 `ConnectionReset (WinError 10054)`。**所有 mock HTTP 响应必须明确带上 `Connection: close
-` 并 `flush()`**。
-3. **便携版 7z 工具路径**：本项目打包脚本需要 `7z.exe`。仓库内便携版路径位于 `.local/build-tools/7zip-26.04-f4a03f7e/portable/7z.exe`，打包时直接指定 `-SevenZipPath` 即可，不需要要求宿主系统预装 7-Zip。
-4. **Tauri 命令参数反序列化限制**：`#[tauri::command]` 宏对参数有严格的 `Deserialize` / `CommandArg` 约束。不能直接将 `Option<tauri::ipc::Channel<T>>` 作为命令入参（会报 E0277）。必须仿照 `identities_stop` 模式：接收 `webview: tauri::Webview` 与 `on_progress: Option<tauri::ipc::JavaScriptChannelId>`，在函数内部通过 `on_progress.map(|id| id.channel_on(webview))` 转换。
-5. **本地隐私默认打码与 GUI 测试模式**：为了安全，新版本在原生未持久化偏好时默认打码（`privacyMask: true`）。已有的针对明文账号/邮箱的 GUI 模拟测试（如 `test-usage-statistics.mjs` 与 `test-identities-ui.ts`）在初始化时，mockIPC 必须显式处理 `ui_privacy_read` 返回 `false` 或注入 `privacyMask: false` 偏好，否则界面因默认打码而无法匹配预期明文。
-6. **归档时间与额度观测时间分离**：切号创建新归档的时间是“此时此刻”，绝对不代表账号额度的“观测时间”。必须持久化并传递真实的 `quota_observed_at_ms`，比较额度时只看真实观测时间，不能用 `saved_at` 阻挡较新的服务端状态。
+## 5. 下一步计划
 
-### 6.2 往期长期有效的纪律
+1. 完成本轮提交/CI/发布与交接回填；若中断，先查 `.local/release-0.1.5/` 和 GitHub 实际状态再续传，不重复发布、重建或覆盖已发布附件。
+2. 在一次性 Windows VM/临时 runner 验收 0.1.4 → 0.1.5 NSIS 真实升级、进程占用拦截、卸载与数据保留。本机只做已审计文件更新，不能冒充安装/卸载验收。
+3. 若继续 Rust 化，先拆分并迁移纯额度估算/计费，配跨语言 fixture；最后才评估采集器替换。保持旧 hook 兼容与唯一写入者交接，避免为语言占比重写成熟 UI。
+4. 若要自动接入采集，先解决受控 Python/cryptography 分发、签名与旧 statusLine 兼容；现有配置不可自动覆盖。
+5. 若用户将来转公开，先按 NOTICE.md、docs/DISTRIBUTION.md 和现有合规记录清点第三方许可；私有仓库不消除分发义务。
 
-7. **不要中断运行中的 `claude.exe`**：本机替换更新只重启 Claude-Local 主程序自身。测试只用虚构 IPC 与隔离环境。Windows 上使用 pwsh 7，严禁使用 5.1。
-8. **Vite 预打包缓存过期**：`node_modules/cromma-ui` 是 `file:` 依赖的硬链接副本，增删 vendor 文件后必须 `bun install` 并用 `--force` 启动一次，否则页面空白。
-9. **不要自造 Cromma/Radix 已有的组件或行为**：分段用 SegmentedControl，换视图用 Tabs，开关用 Switch，折叠用 Disclosure，动效只取 `MOTION.*`。
-10. **格式兼容边界**：`BAGAID01`、`.baga`、SQLite `user_version=3`、账号 HMAC 与旧浏览器种子域保持兼容，绝不破坏。
+## 6. 踩过的坑：绝对不要再踩
+
+1. **不要用整体来源控制两窗**：单窗 unknown 不应隐藏另一窗；逐窗 source/time 优先，旧聚合字段只兼容。另一窗的新时间绝不能回填当前窗空观测。
+2. **归档时间不是观测时间**：只比较真实服务端/对应窗口观测；相同窗口不让旧估计覆盖耗尽，不把过期窗口写成 0 或推进 reset 假装满额。
+3. **旧账本兼容不能污染数据**：不匹配条目应忽略。恢复 legacy 证据须使用原始未过期窗口的 usage/reset/time，不能把过期 anchor 与已滚动未来 reset/0 拼成新证据；邮箱单独相等不够证明账号/组织。
+4. **合并必须在 writer 锁内**：先锁、重读，再调用核心、atomic replace。安装版核心失败不可静默回落继续落盘；Rust UI 永远不写账本。
+5. **headless 入口先于 Tauri 单实例**：否则可能唤起 GUI、无 stdout 或误当已有实例。Windows GUI-subsystem 的 release/custom-protocol 必须实测管道，debug 成功不够。
+6. **不要中断 claude.exe**：更新只精确验证并重启自己的主程序，先备份/哈希，失败回滚。真实账号切换、清理、系统变更测试只在合成或一次性环境；本机不用 stash/reset/restore/clean 清场。
+7. **固定资源白名单同步**：新增随包脚本必须同步 Tauri resource map、审计 allowlist、部署映射/fixture；只放单个公开脚本，不打包 scripts 整目录或用户运行数据。
+8. **工牌严格 180×286**：可用内宽 160px；不要在头部挤按钮，复用额度区域入口。新增内容放详情弹窗；未知数值不参加推荐。
+9. **GUI 测试必须匹配真实 DOM**：不能查不存在的 class 得到永远为零的假绿；默认隐私打码时测试明文必须在 mockIPC 明确返回隐私关闭。仅看测试截图不能声称实机恢复。
+10. **WinError 10054 mock HTTP**：HTTP/1.1 响应明确 `Connection: close` 并 flush，避免客户端复用而服务端提前关 socket。
+11. **工具/构建纪律**：Windows 只用 pwsh7。既有便携 7z 在 `.local/build-tools/7zip-26.04-f4a03f7e/portable/7z.exe`；release 必须 custom-protocol、中立 Cargo root 与隐私审计。不要因现有 advisory/dead-code warning 做无关重构。
+12. **Cromma 与 Vite**：复用 SegmentedControl/Tabs/Switch/Disclosure 和 MOTION；vendor file 依赖改动后 bun install，再用 --force 刷预构建缓存；无 vendor 变化时不要重装。
+13. **Tauri IPC 参数**：可选进度通道用 Webview + JavaScriptChannelId 转换，避免直接 Option<Channel<T>> 触发宏约束错误。
+14. **工具响应与输出**：functions.exec 禁止 notify/yield_control；批处理只输出最终结果。不要输出账号、凭据、原始 statusLine 命令、私密标记或个人机器路径。
+15. **通过即止**：按改动跑针对性验证；成功后推进交付。不要在真实机器跑 CI-only 系统变更测试，不做多轮无关审计。
+
+## 7. 工作区归属与新会话起步
+
+- `AGENTS.md` 本地修改不是本轮产品改动，不暂存；未跟踪 `--help/`、`.planning/`、`.rivet/`、`docs/superpowers/` 原样保留，不删除、不移动、不提交。
+- `.local/`、身份归档、数据库、运行时账本、凭据、构建/安装包和机器笔记不得入 Git。原 MIT 版权和第三方 NOTICE 不变。
+- 下一会话先读本文件、根/相关目录 CLAUDE.md，然后只读核对 `git status`、main/标签/CI/Release 和发布回执。源码已交付且没有用户新需求时，不自动清理或再次部署。

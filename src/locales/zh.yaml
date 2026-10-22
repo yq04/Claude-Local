@@ -1605,6 +1605,7 @@ privacy.saveFailed: "隐私设置未能同步，主程序继续打码；请检�
 "伴生浏览器启动失败。": "伴生浏览器启动失败。"
 
 quotaSetup.status: "本机采集配置"
+quota.independentWindows: "5h 与 7d 独立更新。某个窗口过期或缺少观测时只将该窗口标为未知，不视为额度已恢复；本地估算不等于官方实时额度。"
 quotaSetup.checking: "检查中"
 quotaSetup.unavailable: "未能读取配置状态"
 quotaSetup.not_configured: "未配置 statusLine"

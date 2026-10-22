@@ -1605,6 +1605,7 @@ privacy.saveFailed: "Privacy could not be synchronized. The main app remains mas
 "伴生浏览器启动失败。": "Unable to start the companion browser."
 
 quotaSetup.status: "Local collection configuration"
+quota.independentWindows: "5h and 7d update independently. An expired or unobserved window stays unknown, without implying restored quota. Local estimates are not live official usage."
 quotaSetup.checking: "Checking"
 quotaSetup.unavailable: "Configuration status unavailable"
 quotaSetup.not_configured: "statusLine is not configured"

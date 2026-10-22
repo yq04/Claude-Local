@@ -1,6 +1,6 @@
 // [INPUT]: 用户触发时读取的 Claude settings.json 路径和可选、受信任的随包 collector 路径。
 // [OUTPUT]: 不含路径或命令正文的额度采集接入状态；不执行 statusLine 或 runtime。
-// [POS]: 额度详情的只读自检边界；当前没有随包 collector，也不写 Claude 设置。
+// [POS]: 额度详情的只读自检边界；Windows 随包 collector 源码不代表 Python/依赖可执行，也不写 Claude 设置。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::Serialize;
 use serde_json::Value;

@@ -30,6 +30,7 @@
       "../browser-runtime/LICENSE.fingerprint-chromium": "browser-runtime/LICENSE.fingerprint-chromium",
       "../browser-runtime/WindowsBrowser/": "browser-runtime/WindowsBrowser/",
       "../browser-runtime/icons/browser.ico": "browser-runtime/icons/browser.ico",
+      "../scripts/claude_quota.py": "scripts/claude_quota.py",
       "windows/LICENSE.unicode.txt": "licenses/LICENSE.unicode.txt"
     },
     "windows": {

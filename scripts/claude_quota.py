@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-claude-quota v4: 离线/被动式、无后台额度网络请求的 Claude 多身份实时额度与重置时间引擎
+claude-quota v6: passive quota collector with the bundled Rust window-state core
 融合 GitHub 开源标杆架构 (ryoppippi/ccusage + Maciek-roboblog/Claude-Code-Usage-Monitor + sirmalloc/ccstatusline + Haleclipse/CCometixLine):
 1. 被动式 statusLine 响应头收割 (--statusline): 实时捕获 Claude Code 2.1.x 每轮 /v1/messages 响应头中的
    anthropic-ratelimit-unified-5h/7d-utilization 与 resets_at，仅读取 ~/.claude.json，将锚点写入本地版 quota_ledger.json 与 SQLite 摘要表；
 2. Claude Code 2.1.302 内核级 qHr 精确计费表: 完整对齐 opus-5-5 ($4/$20/$5/$8/$0.20)、haiku-5-5 ($0.10/$0.50)、
    opus-4-7/4-8 ($5/$25)、sonnet-5-5 ($2/$10/$0.10) 及 US 推理倍率 (1.1x)；
 3. 跨文件全局 (message.id, requestId) 去重 + 单账号快照自适应标定 (Adaptive Window Calibration)；
-4. Python 独占写入多账号账本与 SQLite 摘要；按账号/组织来源、真实观测时间与窗口合并，归档/重算时间不冒充新观测。
+4. Python remains the sole ledger/SQLite writer and preserves its lock/atomic replacement. The packaged collector calls the sibling claude-local.exe with bounded JSON for shared Rust window merging; standalone script use without that executable reports and retains the explicit legacy_python path. No statusLine configuration is changed.
 """
 import sys
 import os
@@ -19,6 +19,7 @@ import sqlite3
 import tempfile
 import subprocess
 import time
+from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -30,7 +31,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 # 同时支持从各账号自身官方快照窗口内真实会话流自动计算自适应费率 (Adaptive Calibration)
 PRO_WEEKLY_COST_USD = 242.5
 PRO_5H_COST_USD = 32.0
-CURRENT_QUOTA_VERSION = 4
+CURRENT_QUOTA_VERSION = 5
 
 
 def quota_identity(account: dict) -> str | None:
@@ -81,6 +82,207 @@ def tier_multiplier(plan_str: str) -> float:
     if "max" in p:
         return 5.0
     return 1.0
+
+
+
+def window_fetched_at_ms(anchor: dict | None, window: str) -> int:
+    if not isinstance(anchor, dict):
+        return 0
+    util = anchor.get("utilization")
+    if isinstance(util, dict):
+        win = util.get(window)
+        if isinstance(win, dict):
+            val = win.get("fetchedAtMs")
+            if isinstance(val, (int, float)) and val > 0:
+                return int(val)
+    observed_windows = anchor.get("server_anchor_observed_windows")
+    if isinstance(observed_windows, list) and window not in observed_windows:
+        return 0
+    return anchor_fetched_at_ms(anchor)
+
+
+def aggregate_quota_source(s5: str | None, s7: str | None) -> str:
+    return s5 if s5 == s7 and s5 in ("server_anchor", "local_estimate", "unknown") else "unknown"
+
+
+def aggregate_observed_at_ms(t5: int | None, t7: int | None) -> int | None:
+    valid = [int(t) for t in (t5, t7) if isinstance(t, (int, float)) and t > 0]
+    return max(valid) if valid else None
+
+
+QUOTA_WINDOWS = (("5h", "five_hour"), ("7d", "seven_day"))
+
+QUOTA_CORE_TIMEOUT_SEC = 2.0
+QUOTA_CORE_MAX_BYTES = 1024 * 1024
+QUOTA_CORE_MAX_ITEMS = 256
+
+
+class QuotaCoreError(RuntimeError):
+    """The bundled native quota core failed or returned an invalid response."""
+
+
+def _quota_core_executable() -> Path:
+    """Return the only supported installed layout for the native core."""
+    return Path(__file__).resolve().parent.parent / "claude-local.exe"
+
+
+def quota_backend() -> str:
+    return "rust" if _quota_core_executable().is_file() else "legacy_python"
+
+
+def _state_to_core(state: tuple) -> dict:
+    used, reset, source, observed = state
+    return {"used": used, "reset_at": reset, "source": source, "observed_at_ms": observed}
+
+
+def _state_from_core(state) -> tuple:
+    if not isinstance(state, dict) or set(state) != {"used", "reset_at", "source", "observed_at_ms"}:
+        raise QuotaCoreError("quota core returned an invalid window state")
+    used, reset, source, observed = (state.get("used"), state.get("reset_at"), state.get("source"),
+                                     state.get("observed_at_ms"))
+    if used is not None and (type(used) is not int or not 0 <= used <= 100):
+        raise QuotaCoreError("quota core returned invalid usage")
+    if reset is not None and (type(reset) is not int or not 0 <= reset <= 253402300799):
+        raise QuotaCoreError("quota core returned invalid reset time")
+    if source not in ("server_anchor", "local_estimate", "unknown"):
+        raise QuotaCoreError("quota core returned invalid source")
+    if observed is not None and (type(observed) is not int or not 0 <= observed <= 253402300799999):
+        raise QuotaCoreError("quota core returned invalid observation time")
+    if (used is None) != (source == "unknown") or (source == "unknown" and reset is not None):
+        raise QuotaCoreError("quota core returned inconsistent window state")
+    return used, reset, source, observed
+
+
+def _legacy_merge_window_state(current: tuple, candidate: tuple, now_sec: int) -> tuple:
+    """Python-only compatibility path used only when the bundled core is absent."""
+    cu, cr, cs, ct = current
+    nu, nr, ns, nt = candidate
+    current = (None, None, "unknown", ct) if cs == "unknown" or cu is None or cr is None or cr <= now_sec else current
+    candidate = (None, None, "unknown", nt) if ns == "unknown" or nu is None or nr is None or nr <= now_sec else candidate
+    cu, cr, cs, ct = current
+    nu, nr, ns, nt = candidate
+    if nu is None or ns == "unknown":
+        return current
+    if cu is None or cs == "unknown":
+        return candidate
+    if ct is None and cs == "local_estimate":
+        return current
+    if ct is not None and nt is None:
+        return current
+    if ct is not None and nt is not None and nt < ct:
+        return current
+    if ct == nt and cr != nr:
+        return current
+    if cr == nr and cu > nu:
+        return cu, cr, cs, max((value for value in (ct, nt) if value is not None), default=None)
+    return candidate
+
+
+def merge_window_states(current_states: list[tuple], candidate_states: list[tuple], now_sec: int) -> list[tuple]:
+    if len(current_states) != len(candidate_states) or len(current_states) > QUOTA_CORE_MAX_ITEMS:
+        raise ValueError("invalid quota window batch")
+    executable = _quota_core_executable()
+    if not executable.is_file():
+        return [_legacy_merge_window_state(current, candidate, int(now_sec))
+                for current, candidate in zip(current_states, candidate_states)]
+
+    payload = {
+        "schema": 1,
+        "op": "merge_windows",
+        "now_sec": int(now_sec),
+        "items": [{"current": _state_to_core(current), "candidate": _state_to_core(candidate)}
+                  for current, candidate in zip(current_states, candidate_states)],
+    }
+    encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    if len(encoded) > QUOTA_CORE_MAX_BYTES:
+        raise QuotaCoreError("quota core request exceeds 1 MiB")
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    try:
+        completed = subprocess.run(
+            [str(executable), "--quota-core"], input=encoded, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, timeout=QUOTA_CORE_TIMEOUT_SEC, check=False,
+            shell=False, creationflags=creationflags,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise QuotaCoreError("quota core execution failed") from exc
+    if completed.returncode != 0 or len(completed.stdout) > QUOTA_CORE_MAX_BYTES:
+        raise QuotaCoreError("quota core returned an error or oversized response")
+    try:
+        response = json.loads(completed.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise QuotaCoreError("quota core returned invalid JSON") from exc
+    if (not isinstance(response, dict) or set(response) != {"schema", "items"}
+            or type(response.get("schema")) is not int or response.get("schema") != 1
+            or not isinstance(response.get("items"), list)
+            or len(response["items"]) != len(current_states)):
+        raise QuotaCoreError("quota core returned an invalid response shape")
+    return [_state_from_core(item) for item in response["items"]]
+
+
+def entry_window_state(entry: dict, suffix: str, window: str) -> tuple[int | None, int | None, str, int | None]:
+    """Read one persisted window, retaining legacy global provenance only for compatible entries."""
+    anchor = entry.get("server_anchor") if isinstance(entry.get("server_anchor"), dict) else {}
+    util = anchor.get("utilization") if isinstance(anchor.get("utilization"), dict) else {}
+    anchor_window = util.get(window) if isinstance(util.get(window), dict) else {}
+    explicit_source = entry.get(f"quota_{suffix}_source") in ("server_anchor", "local_estimate", "unknown")
+    source = entry.get(f"quota_{suffix}_source")
+    if source not in ("server_anchor", "local_estimate", "unknown"):
+        source = entry.get("quota_source")
+        if source not in ("server_anchor", "local_estimate", "unknown"):
+            source = "server_anchor" if anchor_fetched_at_ms(anchor) or anchor_window else "unknown"
+    observed = entry.get(f"quota_{suffix}_observed_at_ms")
+    if not (isinstance(observed, (int, float)) and observed > 0):
+        observed = window_fetched_at_ms(anchor, window)
+        if not observed and not explicit_source:
+            observed = entry.get("quota_observed_at_ms")
+    if not (isinstance(observed, (int, float)) and observed > 0):
+        observed = None
+    used = entry.get(f"quota_{suffix}_used")
+    reset = entry.get(f"quota_{suffix}_reset_at")
+    if source == "server_anchor" and anchor_window:
+        anchor_used = anchor_window.get("utilization")
+        anchor_reset = parse_reset_dt(anchor_window.get("resets_at"))
+        if anchor_used is not None:
+            used = int(round(float(anchor_used)))
+        if anchor_reset is not None:
+            reset = int(anchor_reset.timestamp())
+    try:
+        used = max(0, min(100, int(round(float(used))))) if used is not None else None
+        reset = int(reset) if reset is not None else None
+    except (TypeError, ValueError, OverflowError):
+        used, reset = None, None
+    if source == "unknown" or used is None:
+        return None, None, "unknown", int(observed) if observed else None
+    return used, reset, source, int(observed) if observed else None
+
+
+def info_window_state(info: dict, suffix: str, window: str) -> tuple[int | None, int | None, str, int | None]:
+    used = info.get(f"used_{suffix}")
+    reset = info.get(f"reset_{suffix}_ts")
+    source = info.get(f"quota_{suffix}_source")
+    explicit_source = source in ("server_anchor", "local_estimate", "unknown")
+    if source not in ("server_anchor", "local_estimate", "unknown"):
+        source = info.get("quota_source")
+    observed = info.get(f"quota_{suffix}_observed_at_ms")
+    if not (isinstance(observed, (int, float)) and observed > 0):
+        observed = window_fetched_at_ms(info.get("server_anchor"), window)
+        if not observed and not explicit_source:
+            observed = info.get("quota_observed_at_ms")
+    try:
+        used = max(0, min(100, int(round(float(used))))) if used is not None else None
+        reset = int(reset) if reset is not None else None
+    except (TypeError, ValueError, OverflowError):
+        used, reset = None, None
+    if source not in ("server_anchor", "local_estimate", "unknown"):
+        source = "server_anchor" if used is not None and anchor_fetched_at_ms(info.get("server_anchor")) else ("local_estimate" if used is not None else "unknown")
+    if used is None:
+        source = "unknown"
+    return used, reset, source, int(observed) if isinstance(observed, (int, float)) and observed > 0 else None
+
+
+def merge_window_state(current: tuple, candidate: tuple) -> tuple:
+    """Compatibility wrapper around the shared merge operation."""
+    return merge_window_states([current], [candidate], int(time.time()))[0]
 
 
 def parse_reset_dt(val) -> datetime | None:
@@ -627,13 +829,45 @@ def format_account(
     candidate_anchor = cj.get("cachedUsageUtilization")
     if not isinstance(candidate_anchor, dict) or (acc.get("accountUuid") and candidate_anchor.get("accountUuid") != acc.get("accountUuid")):
         candidate_anchor = None
-    source = "local_estimate"
-    for window in ("five_hour", "seven_day"):
-        reset = parse_reset_dt((((candidate_anchor or {}).get("utilization") or {}).get(window) or {}).get("resets_at"))
-        if reset is None or reset <= now_utc:
-            source = "unknown"
+    window_results = {}
+    for suffix, window, used_key, reset_key, span in (
+        ("5h", "five_hour", "used_5h", "reset_5h_ts", timedelta(hours=5)),
+        ("7d", "seven_day", "used_7d", "reset_7d_ts", timedelta(days=7)),
+    ):
+        raw_window = (((candidate_anchor or {}).get("utilization") or {}).get(window) or {})
+        raw_reset = parse_reset_dt(raw_window.get("resets_at"))
+        raw_used = raw_window.get("utilization")
+        observed = window_fetched_at_ms(candidate_anchor, window) or None
+        if (raw_used is not None and raw_reset is not None and raw_reset > now_utc
+                and observed and q.get(used_key) is not None):
+            state = (q[used_key], q[reset_key], "server_anchor", observed)
+        else:
+            evidence_start = max(now_utc - span, active_since_dt or (now_utc - span))
+            local_evidence = active_since_dt is not None and any(
+                evidence_start <= dt <= now_utc and cost > 0 for dt, cost in slices
+            )
+            local_reset = q.get(reset_key)
+            local_reset_dt = datetime.fromtimestamp(local_reset, tz=timezone.utc) if local_reset else None
+            if local_evidence and q.get(used_key) is not None and local_reset_dt and local_reset_dt > now_utc:
+                observed_local = max((int(dt.timestamp() * 1000) for dt, cost in slices
+                                      if evidence_start <= dt <= now_utc and cost > 0), default=None)
+                state = (q[used_key], local_reset, "local_estimate", observed_local)
+            else:
+                state = (None, None, "unknown", observed)
+        used, reset, source, observed = state
+        q[used_key] = used
+        q[f"rem_{suffix}"] = max(0, 100 - used) if used is not None else None
+        q[reset_key] = reset
+        window_results[suffix] = state
+    quota_source = aggregate_quota_source(window_results["5h"][2], window_results["7d"][2])
+    if all(window_results[s][0] is not None for s in ("5h", "7d")):
+        q["effective_rem"] = min(q["rem_5h"], q["rem_7d"])
+    else:
+        q["effective_rem"] = None
     if q["effective_rem"] == 0:
         avail_badge = "🔴 额度已耗尽 (不可用)"
+    elif q["effective_rem"] is None:
+        avail_badge = "⚪ 额度未知"
     elif q["effective_rem"] <= 20:
         avail_badge = f"🟠 额度紧张 (可用 {q['effective_rem']}%)"
     else:
@@ -646,8 +880,12 @@ def format_account(
         "account_uuid": acc.get("accountUuid"),
         "organization_uuid": acc.get("organizationUuid"),
         "quota_identity": quota_identity(acc),
-        "quota_observed_at_ms": anchor_fetched_at_ms(candidate_anchor) or None,
-        "quota_source": source,
+        "quota_observed_at_ms": aggregate_observed_at_ms(window_results["5h"][3], window_results["7d"][3]),
+        "quota_source": quota_source,
+        "quota_5h_source": window_results["5h"][2],
+        "quota_7d_source": window_results["7d"][2],
+        "quota_5h_observed_at_ms": window_results["5h"][3],
+        "quota_7d_observed_at_ms": window_results["7d"][3],
         "server_anchor": candidate_anchor,
         "plan": plan,
         "auth_status": auth_status,
@@ -667,59 +905,42 @@ def apply_ledger_fallback_to_account(info: dict, ledger_accounts: dict, saved_at
     if not entry:
         return
     if not same_quota_account(info, entry):
-        if not entry.get("quota_identity"):
-            info["quota_source"] = "unknown"
         return
-    incoming_ms = anchor_fetched_at_ms(info.get("server_anchor"))
-    ledger_ms = anchor_fetched_at_ms(entry.get("server_anchor"))
-    # Archive creation and computation times say nothing about observation freshness.
-    if not info.get("has_quota_data") or ledger_ms >= incoming_ms:
-        q5 = entry.get("quota_5h_used")
-        r5 = entry.get("quota_5h_reset_at")
-        q7 = entry.get("quota_7d_used")
-        r7 = entry.get("quota_7d_reset_at")
-        if ledger_ms == incoming_ms:
-            if r5 == info.get("reset_5h_ts") and q5 is not None:
-                q5 = max(q5, info.get("used_5h") or 0)
-            if r7 == info.get("reset_7d_ts") and q7 is not None:
-                q7 = max(q7, info.get("used_7d") or 0)
-        now_sec = int(now_utc.timestamp())
-        info["server_anchor"] = entry.get("server_anchor")
-        info["quota_observed_at_ms"] = ledger_ms or None
-        info["quota_source"] = entry.get("quota_source") or ("server_anchor" if ledger_ms else "local_estimate")
-        if r7 is not None and now_sec >= int(r7):
-            info["quota_source"] = "unknown"
-            r7_val = int(r7)
-            while now_sec >= r7_val:
-                r7_val += 7 * 86400
-            r7 = r7_val
-            q7 = 0
-        if r5 is not None and now_sec >= int(r5):
-            info["quota_source"] = "unknown"
-            q5 = 0
-            r5 = None
-        if q7 is not None:
-            info["used_7d"] = int(q7)
-            info["rem_7d"] = max(0, 100 - int(q7))
-            info["reset_7d_ts"] = int(r7) if r7 else None
-            if r7:
-                r7_dt = datetime.fromtimestamp(int(r7), tz=timezone.utc)
-                diff_7d = (r7_dt - now_utc).total_seconds()
-                local_7d = r7_dt.astimezone().strftime("%m-%d %H:%M")
-                info["note_7d"] = f"{format_duration(diff_7d)} ({local_7d})"
-        if q5 is not None:
-            info["used_5h"] = int(q5)
-            info["rem_5h"] = 0 if info["rem_7d"] == 0 else max(0, 100 - int(q5))
-            info["reset_5h_ts"] = int(r5) if r5 else None
-            if info["rem_7d"] == 0:
-                info["note_5h"] = "⛔ 受 7d 周限额耗尽锁死 (即使 5h 重置也无法调用)"
-            elif r5:
-                r5_dt = datetime.fromtimestamp(int(r5), tz=timezone.utc)
-                diff_5h = (r5_dt - now_utc).total_seconds()
-                local_5h = r5_dt.astimezone().strftime("%H:%M")
-                info["note_5h"] = f"{format_duration(diff_5h)} ({local_5h})"
-            else:
-                info["note_5h"] = "🟢 5h 窗口已重置 (发消息即开启新 5h 周期)"
+    # A legacy row with neither identity nor account/organization anchors is not
+    # safe to apply merely because its email matches.
+    anchor = entry.get("server_anchor") if isinstance(entry.get("server_anchor"), dict) else {}
+    if not entry.get("quota_identity") and not (entry.get("account_uuid") or anchor.get("accountUuid")):
+        return
+
+    now_sec = int(now_utc.timestamp())
+    suffixes = [suffix for suffix, _ in QUOTA_WINDOWS]
+    current_states = [info_window_state(info, suffix, window) for suffix, window in QUOTA_WINDOWS]
+    candidate_states = [entry_window_state(entry, suffix, window) for suffix, window in QUOTA_WINDOWS]
+    merged_states = merge_window_states(current_states, candidate_states, now_sec)
+    merged = {}
+    for (suffix, _), state in zip(QUOTA_WINDOWS, merged_states):
+        used, reset, source, observed = state
+        merged[suffix] = (used, reset, source, observed)
+        info[f"used_{suffix}"] = used
+        info[f"reset_{suffix}_ts"] = reset
+        info[f"quota_{suffix}_source"] = source
+        info[f"quota_{suffix}_observed_at_ms"] = observed
+        info[f"rem_{suffix}"] = max(0, 100 - used) if used is not None else None
+        if used is None:
+            info[f"note_{suffix}"] = "额度未知"
+        else:
+            reset_dt = datetime.fromtimestamp(reset, tz=timezone.utc)
+            diff = (reset_dt - now_utc).total_seconds()
+            local = reset_dt.astimezone().strftime("%m-%d %H:%M" if suffix == "7d" else "%H:%M")
+            info[f"note_{suffix}"] = f"{format_duration(diff)} ({local})"
+
+    info["quota_source"] = aggregate_quota_source(merged["5h"][2], merged["7d"][2])
+    info["quota_observed_at_ms"] = aggregate_observed_at_ms(merged["5h"][3], merged["7d"][3])
+    # The server anchor is a cache of per-window evidence; retain the ledger's
+    # merged copy so an unobserved window is not lost on the next write.
+    if entry.get("server_anchor"):
+        info["server_anchor"] = entry["server_anchor"]
+    if all(merged[s][0] is not None for s in ("5h", "7d")):
         info["effective_rem"] = min(info["rem_5h"], info["rem_7d"])
         if info["effective_rem"] == 0:
             info["avail_badge"] = "🔴 额度已耗尽 (不可用)"
@@ -727,6 +948,9 @@ def apply_ledger_fallback_to_account(info: dict, ledger_accounts: dict, saved_at
             info["avail_badge"] = f"🟠 额度紧张 (可用 {info['effective_rem']}%)"
         else:
             info["avail_badge"] = f"🟢 额度充足 (可用 {info['effective_rem']}%)"
+    else:
+        info["effective_rem"] = None
+        info["avail_badge"] = "⚪ 额度未知"
 
 
 def load_ledger(app_dir: str) -> dict:
@@ -786,7 +1010,7 @@ def save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: list
     try:
         with ledger_writer_lock(app_dir):
             _save_ledger_and_sync_sqlite(app_dir, vault_dir, accounts_out, now_utc)
-    except (OSError, TimeoutError):
+    except (OSError, TimeoutError, QuotaCoreError):
         return
 
 
@@ -818,39 +1042,53 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
         prev_anchor = prev_entry.get("server_anchor")
         incoming_anchor = item.get("server_anchor")
         incoming_ms = anchor_fetched_at_ms(incoming_anchor)
-        # Inputs are computed before acquiring this lock. A later statusLine
-        # response may already have committed both its anchor and its summary.
-        if incoming_anchor and anchor_fetched_at_ms(prev_anchor) > incoming_ms:
-            continue
+        # Inputs are computed before acquiring this lock. Each window is merged
+        # by its own observed time below, so a partial/older anchor cannot erase
+        # another window's newer observation.
         if not incoming_anchor and int(prev_entry.get("updated_at_sec") or 0) > now_sec:
             continue
         item = dict(item)
-        if prev_anchor and (not incoming_anchor or anchor_fetched_at_ms(prev_anchor) == incoming_ms):
-            for suffix in ("5h", "7d"):
-                old_used = prev_entry.get(f"quota_{suffix}_used")
-                old_reset = prev_entry.get(f"quota_{suffix}_reset_at")
-                new_used = item.get(f"used_{suffix}")
-                if not incoming_anchor or old_reset == item.get(f"reset_{suffix}_ts"):
-                    item[f"used_{suffix}"] = max(old_used or 0, new_used or 0) if old_used is not None else new_used
-                    item[f"reset_{suffix}_ts"] = old_reset
         observed = item.get("server_anchor_observed_windows")
         if (isinstance(incoming_anchor, dict) and isinstance(prev_anchor, dict)
                 and incoming_anchor.get("accountUuid")
                 and incoming_anchor.get("accountUuid") == prev_anchor.get("accountUuid")
-                and isinstance(observed, list)):
+                ):
             utilization = dict(incoming_anchor.get("utilization") or {})
             previous_utilization = prev_anchor.get("utilization") or {}
             baseline_ms = int(item.get("server_anchor_base_fetched_at_ms") or 0)
             for window, suffix in (("five_hour", "5h"), ("seven_day", "7d")):
-                if (window not in observed and window in previous_utilization
-                        and (window not in utilization or anchor_fetched_at_ms(prev_anchor) > baseline_ms)):
-                    utilization[window] = previous_utilization[window]
-                    item[f"used_{suffix}"] = prev_entry.get(f"quota_{suffix}_used")
-                    item[f"reset_{suffix}_ts"] = prev_entry.get(f"quota_{suffix}_reset_at")
-            incoming_anchor = {**incoming_anchor, "utilization": utilization}
+                previous_window_ms = window_fetched_at_ms(prev_anchor, window)
+                incoming_window_ms = window_fetched_at_ms(incoming_anchor, window)
+                stale_window = previous_window_ms > 0 and incoming_window_ms > 0 and incoming_window_ms < previous_window_ms
+                window_observed = window in observed if isinstance(observed, list) else True
+                if ((not window_observed or stale_window) and window in previous_utilization
+                        and (window not in utilization or stale_window or anchor_fetched_at_ms(prev_anchor) > baseline_ms)):
+                    previous_window = dict(previous_utilization[window])
+                    previous_window.setdefault("fetchedAtMs", previous_window_ms or anchor_fetched_at_ms(prev_anchor))
+                    utilization[window] = previous_window
+                    old_used, old_reset, old_source, old_observed = entry_window_state(prev_entry, suffix, window)
+                    item[f"used_{suffix}"] = old_used
+                    item[f"reset_{suffix}_ts"] = old_reset
+                    item[f"quota_{suffix}_source"] = old_source
+                    item[f"quota_{suffix}_observed_at_ms"] = old_observed
+            merged_anchor_ms = max(anchor_fetched_at_ms(incoming_anchor), anchor_fetched_at_ms(prev_anchor))
+            if not isinstance(observed, list) and anchor_fetched_at_ms(prev_anchor) > anchor_fetched_at_ms(incoming_anchor):
+                incoming_anchor = prev_anchor
+            else:
+                incoming_anchor = {**incoming_anchor, "fetchedAtMs": merged_anchor_ms, "utilization": utilization}
+        current_states = [entry_window_state(prev_entry, suffix, window) for suffix, window in QUOTA_WINDOWS]
+        incoming_states = [info_window_state(item, suffix, window) for suffix, window in QUOTA_WINDOWS]
+        merged_values = merge_window_states(current_states, incoming_states, now_sec)
+        merged_states = {suffix: state for (suffix, _), state in zip(QUOTA_WINDOWS, merged_values)}
+        for suffix, _ in QUOTA_WINDOWS:
+            used, reset, source, observed_at = merged_states[suffix]
+            item[f"used_{suffix}"] = used
+            item[f"reset_{suffix}_ts"] = reset
+            item[f"quota_{suffix}_source"] = source
+            item[f"quota_{suffix}_observed_at_ms"] = observed_at
+        item["quota_source"] = aggregate_quota_source(merged_states["5h"][2], merged_states["7d"][2])
+        item["quota_observed_at_ms"] = aggregate_observed_at_ms(merged_states["5h"][3], merged_states["7d"][3])
         item["server_anchor"] = incoming_anchor
-        if item.get("used_5h") is None or item.get("used_7d") is None:
-            item["quota_source"] = "unknown"
         accepted_accounts.append(item)
         accs[key] = {
             "email": email,
@@ -859,8 +1097,12 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
             "account_uuid": item.get("account_uuid") or prev_entry.get("account_uuid"),
             "organization_uuid": item.get("organization_uuid") or prev_entry.get("organization_uuid"),
             "quota_identity": item.get("quota_identity") or prev_entry.get("quota_identity"),
-            "quota_observed_at_ms": anchor_fetched_at_ms(incoming_anchor or prev_anchor) or None,
-            "quota_source": item.get("quota_source") or ("server_anchor" if incoming_anchor else "local_estimate"),
+            "quota_observed_at_ms": item.get("quota_observed_at_ms"),
+            "quota_source": item.get("quota_source") or "unknown",
+            "quota_5h_source": item.get("quota_5h_source") or "unknown",
+            "quota_7d_source": item.get("quota_7d_source") or "unknown",
+            "quota_5h_observed_at_ms": item.get("quota_5h_observed_at_ms"),
+            "quota_7d_observed_at_ms": item.get("quota_7d_observed_at_ms"),
             "plan": item.get("plan"),
             "auth_status": item.get("auth_status"),
             "quota_5h_used": item.get("used_5h"),
@@ -939,8 +1181,12 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 "quota_checked": True,
                 "quota_version": CURRENT_QUOTA_VERSION,
                 "quota_identity": matched.get("quota_identity") or prev.get("quota_identity"),
-                "quota_observed_at_ms": anchor_fetched_at_ms(matched.get("server_anchor")) or prev.get("quota_observed_at_ms"),
-                "quota_source": matched.get("quota_source") or ("server_anchor" if matched.get("server_anchor") else "local_estimate"),
+                "quota_observed_at_ms": matched.get("quota_observed_at_ms") or prev.get("quota_observed_at_ms"),
+                "quota_source": matched.get("quota_source") or "unknown",
+                "quota_5h_source": matched.get("quota_5h_source") or "unknown",
+                "quota_7d_source": matched.get("quota_7d_source") or "unknown",
+                "quota_5h_observed_at_ms": matched.get("quota_5h_observed_at_ms") or prev.get("quota_5h_observed_at_ms"),
+                "quota_7d_observed_at_ms": matched.get("quota_7d_observed_at_ms") or prev.get("quota_7d_observed_at_ms"),
                 "auth_expires_at": matched.get("auth_expires_at") or prev.get("auth_expires_at"),
                 "auth_has_refresh": (
                     matched.get("auth_has_refresh")
@@ -1034,6 +1280,7 @@ def handle_statusline() -> None:
     account_entry = ledger_account(ledger.get("accounts", {}), email, account_info)
     anchor_base_ms = 0
     observed_windows = []
+    now_ms = int(now_utc.timestamp() * 1000)
 
     # Build server_anchor in memory only (NEVER modify ~/.claude.json; persist only to quota_ledger.json)
     if has_live_rl and isinstance(live_cj, dict):
@@ -1061,6 +1308,7 @@ def handle_statusline() -> None:
                 **(util.get("five_hour") if isinstance(util.get("five_hour"), dict) else {}),
                 "utilization": round(float(rl_5h["used_percentage"]), 1),
                 "resets_at": r5_iso,
+                "fetchedAtMs": now_ms,
             }
         if rl_7d.get("used_percentage") is not None:
             observed_windows.append("seven_day")
@@ -1074,10 +1322,11 @@ def handle_statusline() -> None:
                 **(util.get("seven_day") if isinstance(util.get("seven_day"), dict) else {}),
                 "utilization": round(float(rl_7d["used_percentage"]), 1),
                 "resets_at": r7_iso,
+                "fetchedAtMs": now_ms,
             }
 
         server_anchor = {
-            "fetchedAtMs": int(now_utc.timestamp() * 1000),
+            "fetchedAtMs": now_ms,
             **({"accountUuid": acct_uuid} if acct_uuid else {}),
             "utilization": util,
         }
@@ -1091,11 +1340,13 @@ def handle_statusline() -> None:
         if account_entry and same_quota_account(account_info, account_entry):
             le = account_entry
             if u5_val is None:
-                u5_val = le.get("quota_5h_used")
-                r5_val = le.get("quota_5h_reset_at")
+                old_used, old_reset, old_source, _ = entry_window_state(le, "5h", "five_hour")
+                if old_source != "unknown":
+                    u5_val, r5_val = old_used, old_reset
             if u7_val is None:
-                u7_val = le.get("quota_7d_used")
-                r7_val = le.get("quota_7d_reset_at")
+                old_used, old_reset, old_source, _ = entry_window_state(le, "7d", "seven_day")
+                if old_source != "unknown":
+                    u7_val, r7_val = old_used, old_reset
         cu_util = (((server_anchor or live_cj.get("cachedUsageUtilization")) or {}).get("utilization") or {})
         if u5_val is None and isinstance(cu_util.get("five_hour"), dict):
             u5_val = cu_util["five_hour"].get("utilization")
@@ -1110,14 +1361,29 @@ def handle_statusline() -> None:
     used7 = min(100, max(0, int(round(float(u7_val))))) if u7_val is not None else None
     r5_int = int(r5_val) if r5_val else None
     r7_int = int(r7_val) if r7_val else None
-    expired_observation = bool((r5_int and now_sec >= r5_int) or (r7_int and now_sec >= r7_int))
     if r7_int and now_sec >= r7_int:
-        while now_sec >= r7_int:
-            r7_int += 7 * 86400
-        used7 = 0
+        used7, r7_int = None, None
     if r5_int and now_sec >= r5_int:
-        used5 = 0
-        r5_int = None
+        used5, r5_int = None, None
+
+    def status_window_provenance(suffix: str, window: str, used, reset):
+        if used is None or reset is None:
+            return "unknown", None
+        if window in observed_windows:
+            return "server_anchor", window_fetched_at_ms(server_anchor, window) or now_ms
+        old = entry_window_state(account_entry, suffix, window) if account_entry else (None, None, "unknown", None)
+        if old[0] is not None and old[1] == reset and old[2] != "unknown":
+            return old[2], old[3]
+        cached = (((server_anchor or live_cj.get("cachedUsageUtilization") or {}).get("utilization") or {}).get(window) or {})
+        cached_reset = parse_reset_dt(cached.get("resets_at"))
+        cached_used = cached.get("utilization")
+        cached_at = window_fetched_at_ms(server_anchor or live_cj.get("cachedUsageUtilization"), window)
+        if cached_used is not None and cached_reset and int(cached_reset.timestamp()) == reset and cached_at:
+            return "server_anchor", cached_at
+        return "unknown", None
+
+    source5, observed5 = status_window_provenance("5h", "five_hour", used5, r5_int)
+    source7, observed7 = status_window_provenance("7d", "seven_day", used7, r7_int)
 
     if has_live_rl and email and (used5 is not None or used7 is not None):
         save_ledger_and_sync_sqlite(
@@ -1132,14 +1398,18 @@ def handle_statusline() -> None:
                     "account_uuid": acct_uuid,
                     "organization_uuid": acc.get("organizationUuid"),
                     "quota_identity": quota_identity(acc),
-                    "quota_source": "unknown" if expired_observation else "server_anchor",
+                    "quota_source": aggregate_quota_source(source5, source7),
+                    "quota_5h_source": source5,
+                    "quota_7d_source": source7,
+                    "quota_5h_observed_at_ms": observed5,
+                    "quota_7d_observed_at_ms": observed7,
                     "plan": "Pro",
                     "auth_status": "valid",
                     "used_5h": used5,
-                    "rem_5h": max(0, 100 - (used5 if used5 is not None else 0)),
+                    "rem_5h": max(0, 100 - used5) if used5 is not None else None,
                     "reset_5h_ts": r5_int,
                     "used_7d": used7,
-                    "rem_7d": max(0, 100 - (used7 if used7 is not None else 0)),
+                    "rem_7d": max(0, 100 - used7) if used7 is not None else None,
                     "reset_7d_ts": r7_int,
                     "server_anchor": server_anchor,
                     "server_anchor_observed_windows": observed_windows,
@@ -1158,10 +1428,8 @@ def handle_statusline() -> None:
     curr_rem5 = (0 if curr_rem7 == 0 else max(0, 100 - used5)) if used5 is not None else None
     if curr_rem5 is not None and curr_rem7 is not None:
         curr_eff = min(curr_rem5, curr_rem7)
-    elif curr_rem5 is not None:
-        curr_eff = curr_rem5
     else:
-        curr_eff = curr_rem7
+        curr_eff = None
 
     # Resolve saved identity custom names from identities.sqlite when available
     saved_name_by_email = {}
@@ -1198,23 +1466,13 @@ def handle_statusline() -> None:
         if saved_name_by_email and k_lower not in saved_name_by_email:
             continue
         p_name = saved_name_by_email.get(k_lower) or le.get("display_name") or k_email.split("@")[0]
-        p_u5 = le.get("quota_5h_used")
-        p_r5 = le.get("quota_5h_reset_at")
-        p_u7 = le.get("quota_7d_used")
-        p_r7 = le.get("quota_7d_reset_at")
-        if p_u5 is None and p_u7 is None:
+        p_u5, p_r5, p_s5, _ = entry_window_state(le, "5h", "five_hour")
+        p_u7, p_r7, p_s7, _ = entry_window_state(le, "7d", "seven_day")
+        if (p_s5 == "unknown" or p_s7 == "unknown" or p_u5 is None or p_u7 is None
+                or p_r5 is None or p_r7 is None or p_r5 <= now_sec or p_r7 <= now_sec):
             continue
-        p_u5_i = int(p_u5 or 0)
-        p_u7_i = int(p_u7 or 0)
-        p_r5_i = int(p_r5) if p_r5 else None
-        p_r7_i = int(p_r7) if p_r7 else None
-        if p_r7_i and now_sec >= p_r7_i:
-            while now_sec >= p_r7_i:
-                p_r7_i += 7 * 86400
-            p_u7_i = 0
-        if p_r5_i and now_sec >= p_r5_i:
-            p_u5_i = 0
-            p_r5_i = None
+        p_u5_i, p_u7_i = int(p_u5), int(p_u7)
+        p_r5_i, p_r7_i = int(p_r5), int(p_r7)
         p_rem7 = max(0, 100 - p_u7_i)
         p_rem5 = 0 if p_rem7 == 0 else max(0, 100 - p_u5_i)
         p_eff = min(p_rem5, p_rem7)
@@ -1403,6 +1661,9 @@ def detect_active_sessions(home: str) -> list[dict]:
 
 
 def main():
+    if "--quota-backend" in sys.argv:
+        print(quota_backend())
+        return
     if "--statusline" in sys.argv:
         handle_statusline()
         return

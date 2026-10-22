@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# [INPUT]: Fixed Windows Tauri resource inputs, optional extracted NSIS payload and caller-owned marker file.
+# [INPUT]: Fixed Windows Tauri resources including the public collector source, optional extracted NSIS payload and caller-owned marker file.
 # [OUTPUT]: Relative-path SHA-256 manifest and privacy findings in a caller-selected ignored directory.
 # [POS]: Read-only release boundary; never reads live profiles, installs software or deletes source files.
 # [PROTOCOL]: Update this header and scripts/CLAUDE.md when changing the packaging boundary.
@@ -30,6 +30,7 @@ RESOURCE_MAP = {
     "../browser-runtime/WindowsBrowser/": "browser-runtime/WindowsBrowser/",
     "../browser-runtime/icons/browser.ico": "browser-runtime/icons/browser.ico",
     "windows/LICENSE.unicode.txt": "licenses/LICENSE.unicode.txt",
+    "../scripts/claude_quota.py": "scripts/claude_quota.py",
 }
 ENGINE_FILES = {
     "chrome.exe", "chrome.dll", "chrome_elf.dll", "chrome_wer.dll", "chrome_proxy.exe",

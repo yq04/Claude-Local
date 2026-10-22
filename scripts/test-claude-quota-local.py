@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import sys
+import subprocess
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +20,88 @@ spec.loader.exec_module(quota)
 
 
 class LocalQuotaTests(unittest.TestCase):
+    def test_quota_core_bridge_uses_fixed_flag_and_schema(self):
+        with tempfile.TemporaryDirectory() as temp:
+            executable = Path(temp) / "claude-local.exe"
+            executable.write_bytes(b"synthetic executable marker")
+            outputs = [{"used": 20, "reset_at": 10000, "source": "server_anchor", "observed_at_ms": 1000}]
+            completed = subprocess.CompletedProcess([], 0, json.dumps({"schema": 1, "items": outputs}).encode(), b"")
+            with patch.object(quota, "_quota_core_executable", return_value=executable), \
+                    patch.object(quota.subprocess, "run", return_value=completed) as run:
+                result = quota.merge_window_states(
+                    [(10, 10000, "local_estimate", 900)], [(20, 10000, "server_anchor", 1000)], 100)
+            self.assertEqual(result, [(20, 10000, "server_anchor", 1000)])
+            args, kwargs = run.call_args
+            self.assertEqual(args[0], [str(executable), "--quota-core"])
+            self.assertFalse(kwargs["shell"])
+            request = json.loads(kwargs["input"])
+            self.assertEqual(request["op"], "merge_windows")
+            self.assertEqual(request["items"][0]["current"]["observed_at_ms"], 900)
+            self.assertEqual(kwargs["timeout"], quota.QUOTA_CORE_TIMEOUT_SEC)
+
+    def test_quota_core_real_subprocess_pipe(self):
+        executable = Path(__file__).resolve().parents[1] / "src-tauri" / "target" / "debug" / "claude-local.exe"
+        if not executable.is_file():
+            self.skipTest("Rust debug executable is not available")
+        now = int(datetime.now(timezone.utc).timestamp())
+        with patch.object(quota, "_quota_core_executable", return_value=executable):
+            states = quota.merge_window_states(
+                [(90, now + 600, "local_estimate", 1000), (20, now + 900, "server_anchor", 1500)],
+                [(80, now + 600, "server_anchor", 2000), (35, now + 1200, "server_anchor", 2500)], now)
+        self.assertEqual(states[0], (90, now + 600, "local_estimate", 2000))
+        self.assertEqual(states[1], (35, now + 1200, "server_anchor", 2500))
+
+    def test_quota_core_failure_aborts_ledger_write(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            executable = root / "claude-local.exe"
+            executable.write_bytes(b"synthetic executable marker")
+            item = {"role": "current", "email": "failure@example.invalid", "used_5h": 20,
+                    "reset_5h_ts": 10000, "quota_5h_source": "server_anchor",
+                    "quota_5h_observed_at_ms": 1000}
+            for failure, mode in ((subprocess.TimeoutExpired("core", 2), "raise"),
+                                  (subprocess.CompletedProcess([], 2, b"", b""), "return"),
+                                  (subprocess.CompletedProcess([], 0, b"not json", b""), "return")):
+                with self.subTest(failure=type(failure).__name__), \
+                        patch.object(quota, "_quota_core_executable", return_value=executable), \
+                        patch.object(quota.subprocess, "run", **({"side_effect": failure} if mode == "raise" else {"return_value": failure})):
+                    quota.save_ledger_and_sync_sqlite(temp, str(root / "missing-vault"), [item],
+                                                      datetime.fromtimestamp(1, timezone.utc))
+                self.assertFalse((root / "quota_ledger.json").exists())
+
+    def test_writer_sends_each_window_observation_independently(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            executable = root / "claude-local.exe"
+            executable.write_bytes(b"synthetic executable marker")
+            now = int(datetime.now(timezone.utc).timestamp())
+            request_seen = {}
+
+            def run_core(args, **kwargs):
+                request = json.loads(kwargs["input"])
+                request_seen.update(request)
+                items = [entry["candidate"] for entry in request["items"]]
+                return subprocess.CompletedProcess(args, 0,
+                    json.dumps({"schema": 1, "items": items}).encode(), b"")
+
+            item = {"role": "current", "email": "windows@example.invalid", "account_uuid": "fixture",
+                    "used_5h": 21, "reset_5h_ts": now + 300,
+                    "quota_5h_source": "server_anchor", "quota_5h_observed_at_ms": 1111,
+                    "used_7d": 42, "reset_7d_ts": now + 800,
+                    "quota_7d_source": "local_estimate", "quota_7d_observed_at_ms": 2222}
+            with patch.object(quota, "_quota_core_executable", return_value=executable), \
+                    patch.object(quota.subprocess, "run", side_effect=run_core):
+                quota.save_ledger_and_sync_sqlite(temp, str(root / "missing-vault"), [item],
+                                                  datetime.fromtimestamp(now, timezone.utc))
+            self.assertEqual(len(request_seen["items"]), 2)
+            self.assertEqual([window["candidate"]["observed_at_ms"] for window in request_seen["items"]],
+                             [1111, 2222])
+            saved = quota.load_ledger(temp)["accounts"]["windows@example.invalid"]
+            self.assertEqual(saved["quota_5h_observed_at_ms"], 1111)
+            self.assertEqual(saved["quota_7d_observed_at_ms"], 2222)
+            self.assertEqual(saved["quota_5h_source"], "server_anchor")
+            self.assertEqual(saved["quota_7d_source"], "local_estimate")
+
     def test_saved_after_exhaustion_keeps_observed_quota(self):
         now = datetime.fromtimestamp(100, timezone.utc)
         info = {"email": "a@example.invalid", "account_uuid": "a", "used_5h": 10,
@@ -130,6 +213,84 @@ class LocalQuotaTests(unittest.TestCase):
                 quota.apply_ledger_fallback_to_account(info, accounts, 90000, datetime.fromtimestamp(100, timezone.utc))
                 self.assertEqual(info["used_5h"], expected)
 
+    def test_per_window_source_expiration_does_not_poison_healthy_window(self):
+        now = datetime.fromtimestamp(2000, timezone.utc)
+        entry = {
+            "email": "healthy@example.invalid",
+            "account_uuid": "u1",
+            "quota_5h_used": 100,
+            "quota_5h_reset_at": 1500,
+            "quota_5h_source": "server_anchor",
+            "quota_5h_observed_at_ms": 1000_000,
+            "quota_7d_used": 40,
+            "quota_7d_reset_at": 3000,
+            "quota_7d_source": "server_anchor",
+            "quota_7d_observed_at_ms": 1000_000,
+            "server_anchor": {
+                "accountUuid": "u1",
+                "fetchedAtMs": 1000_000,
+                "utilization": {
+                    "five_hour": {"utilization": 100, "resets_at": 1500, "fetchedAtMs": 1000_000},
+                    "seven_day": {"utilization": 40, "resets_at": 3000, "fetchedAtMs": 1000_000},
+                },
+            },
+        }
+        info = {"email": "healthy@example.invalid", "account_uuid": "u1"}
+        quota.apply_ledger_fallback_to_account(info, {"healthy@example.invalid": entry}, 0, now)
+        self.assertEqual(info.get("quota_5h_source"), "unknown")
+        self.assertIsNone(info.get("used_5h"))
+        self.assertIsNone(info.get("reset_5h_ts"))
+        self.assertEqual(info.get("quota_7d_source"), "server_anchor")
+        self.assertEqual(info.get("used_7d"), 40)
+        self.assertEqual(info.get("reset_7d_ts"), 3000)
+        self.assertEqual(info.get("quota_source"), "unknown")
+
+    def test_expired_window_does_not_manufacture_zero_usage_or_roll_reset(self):
+        now = datetime.fromtimestamp(2000, timezone.utc)
+        entry = {
+            "email": "exp@example.invalid",
+            "account_uuid": "u1",
+            "quota_7d_used": 90,
+            "quota_7d_reset_at": 1500,
+            "quota_7d_source": "server_anchor",
+            "quota_7d_observed_at_ms": 1000_000,
+            "server_anchor": {"accountUuid": "u1", "fetchedAtMs": 1000_000},
+        }
+        info = {"email": "exp@example.invalid", "account_uuid": "u1"}
+        quota.apply_ledger_fallback_to_account(info, {"exp@example.invalid": entry}, 0, now)
+        self.assertEqual(info.get("quota_7d_source"), "unknown")
+        self.assertIsNone(info.get("used_7d"))
+        self.assertIsNone(info.get("reset_7d_ts"))
+
+    def test_unmatched_legacy_ledger_does_not_poison_info_source(self):
+        now = datetime.fromtimestamp(100, timezone.utc)
+        info = {"email": "a@example.invalid", "account_uuid": "mine", "quota_source": "server_anchor", "used_5h": 50}
+        entry = {"email": "a@example.invalid", "account_uuid": "other"}
+        quota.apply_ledger_fallback_to_account(info, {"a@example.invalid": entry}, 0, now)
+        self.assertEqual(info["quota_source"], "server_anchor")
+        self.assertEqual(info["used_5h"], 50)
+
+    def test_per_window_provenance_and_observation_times_persist_without_cross_window_fallback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            vault = self.create_summary_database(root)
+            quota.save_ledger_and_sync_sqlite(temp, str(vault), [{
+                "role": "current", "email": "fixture@example.invalid", "used_5h": 20,
+                "reset_5h_ts": 10000, "used_7d": 30, "reset_7d_ts": 20000,
+                "quota_source": "unknown", "quota_5h_source": "server_anchor",
+                "quota_7d_source": "local_estimate", "quota_5h_observed_at_ms": None,
+                "quota_7d_observed_at_ms": 2000,
+            }], datetime.fromtimestamp(3, timezone.utc))
+            account, summary = self.read_account_and_summary(root)
+            self.assertEqual(account["quota_5h_source"], "server_anchor")
+            self.assertEqual(account["quota_7d_source"], "local_estimate")
+            self.assertIsNone(account["quota_5h_observed_at_ms"])
+            self.assertEqual(account["quota_7d_observed_at_ms"], 2000)
+            self.assertEqual(summary["quota_5h_source"], "server_anchor")
+            self.assertEqual(summary["quota_7d_source"], "local_estimate")
+            self.assertNotIn("quota_5h_observed_at_ms", summary)
+            self.assertEqual(summary["quota_7d_observed_at_ms"], 2000)
+
     def create_summary_database(self, root):
         vault = root / "identity-vault"
         vault.mkdir()
@@ -158,10 +319,13 @@ class LocalQuotaTests(unittest.TestCase):
             root = Path(temp)
             now = datetime.now(timezone.utc)
             item = {"role": "current", "email": "A@example.invalid", "account_uuid": "fixture", "used_5h": 23,
+                    "reset_5h_ts": int(now.timestamp()) + 3600,
                     "server_anchor": {"accountUuid": "fixture", "fetchedAtMs": 123}}
             quota.save_ledger_and_sync_sqlite(temp, str(root / "no-db"), [item], now)
             item.pop("server_anchor")
             item["used_5h"] = 24
+            item["quota_5h_source"] = "local_estimate"
+            item["quota_5h_observed_at_ms"] = 124
             quota.save_ledger_and_sync_sqlite(temp, str(root / "no-db"), [item], now)
             quota.save_ledger_and_sync_sqlite(temp, str(root / "no-db"), [{"role": "saved", "email": "b@example.invalid"}], now)
             ledger = json.loads((root / "quota_ledger.json").read_text(encoding="utf-8"))
@@ -188,8 +352,10 @@ class LocalQuotaTests(unittest.TestCase):
             for fetched, used in [(200, 90), (100, 10)]:
                 quota.save_ledger_and_sync_sqlite(temp, str(vault), [{
                     "role": "current", "email": "fixture@example.invalid", "used_5h": used,
+                    "reset_5h_ts": int(now.timestamp()) + 3600,
                     "server_anchor": {"accountUuid": "fixture", "fetchedAtMs": fetched,
-                                      "utilization": {"five_hour": {"utilization": used}}},
+                                      "utilization": {"five_hour": {"utilization": used,
+                                                                      "resets_at": int(now.timestamp()) + 3600}}},
                 }], now)
             account, summary = self.read_account_and_summary(root)
             self.assertEqual(account["server_anchor"]["fetchedAtMs"], 200)
@@ -202,10 +368,11 @@ class LocalQuotaTests(unittest.TestCase):
             vault = self.create_summary_database(root)
             quota.save_ledger_and_sync_sqlite(temp, str(vault), [{
                 "role": "current", "email": "fixture@example.invalid", "used_5h": 90,
+                "reset_5h_ts": 1000,
                 "server_anchor": {"accountUuid": "fixture", "fetchedAtMs": 2000},
             }], datetime.fromtimestamp(2, timezone.utc))
             quota.save_ledger_and_sync_sqlite(temp, str(vault), [{
-                "role": "current", "email": "fixture@example.invalid", "used_5h": 10,
+                "role": "current", "email": "fixture@example.invalid", "used_5h": 10, "reset_5h_ts": 1000,
             }], datetime.fromtimestamp(1, timezone.utc))
             account, summary = self.read_account_and_summary(root)
             self.assertEqual(account["quota_5h_used"], 90)
@@ -418,11 +585,19 @@ class LocalQuotaTests(unittest.TestCase):
                         "accounts": {
                             "b@example.invalid": {
                                 "display_name": "Acct-B",
+                                "account_uuid": "uuid-b",
+                                "quota_identity": quota.quota_identity({"accountUuid": "uuid-b", "emailAddress": "b@example.invalid"}),
+                                "quota_source": "server_anchor",
+                                "quota_5h_source": "server_anchor",
+                                "quota_7d_source": "server_anchor",
+                                "quota_5h_observed_at_ms": now * 1000,
+                                "quota_7d_observed_at_ms": now * 1000,
                                 "auth_status": "valid",
                                 "quota_5h_used": 10,
                                 "quota_5h_reset_at": now + 3600,
                                 "quota_7d_used": 20,
                                 "quota_7d_reset_at": now + 86400,
+                                "server_anchor": {"accountUuid": "uuid-b", "fetchedAtMs": now * 1000},
                             }
                         }
                     }

@@ -1,5 +1,5 @@
 // [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统、固定网络资源导航、独立界面语言与本地 Token 统计命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
-// [OUTPUT]: Claude-Local 独立窗口、托盘、SQLite 本地身份暂存/恢复、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、固定网络入口与 CI 固定启动诊断。
+// [OUTPUT]: Claude-Local 独立窗口、托盘、SQLite 本地身份暂存/恢复、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、固定网络入口与 CI 固定启动诊断；--quota-core 在 GUI 初始化前提供纯 JSON 额度合并。
 // [POS]: 应用编排层；不注册翻译快捷键，不读取翻译设置或 API 密钥。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -18,6 +18,7 @@ mod local_runtime;
 mod native;
 mod network_links;
 mod progress;
+mod quota_core;
 mod regions;
 mod system;
 mod ui_language;
@@ -77,6 +78,9 @@ pub(crate) fn startup_trace(stage: &str) {
     let _ = stage;
 }
 fn main() {
+    if let Some(code) = quota_core::headless(&std::env::args().collect::<Vec<_>>()) {
+        std::process::exit(code);
+    }
     startup_trace("host entry");
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {

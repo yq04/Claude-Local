@@ -1,5 +1,5 @@
 # [INPUT]: 已编译的本地版宿主、构建后的 UI 与固定 Windows 浏览器引擎。
-# [OUTPUT]: 独立安装目录、原有本地程序备份和专属桌面快捷方式；不写入用户身份数据。
+# [OUTPUT]: 独立安装目录、原有本地程序/采集脚本备份和专属桌面快捷方式；不写入用户身份数据或配置 statusLine。
 # [POS]: Windows 本地部署入口；拒绝运行中的本地宿主，不结束 Claude，不调用官方安装/更新器。
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 param([string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'Programs\Claude-Local'))
@@ -23,7 +23,7 @@ if (Test-Path -LiteralPath $installRoot) {
         Copy-Item -LiteralPath $installed -Destination ($installed + '.backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     }
 } else { New-Item -ItemType Directory -Path $installRoot | Out-Null }
-foreach ($folder in @('browser-runtime', 'browser-runtime\icons', 'browser-ui', 'licenses')) {
+foreach ($folder in @('browser-runtime', 'browser-runtime\icons', 'browser-ui', 'licenses', 'scripts')) {
     New-Item -ItemType Directory -Path (Join-Path $installRoot $folder) -Force | Out-Null
 }
 Copy-Item -LiteralPath $engine -Destination (Join-Path $installRoot 'browser-runtime') -Recurse -Force
@@ -34,6 +34,11 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'browser-runtime\LICENSE.fingerpr
 Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\ai-icons\LICENSE.lobehub.txt') -Destination (Join-Path $installRoot 'licenses\LICENSE.lobehub.txt') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'src-tauri\windows\LICENSE.unicode.txt') -Destination (Join-Path $installRoot 'licenses\LICENSE.unicode.txt') -Force
 Copy-Item -LiteralPath $binary -Destination (Join-Path $installRoot 'claude-local.exe') -Force
+$collectorDestination = Join-Path $installRoot 'scripts\claude_quota.py'
+if (Test-Path -LiteralPath $collectorDestination -PathType Leaf) {
+    Copy-Item -LiteralPath $collectorDestination -Destination ($collectorDestination + '.backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+}
+Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\claude_quota.py') -Destination $collectorDestination -Force
 $sourceHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
 if ((Get-FileHash -LiteralPath (Join-Path $installRoot 'claude-local.exe') -Algorithm SHA256).Hash -ne $sourceHash) { throw 'Installed binary hash mismatch.' }
 $desktop = [Environment]::GetFolderPath('Desktop')

@@ -1,10 +1,12 @@
 /**
- * [INPUT]: Bounded local quota values, observed window reset timestamps and an explicit clock.
+ * [INPUT]: Bounded local quota values, independent window evidence/reset timestamps and an explicit clock.
  * [OUTPUT]: Independent quota-window presentation and conservative account recommendation eligibility.
  * [POS]: Pure frontend quota model; no network, ledger writes or account operations.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
-export type QuotaInput = {quota_5h_used?: number | null; quota_5h_reset_at?: number | null; quota_7d_used?: number | null; quota_7d_reset_at?: number | null; quota_source?: 'server_anchor' | 'local_estimate' | 'unknown' | null};
+import type {QuotaEvidence} from './identity-model';
+
+export type QuotaInput = QuotaEvidence & {quota_5h_used?: number | null; quota_5h_reset_at?: number | null; quota_7d_used?: number | null; quota_7d_reset_at?: number | null};
 
 export function formatCompactEta(resetSec: number | null | undefined, nowSec: number) {
   if (!resetSec || resetSec <= nowSec) return '';
@@ -28,13 +30,15 @@ export function formatResetClock(resetSec: number | null | undefined, includeDat
   return `${mo}-${da} ${hh}:${mm}`;
 }
 export function evaluateQuota(item: QuotaInput | null | undefined, nowSec: number) {
-  if (!item || (item.quota_5h_used == null && item.quota_7d_used == null)) return null;
+  if (!item) return null;
   const expired7d = item.quota_7d_reset_at != null && nowSec >= item.quota_7d_reset_at;
   const expired5h = item.quota_5h_reset_at != null && nowSec >= item.quota_5h_reset_at;
   const r5 = !expired5h && item.quota_5h_reset_at ? item.quota_5h_reset_at : null;
   const r7 = !expired7d && item.quota_7d_reset_at ? item.quota_7d_reset_at : null;
-  const known5h = item.quota_source !== 'unknown' && typeof item.quota_5h_used === 'number' && Number.isFinite(item.quota_5h_used) && !expired5h;
-  const known7d = item.quota_source !== 'unknown' && typeof item.quota_7d_used === 'number' && Number.isFinite(item.quota_7d_used) && !expired7d;
+  const source5h = item.quota_5h_source ?? item.quota_source;
+  const source7d = item.quota_7d_source ?? item.quota_source;
+  const known5h = source5h !== 'unknown' && typeof item.quota_5h_used === 'number' && Number.isFinite(item.quota_5h_used) && !expired5h;
+  const known7d = source7d !== 'unknown' && typeof item.quota_7d_used === 'number' && Number.isFinite(item.quota_7d_used) && !expired7d;
   const used5h = known5h ? Math.max(0, Math.min(100, item.quota_5h_used!)) : 0;
   const used7d = known7d ? Math.max(0, Math.min(100, item.quota_7d_used!)) : 0;
   const rem5h = known5h ? 100 - used5h : 0;
@@ -50,5 +54,5 @@ export function evaluateQuota(item: QuotaInput | null | undefined, nowSec: numbe
   const primaryEta = rem7d === 0 ? eta7d : eta5h && eta7d ? `${eta5h}/${eta7d}` : eta5h || eta7d;
   const badge = `5h ${known5h ? rem5h + '%' : '?'} · 7d ${known7d ? rem7d + '%' : '?'}${primaryEta ? ` (${primaryEta})` : ''}`;
   const detail = `5h: ${known5h ? rem5h + '%' : '?'}${eta5h ? ` (${eta5h} · ${clock5h})` : ''} | 7d: ${known7d ? rem7d + '%' : '?'}${eta7d ? ` (${eta7d} · ${clock7d})` : ''}`;
-  return {rem5h, rem7d, effectiveRem, level, level5h, level7d, primaryEta, badge, detail, used5h, used7d, r5, r7, expired5h, expired7d, known5h, known7d, recommendable: known5h && known7d};
+  return {rem5h, rem7d, effectiveRem, level, level5h, level7d, primaryEta, badge, detail, used5h, used7d, r5, r7, expired5h, expired7d, known5h, known7d, source5h, source7d, recommendable: known5h && known7d};
 }
