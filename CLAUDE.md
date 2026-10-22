@@ -19,6 +19,7 @@ vendor/ - Existing UI components with separate attribution/license boundaries in
 docs/ - Local development, data boundaries and distribution documentation.
 docs/plans/2026-10-21-usage-account-safety/ - Historical proposal, source evidence and phased account-safety plan implemented in 0.1.4; 0.1.5 fixes quota evidence compatibility and shares Rust window-state rules.
 .github/workflows/ - Credential-free Windows checks and explicitly dispatched private build artifacts.
+.github/workflows/share-windows.yml - Private manual artifact build with public original host/frontend inputs and audit evidence, allowing independent workstation re-audit without recompilation or binary reconstruction; no private probes or automatic release.
 HANDOFF.md - Current product behavior, verified delivery receipts, outstanding source work and safe next steps; machine-specific receipts stay in ignored .local/.
 </directory>
 

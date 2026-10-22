@@ -59,7 +59,17 @@ jobs:
       - name: Fetch the pinned browser engine
         run: python scripts/fetch-browser.py
       - name: Build the host and browser in one installer
-        run: bun run build:windows
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $auditedShare = $null
+          & bun run build:windows | ForEach-Object {
+            $line = [string]$_
+            Write-Host $line
+            if ($line.StartsWith('{"artifactDirectory":')) { $auditedShare = $line | ConvertFrom-Json }
+          }
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (-not $auditedShare) { throw 'Missing canonical build audit receipt' }
+          "CLAUDE_LOCAL_AUDITED_SHARE=$($auditedShare.artifactDirectory)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Collect the installer, notices and checksums
         run: |
           $ErrorActionPreference = 'Stop'
@@ -81,6 +91,15 @@ jobs:
           $share = Join-Path $env:RUNNER_TEMP 'claude-local-share'
           $notices = Join-Path $share 'licenses'
           New-Item -ItemType Directory -Path $notices -Force | Out-Null
+          # Preserve public build inputs so a resource-constrained workstation can
+          # independently re-audit the exact NSIS payload without rebuilding it or
+          # attempting to reverse the bundler's executable transformation.
+          $buildInputs = Join-Path $share 'build-inputs'
+          $buildEvidence = Join-Path $share 'build-evidence'
+          New-Item -ItemType Directory -Path $buildInputs,$buildEvidence -Force | Out-Null
+          Copy-Item -LiteralPath src-tauri/target/release/claude-local.exe -Destination (Join-Path $buildInputs 'claude-local.exe')
+          Copy-Item -LiteralPath dist -Destination (Join-Path $buildInputs 'browser-ui') -Recurse
+          Copy-Item -LiteralPath (Join-Path $env:CLAUDE_LOCAL_AUDITED_SHARE 'privacy-audit.json'),(Join-Path $env:CLAUDE_LOCAL_AUDITED_SHARE 'resource-manifest.json') -Destination $buildEvidence
           Copy-Item -LiteralPath $installers[0].FullName -Destination $share
           Copy-Item -LiteralPath LICENSE,NOTICE.md -Destination $share
           Copy-Item -LiteralPath docs/DISTRIBUTION.md -Destination (Join-Path $share 'DISTRIBUTION.md')
@@ -97,6 +116,13 @@ jobs:
             engineSource = "https://github.com/adryfish/fingerprint-chromium/releases/download/$engineVersion/ungoogled-chromium_$engineVersion-1.1_windows_x64.zip"
             engineExecutableSha256 = (Get-FileHash browser-runtime/WindowsBrowser/chrome.exe -Algorithm SHA256).Hash.ToLowerInvariant()
             installerSha256 = (Get-FileHash $installers[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            hostSha256 = (Get-FileHash (Join-Path $buildInputs 'claude-local.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+            frontendFiles = @(Get-ChildItem (Join-Path $buildInputs 'browser-ui') -File -Recurse | Sort-Object FullName | ForEach-Object {
+              [ordered]@{
+                path = [IO.Path]::GetRelativePath((Join-Path $buildInputs 'browser-ui'), $_.FullName).Replace('\','/')
+                sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              }
+            })
             signed = $false
             distribution = 'private review; third-party redistribution terms remain subject to NOTICE.md'
           }

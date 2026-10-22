@@ -25,4 +25,6 @@ Machine-specific proxy integration is deliberately excluded from source and may 
 
 [PROTOCOL]: Update source headers and this map with changes.
 
+Private share workflow: manually dispatched Windows artifacts also retain the public unbundled host, compiled frontend and canonical build audit evidence with per-file hashes, enabling a second local13-probe audit and backed-up update when the workstation lacks build memory. No runtime user data, private probes or release secrets are uploaded.
+
 Usage GUI checks also require the concise All selector and absence of history/live/scope clutter.
