@@ -1,5 +1,5 @@
-// [INPUT]: Tauri 主窗口事件、应用私有目录和当前屏幕工作区。
-// [OUTPUT]: 界面显示前恢复主窗口正常尺寸/最大化状态，并防抖保存有效尺寸。
+// [INPUT]: Tauri 主窗口事件、Windows 恢复态 placement/DPI/正常外框、私有目录和屏幕工作区。
+// [OUTPUT]: 显示前恢复正常尺寸/最大化状态，Windows 采集不依赖过渡期缓存标志/客户区；防抖私有保存。
 // [POS]: 主窗口专属持久化边界；不处理浏览器窗口、账号资料或无 GUI 的额度核心。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -115,10 +115,6 @@ fn capture(window: &WebviewWindow, flush: bool) {
     if window.label() != "main" {
         return;
     }
-    let minimized = window.is_minimized().unwrap_or(false);
-    if minimized && !flush {
-        return;
-    }
     let Some(state) = window.app_handle().try_state::<ManagedWindowState>() else {
         return;
     };
@@ -126,20 +122,107 @@ fn capture(window: &WebviewWindow, flush: bool) {
         .0
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !minimized {
-        let maximized = window.is_maximized().unwrap_or(false);
-        let (width, height) = window
-            .inner_size()
-            .map(|size| {
-                let scale = window.scale_factor().unwrap_or(1.0);
-                (size.width as f64 / scale, size.height as f64 / scale)
-            })
-            .unwrap_or((state.width, state.height));
-        *state = model::capture_normal_size(*state, width, height, maximized, false);
+    if let Some(captured) = capture_platform(window, *state) {
+        *state = captured;
     }
     if flush {
         save(window.app_handle(), *state);
     }
+}
+
+#[cfg(not(windows))]
+fn capture_platform(window: &WebviewWindow, previous: WindowState) -> Option<WindowState> {
+    if window.is_minimized().ok()? {
+        return None;
+    }
+    let maximized = window.is_maximized().ok()?;
+    let size = window.inner_size().ok()?;
+    let scale = window.scale_factor().ok()?;
+    Some(model::capture_normal_size(
+        previous,
+        size.width as f64 / scale,
+        size.height as f64 / scale,
+        maximized,
+        false,
+    ))
+}
+
+#[cfg(windows)]
+fn capture_platform(window: &WebviewWindow, previous: WindowState) -> Option<WindowState> {
+    use windows_sys::Win32::{
+        Foundation::{BOOL, HWND, RECT},
+        UI::WindowsAndMessaging::{
+            GetMenu, GetWindowLongW, GetWindowPlacement, GWL_EXSTYLE, GWL_STYLE, SW_MINIMIZE,
+            SW_SHOWMAXIMIZED, SW_SHOWMINIMIZED, SW_SHOWMINNOACTIVE, WINDOWPLACEMENT, WS_MAXIMIZE,
+            WS_MINIMIZE,
+        },
+    };
+
+    // These Windows 10 user32 APIs are not exposed by the existing windows-sys
+    // feature set. Signatures match the Win32 system ABI; RECT/HWND/BOOL reuse
+    // windows-sys types. The borrowed live Tauri HWND is only queried here and
+    // AdjustWindowRectExForDpi writes only to our initialized local RECT.
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetDpiForWindow(hwnd: HWND) -> u32;
+        fn AdjustWindowRectExForDpi(
+            rect: *mut RECT,
+            style: u32,
+            menu: BOOL,
+            ex_style: u32,
+            dpi: u32,
+        ) -> BOOL;
+    }
+
+    let hwnd = window.hwnd().ok()?.0 as HWND;
+    let mut placement: WINDOWPLACEMENT = unsafe { std::mem::zeroed() };
+    placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+    if unsafe { GetWindowPlacement(hwnd, &mut placement) } == 0 {
+        // Never fall back to the live inner size/cached maximize flag on Windows.
+        return None;
+    }
+    let show = placement.showCmd as i32;
+    if matches!(show, SW_SHOWMINIMIZED | SW_MINIMIZE | SW_SHOWMINNOACTIVE) {
+        return None;
+    }
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    if dpi == 0 {
+        return None;
+    }
+    // rcNormalPosition is an OUTER rect. Maximize/minimize style bits alter
+    // non-client metrics, so calculate the restored frame instead of subtracting
+    // the current outer/client rects. Workspace offsets cancel in width/height;
+    // no saved coordinates are used or persisted.
+    let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32 & !(WS_MAXIMIZE | WS_MINIMIZE);
+    let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32;
+    let mut frame: RECT = unsafe { std::mem::zeroed() };
+    if unsafe {
+        AdjustWindowRectExForDpi(
+            &mut frame,
+            style,
+            i32::from(!GetMenu(hwnd).is_null()),
+            ex_style,
+            dpi,
+        )
+    } == 0
+    {
+        return None;
+    }
+    let normal = placement.rcNormalPosition;
+    Some(model::capture_windows_placement(
+        previous,
+        FrameSize {
+            width: normal.right as f64 - normal.left as f64,
+            height: normal.bottom as f64 - normal.top as f64,
+        },
+        FrameSize {
+            width: frame.right as f64 - frame.left as f64,
+            height: frame.bottom as f64 - frame.top as f64,
+        },
+        dpi,
+        show == SW_SHOWMAXIMIZED,
+        false,
+    ))
 }
 
 fn schedule_capture() {
@@ -279,7 +362,7 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         return;
     }
     match event {
-        tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => {
+        tauri::WindowEvent::Resized(_) => {
             let app = window.app_handle();
             if let Some(webview) = app.get_webview_window("main") {
                 capture(&webview, false);

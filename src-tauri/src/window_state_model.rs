@@ -1,4 +1,4 @@
-// [INPUT]: 合成逻辑尺寸、DPI 比例、屏幕工作区与窗口装饰尺寸。
+// [INPUT]: 合成逻辑尺寸、Windows 恢复态外框/装饰/DPI、屏幕工作区。
 // [OUTPUT]: 有界状态校验、当前屏幕尺寸适配和居中几何；不访问 Tauri、文件或系统。
 // [POS]: 主窗口状态持久化的纯规则层，供本机窗口控制器和隔离单元测试共用。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -84,6 +84,44 @@ pub fn capture_normal_size(
         height,
         maximized,
     }
+}
+
+// WINDOWPLACEMENT owns restored bounds even while the live client is maximized.
+// Its outer rectangle and the normal-style frame are both physical pixels.
+#[cfg(any(windows, test))]
+pub fn capture_windows_placement(
+    previous: WindowState,
+    normal_outer: FrameSize,
+    normal_frame: FrameSize,
+    dpi: u32,
+    maximized: bool,
+    minimized: bool,
+) -> WindowState {
+    if minimized {
+        return previous;
+    }
+    let mut next = WindowState {
+        maximized,
+        ..previous
+    };
+    if !(48..=768).contains(&dpi)
+        || !normal_frame.width.is_finite()
+        || !normal_frame.height.is_finite()
+        || normal_frame.width < 0.0
+        || normal_frame.height < 0.0
+    {
+        return next;
+    }
+    let scale = dpi as f64 / 96.0;
+    let candidate = WindowState {
+        width: (normal_outer.width - normal_frame.width) / scale,
+        height: (normal_outer.height - normal_frame.height) / scale,
+        maximized,
+    };
+    if valid_state(candidate) {
+        next = candidate;
+    }
+    next
 }
 
 pub fn adapt_to_work_area(
@@ -205,6 +243,77 @@ mod tests {
                 maximized: false
             }
         );
+    }
+
+    #[test]
+    fn windows_placement_ignores_maximize_transition_client_size_and_cached_flag() {
+        // A move callback can see the old Tauri flag and the new maximized client.
+        let cached_maximized = false;
+        let current_client = (2560.0, 1369.0);
+        assert_eq!(
+            capture_normal_size(
+                WindowState::default(),
+                current_client.0,
+                current_client.1,
+                cached_maximized,
+                false,
+            )
+            .width,
+            2560.0
+        );
+        // Windows still retains the correct restored outer rect at 150% DPI.
+        let normal_outer = FrameSize {
+            width: 1488.0,
+            height: 1227.0,
+        };
+        let normal_frame = FrameSize {
+            width: 24.0,
+            height: 57.0,
+        };
+        for os_maximized in [false, true] {
+            assert_eq!(
+                capture_windows_placement(
+                    WindowState::default(),
+                    normal_outer,
+                    normal_frame,
+                    144,
+                    os_maximized,
+                    false,
+                ),
+                WindowState {
+                    width: 976.0,
+                    height: 780.0,
+                    maximized: os_maximized,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn windows_placement_preserves_previous_dimensions_for_minimized_or_invalid_bounds() {
+        let previous = WindowState {
+            width: 976.0,
+            height: 780.0,
+            maximized: true,
+        };
+        let outer = FrameSize {
+            width: 992.0,
+            height: 818.0,
+        };
+        let frame = FrameSize {
+            width: 16.0,
+            height: 38.0,
+        };
+        assert_eq!(
+            capture_windows_placement(previous, outer, frame, 96, false, true),
+            previous
+        );
+        for dpi in [0, 96] {
+            assert_eq!(
+                capture_windows_placement(previous, frame, frame, dpi, true, false),
+                previous
+            );
+        }
     }
 
     #[test]
