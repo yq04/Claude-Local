@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Claude 四个固定服务域名、用户触发的原生只读诊断、发行者固定的 iKuuu/Kookeey 推广链接与 AI 配置提示词及双语文案。
- * [OUTPUT]: 隐藏URL/邀请码的固定链接复制卡、精简双语Agent配置提示词与真实复制反馈，以及服务连通性四态诊断。
+ * [OUTPUT]: 隐藏URL/邀请码的固定链接复制卡、按文字自适应的统一中性按钮、精简双语Agent提示词与真实复制反馈，以及服务连通性四态诊断。
  * [POS]: 固定链接随软件分享，不接受本机自定义覆盖或外部自动导航；仅在点击检测后发起连通性探测。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -122,7 +122,7 @@ export function VpsPanel() {
               </div>
               <div className="network-action-buttons">
                 <Button
-                  variant="ink"
+                  variant="secondary"
                   size="small"
                   disabled={copyingId !== ''}
                   leftIcon={copiedId === 'ikuuu-url' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
@@ -147,7 +147,7 @@ export function VpsPanel() {
               </div>
               <div className="network-action-buttons">
                 <Button
-                  variant="ink"
+                  variant="secondary"
                   size="small"
                   disabled={copyingId !== ''}
                   leftIcon={copiedId === 'kookeey-url' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
@@ -172,7 +172,7 @@ export function VpsPanel() {
               </div>
               <div className="network-action-buttons">
                 <Button
-                  variant="ink"
+                  variant="secondary"
                   size="small"
                   disabled={copyingId !== ''}
                   leftIcon={copiedId === 'ai-prompt' ? <CheckTickCircle size={14} aria-hidden /> : undefined}

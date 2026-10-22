@@ -1605,7 +1605,10 @@ privacy.saveFailed: "Privacy could not be synchronized. The main app remains mas
 "伴生浏览器启动失败。": "Unable to start the companion browser."
 
 quotaSetup.status: "Local collection configuration"
-quota.independentWindows: "5h and 7d update independently. An expired or unobserved window stays unknown, without implying restored quota. Local estimates are not live official usage."
+quota.independentWindows: "5h and 7d update independently. A trusted server reset that has passed shows locally inferred recovery; windows without evidence remain unknown. Local estimates are not live official usage."
+identityCard.resetInferred: "Recovery estimated"
+quota.resetInferredSource: "Inferred from elapsed reset"
+quota.resetInferredHint: "The recorded server reset has passed, so 100% remaining is assumed locally. Usage on other devices cannot be verified offline. New observations replace this estimate; the next reset time is not predicted."
 quotaSetup.checking: "Checking"
 quotaSetup.unavailable: "Configuration status unavailable"
 quotaSetup.not_configured: "statusLine is not configured"

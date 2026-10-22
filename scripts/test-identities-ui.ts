@@ -1,7 +1,7 @@
 /**
  * [INPUT]: Node.js 标准管道、已锁定 playwright-core、固定引擎、Vite 与 tests/ 的虚构 Tauri IPC。
- * [OUTPUT]: 单行本地保存名与长名称重命名、隐私提示、工牌/离线额度、浏览器/网络与清理确认及真实阶段动画的双语 DOM 验收。
- * [POS]: 发布前无头行为回归；无截图、无真实账号/文件修改，不加载原生宿主，不允许外网请求。
+ * [OUTPUT]: 单行本地保存名与长名称重命名、隐私提示、工牌/离线额度、浏览器/网络与清理确认、真实阶段动画及额度重置推定恢复的双语 DOM 验收。
+ * [POS]: 发布前无头行为回归；无截图、无真实账号/文件修改，不加载原生宿主，不允许外网请求。支持 --quota-reset-only 仅运行额度重置检查。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {strict as assert} from 'node:assert';
@@ -16,6 +16,8 @@ import {testBrowserCleanup} from './test-browser-cleanup.ts';
 import {testNetworkDiagnostics} from './test-network-diagnostics.ts';
 import {testClaudeResidue} from './test-claude-residue.ts';
 import {testIdentityOperation} from './test-identity-operation.ts';
+import {testQuotaReset} from './test-quota-reset.ts';
+const quotaResetOnly=process.argv.includes('--quota-reset-only');
 const engine=process.platform==='darwin'?'Browser.app/Contents/MacOS/Chromium':process.platform==='win32'?'WindowsBrowser/chrome.exe':'LinuxBrowser/chrome';
 const server=await createServer({server:{host:'127.0.0.1',port:0,strictPort:false,watch:{ignored:['**/src-tauri/**','**/browser-runtime/**','**/releases/**','**/dist/**']}},optimizeDeps:{include:['@tauri-apps/api/mocks']}});
 await server.listen();
@@ -31,7 +33,11 @@ try{browser=await chromium.launch({executablePath:resolve('browser-runtime',engi
 catch(error){await server.close();await rm(temporary,{recursive:true,force:true});throw error;}
 let checks=0;
 try{
- const context=await browser.newContext({viewport:{width:1040,height:820},reducedMotion:'no-preference'});
+ if(quotaResetOnly){
+  checks+=await testQuotaReset(browser,base);
+  console.log(`${checks} quota reset UI simulation checks passed; no native commands or user data used.`);
+ }else{
+  const context=await browser.newContext({viewport:{width:1040,height:820},reducedMotion:'no-preference'});
  await context.route('**/*',route=>route.request().url().startsWith(base+'/')?route.continue():route.abort());
  const page=await context.newPage();page.setDefaultTimeout(10000);
  const errors:string[]=[];page.on('console',message=>{if(message.type()==='error')console.error(message.text());});page.on('pageerror',error=>{errors.push(error.message);console.error(error.message);});
@@ -192,5 +198,7 @@ try{
  checks+=await testClaudeResidue(browser,base);
  checks+=await testIdentityOperation(browser,base);
  checks+=await testBrowserProfiles(resolve('browser-runtime',engine),base,temporary,env);
- console.log(`${checks} identity, browser and network UI simulation checks passed; no native commands or user data used.`);
+  checks+=await testQuotaReset(browser,base);
+  console.log(`${checks} identity, browser, network and quota reset UI simulation checks passed; no native commands or user data used.`);
+ }
 }finally{await browser.close();await server.close();await rm(temporary,{recursive:true,force:true});}

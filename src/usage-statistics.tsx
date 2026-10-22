@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Native numeric usage aggregates, shared locale and display/privacy preferences.
- * [OUTPUT]: Compact account filters, fallback-attributed metrics, responsive trend/model panels and sortable time-bucket detail views; period and chart/data switches use Cromma Tabs, the method note uses Disclosure.
+ * [OUTPUT]: Label-sized account filters, fallback-attributed metrics, responsive trend/model panels and sortable time-bucket views; period and chart/data switches use Cromma Tabs, the method note uses Disclosure.
  * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh, no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -102,7 +102,7 @@ export function UsageStatisticsPanel() {
           <div className="usage-period-filter"><span className="usage-filter-label">{t('usage.periodFilter')}</span>
           <Tabs aria-label={t('usage.periodFilter')} className="usage-periods" value={period} onValueChange={value => setPeriod(value as UsagePeriod)} tabs={periods.map(([value, label]) => ({value, label: t(label)}))} />
           </div>
-          <div className="usage-account-filter"><span className="usage-filter-label">{t('usage.accountFilter')}</span><Select aria-label={t('usage.accountFilter')} size="medium" value={account} onValueChange={setAccount} items={[{value: 'all', label: t('usage.allAccounts')}, ...accounts.map(row => ({value: row.id, label: row.name}))]} /></div>
+          <div className="usage-account-filter"><span className="usage-filter-label">{t('usage.accountFilter')}</span><Select aria-label={t('usage.accountFilter')} size="small" value={account} onValueChange={setAccount} items={[{value: 'all', label: t('usage.allAccounts')}, ...accounts.map(row => ({value: row.id, label: row.name}))]} /></div>
         </div>
         <div className="usage-filter-footer"><div className="usage-context"><strong>{range}</strong></div>{(period !== 'all' || account !== 'all') && <Button variant="ghost" size="small" onClick={() => {setPeriod('all'); setAccount('all');}}>{t('usage.resetFilters')}</Button>}</div>
         </div>

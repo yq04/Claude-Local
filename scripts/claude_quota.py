@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# [INPUT]: Passive statusLine data, isolated account evidence and the bounded sibling Rust quota protocol.
+# [OUTPUT]: Serialized atomic quota ledger/SQLite summaries with explicit trusted-reset inference and original observations.
+# [POS]: Sole quota-ledger writer; standalone legacy rules mirror Rust without polling or editing Claude configuration.
+# [PROTOCOL]: Update scripts/CLAUDE.md when changing window evidence or persistence behavior.
 """
 claude-quota v6: passive quota collector with the bundled Rust window-state core
 融合 GitHub 开源标杆架构 (ryoppippi/ccusage + Maciek-roboblog/Claude-Code-Usage-Monitor + sirmalloc/ccstatusline + Haleclipse/CCometixLine):
@@ -8,7 +12,7 @@ claude-quota v6: passive quota collector with the bundled Rust window-state core
 2. Claude Code 2.1.302 内核级 qHr 精确计费表: 完整对齐 opus-5-5 ($4/$20/$5/$8/$0.20)、haiku-5-5 ($0.10/$0.50)、
    opus-4-7/4-8 ($5/$25)、sonnet-5-5 ($2/$10/$0.10) 及 US 推理倍率 (1.1x)；
 3. 跨文件全局 (message.id, requestId) 去重 + 单账号快照自适应标定 (Adaptive Window Calibration)；
-4. Python remains the sole ledger/SQLite writer and preserves its lock/atomic replacement. The packaged collector calls the sibling claude-local.exe with bounded JSON for shared Rust window merging; standalone script use without that executable reports and retains the explicit legacy_python path. No statusLine configuration is changed.
+4. Python remains the sole ledger/SQLite writer and preserves its lock/atomic replacement. The packaged collector calls the sibling claude-local.exe with bounded JSON for shared Rust window merging; standalone script use without that executable reports and retains the explicit legacy_python path. Trusted elapsed server resets retain their original boundary/observation as reset_inferred, never as a new server observation. No statusLine configuration is changed.
 """
 import sys
 import os
@@ -31,7 +35,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 # 同时支持从各账号自身官方快照窗口内真实会话流自动计算自适应费率 (Adaptive Calibration)
 PRO_WEEKLY_COST_USD = 242.5
 PRO_5H_COST_USD = 32.0
-CURRENT_QUOTA_VERSION = 5
+CURRENT_QUOTA_VERSION = 6
+QUOTA_SOURCES = ("server_anchor", "local_estimate", "reset_inferred", "unknown")
 
 
 def quota_identity(account: dict) -> str | None:
@@ -102,7 +107,7 @@ def window_fetched_at_ms(anchor: dict | None, window: str) -> int:
 
 
 def aggregate_quota_source(s5: str | None, s7: str | None) -> str:
-    return s5 if s5 == s7 and s5 in ("server_anchor", "local_estimate", "unknown") else "unknown"
+    return s5 if s5 == s7 and s5 in QUOTA_SOURCES else "unknown"
 
 
 def aggregate_observed_at_ms(t5: int | None, t7: int | None) -> int | None:
@@ -135,7 +140,7 @@ def _state_to_core(state: tuple) -> dict:
     return {"used": used, "reset_at": reset, "source": source, "observed_at_ms": observed}
 
 
-def _state_from_core(state) -> tuple:
+def _state_from_core(state, now_sec: int | None = None) -> tuple:
     if not isinstance(state, dict) or set(state) != {"used", "reset_at", "source", "observed_at_ms"}:
         raise QuotaCoreError("quota core returned an invalid window state")
     used, reset, source, observed = (state.get("used"), state.get("reset_at"), state.get("source"),
@@ -144,26 +149,50 @@ def _state_from_core(state) -> tuple:
         raise QuotaCoreError("quota core returned invalid usage")
     if reset is not None and (type(reset) is not int or not 0 <= reset <= 253402300799):
         raise QuotaCoreError("quota core returned invalid reset time")
-    if source not in ("server_anchor", "local_estimate", "unknown"):
+    if source not in QUOTA_SOURCES:
         raise QuotaCoreError("quota core returned invalid source")
     if observed is not None and (type(observed) is not int or not 0 <= observed <= 253402300799999):
         raise QuotaCoreError("quota core returned invalid observation time")
     if (used is None) != (source == "unknown") or (source == "unknown" and reset is not None):
         raise QuotaCoreError("quota core returned inconsistent window state")
+    if source == "reset_inferred" and not (
+            used == 0 and reset is not None and observed is not None and 0 < observed < reset * 1000
+            and (now_sec is None or reset <= now_sec)):
+        raise QuotaCoreError("quota core returned invalid reset inference")
+    return used, reset, source, observed
+
+
+def _normalize_window_state(state: tuple, now_sec: int) -> tuple:
+    """Mirror the pure Rust rules only for the explicit standalone compatibility path."""
+    used, reset, source, observed = state
+    observed = observed if observed is not None and observed > 0 else None
+    elapsed_evidence = (reset is not None and reset <= now_sec and observed is not None
+                        and observed < reset * 1000)
+    if source == "reset_inferred":
+        return (0, reset, source, observed) if used == 0 and elapsed_evidence else (None, None, "unknown", observed)
+    if source == "server_anchor" and used is not None and elapsed_evidence:
+        return 0, reset, "reset_inferred", observed
+    if source == "unknown" or used is None or reset is None or reset <= now_sec:
+        return None, None, "unknown", observed
     return used, reset, source, observed
 
 
 def _legacy_merge_window_state(current: tuple, candidate: tuple, now_sec: int) -> tuple:
     """Python-only compatibility path used only when the bundled core is absent."""
-    cu, cr, cs, ct = current
-    nu, nr, ns, nt = candidate
-    current = (None, None, "unknown", ct) if cs == "unknown" or cu is None or cr is None or cr <= now_sec else current
-    candidate = (None, None, "unknown", nt) if ns == "unknown" or nu is None or nr is None or nr <= now_sec else candidate
+    original_source = current[2]
+    current = _normalize_window_state(current, now_sec)
+    candidate = _normalize_window_state(candidate, now_sec)
     cu, cr, cs, ct = current
     nu, nr, ns, nt = candidate
     if nu is None or ns == "unknown":
         return current
+    if ns == "reset_inferred" and original_source == "local_estimate":
+        return current
+    if cs == "reset_inferred" and ns == "local_estimate" and nr is not None and nr > now_sec:
+        return candidate
     if cu is None or cs == "unknown":
+        if ct is not None and nt is not None and nt < ct:
+            return current
         return candidate
     if ct is None and cs == "local_estimate":
         return current
@@ -216,19 +245,51 @@ def merge_window_states(current_states: list[tuple], candidate_states: list[tupl
             or not isinstance(response.get("items"), list)
             or len(response["items"]) != len(current_states)):
         raise QuotaCoreError("quota core returned an invalid response shape")
-    return [_state_from_core(item) for item in response["items"]]
+    return [_state_from_core(item, int(now_sec)) for item in response["items"]]
 
 
-def entry_window_state(entry: dict, suffix: str, window: str) -> tuple[int | None, int | None, str, int | None]:
+def _expired_anchor_state(entry: dict, suffix: str, window: str, now_sec: int) -> tuple | None:
+    """Recover an erased window only from its original, same-account server boundary."""
+    if entry.get(f"quota_{suffix}_source") == "local_estimate" or (
+            entry.get(f"quota_{suffix}_source") is None and entry.get("quota_source") == "local_estimate"):
+        return None
+    anchor = entry.get("server_anchor")
+    if not isinstance(anchor, dict) or not anchor.get("accountUuid"):
+        return None
+    if entry.get("account_uuid") and entry["account_uuid"] != anchor["accountUuid"]:
+        return None
+    raw = (anchor.get("utilization") or {}).get(window)
+    if not isinstance(raw, dict):
+        return None
+    try:
+        raw_used = float(raw.get("utilization"))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not 0 <= raw_used <= 100:
+        return None
+    reset_dt = parse_reset_dt(raw.get("resets_at"))
+    if reset_dt is None:
+        return None
+    reset = int(reset_dt.timestamp())
+    observed_windows = entry.get("server_anchor_observed_windows")
+    if not raw.get("fetchedAtMs") and isinstance(observed_windows, list) and window not in observed_windows:
+        return None
+    observed = window_fetched_at_ms(anchor, window)
+    if not (0 < observed < reset * 1000 and reset <= now_sec):
+        return None
+    return 0, reset, "reset_inferred", observed
+
+
+def entry_window_state(entry: dict, suffix: str, window: str, now_sec: int | None = None) -> tuple[int | None, int | None, str, int | None]:
     """Read one persisted window, retaining legacy global provenance only for compatible entries."""
     anchor = entry.get("server_anchor") if isinstance(entry.get("server_anchor"), dict) else {}
     util = anchor.get("utilization") if isinstance(anchor.get("utilization"), dict) else {}
     anchor_window = util.get(window) if isinstance(util.get(window), dict) else {}
-    explicit_source = entry.get(f"quota_{suffix}_source") in ("server_anchor", "local_estimate", "unknown")
+    explicit_source = entry.get(f"quota_{suffix}_source") in QUOTA_SOURCES
     source = entry.get(f"quota_{suffix}_source")
-    if source not in ("server_anchor", "local_estimate", "unknown"):
+    if source not in QUOTA_SOURCES:
         source = entry.get("quota_source")
-        if source not in ("server_anchor", "local_estimate", "unknown"):
+        if source not in QUOTA_SOURCES:
             source = "server_anchor" if anchor_fetched_at_ms(anchor) or anchor_window else "unknown"
     observed = entry.get(f"quota_{suffix}_observed_at_ms")
     if not (isinstance(observed, (int, float)) and observed > 0):
@@ -251,17 +312,26 @@ def entry_window_state(entry: dict, suffix: str, window: str) -> tuple[int | Non
         reset = int(reset) if reset is not None else None
     except (TypeError, ValueError, OverflowError):
         used, reset = None, None
+    now_sec = int(time.time()) if now_sec is None else int(now_sec)
+    if source == "reset_inferred":
+        inferred = _expired_anchor_state(entry, suffix, window, now_sec)
+        if inferred is not None and used == 0 and reset == inferred[1] and observed == inferred[3]:
+            return inferred
+        return None, None, "unknown", int(observed) if observed else None
     if source == "unknown" or used is None:
+        inferred = _expired_anchor_state(entry, suffix, window, now_sec)
+        if inferred is not None and (observed is None or inferred[3] >= observed):
+            return inferred
         return None, None, "unknown", int(observed) if observed else None
     return used, reset, source, int(observed) if observed else None
 
 
-def info_window_state(info: dict, suffix: str, window: str) -> tuple[int | None, int | None, str, int | None]:
+def info_window_state(info: dict, suffix: str, window: str, now_sec: int | None = None) -> tuple[int | None, int | None, str, int | None]:
     used = info.get(f"used_{suffix}")
     reset = info.get(f"reset_{suffix}_ts")
     source = info.get(f"quota_{suffix}_source")
-    explicit_source = source in ("server_anchor", "local_estimate", "unknown")
-    if source not in ("server_anchor", "local_estimate", "unknown"):
+    explicit_source = source in QUOTA_SOURCES
+    if source not in QUOTA_SOURCES:
         source = info.get("quota_source")
     observed = info.get(f"quota_{suffix}_observed_at_ms")
     if not (isinstance(observed, (int, float)) and observed > 0):
@@ -273,10 +343,14 @@ def info_window_state(info: dict, suffix: str, window: str) -> tuple[int | None,
         reset = int(reset) if reset is not None else None
     except (TypeError, ValueError, OverflowError):
         used, reset = None, None
-    if source not in ("server_anchor", "local_estimate", "unknown"):
+    if source not in QUOTA_SOURCES:
         source = "server_anchor" if used is not None and anchor_fetched_at_ms(info.get("server_anchor")) else ("local_estimate" if used is not None else "unknown")
     if used is None:
         source = "unknown"
+    if source == "unknown":
+        inferred = _expired_anchor_state(info, suffix, window, int(time.time()) if now_sec is None else int(now_sec))
+        if inferred is not None and (observed is None or inferred[3] >= observed):
+            return inferred
     return used, reset, source, int(observed) if isinstance(observed, (int, float)) and observed > 0 else None
 
 
@@ -854,10 +928,17 @@ def format_account(
                 state = (q[used_key], local_reset, "local_estimate", observed_local)
             else:
                 state = (None, None, "unknown", observed)
+                inferred = _expired_anchor_state(
+                    {"server_anchor": candidate_anchor, "account_uuid": acc.get("accountUuid")},
+                    suffix, window, int(now_utc.timestamp()))
+                if inferred is not None:
+                    state = inferred
         used, reset, source, observed = state
         q[used_key] = used
         q[f"rem_{suffix}"] = max(0, 100 - used) if used is not None else None
         q[reset_key] = reset
+        if source == "reset_inferred":
+            q[f"note_{suffix}"] = "预计已恢复"
         window_results[suffix] = state
     quota_source = aggregate_quota_source(window_results["5h"][2], window_results["7d"][2])
     if all(window_results[s][0] is not None for s in ("5h", "7d")):
@@ -914,8 +995,8 @@ def apply_ledger_fallback_to_account(info: dict, ledger_accounts: dict, saved_at
 
     now_sec = int(now_utc.timestamp())
     suffixes = [suffix for suffix, _ in QUOTA_WINDOWS]
-    current_states = [info_window_state(info, suffix, window) for suffix, window in QUOTA_WINDOWS]
-    candidate_states = [entry_window_state(entry, suffix, window) for suffix, window in QUOTA_WINDOWS]
+    current_states = [info_window_state(info, suffix, window, now_sec) for suffix, window in QUOTA_WINDOWS]
+    candidate_states = [entry_window_state(entry, suffix, window, now_sec) for suffix, window in QUOTA_WINDOWS]
     merged_states = merge_window_states(current_states, candidate_states, now_sec)
     merged = {}
     for (suffix, _), state in zip(QUOTA_WINDOWS, merged_states):
@@ -928,6 +1009,8 @@ def apply_ledger_fallback_to_account(info: dict, ledger_accounts: dict, saved_at
         info[f"rem_{suffix}"] = max(0, 100 - used) if used is not None else None
         if used is None:
             info[f"note_{suffix}"] = "额度未知"
+        elif source == "reset_inferred":
+            info[f"note_{suffix}"] = "预计已恢复"
         else:
             reset_dt = datetime.fromtimestamp(reset, tz=timezone.utc)
             diff = (reset_dt - now_utc).total_seconds()
@@ -1066,7 +1149,7 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                     previous_window = dict(previous_utilization[window])
                     previous_window.setdefault("fetchedAtMs", previous_window_ms or anchor_fetched_at_ms(prev_anchor))
                     utilization[window] = previous_window
-                    old_used, old_reset, old_source, old_observed = entry_window_state(prev_entry, suffix, window)
+                    old_used, old_reset, old_source, old_observed = entry_window_state(prev_entry, suffix, window, now_sec)
                     item[f"used_{suffix}"] = old_used
                     item[f"reset_{suffix}_ts"] = old_reset
                     item[f"quota_{suffix}_source"] = old_source
@@ -1076,8 +1159,8 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 incoming_anchor = prev_anchor
             else:
                 incoming_anchor = {**incoming_anchor, "fetchedAtMs": merged_anchor_ms, "utilization": utilization}
-        current_states = [entry_window_state(prev_entry, suffix, window) for suffix, window in QUOTA_WINDOWS]
-        incoming_states = [info_window_state(item, suffix, window) for suffix, window in QUOTA_WINDOWS]
+        current_states = [entry_window_state(prev_entry, suffix, window, now_sec) for suffix, window in QUOTA_WINDOWS]
+        incoming_states = [info_window_state(item, suffix, window, now_sec) for suffix, window in QUOTA_WINDOWS]
         merged_values = merge_window_states(current_states, incoming_states, now_sec)
         merged_states = {suffix: state for (suffix, _), state in zip(QUOTA_WINDOWS, merged_values)}
         for suffix, _ in QUOTA_WINDOWS:
@@ -1522,6 +1605,7 @@ def select_best_relay_candidate(valid_accounts: list[dict], now_sec: int, hyster
         for a in valid_accounts
         if a.get("role") == "saved"
         and a.get("auth_status") != "expired"
+        and all(a.get(f"quota_{suffix}_source") != "reset_inferred" for suffix, _ in QUOTA_WINDOWS)
         and int(a.get("effective_rem") or 0) > 0
     ]
 

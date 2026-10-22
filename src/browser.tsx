@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Cromma UI、原生浏览器命令、带回报时间的真实观测事件、共用地区契约与共享活动日志和 YAML 文案。
- * [OUTPUT]: 按部就班三步式浏览器环境控制台（01 启动与默认浏览器授权、02 目标地区环境核验与一键对齐、03 日常释放缓存与排障重置）及默认折叠的指纹与代理高级设置。
+ * [OUTPUT]: 使用统一中性操作按钮的浏览器环境控制台（启动与默认浏览器授权、目标地区核验与对齐、缓存释放与排障重置）及默认折叠的高级设置；危险确认保留警告色。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -157,7 +157,7 @@ export function BrowserPanel({ onBusy }: {
                         )}
                     </div>
                     <div className="network-action-buttons">
-                        <Button variant="ink" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
+                        <Button variant="secondary" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
                             {state?.running ? t("重新打开实测页") : t("打开浏览器并实测")}
                         </Button>
                         {state?.running && (
@@ -232,7 +232,7 @@ export function BrowserPanel({ onBusy }: {
                             </div>
                             <p>{t("安全清理网页图片与脚本缓存，保留 Claude 登录状态、书签与密码（需先关闭浏览器）。")}</p>
                         </div>
-                        <Button variant="ink" size="small" disabled={disabled || state?.running || !cache.length || !!state?.cache_error} loading={busy === 'browser_clear'} onClick={() => void act('browser_clear', { includeSiteData: false })}>{t("一键清理缓存")}</Button>
+                        <Button variant="secondary" size="small" disabled={disabled || state?.running || !cache.length || !!state?.cache_error} loading={busy === 'browser_clear'} onClick={() => void act('browser_clear', { includeSiteData: false })}>{t("一键清理缓存")}</Button>
                     </div>
                     <div className="browser-scenario-card">
                         <div className="browser-scenario-copy">
@@ -283,14 +283,14 @@ export function BrowserPanel({ onBusy }: {
                         </div>
                     )}
                     <div className="system-card-actions">
-                        <Button variant="ink" size="small" disabled={disabled || state?.running || !changed} loading={busy === 'browser_save'} onClick={() => draft && void act('browser_save', { config: draft })}>{t("保存设置")}</Button>
+                        <Button variant="secondary" size="small" disabled={disabled || state?.running || !changed} loading={busy === 'browser_save'} onClick={() => draft && void act('browser_save', { config: draft })}>{t("保存设置")}</Button>
                     </div>
                 </div>
             </Disclosure>
         </div>
 
         <CleanupActivity activity={activity.state} />
-        <AppDialog alert={confirm === 'reset'} className={confirm === 'reset' ? 'identity-delete-alert' : undefined} open={confirm !== null} onOpenChange={v => { if (!v) { setConfirm(null); setAccepted(false); } }} title={confirm === 'reset' ? t("全清理浏览器") : t("对齐美国系统环境")} description={confirm === 'reset' ? t("永久删除当前身份的全部本地浏览器资料，不创建备份。") : t("先核验代理实际在美国，再将机器时区设为出口时区、首选语言设为 en-US、区域设为 en_US，并关闭系统定位。时区可能需要管理员授权。")} footer={<><Button variant="secondary" data-dialog-cancel onClick={() => { setConfirm(null); setAccepted(false); }}>{t("取消")}</Button><Button className={confirm === 'reset' ? 'identity-delete-button' : undefined} variant="ink" disabled={!!busy || (confirm === 'reset' && !accepted)} onClick={() => { const action = confirm; if (action === 'reset' && !accepted) return; setConfirm(null); setAccepted(false); void act(action === 'reset' ? 'browser_clear' : 'browser_align', action === 'reset' ? { includeSiteData: true, resetProfile: true } : {}); }}>{confirm === 'reset' ? t("确认全清理") : t("检测并应用")}</Button></>}>
+        <AppDialog alert={confirm === 'reset'} className={confirm === 'reset' ? 'identity-delete-alert' : undefined} open={confirm !== null} onOpenChange={v => { if (!v) { setConfirm(null); setAccepted(false); } }} title={confirm === 'reset' ? t("全清理浏览器") : t("对齐美国系统环境")} description={confirm === 'reset' ? t("永久删除当前身份的全部本地浏览器资料，不创建备份。") : t("先核验代理实际在美国，再将机器时区设为出口时区、首选语言设为 en-US、区域设为 en_US，并关闭系统定位。时区可能需要管理员授权。")} footer={<><Button variant="secondary" data-dialog-cancel onClick={() => { setConfirm(null); setAccepted(false); }}>{t("取消")}</Button><Button className={confirm === 'reset' ? 'identity-delete-button' : undefined} variant="secondary" disabled={!!busy || (confirm === 'reset' && !accepted)} onClick={() => { const action = confirm; if (action === 'reset' && !accepted) return; setConfirm(null); setAccepted(false); void act(action === 'reset' ? 'browser_clear' : 'browser_align', action === 'reset' ? { includeSiteData: true, resetProfile: true } : {}); }}>{confirm === 'reset' ? t("确认全清理") : t("检测并应用")}</Button></>}>
             {confirm === 'reset' ? <div className="identity-confirm"><div className="identity-delete-warning"><span aria-hidden="true">!</span><strong>{t("警告：此操作不可撤销，不会创建新备份。")}</strong></div><p>{t("登录状态、密码与密钥、书签、历史、扩展、设置和缓存将全部移除。")}</p><p>{t("其他身份的浏览器资料和身份保险库不受影响。")}</p><Checkbox checked={accepted} onCheckedChange={value => setAccepted(value === true)} label={t("我知道此操作无法撤销")} /></div> : <p>{t("不会修改代理节点。若机器与浏览器出口不同，需在代理工具中统一系统路由。更改系统语言后，部分应用需重新启动或注销。")}</p>}
         </AppDialog>
     </section>;

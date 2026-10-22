@@ -1,6 +1,6 @@
 // [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话账单增量、本地 settings.json 代理环境变量、只读外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据；当前无可信订阅到期来源。
-// [OUTPUT]: 当前本地身份与已保存身份的脱敏摘要（用户名/邮箱/组织/套餐档位/OAuth有效状态/可选订阅到期/专属代理/逐窗离线5h与7d额度、来源、真实观测时间及重置时间戳）及有界活动会话列表；保留旧聚合来源/观测时间，不输出令牌、不联网验证账号。
-// [POS]: 身份卡片的只读展示边界；账号匹配与旧格式适配留在此处，逐窗合并/过期/聚合复用 quota_core；归档时间不代表额度新鲜度，账本只读且不匹配项不污染摘要。
+// [OUTPUT]: 当前本地身份与已保存身份的脱敏摘要（用户名/邮箱/组织/套餐档位/OAuth有效状态/可选订阅到期/专属代理/逐窗离线5h与7d额度、含 reset_inferred 来源、真实观测时间及重置时间戳）及有界活动会话列表；保留旧聚合来源/观测时间，不输出令牌、不联网验证账号。
+// [POS]: 身份卡片的只读展示边界；账号匹配与旧格式适配留在此处，逐窗合并/过期/推定恢复/聚合复用 quota_core；归档时间不代表额度新鲜度，账本只读且不匹配项不污染摘要。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -60,7 +60,7 @@ pub struct Current {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_expires_at: Option<u64>,
 }
-pub const CURRENT_QUOTA_VERSION: u8 = 5;
+pub const CURRENT_QUOTA_VERSION: u8 = 6;
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Summary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -125,9 +125,9 @@ impl Summary {
                 self.quota_7d_observed_at_ms.or(self.quota_observed_at_ms);
         }
         expire_window(&mut self.quota_7d_used, &mut self.quota_7d_reset_at,
-            &mut self.quota_7d_source, now_sec);
+            &mut self.quota_7d_source, self.quota_7d_observed_at_ms, now_sec);
         expire_window(&mut self.quota_5h_used, &mut self.quota_5h_reset_at,
-            &mut self.quota_5h_source, now_sec);
+            &mut self.quota_5h_source, self.quota_5h_observed_at_ms, now_sec);
         if self.quota_5h_source.is_some() || self.quota_7d_source.is_some() {
             self.quota_source = aggregate_source(self.quota_5h_source, self.quota_7d_source);
         }
@@ -857,6 +857,22 @@ fn set_quota_evidence(cj: &Value, result: &ExtractedQuota, now_sec: u64, current
     );
     current.quota_5h_observed_at_ms = quota_window_observed_at(cj, "five_hour");
     current.quota_7d_observed_at_ms = quota_window_observed_at(cj, "seven_day");
+    if !result.used_5h.is_some_and(|_| result.reset_5h.is_some_and(|r| r > now_sec)) {
+        if let Some((reset, observed)) = cached_reset_inference(cj, "five_hour", now_sec) {
+            current.quota_5h_used = Some(0);
+            current.quota_5h_reset_at = Some(reset);
+            current.quota_5h_source = Some(QuotaSource::ResetInferred);
+            current.quota_5h_observed_at_ms = Some(observed);
+        }
+    }
+    if !result.used_7d.is_some_and(|_| result.reset_7d.is_some_and(|r| r > now_sec)) {
+        if let Some((reset, observed)) = cached_reset_inference(cj, "seven_day", now_sec) {
+            current.quota_7d_used = Some(0);
+            current.quota_7d_reset_at = Some(reset);
+            current.quota_7d_source = Some(QuotaSource::ResetInferred);
+            current.quota_7d_observed_at_ms = Some(observed);
+        }
+    }
     current.quota_source = aggregate_source(current.quota_5h_source, current.quota_7d_source);
     current.quota_observed_at_ms = max_observation(
         current.quota_5h_observed_at_ms,
@@ -887,11 +903,50 @@ fn set_summary_quota_evidence(
     );
     summary.quota_5h_observed_at_ms = quota_window_observed_at(cj, "five_hour");
     summary.quota_7d_observed_at_ms = quota_window_observed_at(cj, "seven_day");
+    if !result.used_5h.is_some_and(|_| result.reset_5h.is_some_and(|r| r > now_sec)) {
+        if let Some((reset, observed)) = cached_reset_inference(cj, "five_hour", now_sec) {
+            summary.quota_5h_used = Some(0);
+            summary.quota_5h_reset_at = Some(reset);
+            summary.quota_5h_source = Some(QuotaSource::ResetInferred);
+            summary.quota_5h_observed_at_ms = Some(observed);
+        }
+    }
+    if !result.used_7d.is_some_and(|_| result.reset_7d.is_some_and(|r| r > now_sec)) {
+        if let Some((reset, observed)) = cached_reset_inference(cj, "seven_day", now_sec) {
+            summary.quota_7d_used = Some(0);
+            summary.quota_7d_reset_at = Some(reset);
+            summary.quota_7d_source = Some(QuotaSource::ResetInferred);
+            summary.quota_7d_observed_at_ms = Some(observed);
+        }
+    }
     summary.quota_source = aggregate_source(summary.quota_5h_source, summary.quota_7d_source);
     summary.quota_observed_at_ms = max_observation(
         summary.quota_5h_observed_at_ms,
         summary.quota_7d_observed_at_ms,
     );
+}
+
+fn cached_reset_inference(cj: &Value, window: &str, now_sec: u64) -> Option<(u64, u64)> {
+    let account_uuid = cj
+        .pointer("/oauthAccount/accountUuid")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())?;
+    let cache = cj.get("cachedUsageUtilization")?;
+    if cache.get("accountUuid").and_then(Value::as_str) != Some(account_uuid) {
+        return None;
+    }
+    let window_value = cache.pointer(&format!("/utilization/{window}"))?;
+    let used = window_value.get("utilization").and_then(Value::as_f64)?;
+    if !used.is_finite() || !(0.0..=100.0).contains(&used) {
+        return None;
+    }
+    let reset = window_value.get("resets_at").and_then(parse_reset_value)?;
+    let observed = window_value
+        .get("fetchedAtMs")
+        .and_then(Value::as_u64)
+        .or_else(|| cache.get("fetchedAtMs").and_then(Value::as_u64))
+        .filter(|value| *value > 0)?;
+    (reset <= now_sec && observed / 1000 < reset).then_some((reset, observed))
 }
 // The statusLine collector is the sole ledger writer. UI reads must never replace
 // a newer server anchor with an estimate derived from an older official cache.
@@ -1045,6 +1100,7 @@ fn ledger_window_value(
     let source = match explicit_source {
         Some("server_anchor") => QuotaSource::ServerAnchor,
         Some("local_estimate") => QuotaSource::LocalEstimate,
+        Some("reset_inferred") => QuotaSource::ResetInferred,
         Some(_) => QuotaSource::Unknown,
         None if global_source == Some("local_estimate") => QuotaSource::LocalEstimate,
         None if anchor_window.is_some() => QuotaSource::ServerAnchor,
@@ -1073,10 +1129,71 @@ fn ledger_window_value(
         (used, reset)
     };
     let observed = ledger_window_observed_at(entry, window)?;
-    if reset <= now_sec {
+    if source == QuotaSource::ResetInferred {
+        let raw_anchor = ledger_reset_inferred_value(entry, window, now_sec)?;
+        if used != 0
+            || reset > now_sec
+            || observed / 1000 >= reset
+            || raw_anchor.1 != reset
+            || raw_anchor.2 != observed
+        {
+            return None;
+        }
+    } else if reset <= now_sec {
         return None;
     }
     Some((used.min(100) as u8, reset, observed, source))
+}
+
+fn ledger_reset_inferred_value(
+    entry: &Value,
+    window: &str,
+    now_sec: u64,
+) -> Option<(u8, u64, u64, QuotaSource)> {
+    let suffix = if window == "five_hour" { "5h" } else { "7d" };
+    let explicit_source = entry
+        .get(format!("quota_{suffix}_source"))
+        .and_then(Value::as_str);
+    if explicit_source == Some("local_estimate") {
+        return None;
+    }
+    if explicit_source.is_none()
+        && entry.get("quota_source").and_then(Value::as_str) == Some("local_estimate")
+    {
+        return None;
+    }
+    let anchor = entry.get("server_anchor")?;
+    let anchor_uuid = anchor.get("accountUuid").and_then(Value::as_str)?;
+    if let Some(account_uuid) = entry.get("account_uuid").and_then(Value::as_str) {
+        if account_uuid != anchor_uuid {
+            return None;
+        }
+    }
+    let anchor_window = anchor.pointer(&format!("/utilization/{window}"))?;
+    let _used = anchor_window
+        .get("utilization")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))?;
+    let reset = anchor_window.get("resets_at").and_then(parse_reset_value)?;
+    let observed = anchor_window
+        .get("fetchedAtMs")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            let observed_windows = entry
+                .get("server_anchor_observed_windows")
+                .and_then(Value::as_array);
+            let explicitly_included = observed_windows
+                .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(window)));
+            if observed_windows.is_some() && !explicitly_included {
+                return None;
+            }
+            anchor.get("fetchedAtMs").and_then(Value::as_u64)
+        })
+        .filter(|value| *value > 0)?;
+    if reset > now_sec || observed / 1000 >= reset {
+        return None;
+    }
+    Some((0, reset, observed, QuotaSource::ResetInferred))
 }
 
 fn merge_summary_window(
@@ -1154,7 +1271,8 @@ pub(super) fn apply_ledger_to_summary(
         &mut summary.quota_5h_reset_at,
         &mut summary.quota_5h_source,
         &mut summary.quota_5h_observed_at_ms,
-        ledger_window_value(entry, "five_hour", now_sec),
+        ledger_window_value(entry, "five_hour", now_sec)
+            .or_else(|| ledger_reset_inferred_value(entry, "five_hour", now_sec)),
         now_sec,
     );
     let merged_7d = merge_summary_window(
@@ -1162,7 +1280,8 @@ pub(super) fn apply_ledger_to_summary(
         &mut summary.quota_7d_reset_at,
         &mut summary.quota_7d_source,
         &mut summary.quota_7d_observed_at_ms,
-        ledger_window_value(entry, "seven_day", now_sec),
+        ledger_window_value(entry, "seven_day", now_sec)
+            .or_else(|| ledger_reset_inferred_value(entry, "seven_day", now_sec)),
         now_sec,
     );
     if merged_5h || merged_7d {

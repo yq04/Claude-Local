@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 随机令牌回环服务上下文、浏览器原生 navigator/Intl/Permissions 与实际 HTTPS 出口与服务备援目录与宿主界面语言。
- * [OUTPUT]: 单项未知黄色待测与已知冲突红叉； 顶部本地身份工牌与绑定/不匹配/未知状态、全宽紧凑实测起始页，同步宿主中英文界面，显示本机通讯状态与回报时间，观测上报宿主；逐项原因和实际/目标对比，检测中黄底波纹、失败红底、完整通过绿底大对勾。
+ * [OUTPUT]: 单项未知黄色待测与已知冲突红叉；顶部身份工牌、紧凑实测起始页与统一中性操作按钮，同步宿主双语及通讯/回报时间；逐项原因和实际/目标对比，检测中黄底波纹、失败红底、完整通过绿底大对勾。
  * [POS]: 独立 Chromium 入口，复用工具箱控件；成功状态只由真实观测决定，不接入 Tauri 权限，不伪造地理位置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -84,7 +84,7 @@ function Start() {
       <section className="verification-banner" aria-labelledby="verification-title" aria-busy={busy}>
        <div className="verification-signal" aria-hidden="true"><i/><i/><svg viewBox="0 0 96 96"><circle cx="48" cy="48" r="44" fill="currentColor"/>{phase==='passed'?<path d="m27 49 14 14 28-31"/>:phase==='failed'?<path d="m34 34 28 28m0-28L34 62"/>:<><path d="M48 27v23"/><circle cx="48" cy="65" r="3" fill="white" stroke="none"/></>}</svg></div>
        <div className="verification-title" aria-live="polite"><span>{t('浏览器环境')}</span><h1 id="verification-title">{t(title)}</h1>{!busy&&<span>{t('已通过 {v0} / {v1} 项',{v0:checks.filter(check=>check.ok).length,v1:checks.length})}</span>}</div>
-       <Button variant="ink" loading={busy} disabled={busy} onClick={()=>void measure()}>{t('重新实测')}</Button>
+       <Button variant="secondary" loading={busy} disabled={busy} onClick={()=>void measure()}>{t('重新实测')}</Button>
       </section>
       <div className="landing-section-band" aria-hidden="true"/>
       {phase==='failed'&&problems.length>0&&<section className="verification-reasons" aria-labelledby="verification-reasons-title"><h2 id="verification-reasons-title">{t('未通过原因')}</h2><ul>{problems.map(problem=><li key={problem}>{t(problem)}</li>)}</ul></section>}

@@ -4,11 +4,11 @@ Independent Windows desktop application: Tauri/Rust native operations, React/Typ
 
 <directory>
 src/ - Main application, browser verification page, shared UI and bilingual catalogs.
-src/identities.tsx - Single-line local identity aliases and consistent quota/time typography, with original account names confined to non-private hints.
+src/identities.tsx - Single-line local identity aliases, independent quota/time typography and a local presentation clock; elapsed trusted server resets show explicitly inferred recovery without additional native polling or automatic recommendation.
 src/quick-actions.tsx - On-demand independent environment reads, scoped recovery and six configuration destinations using shared page icons and effective browser targets.
 src/usage-statistics.tsx - Scoped token analytics with responsive trend/model panels, sortable period details and visible-page refresh; separate from hourly quota refresh.
 src/vps.tsx - Fixed referral copies without rendered URLs/codes, concise agent setup prompts and truthful clipboard feedback.
-src/system.tsx - Natural-height computer settings, observed values separate from draft controls and a compact location action row.
+src/system.tsx - Paired rounded timezone/language cards, observed values separate from drafts and a compact full-width location row; narrow content stacks the paired cards.
 src-tauri/ - Native commands, Windows boundaries, vault transactions, local quota consumers and installer configuration.
 src-tauri/windows/installer-hooks.nsh - Existing MUI pre-welcome upgrade confirmation, read-only process checks and synchronous data-preserving removal before the next install; owner-selected unsigned distribution.
 scripts/ - Windows build/deploy, audited NSIS share assembly, pinned engine preparation and synthetic verification tools.
@@ -31,8 +31,11 @@ User-requested Claude Code CLI maintenance is separate from application releases
 
 [PROTOCOL]: Update source headers and directory maps with changes. Preserve both locale catalogs and run scoped tests.
 
+Action geometry: ordinary application buttons use the shared small 28px height and 10px horizontal padding, with width determined by their labels. Pages use the existing neutral secondary variant; destructive confirmations retain explicit red styling. Account filters fit the selected label instead of a fixed wide column, while popup options retain readable width. No vendored primitives or action semantics are changed.
+
 docs/RELEASE_NOTES_0.1.1.md - Owner-requested manual private prerelease notes; shared packages exclude personal usage-attribution seeds.
 docs/RELEASE_NOTES_0.1.2.md - Quick setup cold-start/database concurrency fixes, shared UI consistency and effective browser targets; manual private delivery only.
 docs/RELEASE_NOTES_0.1.3.md - Cromma SegmentedControl/Switch/Disclosure adoption, truthful version settings, reduced-motion wiring and the registered-install upgrade sequence; manual private delivery only.
 docs/RELEASE_NOTES_0.1.4.md - Quota observation order fix, native privacy preference bridge, environment-first navigation, task handoff notes, and device-identifier preservation; manual private delivery only.
 docs/RELEASE_NOTES_0.1.5.md - Independent quota evidence/legacy compatibility and shared Rust window-state core; audited local update and owner-requested private prerelease, without automatic publishing or statusLine migration.
+docs/RELEASE_NOTES_0.1.6.md - Explicitly inferred quota recovery after trusted resets, compact neutral action controls and paired computer setting cards; manual private delivery, preserving the existing data and hook boundaries.

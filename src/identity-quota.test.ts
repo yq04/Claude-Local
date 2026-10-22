@@ -1,5 +1,5 @@
 // [INPUT]: Fictional independent window evidence and a fixed clock.
-// [OUTPUT]: Expiry, partial-observation, legacy-source and exhaustion display regressions.
+// [OUTPUT]: Trusted reset recovery, partial-observation, legacy-source and exhaustion display regressions.
 // [POS]: Pure quota-model tests; no native IPC, accounts or ledger writes.
 // [PROTOCOL]: Keep src/CLAUDE.md aligned with quota presentation changes.
 import {expect, test} from 'bun:test';
@@ -57,4 +57,40 @@ test('missing percentages retain observed reset metadata without inventing avail
   expect(quota.known5h).toBe(false);
   expect(quota.known7d).toBe(false);
   expect(quota.recommendable).toBe(false);
+});
+
+test('a trusted server deadline restores the display exactly at reset without inventing a next window', () => {
+  const reset = 2_000_000_000;
+  const input = {quota_5h_source:'server_anchor' as const, quota_5h_observed_at_ms:(reset-300)*1000, quota_5h_used:100, quota_5h_reset_at:reset, quota_7d_source:'server_anchor' as const, quota_7d_used:40, quota_7d_reset_at:reset+86400};
+  expect(evaluateQuota(input, reset-1)!.rem5h).toBe(0);
+  const recovered = evaluateQuota(input, reset)!;
+  expect(recovered.known5h).toBe(true);
+  expect(recovered.rem5h).toBe(100);
+  expect(recovered.used5h).toBe(0);
+  expect(recovered.source5h).toBe('reset_inferred');
+  expect(recovered.r5).toBeNull();
+  expect(recovered.rem7d).toBe(60);
+  expect(recovered.recommendable).toBe(false);
+  expect(evaluateQuota(input, reset+86400)!.r5).toBeNull();
+});
+
+test('native inferred recovery remains visible and a new real window replaces it', () => {
+  const now = 2_000_000_000;
+  const inferred = {quota_5h_source:'reset_inferred' as const, quota_5h_observed_at_ms:(now-300)*1000, quota_5h_used:0, quota_5h_reset_at:now-1};
+  expect(evaluateQuota(inferred, now)!.rem5h).toBe(100);
+  expect(evaluateQuota(inferred, now)!.known5h).toBe(true);
+  const actual = evaluateQuota({...inferred, quota_5h_source:'server_anchor', quota_5h_observed_at_ms:now*1000, quota_5h_used:23, quota_5h_reset_at:now+18000}, now)!;
+  expect(actual.source5h).toBe('server_anchor');
+  expect(actual.rem5h).toBe(77);
+  expect(actual.r5).toBe(now+18000);
+});
+
+test('expired local estimates and invalid server evidence cannot imply recovered quota', () => {
+  const now = 2_000_000_000;
+  const input = {quota_5h_used:100, quota_5h_reset_at:now-1, quota_5h_observed_at_ms:(now-100)*1000};
+  expect(evaluateQuota({...input, quota_5h_source:'local_estimate'}, now)!.known5h).toBe(false);
+  expect(evaluateQuota({...input, quota_5h_source:'server_anchor', quota_5h_observed_at_ms:null}, now)!.known5h).toBe(false);
+  expect(evaluateQuota({...input, quota_5h_source:'server_anchor', quota_5h_observed_at_ms:now*1000}, now)!.known5h).toBe(false);
+  expect(evaluateQuota({...input, quota_5h_source:'unknown'}, now)!.known5h).toBe(false);
+  expect(evaluateQuota({...input, quota_5h_source:'reset_inferred', quota_5h_used:100}, now)!.known5h).toBe(false);
 });

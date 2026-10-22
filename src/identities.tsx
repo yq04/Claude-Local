@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生身份命令、保留策略、带来源与观测时间的离线 5h/7d 额度、重置权益未知状态与固定官方用量入口、订阅到期摘要、经 Cromma 入口的 Motion 弹簧与根级减弱动效（系统设置或「减少动画」偏好）、settings-model 视图偏好、共享确认窗/进度、文件残留与 CLI 维护。
- * [OUTPUT]: 180×286 身份工牌统一以本地保存名为单行主标题，原账号名仅在非隐私提示中保留；逐窗口独立额度/来源/观测时间、过期/未知不推荐、额度详情与官网权益入口、明确恢复/删除进程确认及真实操作进度。
+ * [OUTPUT]: 180×286 身份工牌、本地时钟驱动的逐窗额度与可信重置后的预计恢复；预计/未知不推荐，统一中性操作按钮与红色危险确认，详情保留真实观测时间、官网权益入口和进度。
  * [POS]: 身份管理 GUI；只呈现脱敏元数据与离线额度，身份正文留在原生保险库；可选浏览器绑定/旧资料采用确认与重开重试，关联浏览器资料删除单独选择。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -29,15 +29,15 @@ function authBadgeLabel(status: string | null | undefined, t: (key: string) => s
   return null;
 }
 
-function QuotaWindow({label, used, remaining, resetAt, resetComplete = false, known, level, display, nowSec, t}: {label: string; used: number; remaining: number; resetAt: number | null; resetComplete?: boolean; known: boolean; level: string; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string}) {
+function QuotaWindow({label, used, remaining, resetAt, resetComplete = false, inferred = false, known, level, display, nowSec, t}: {label: string; used: number; remaining: number; resetAt: number | null; resetComplete?: boolean; inferred?: boolean; known: boolean; level: string; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string}) {
   const value = display === 'used' ? used : remaining;
   const reset = resetAt ? formatResetClock(resetAt, label === '7d') : '';
   const countdown = formatCompactEta(resetAt, nowSec);
-  const resetLabel = reset ? `${t('identityCard.reset')} ${reset}` : resetComplete ? t('identityCard.windowExpired') : t('identityCard.resetUnavailable');
+  const resetLabel = inferred ? t('identityCard.resetInferred') : reset ? `${t('identityCard.reset')} ${reset}` : resetComplete ? t('identityCard.windowExpired') : t('identityCard.resetUnavailable');
   const resetDate = resetAt == null ? null : new Date(resetAt * 1000);
   const resetDateTime = resetDate && Number.isFinite(resetDate.getTime()) ? resetDate.toISOString() : undefined;
   return (
-    <div className={`identity-quota-window ${known ? `quota-${level}` : 'quota-unknown'}`} data-quota-window={label} aria-label={`${label} ${known ? `${t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')} ${Math.round(value)}%` : t('identityCard.quotaUnknown')}`}>
+    <div className={`identity-quota-window ${known ? `quota-${level}` : 'quota-unknown'}`} data-quota-window={label} data-quota-inferred={inferred || undefined} title={inferred ? t('quota.resetInferredHint') : undefined} aria-label={`${label} ${known ? `${t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')} ${Math.round(value)}%` : t('identityCard.quotaUnknown')}${inferred ? ` · ${resetLabel}` : ''}`}>
       <div className="identity-quota-copy">
         <strong>{label}</strong>
         <span className="identity-quota-value">{known ? <><span>{t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')}</span>{' '}<strong>{Math.round(value)}%</strong></> : t('identityCard.unknown')}</span>
@@ -56,8 +56,8 @@ function QuotaWindow({label, used, remaining, resetAt, resetComplete = false, kn
 function IdentityQuota({quota, display, nowSec, t, onOpenDetails}: {quota: ReturnType<typeof evaluateQuota>; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string; onOpenDetails?: () => void}) {
   return (
     <div className="identity-quota-stack identity-quota-open" data-identity-quota tabIndex={0} role="button" aria-label={t('quota.details')} onClick={onOpenDetails} onKeyDown={e => {if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenDetails?.(); }}}>
-      <QuotaWindow label="5h" used={quota?.used5h ?? 0} remaining={quota?.rem5h ?? 0} resetAt={quota?.r5 ?? null} resetComplete={quota?.expired5h} known={quota?.known5h ?? false} level={quota?.level5h ?? 'ok'} display={display} nowSec={nowSec} t={t} />
-      <QuotaWindow label="7d" used={quota?.used7d ?? 0} remaining={quota?.rem7d ?? 0} resetAt={quota?.r7 ?? null} resetComplete={quota?.expired7d} known={quota?.known7d ?? false} level={quota?.level7d ?? 'ok'} display={display} nowSec={nowSec} t={t} />
+      <QuotaWindow label="5h" used={quota?.used5h ?? 0} remaining={quota?.rem5h ?? 0} resetAt={quota?.r5 ?? null} resetComplete={quota?.expired5h} inferred={quota?.inferred5h} known={quota?.known5h ?? false} level={quota?.level5h ?? 'ok'} display={display} nowSec={nowSec} t={t} />
+      <QuotaWindow label="7d" used={quota?.used7d ?? 0} remaining={quota?.rem7d ?? 0} resetAt={quota?.r7 ?? null} resetComplete={quota?.expired7d} inferred={quota?.inferred7d} known={quota?.known7d ?? false} level={quota?.level7d ?? 'ok'} display={display} nowSec={nowSec} t={t} />
     </div>
   );
 }
@@ -112,7 +112,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
   const kept = policyRows.filter(([key]) => policy[key]).map(([, label]) => t(label));
   const removed = policyRows.filter(([key]) => !policy[key]).map(([, label]) => t(label));
   const isDefaultPolicy = policyRows.every(([key]) => policy[key] === defaultPolicy[key]);
-  const nowSec = Math.floor(Date.now() / 1000);
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   const currentQuota = evaluateQuota(current, nowSec);
   const detailsAreCurrent = quotaDetails?.id === 'current' || (!!quotaDetails && quotaDetails.id === state?.active);
   const detailsSummary = detailsAreCurrent ? current : quotaDetails ? state?.summaries[quotaDetails.id] : undefined;
@@ -134,6 +134,12 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
 
   useEffect(() => {
     void read();
+  }, []);
+  useEffect(() => {
+    const tick = () => {if (!document.hidden) setNowSec(Math.floor(Date.now() / 1000));};
+    const timer = window.setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {window.clearInterval(timer);document.removeEventListener('visibilitychange', tick);};
   }, []);
   useEffect(() => {
     if (!quotaDetails) return;
@@ -417,7 +423,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
       {state?.recovery && (
         <div className="identity-recovery" role="alert">
           <strong>{t('有一次身份切换尚未完成')}</strong>
-          <Button size="small" variant="ink" disabled={locked || loading} onClick={() => choose('recovery')}>
+          <Button size="small" variant="secondary" disabled={locked || loading} onClick={() => choose('recovery')}>
             {t('恢复原身份')}
           </Button>
         </div>
@@ -432,7 +438,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             </span>
           </div>
           <div className="identity-library-controls">
-            <Button variant="ink" size="small" disabled={blocked || current?.present === false} onClick={() => choose('empty')}>
+            <Button variant="secondary" size="small" disabled={blocked || current?.present === false} onClick={() => choose('empty')}>
               {current?.present === false ? t('当前为新身份') : t('新身份')}
             </Button>
             {recommendSaved && (
@@ -477,7 +483,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
               <h3>{t('新身份')}</h3>
               <p className="identity-empty-note">{t('identitySafety.emptyGuide')}</p>
               <div className="identity-card-footer">
-                <Button variant="ink" size="small" disabled={blocked} onClick={() => void retryBrowser()}>
+                <Button variant="secondary" size="small" disabled={blocked} onClick={() => void retryBrowser()}>
                   {t('打开内置浏览器')}
                 </Button>
               </div>
@@ -604,7 +610,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
         description={t('quota.localOnly')}
         footer={<>
           <Button variant="secondary" disabled={busy || loading} onClick={() => void read(false)}>{t('quota.refreshLocal')}</Button>
-          <Button variant="ink" loading={busy} disabled={busy || !detailsAreCurrent || !!state?.recovery} onClick={() => void openUsagePage()}>{t('quota.openOfficial')}</Button>
+          <Button variant="secondary" loading={busy} disabled={busy || !detailsAreCurrent || !!state?.recovery} onClick={() => void openUsagePage()}>{t('quota.openOfficial')}</Button>
         </>}
       >
         <div className="identity-quota-details">
@@ -617,11 +623,12 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
               ? detailsSummary[`quota_${window}_observed_at_ms`]
               : detailsSummary?.quota_observed_at_ms;
             return <div key={window}>
-              <div className="identity-confirm-target"><span>{window} · {t('quota.source')}</span><strong>{t(source === 'server_anchor' ? 'quota.serverSnapshot' : source === 'local_estimate' ? 'quota.estimated' : 'quota.unverified')}</strong></div>
+              <div className="identity-confirm-target"><span>{window} · {t('quota.source')}</span><strong>{t(source === 'server_anchor' ? 'quota.serverSnapshot' : source === 'local_estimate' ? 'quota.estimated' : source === 'reset_inferred' ? 'quota.resetInferredSource' : 'quota.unverified')}</strong></div>
               <div className="identity-confirm-target"><span>{window} · {t('quota.observedAt')}</span><strong>{observed ? new Date(observed).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') : t('identityCard.notProvided')}</strong></div>
             </div>;
           })}
           <p className="identity-quota-note">{t('quota.independentWindows')}</p>
+          {(detailsQuota?.inferred5h || detailsQuota?.inferred7d) && <p className="identity-quota-note">{t('quota.resetInferredHint')}</p>}
           <div className="identity-confirm-target"><span>{t('quota.resetCount')}</span><strong>{t('identityCard.notProvided')}</strong></div>
           <div className="identity-confirm-target"><span>{t('quota.resetSchedule')}</span><strong>{t('identityCard.notProvided')}</strong></div>
           <p className="identity-quota-note">{t('quota.resetHint')}</p>
@@ -644,7 +651,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             <Button variant="secondary" onClick={() => setSnapshot(false)}>
               {t('取消')}
             </Button>
-            <Button variant="ink" disabled={busy || loading || !state || !name.trim() || !!state.recovery || !state.current.present} onClick={() => void saveSnapshot()}>
+            <Button variant="secondary" disabled={busy || loading || !state || !name.trim() || !!state.recovery || !state.current.present} onClick={() => void saveSnapshot()}>
               {t('确认保存备份')}
             </Button>
           </>
@@ -702,7 +709,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             <Button variant="secondary" onClick={() => setReview(null)}>
               {t('取消')}
             </Button>
-            <Button variant="ink" disabled={busy || loading || !state || !name.trim() || (review !== 'recovery' && !!state.recovery)} onClick={() => void change()}>
+            <Button variant="secondary" disabled={busy || loading || !state || !name.trim() || (review !== 'recovery' && !!state.recovery)} onClick={() => void change()}>
               {review === 'recovery' ? t('确认恢复') : t('确认暂存并切换')}
             </Button>
           </>
@@ -787,7 +794,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             <Button variant="secondary" data-dialog-cancel onClick={() => setDeletion(null)}>
               {t('取消')}
             </Button>
-            <Button className="identity-delete-button" variant="ink" disabled={busy || !accepted} onClick={() => void remove()}>
+            <Button className="identity-delete-button" variant="secondary" disabled={busy || !accepted} onClick={() => void remove()}>
               {t('确认直接删除')}
             </Button>
           </>
@@ -834,7 +841,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             <Button variant="secondary" disabled={busy} onClick={() => setBrowserReview(null)}>
               {t('取消')}
             </Button>
-            <Button variant="ink" disabled={busy} loading={busy} onClick={() => void configureBrowser()}>
+            <Button variant="secondary" disabled={busy} loading={busy} onClick={() => void configureBrowser()}>
               {t('确认')}
             </Button>
           </>
@@ -868,7 +875,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             >
               {t('取消')}
             </Button>
-            <Button variant="ink" disabled={busy || !renameValue.trim()} onClick={() => void saveName()}>
+            <Button variant="secondary" disabled={busy || !renameValue.trim()} onClick={() => void saveName()}>
               {t('保存')}
             </Button>
           </>

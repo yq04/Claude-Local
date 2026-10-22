@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Cromma UI 表单、原生电脑环境快照与经核验的设置命令与共享 YAML 文案。
- * [OUTPUT]: 按内容自然高度的电脑设置卡：时区/语言分离当前状态与目标选择，定位为紧凑操作行；保留执行记录、授权入口与任务锁。
+ * [OUTPUT]: 时区/语言并排的紧凑圆角卡片，当前状态与目标选择分层；定位为下方紧凑长条；保留执行记录、授权入口与任务锁。
  * [POS]: 系统设置的交互边界；草稿与当前状态分离，不在页面加载时修改电脑；兼容未含 platform 的旧 macOS 快照。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -203,10 +203,9 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
           <div className="system-setting-header">
             <span className="settings-icon-badge" aria-hidden="true"><ClockIcon size={20} /></span>
             <div className="system-setting-copy">
-              <h2 id="system-timezone-title">{t('设备时区')}</h2>
+              <div className="system-heading-line"><h2 id="system-timezone-title">{t('设备时区')}</h2><span className="system-state-label">{!state ? t('等待系统状态') : state.automatic_timezone == null ? t('computer.autoUnknown') : state.automatic_timezone ? t('computer.automatic') : t('computer.manual')}</span></div>
               <p className="system-current-value"><span>{t('computer.current')}</span><strong>{state?.timezone || t('读取中…')}</strong></p>
             </div>
-            <span className="system-state-label">{!state ? t('等待系统状态') : state.automatic_timezone == null ? t('computer.autoUnknown') : state.automatic_timezone ? t('computer.automatic') : t('computer.manual')}</span>
           </div>
           <div className="system-inline-controls">
             <div className="system-inline-field system-inline-select">
@@ -221,7 +220,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
               />
             </div>
             <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('timezone')}>{t('系统设置')}</Button>
-            <Button variant="ink" size="small" loading={busy === 'timezone'} disabled={disabled || !zone || (zone === state?.timezone && state?.automatic_timezone !== true)} onClick={() => void apply('timezone')}>{t('应用时区')}</Button>
+            <Button variant="secondary" size="small" loading={busy === 'timezone'} disabled={disabled || !zone || (zone === state?.timezone && state?.automatic_timezone !== true)} onClick={() => void apply('timezone')}>{t('应用时区')}</Button>
           </div>
         </article>
 
@@ -246,7 +245,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
               />
             </div>
             <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('language')}>{t('系统设置')}</Button>
-            <Button variant="ink" size="small" loading={busy === 'language'} disabled={disabled || language === languageChoice(state?.languages[0] || 'en')} onClick={() => void apply('language')}>{t('应用语言')}</Button>
+            <Button variant="secondary" size="small" loading={busy === 'language'} disabled={disabled || language === languageChoice(state?.languages[0] || 'en')} onClick={() => void apply('language')}>{t('应用语言')}</Button>
           </div>
           <p className="system-setting-note">{t('应用重启后生效；系统完整切换可能需要注销。')}</p>
         </article>
@@ -262,7 +261,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
             </div>
             <div className="system-inline-controls system-location-controls">
               <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('location')}>{t('打开定位设置')}</Button>
-              <Button variant="ink" size="small" loading={busy === 'location'} disabled={disabled || state?.location_enabled === false} onClick={() => void apply('location')}>{state?.location_enabled === false ? t('已关闭定位') : t('关闭地理位置')}</Button>
+              <Button variant="secondary" size="small" loading={busy === 'location'} disabled={disabled || state?.location_enabled === false} onClick={() => void apply('location')}>{state?.location_enabled === false ? t('已关闭定位') : t('关闭地理位置')}</Button>
             </div>
           </div>
         </article>

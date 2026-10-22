@@ -1,5 +1,6 @@
 # src/
 > L2 | 父级: ../CLAUDE.md
+共享操作控件：普通 Button 统一使用中性 secondary 皮肤、28px 高与10px水平内距，按文字占宽；图标按钮、导航和180×286工牌内专用几何保留，危险确认显式红色。账号筛选框随已选文本占宽，弹出选项保持可读宽度；不修改 vendor 原语或业务行为。
 界面只管理输入、状态和执行记录；本机权限交给原生层；网络页提供发行者批准的固定推广链接和配置提示词复制，用户点击后才检测固定 Claude 服务连通性，没有收件人链接编辑、Skill 安装或自动外部导航。两入口复用 YAML 中英文文案，原始诊断保留到呈现时翻译；系统语言与界面语言独立。
 browser.tsx: 统一全宽卡片风格的浏览器环境控制台（启动内置浏览器与 CLI 授权联动、目标地区环境一致性核验与一键对齐、按身份自动隔离的日常释放缓存与排障全清理）及默认折叠的指纹与代理高级设置抽屉；去除机械序号徽章；站点永久删除使用 Alert 警告并默认取消；复用 Cromma UI 和活动日志。缓存明细与高级设置统一使用 Cromma Disclosure，未保存修改时高级设置保持展开。
 browser-model.ts: 有界浏览器身份摘要与同步状态；工具箱与起始页共享配置、目标地区、机器、出口服务目录、观测接收时间与默认浏览器契约；effectiveBrowserTarget 统一解析跟随电脑的有效时区/语言及 en→en-US，不接入原生权限；三平台设备/CPU/版本核验由共用函数保持一致，Windows 必须 Win32。
@@ -14,13 +15,13 @@ navigation.ts / navigation.test.ts: 本机页面偏好白名单（含 settings �
 help.tsx: 双语只读本地产品说明，含置顶的「新用户与添加新号」三步法及身份/浏览器/离线额度/网络诊断/电脑设置分节说明（统一采用与软件设置一致的强调色竖条标头，去除机械数字序号），Cromma Disclosure 折叠应用使用、账号边界与申诉；不读取用户资料或调用原生命令。
 identities.tsx: 紧凑身份工作台与180×286工牌；当前/保存卡统一优先显示本地保存名，单行主标题与邮箱，原账号名仅放非隐私标题提示/可访问描述，重命名说明只改本机标签。保留Pro/Max、订阅来源未知、双5h/7d额度、6px进度条；额度、带时钟的重置时间和倒计时采用同族12px正文及等宽数字。当前绿光、推荐切换、弹簧横滚与平面悬停保留，减少动画设置生效。浏览器联动、旧资料采用、加密备份、智能保留、切换/恢复/永久删除确认及真实阶段进度沿用原流程，凭据不进UI。保留策略折叠区使用 Cromma Disclosure；弹簧与减弱动效经 cromma-ui 入口读取根级设置，不再自订媒体查询。
 identity-model.ts: 浏览器绑定脱敏状态与 SQLite 受限目录、当前/暂存显示字段（含离线 5h/7d 额度百分比、逐窗来源/实际观测时间、重置时间戳、可选 Unix 秒级 subscription_expires_at）和保留策略契约；订阅到期缺失保持未知，不复用 OAuth 凭据有效期。默认保留 Skills/插件/MCP/个人设置/项目记录/会话历史以支持跨账号无缝接力恢复，可逐项由用户选择。
-identity-quota.ts / identity-quota.test.ts: 逐窗优先读取 5h/7d 来源，兼容旧整体来源；缺值/到期只影响对应窗口，保留可用重置元数据，不制造满额，两个窗口均有证据时才推荐。额度详情逐窗展示来源/观测时间，卡片维持180×286。
+identity-quota.ts / identity-quota.test.ts: 逐窗优先读取 5h/7d 来源，兼容旧整体来源；可信服务端重置时间已过时显示 reset_inferred 本地预计恢复，保留原观测且不推算下一重置；缺少可信依据仍未知。预计值不参与自动推荐。身份页仅更新本地显示时钟，不增加每小时/手动之外的原生读取；详情逐窗展示来源/观测时间，卡片维持180×286。
 claude-cli-panel.tsx: 身份页内的品牌 CLI 维护卡片，展示本地版本/路径与用户手动检查的最新版本，提供「检查更新 / 一键更新」；没有卸载/重装入口或自动结束进程，运行中禁用更新，首次挂载只读本地状态。
 claude-residue-panel.tsx: 身份页内带「切号已自动清理」状态徽章的固定 Claude 文件按需扫描、动态风险分级提示条与场景预设快捷按钮（仅选安全缓存 vs 选入异常登录项）、路径/字段名/大小/影响预览；仅完整缓存默认勾选，登录/历史/备份独立选择，不完整项禁选。直接清理使用默认取消的 Alert 与勾选确认，成功/失败均复查且清空选择；不访问钥匙串、通用配置或浏览器资料。扫描提示折叠复用 Cromma Disclosure。
 cleaner-activity.tsx: 单次调用隔离的 ActivityController 与身份卡片正下方 IdentityOperationProgress；身份/空身份/残留清理共用真实事件阶段、局部 n/N 与脉冲，不预填步骤或按时间推算百分比，未知总量只显示运行。失败/回滚/完成带警告分开呈现，保留实际耗时和原始日志用于即时切换语言；其他页面沿用 CleanupActivity。
 cleaner-model.ts: 文件残留快照类型与选择规则、POSIX/Windows 路径父子去重、子项排除、重扫编号映射与规模格式化，供预览和执行共享。
 cleaner-model.test.ts: 预设、跨平台父子选择隔离与重扫不扩大选择的回归，不调用清理命令。
-system.tsx: 按内容自然高度的电脑环境页；时区/语言分层展示当前状态与目标选择，地理位置为紧凑横行，窄窗自动换行；简洁状态标签与操作对应，未知定位不显示关闭。当前状态与目标草稿分离，保留平台判断、授权、错误和任务锁。
+system.tsx: 时区/语言并排的等宽圆角卡片，状态徽章随标题布局，目标选择独占一行、操作紧凑靠右；定位为下方全宽横条，内容窄于572px时卡片堆叠。当前观测与目标草稿分离，未知定位不显示关闭，保留平台判断、授权、错误和任务锁。
 index.css: 系统字体与明确的 Microsoft YaHei UI 中文回退、中性黑白基础主题入口及共享控件扫描；Landing 的几何与纹理归 style.css。
 locales/: 双语 YAML 目录及导入类型，包含使用说明页的操作、安全和账号风险文案、软件设置页文案、智能环境托管文案、新账号 3 步添加指引文案以及 iKuuu + Kookeey 链式代理配置指南文案；见其 CLAUDE.md。
 i18n.ts: 共享界面语言订阅与文案格式化；优先精确键，动态原生结果按最具体模板匹配，未知诊断保留原文；切换语言保留 Claude-Local 主窗口标题，伴生核验页标题独立。
@@ -34,10 +35,10 @@ usage-statistics.tsx: CPAMP 分析层次适配的本地用量工作台；集中�
 usage-trend.tsx / usage-statistics.css: 紧凑总 Token SVG、卡内标题与按实际内容宽度切换的趋势/模型双栏；今日24小时轴、未来留空、完整历史和键盘/指针精确值，筛选切换保护旧悬停索引；保持四卡同表面和全页无横向溢出。
 usage-table.tsx: 本地时段明细视图；仅已发生时段，时间/总Token/响应数排序、每页10行、精确值与可聚焦局部横滚；切换视图、排序和翻页不发起IPC，刷新保留有效页码。
 usage-model.ts / usage-model.test.ts: 脱敏 Token 聚合契约、K/M/B 与精确值、缓存命中率；小时/自然日与完整历史补零、剔除未来的均值/峰值及合成测试；不读取身份配置或会话文件。
-style.css: 双主题、四色强调色、可折叠侧栏及统一54px页头/20px页边距；保留180×286工牌与当前顶部绿光，名称/邮箱/双额度/订阅固定行高，额度中性底色、进度条和百分比承载状态色，正文/日期/倒计时同族12px且数字等宽。电脑页自然高度卡片、紧凑定位行与按容器宽度换行；软件设置卡片、网络页同宽复制按钮与轻量反馈、CC Switch分段选择器、窗口适配及Cromma模态。分段、页签、开关与折叠区皮肤归 Cromma UI，本文件只保留其布局类；「减少动画」同时把 Cromma --motion-* 归零。
+style.css: 双主题、四色强调色、可折叠侧栏及统一54px页头/20px页边距；保留180×286工牌与当前顶部绿光，名称/邮箱/双额度/订阅固定行高，额度中性底色、进度条和百分比承载状态色，正文/日期/倒计时同族12px且数字等宽。电脑页并排圆角卡片、紧凑定位行与按容器宽度换行；统一28px普通按钮、网络页按文字占宽的复制按钮与轻量反馈、软件设置卡片、CC Switch分段选择器、窗口适配及Cromma模态。分段、页签、开关与折叠区皮肤归 Cromma UI，本文件只保留其布局类；「减少动画」同时把 Cromma --motion-* 归零。
 quick-actions.tsx / quick-setup.css: 按需挂载的快速配置页，身份、浏览器、电脑和 CLI 各自完成即展示；具体分区错误/原生原因、手动重试及六个配置入口，不依赖先访问身份/浏览页。共用有效浏览器目标、页面图标、Button 加载/尺寸、设置卡片与主题错误色；按内容宽度自适应，不直接清理、轮换指纹、启动浏览器或修改系统。
 vps.tsx: 固定分发网络配置页；iKuuu/Kookeey只显示服务标题与说明，不把URL/邀请码放入可见文本或提示属性。两家按钮固定「复制链接」，Agent入口固定「复制提示词」；勾图标/独立状态反馈成功，原生与浏览器复制均失败时提示重试。固定链接随构建内置且忽略旧覆盖，无编辑/自动导航。精简双语提示词只含链路目标、现状备份、按版本配置、回环直连与验证/回滚方法；不预置完整脚本或参数。四域名诊断仍单独手动触发。
 Linux 呈现边界：设备平台由原生快照提供；未知定位不显示关闭；系统授权提示不固定 macOS；本地版不挂载自动更新器，侧栏显示本机版本。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
-Usage filters use a compact All/account selector; private workstation setup seeds a stable native fallback ID; distributed frontend assets contain no account selector seed. Redundant scope/live/history copy is removed.
+Usage filters use a label-sized 28px All/account selector with a 220px bound for long names; private workstation setup seeds a stable native fallback ID; distributed frontend assets contain no account selector seed. Redundant scope/live/history copy is removed.

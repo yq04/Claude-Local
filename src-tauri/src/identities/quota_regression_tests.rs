@@ -1,5 +1,5 @@
 // [INPUT]: Temporary fictional quota ledgers and in-memory identity summaries only.
-// [OUTPUT]: Observation-order, account/organization and return-visit regressions.
+// [OUTPUT]: Observation-order, account/organization, expired reset inference and return-visit regressions.
 // [POS]: No real Claude home, credentials, processes, browser or network access.
 // [PROTOCOL]: Update identities/CLAUDE.md when changing this test boundary.
 use super::*;
@@ -103,7 +103,7 @@ fn expired_five_hour_window_does_not_manufacture_zero_or_discard_weekly_window()
         quota_source: Some(QuotaSource::LocalEstimate),
         quota_5h_source: Some(QuotaSource::ServerAnchor),
         quota_7d_source: Some(QuotaSource::LocalEstimate),
-        quota_5h_observed_at_ms: Some(100_000),
+        quota_5h_observed_at_ms: Some(99_000),
         quota_7d_observed_at_ms: Some(90_000),
         quota_5h_used: Some(100),
         quota_5h_reset_at: Some(100),
@@ -114,11 +114,11 @@ fn expired_five_hour_window_does_not_manufacture_zero_or_discard_weekly_window()
 
     summary.refresh_for_now(101);
 
-    assert_eq!(summary.quota_5h_used, None);
-    assert_eq!(summary.quota_5h_reset_at, None);
+    assert_eq!(summary.quota_5h_used, Some(0));
+    assert_eq!(summary.quota_5h_reset_at, Some(100));
     assert_eq!(summary.quota_7d_used, Some(63));
     assert_eq!(summary.quota_7d_reset_at, Some(700_000));
-    assert!(summary.quota_5h_source == Some(QuotaSource::Unknown));
+    assert!(summary.quota_5h_source == Some(QuotaSource::ResetInferred));
     assert!(summary.quota_7d_source == Some(QuotaSource::LocalEstimate));
 }
 
@@ -144,10 +144,128 @@ fn expired_raw_five_hour_anchor_does_not_mark_valid_seven_day_anchor_unknown() {
     summary.quota_7d_reset_at = result.reset_7d;
     set_summary_quota_evidence(&cj, &result, now, &mut summary);
 
-    assert_eq!(summary.quota_5h_used, None);
-    assert!(summary.quota_5h_source == Some(QuotaSource::Unknown));
+    assert_eq!(summary.quota_5h_used, Some(0));
+    assert_eq!(summary.quota_5h_reset_at, Some(now - 1));
+    assert!(summary.quota_5h_source == Some(QuotaSource::ResetInferred));
     assert_eq!(summary.quota_7d_used, Some(42));
     assert!(summary.quota_7d_source == Some(QuotaSource::ServerAnchor));
+}
+
+#[test]
+fn expired_cached_anchor_becomes_inferred_zero_without_fabricating_reset_or_observation() {
+    let now = 1_800_000_000;
+    let observed = (now as u64 - 900) * 1000;
+    let cj = serde_json::json!({
+        "oauthAccount": {"accountUuid": "a", "emailAddress": "fixture@example.invalid"},
+        "cachedUsageUtilization": {
+            "accountUuid": "a",
+            "fetchedAtMs": observed,
+            "utilization": {
+                "five_hour": {"utilization": 100, "resets_at": now - 1},
+                "seven_day": {"utilization": 72, "resets_at": now - 10}
+            }
+        }
+    });
+    let extracted = extract_quota(&cj, None, Some("Pro"), now, 0);
+    let mut summary = Summary::default();
+    set_summary_quota_evidence(&cj, &extracted, now, &mut summary);
+
+    assert_eq!(summary.quota_5h_used, Some(0));
+    assert_eq!(summary.quota_5h_reset_at, Some(now - 1));
+    assert_eq!(summary.quota_5h_source, Some(QuotaSource::ResetInferred));
+    assert_eq!(summary.quota_5h_observed_at_ms, Some(observed));
+    assert_eq!(summary.quota_7d_used, Some(0));
+    assert_eq!(summary.quota_7d_reset_at, Some(now - 10));
+    assert_eq!(summary.quota_7d_source, Some(QuotaSource::ResetInferred));
+    assert_eq!(summary.quota_7d_observed_at_ms, Some(observed));
+}
+
+#[test]
+fn erased_expired_anchor_is_recovered_only_for_matching_identity_and_never_replaces_live_window() {
+    let root = std::env::temp_dir().join(format!(
+        "claude-local-quota-inferred-{}",
+        super::super::new_id().unwrap()
+    ));
+    fs::create_dir_all(root.join("identity-vault")).unwrap();
+    let account_id = identity("a", "org-a");
+    let now = 1_800_000_001u64;
+    let ledger = serde_json::json!({"accounts": {"fixture@example.invalid": {
+        "quota_identity": account_id,
+        "quota_5h_source": "unknown",
+        "quota_5h_used": null,
+        "quota_5h_reset_at": null,
+        "server_anchor": {
+            "accountUuid": "a",
+            "utilization": {"five_hour": {
+                "utilization": 100,
+                "resets_at": now - 1,
+                "fetchedAtMs": (now - 900) * 1000
+            }}
+        }
+    }}});
+    fs::write(
+        root.join("quota_ledger.json"),
+        serde_json::to_vec(&ledger).unwrap(),
+    )
+    .unwrap();
+
+    let mut summary = Summary {
+        email: Some("fixture@example.invalid".into()),
+        quota_identity: Some(account_id.clone()),
+        quota_5h_source: Some(QuotaSource::Unknown),
+        ..Summary::default()
+    };
+    apply_ledger_to_summary(&root.join("identity-vault"), &mut summary, 0, now);
+    assert_eq!(summary.quota_5h_used, Some(0));
+    assert_eq!(summary.quota_5h_reset_at, Some(now - 1));
+    assert_eq!(summary.quota_5h_source, Some(QuotaSource::ResetInferred));
+    assert_eq!(summary.quota_5h_observed_at_ms, Some((now - 900) * 1000));
+
+    let mut writer_ledger = ledger.clone();
+    let writer_entry = &mut writer_ledger["accounts"]["fixture@example.invalid"];
+    writer_entry["quota_5h_source"] = Value::String("reset_inferred".into());
+    writer_entry["quota_5h_used"] = Value::from(0);
+    writer_entry["quota_5h_reset_at"] = Value::from(now - 1);
+    writer_entry["quota_5h_observed_at_ms"] = Value::from((now - 900) * 1000);
+    fs::write(
+        root.join("quota_ledger.json"),
+        serde_json::to_vec(&writer_ledger).unwrap(),
+    )
+    .unwrap();
+    let mut writer_summary = Summary {
+        email: Some("fixture@example.invalid".into()),
+        quota_identity: Some(identity("a", "org-a")),
+        quota_5h_source: Some(QuotaSource::Unknown),
+        ..Summary::default()
+    };
+    apply_ledger_to_summary(&root.join("identity-vault"), &mut writer_summary, 0, now);
+    assert_eq!(writer_summary.quota_5h_used, Some(0));
+    assert_eq!(writer_summary.quota_5h_reset_at, Some(now - 1));
+    assert_eq!(writer_summary.quota_5h_source, Some(QuotaSource::ResetInferred));
+
+    let mut foreign = Summary {
+        email: Some("fixture@example.invalid".into()),
+        quota_identity: Some(identity("b", "org-a")),
+        quota_5h_source: Some(QuotaSource::Unknown),
+        ..Summary::default()
+    };
+    apply_ledger_to_summary(&root.join("identity-vault"), &mut foreign, 0, now);
+    assert_eq!(foreign.quota_5h_source, Some(QuotaSource::Unknown));
+    assert_eq!(foreign.quota_5h_used, None);
+
+    let mut live = Summary {
+        email: Some("fixture@example.invalid".into()),
+        quota_identity: Some(account_id),
+        quota_5h_source: Some(QuotaSource::ServerAnchor),
+        quota_5h_observed_at_ms: Some((now as u64) * 1000),
+        quota_5h_used: Some(15),
+        quota_5h_reset_at: Some(now + 300),
+        ..Summary::default()
+    };
+    apply_ledger_to_summary(&root.join("identity-vault"), &mut live, 0, now);
+    assert_eq!(live.quota_5h_used, Some(15));
+    assert_eq!(live.quota_5h_reset_at, Some(now + 300));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

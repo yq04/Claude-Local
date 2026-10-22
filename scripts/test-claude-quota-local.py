@@ -51,6 +51,105 @@ class LocalQuotaTests(unittest.TestCase):
         self.assertEqual(states[0], (90, now + 600, "local_estimate", 2000))
         self.assertEqual(states[1], (35, now + 1200, "server_anchor", 2500))
 
+    def test_reset_inference_matches_between_real_core_and_legacy_python(self):
+        executable = Path(__file__).resolve().parents[1] / "src-tauri" / "target" / "debug" / "claude-local.exe"
+        if not executable.is_file():
+            self.skipTest("Rust debug executable is not available")
+        now_sec = 100
+        current = [
+            (100, 90, "server_anchor", 80_000),
+            (40, 90, "local_estimate", 80_000),
+            (0, 90, "reset_inferred", 80_000),
+        ]
+        candidates = [
+            (None, None, "unknown", None),
+            (None, None, "unknown", None),
+            (100, 90, "server_anchor", 80_000),
+        ]
+        with patch.object(quota, "_quota_core_executable", return_value=executable):
+            rust = quota.merge_window_states(current, candidates, now_sec)
+        with tempfile.TemporaryDirectory() as temp:
+            missing_core = Path(temp) / "missing-claude-local.exe"
+            with patch.object(quota, "_quota_core_executable", return_value=missing_core):
+                legacy = quota.merge_window_states(current, candidates, now_sec)
+        self.assertEqual(rust, legacy)
+        self.assertEqual(rust[0], (0, 90, "reset_inferred", 80_000))
+        self.assertEqual(rust[1], (None, None, "unknown", 80_000))
+        self.assertEqual(rust[2], (0, 90, "reset_inferred", 80_000))
+
+    def test_reset_inference_requires_pre_reset_server_observation_and_is_idempotent(self):
+        for state, expected in [
+            ((100, 90, "server_anchor", 80_000), (0, 90, "reset_inferred", 80_000)),
+            ((100, 90, "server_anchor", None), (None, None, "unknown", None)),
+            ((100, 90, "server_anchor", 90_000), (None, None, "unknown", 90_000)),
+            ((40, 90, "local_estimate", 80_000), (None, None, "unknown", 80_000)),
+            ((None, None, "unknown", 80_000), (None, None, "unknown", 80_000)),
+        ]:
+            self.assertEqual(quota._normalize_window_state(state, 100), expected)
+        inferred = (0, 90, "reset_inferred", 80_000)
+        self.assertEqual(quota._normalize_window_state(inferred, 200), inferred)
+
+    def test_expired_raw_anchor_recovers_old_unknown_but_rejects_uuid_conflict(self):
+        now_sec = 2_000_000_000
+        observed = (now_sec - 20) * 1000
+        reset = now_sec - 10
+        entry = {
+            "account_uuid": "u1",
+            "quota_5h_source": "unknown",
+            "quota_5h_used": None,
+            "quota_5h_reset_at": None,
+            "server_anchor": {
+                "accountUuid": "u1",
+                "fetchedAtMs": observed,
+                "utilization": {
+                    "five_hour": {"utilization": 100, "resets_at": reset, "fetchedAtMs": observed},
+                },
+            },
+        }
+        self.assertEqual(
+            quota.entry_window_state(entry, "5h", "five_hour", now_sec),
+            (0, reset, "reset_inferred", observed),
+        )
+        entry["server_anchor"]["accountUuid"] = "u2"
+        self.assertEqual(
+            quota.entry_window_state(entry, "5h", "five_hour", now_sec),
+            (None, None, "unknown", observed),
+        )
+
+    def test_old_inferred_state_does_not_replace_new_valid_local_or_server_window(self):
+        inferred = (0, 90, "reset_inferred", 80_000)
+        for current in [
+            (15, 140, "local_estimate", 85_000),
+            (20, 150, "server_anchor", 85_000),
+        ]:
+            self.assertEqual(
+                quota._legacy_merge_window_state(current, inferred, 100), current
+            )
+
+    def test_writer_persists_recovery_with_original_anchor_and_summary_version(self):
+        now = 2_000_000_000
+        observed = (now - 20) * 1000
+        reset = now - 10
+        anchor = {"accountUuid": "fixture", "fetchedAtMs": observed,
+                  "utilization": {"five_hour": {"utilization": 100, "resets_at": reset,
+                                                 "fetchedAtMs": observed}}}
+        with tempfile.TemporaryDirectory() as temp:
+            item = {"role": "saved", "email": "reset@example.invalid", "account_uuid": "fixture",
+                    "used_5h": None, "reset_5h_ts": None, "quota_5h_source": "unknown",
+                    "server_anchor": anchor}
+            for _ in range(2):
+                quota.save_ledger_and_sync_sqlite(temp, str(Path(temp) / "missing-vault"), [item],
+                                                datetime.fromtimestamp(now, timezone.utc))
+            stored = quota.load_ledger(temp)["accounts"]["reset@example.invalid"]
+            self.assertEqual(stored["quota_5h_source"], "reset_inferred")
+            self.assertEqual(stored["quota_5h_used"], 0)
+            self.assertEqual(stored["quota_5h_reset_at"], reset)
+            self.assertEqual(stored["quota_5h_observed_at_ms"], observed)
+            self.assertEqual(stored["server_anchor"], anchor)
+            self.assertEqual(quota.entry_window_state(stored, "5h", "five_hour", now),
+                             (0, reset, "reset_inferred", observed))
+        self.assertEqual(quota.CURRENT_QUOTA_VERSION, 6)
+
     def test_quota_core_failure_aborts_ledger_write(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -237,9 +336,9 @@ class LocalQuotaTests(unittest.TestCase):
         }
         info = {"email": "healthy@example.invalid", "account_uuid": "u1"}
         quota.apply_ledger_fallback_to_account(info, {"healthy@example.invalid": entry}, 0, now)
-        self.assertEqual(info.get("quota_5h_source"), "unknown")
-        self.assertIsNone(info.get("used_5h"))
-        self.assertIsNone(info.get("reset_5h_ts"))
+        self.assertEqual(info.get("quota_5h_source"), "reset_inferred")
+        self.assertEqual(info.get("used_5h"), 0)
+        self.assertEqual(info.get("reset_5h_ts"), 1500)
         self.assertEqual(info.get("quota_7d_source"), "server_anchor")
         self.assertEqual(info.get("used_7d"), 40)
         self.assertEqual(info.get("reset_7d_ts"), 3000)
@@ -258,9 +357,9 @@ class LocalQuotaTests(unittest.TestCase):
         }
         info = {"email": "exp@example.invalid", "account_uuid": "u1"}
         quota.apply_ledger_fallback_to_account(info, {"exp@example.invalid": entry}, 0, now)
-        self.assertEqual(info.get("quota_7d_source"), "unknown")
-        self.assertIsNone(info.get("used_7d"))
-        self.assertIsNone(info.get("reset_7d_ts"))
+        self.assertEqual(info.get("quota_7d_source"), "reset_inferred")
+        self.assertEqual(info.get("used_7d"), 0)
+        self.assertEqual(info.get("reset_7d_ts"), 1500)
 
     def test_unmatched_legacy_ledger_does_not_poison_info_source(self):
         now = datetime.fromtimestamp(100, timezone.utc)

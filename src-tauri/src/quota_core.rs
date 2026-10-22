@@ -1,5 +1,5 @@
 // [INPUT]: Bounded, credential-free window states and an explicit caller-supplied clock.
-// [OUTPUT]: Pure expiry/merge/provenance decisions and schema-1 JSON stdin/stdout responses.
+// [OUTPUT]: Pure expiry/merge/provenance decisions, including local reset inference, and schema-1 JSON responses.
 // [POS]: Shared quota rules for the read-only GUI and Python ledger writer; no file/network access.
 // [PROTOCOL]: Update this header and src/CLAUDE.md when changing the interface.
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,7 @@ const MAX_TIME_MS: u64 = MAX_TIME_SEC * 1000 + 999;
 pub enum QuotaSource {
     ServerAnchor,
     LocalEstimate,
+    ResetInferred,
     Unknown,
 }
 
@@ -30,6 +31,31 @@ pub(crate) struct WindowState {
 impl WindowState {
     pub(crate) fn normalized(mut self, now_sec: u64) -> Self {
         self.observed_at_ms = self.observed_at_ms.filter(|time| *time > 0);
+        if self.source == QuotaSource::ResetInferred {
+            if self.used == Some(0)
+                && self.reset_at.is_some_and(|reset| reset <= now_sec)
+                && self.observed_at_ms.is_some_and(|observed| {
+                    self.reset_at.is_some_and(|reset| observed / 1000 < reset)
+                })
+            {
+                return self;
+            }
+            self.used = None;
+            self.reset_at = None;
+            self.source = QuotaSource::Unknown;
+            return self;
+        }
+        if self.source == QuotaSource::ServerAnchor
+            && self.used.is_some()
+            && self.reset_at.is_some_and(|reset| reset <= now_sec)
+            && self.observed_at_ms.is_some_and(|observed| {
+                self.reset_at.is_some_and(|reset| observed / 1000 < reset)
+            })
+        {
+            self.used = Some(0);
+            self.source = QuotaSource::ResetInferred;
+            return self;
+        }
         if self.source == QuotaSource::Unknown
             || self.used.is_none()
             || self.reset_at.is_none_or(|reset| reset <= now_sec)
@@ -71,12 +97,20 @@ pub(crate) fn expire_window(
     used: &mut Option<u8>,
     reset: &mut Option<u64>,
     source: &mut Option<QuotaSource>,
+    observed_at_ms: Option<u64>,
     now_sec: u64,
 ) {
     if reset.is_some_and(|time| now_sec >= time) {
-        *used = None;
-        *reset = None;
-        *source = Some(QuotaSource::Unknown);
+        let normalized = WindowState {
+            used: *used,
+            reset_at: *reset,
+            source: source.unwrap_or(QuotaSource::Unknown),
+            observed_at_ms,
+        }
+        .normalized(now_sec);
+        *used = normalized.used;
+        *reset = normalized.reset_at;
+        *source = Some(normalized.source);
     }
 }
 
@@ -88,6 +122,7 @@ pub(crate) fn merge_window(
     candidate: Option<WindowState>,
     now_sec: u64,
 ) -> WindowState {
+    let original_current_source = current.source;
     let current = current.normalized(now_sec);
     let Some(candidate) = candidate.map(|state| state.normalized(now_sec)) else {
         return current;
@@ -95,7 +130,23 @@ pub(crate) fn merge_window(
     if candidate.source == QuotaSource::Unknown {
         return current;
     }
+    if candidate.source == QuotaSource::ResetInferred
+        && original_current_source == QuotaSource::LocalEstimate
+    {
+        return current;
+    }
+    if current.source == QuotaSource::ResetInferred
+        && candidate.source == QuotaSource::LocalEstimate
+        && candidate.reset_at.is_some_and(|reset| reset > now_sec)
+    {
+        return candidate;
+    }
     if current.source == QuotaSource::Unknown {
+        if matches!((current.observed_at_ms, candidate.observed_at_ms),
+            (Some(current_ms), Some(candidate_ms)) if candidate_ms < current_ms)
+        {
+            return current;
+        }
         return candidate;
     }
     if current.observed_at_ms.is_none() && current.source == QuotaSource::LocalEstimate {
@@ -300,9 +351,9 @@ mod tests {
             None,
             100,
         );
-        assert_eq!(expired.used, None);
-        assert_eq!(expired.reset_at, None);
-        assert_eq!(expired.source, QuotaSource::Unknown);
+        assert_eq!(expired.used, Some(0));
+        assert_eq!(expired.reset_at, Some(100));
+        assert_eq!(expired.source, QuotaSource::ResetInferred);
         assert_eq!(expired.observed_at_ms, Some(1000));
         let missing = WindowState {
             reset_at: None,
@@ -317,6 +368,58 @@ mod tests {
             Some(QuotaSource::Unknown)
         );
         assert_eq!(max_observation(Some(1000), Some(2000)), Some(2000));
+    }
+
+    #[test]
+    fn expired_server_anchor_infers_zero_only_with_real_pre_reset_observation() {
+        let inferred = state(100, 100, QuotaSource::ServerAnchor, Some(99_000))
+            .normalized(100);
+        assert_eq!(inferred.used, Some(0));
+        assert_eq!(inferred.reset_at, Some(100));
+        assert_eq!(inferred.source, QuotaSource::ResetInferred);
+        assert_eq!(inferred.observed_at_ms, Some(99_000));
+
+        for invalid in [
+            state(100, 100, QuotaSource::ServerAnchor, None),
+            state(100, 100, QuotaSource::ServerAnchor, Some(100_000)),
+            state(100, 100, QuotaSource::LocalEstimate, Some(99_000)),
+            state(100, 100, QuotaSource::Unknown, Some(99_000)),
+        ] {
+            assert_eq!(invalid.normalized(100).source, QuotaSource::Unknown);
+        }
+
+        assert_eq!(inferred.normalized(200), inferred);
+    }
+
+    #[test]
+    fn inferred_reset_resists_old_anchors_but_yields_to_real_new_windows() {
+        let inferred = state(0, 100, QuotaSource::ResetInferred, Some(99_000));
+        assert_eq!(
+            merge_window(
+                inferred,
+                Some(state(100, 100, QuotaSource::ServerAnchor, Some(99_000))),
+                200,
+            ),
+            inferred
+        );
+        assert_eq!(
+            merge_window(
+                inferred,
+                Some(state(100, 100, QuotaSource::ServerAnchor, Some(98_000))),
+                200,
+            ),
+            inferred
+        );
+        let live = state(12, 400, QuotaSource::ServerAnchor, Some(101_000));
+        assert_eq!(merge_window(inferred, Some(live), 200), live);
+
+        let local = state(22, 400, QuotaSource::LocalEstimate, Some(102_000));
+        assert_eq!(merge_window(inferred, Some(local), 200), local);
+
+        let expired_local = state(40, 150, QuotaSource::LocalEstimate, Some(120_000));
+        let unknown = merge_window(expired_local, Some(inferred), 200);
+        assert_eq!(unknown.used, None);
+        assert_eq!(unknown.source, QuotaSource::Unknown);
     }
 
     #[test]

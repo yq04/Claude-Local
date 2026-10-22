@@ -8,7 +8,7 @@ network.*: 网络页隐藏推广地址的服务说明、「复制链接 / 复制
 computer.*: 电脑页简短说明、当前值标签、自动/手动/未知状态及定位服务说明；当前系统观测与草稿选项分开呈现。
 usage.* / cli.* / quick.*: 小时/完整历史用量、集中筛选、均值/峰值、图表/数据切换、列排序/分页与模型占比；未来空区、日志来源/近实时刷新/历史夏令时限制；只读快速配置、局部失败与六卡入口；手动 CLI 更新、运行阻断与错误状态的同键双语文案。保留兼容词条，不在界面显示独立推理指标。
 identity.* / identityCard.*: 身份工牌本地保存名优先、原账号名的非隐私提示与重命名范围说明；独立额度区、重置时间、订阅到期和未知状态。缺失的订阅日期统一说明未提供，不混用凭据有效期。
-quota.independentWindows: 说明5h/7d独立更新、到期/缺观测不代表恢复满额及本地估算与官方实时额度的区别；两语同键。
+quota.independentWindows / quota.resetInferredSource / quota.resetInferredHint / identityCard.resetInferred: 说明5h/7d独立更新，可信服务端重置时间到期后的预计恢复、其他设备用量未知与不推算下一重置；缺证据仍未知，预计值不等于官方实时额度。两语同键且工牌提示保持单行。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 usage.allAccounts: concise All label in both catalogs.
