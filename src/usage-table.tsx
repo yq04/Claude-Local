@@ -11,13 +11,14 @@ import {formatUsageNumber, type UsageDay} from './usage-model';
 type SortKey = 'day' | 'total_tokens' | 'requests';
 const pageSize = 10;
 
-export function UsageTrendTable({days, hourly = false}: {days: UsageDay[]; hourly?: boolean}) {
+export function UsageTrendTable({days, hourly = false, timezone}: {days: UsageDay[]; hourly?: boolean; timezone?: string}) {
   const {t, locale} = useI18n();
   const [sort, setSort] = useState<{key: SortKey; descending: boolean}>({key: 'day', descending: true});
   const [page, setPage] = useState(0);
   const rows = days.filter(day => !day.future).sort((a, b) => {
-    const comparison = sort.key === 'day' ? a.day.localeCompare(b.day) : a.totals[sort.key] - b.totals[sort.key];
-    return comparison ? comparison * (sort.descending ? -1 : 1) : b.day.localeCompare(a.day);
+    const time = a.start_at != null && b.start_at != null ? a.start_at - b.start_at : a.day.localeCompare(b.day);
+    const comparison = sort.key === 'day' ? time : a.totals[sort.key] - b.totals[sort.key];
+    return comparison ? comparison * (sort.descending ? -1 : 1) : (b.start_at ?? 0) - (a.start_at ?? 0) || b.day.localeCompare(a.day);
   });
   const pages = Math.max(1, Math.ceil(rows.length / pageSize));
   const currentPage = Math.min(page, pages - 1);
@@ -38,9 +39,16 @@ export function UsageTrendTable({days, hourly = false}: {days: UsageDay[]; hourl
       </button>
     </th>;
   };
-  const periodLabel = (day: string) => hourly
-    ? t('usage.hourRange', {start: day.slice(11), end: `${String(Number(day.slice(11, 13)) + 1).padStart(2, '0')}:00`})
-    : new Date(`${day}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {year: 'numeric', month: 'short', day: 'numeric'});
+  const periodLabel = (day: UsageDay) => {
+    if (!hourly) return new Date(`${day.day.slice(0, 10)}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {year: 'numeric', month: 'short', day: 'numeric'});
+    if (day.start_at != null && day.end_at != null) {
+      const opts: Intl.DateTimeFormatOptions = {hour: '2-digit', minute: '2-digit', ...(timezone ? {timeZone: timezone} : {})};
+      const start = new Date(day.start_at * 1000).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', {...opts, timeZoneName: 'short'});
+      const end = new Date(day.end_at * 1000).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US', opts);
+      return `${start} – ${end}`;
+    }
+    return t('usage.hourRange', {start: day.day.slice(11, 16), end: `${String(Number(day.day.slice(11, 13)) + 1).padStart(2, '0')}:00`});
+  };
   const valueCell = (value: number) => <td title={formatUsageNumber(value, locale)}>{formatUsageNumber(value, locale, true)}</td>;
 
   return <div className="usage-trend-table">
@@ -48,8 +56,8 @@ export function UsageTrendTable({days, hourly = false}: {days: UsageDay[]; hourl
       <div className="usage-data-scroll" tabIndex={0} role="region" aria-label={t('usage.periodTable')}>
         <table className="usage-data-table" aria-label={t('usage.periodTable')}>
           <thead><tr>{header('day', t('usage.time'))}{header('total_tokens', t('usage.total'))}<th scope="col">{t('usage.input')}</th><th scope="col">{t('usage.output')}</th><th scope="col">{t('usage.cacheRead')}</th>{header('requests', t('usage.requests'))}</tr></thead>
-          <tbody>{rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map(row => <tr key={row.day}>
-            <th scope="row" title={row.day}>{periodLabel(row.day)}</th>{valueCell(row.totals.total_tokens)}{valueCell(row.totals.input_tokens)}{valueCell(row.totals.output_tokens)}{valueCell(row.totals.cache_read_tokens)}{valueCell(row.totals.requests)}
+          <tbody>{rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map(row => <tr key={row.start_at ?? row.day}>
+            <th scope="row" title={row.day}>{periodLabel(row)}</th>{valueCell(row.totals.total_tokens)}{valueCell(row.totals.input_tokens)}{valueCell(row.totals.output_tokens)}{valueCell(row.totals.cache_read_tokens)}{valueCell(row.totals.requests)}
           </tr>)}</tbody>
         </table>
       </div>

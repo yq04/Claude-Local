@@ -1,5 +1,5 @@
 // [INPUT]: Synthetic usage fragments and isolated temporary files/SQLite ledgers.
-// [OUTPUT]: Regressions for idempotency/ownership, incremental and oversized tails, legacy cursors, bucket spans, stable fallback attribution and token semantics.
+// [OUTPUT]: Regressions for idempotency/ownership, cursors, named-timezone DST calendars, stable fallback attribution and token semantics.
 // [POS]: Unit tests for identities::usage; never touches the user's Claude profile or identity vault.
 // [PROTOCOL]: Keep all fixtures synthetic and scoped to temporary directories.
 use super::usage::{self, Counts, Event};
@@ -753,4 +753,343 @@ fn snapshots_include_hourly_today_full_history_and_consistent_period_totals() {
         }
     }
     fs::remove_dir_all(dir).unwrap();
+}
+
+fn timezone_fixture(
+    period: &str,
+    timezone: Option<&str>,
+    clock: u64,
+    records: &[(&str, u64, u64)],
+) -> usage::UsageSnapshot {
+    let dir = temp_dir("timezone");
+    let vault = dir.join("vault");
+    let conn = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
+    let events = records
+        .iter()
+        .map(|(key, ts, count)| {
+            (
+                (*key).into(),
+                event(
+                    key,
+                    *ts,
+                    Counts {
+                        input: *count,
+                        ..Counts::default()
+                    },
+                ),
+            )
+        })
+        .collect();
+    usage::persist_scan(&conn, events, &[], &[]).unwrap();
+    drop(conn);
+    let snapshot = usage::read_at_with_timezone_now(
+        &vault,
+        &dir.join("home"),
+        period,
+        Some("unattributed"),
+        0,
+        None,
+        timezone,
+        clock,
+    )
+    .unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    snapshot
+}
+
+#[test]
+fn named_timezone_spring_day_has_23_real_hours_and_calendar_boundaries() {
+    // New York 2026-03-08 spans 05:00Z through 04:00Z next day.
+    let midnight = 1_772_946_000;
+    let records = [
+        ("before", midnight - 1, 100),
+        ("start", midnight, 2),
+        ("after-jump", midnight + 2 * 3600, 3),
+        ("late", midnight + 23 * 3600 - 1, 5),
+        ("future", midnight + 23 * 3600, 1000),
+    ];
+    let snapshot = timezone_fixture(
+        "today",
+        Some("America/New_York"),
+        midnight + 23 * 3600 - 1,
+        &records,
+    );
+    assert_eq!(snapshot.timezone.as_deref(), Some("America/New_York"));
+    assert_eq!(snapshot.daily.len(), 23);
+    assert_eq!(snapshot.daily[0].day, "2026-03-08T00:00-05:00");
+    assert_eq!(snapshot.daily[2].day, "2026-03-08T03:00-04:00");
+    assert_eq!(snapshot.totals.input_tokens, 10);
+    assert_eq!(
+        snapshot
+            .daily
+            .iter()
+            .map(|row| row.totals.input_tokens)
+            .sum::<u64>(),
+        10
+    );
+    assert_eq!(snapshot.daily.first().unwrap().start_at, Some(midnight));
+    assert_eq!(
+        snapshot.daily.last().unwrap().end_at,
+        Some(midnight + 23 * 3600)
+    );
+    let week = timezone_fixture(
+        "week",
+        Some("America/New_York"),
+        midnight + 23 * 3600 + 12 * 3600,
+        &records,
+    );
+    assert_eq!(week.daily.len(), 7);
+    assert_eq!(week.daily[0].day, "2026-03-03");
+    assert_eq!(week.daily.last().unwrap().day, "2026-03-09");
+    assert_eq!(
+        week.daily
+            .iter()
+            .find(|row| row.day == "2026-03-07")
+            .unwrap()
+            .totals
+            .input_tokens,
+        100
+    );
+    assert_eq!(
+        week.daily
+            .iter()
+            .find(|row| row.day == "2026-03-08")
+            .unwrap()
+            .totals
+            .input_tokens,
+        10
+    );
+}
+
+#[test]
+fn named_timezone_fall_repeated_hours_keep_offsets_and_conserve_totals() {
+    // New York 2026-11-01 spans 04:00Z through 05:00Z next day.
+    let midnight = 1_793_505_600;
+    let records = [
+        ("before", midnight - 1, 100),
+        ("first-one", midnight + 5400, 7),
+        ("second-one", midnight + 9000, 11),
+        ("late", midnight + 25 * 3600 - 1, 13),
+    ];
+    let snapshot = timezone_fixture(
+        "today",
+        Some("America/New_York"),
+        midnight + 25 * 3600 - 1,
+        &records,
+    );
+    assert_eq!(snapshot.daily.len(), 25);
+    assert_eq!(snapshot.daily[1].day, "2026-11-01T01:00-04:00");
+    assert_eq!(snapshot.daily[2].day, "2026-11-01T01:00-05:00");
+    assert_eq!(snapshot.daily[1].totals.input_tokens, 7);
+    assert_eq!(snapshot.daily[2].totals.input_tokens, 11);
+    assert_eq!(snapshot.totals.input_tokens, 31);
+    assert_eq!(
+        snapshot
+            .daily
+            .iter()
+            .map(|row| row.totals.input_tokens)
+            .sum::<u64>(),
+        31
+    );
+    for pair in snapshot.daily.windows(2) {
+        assert_eq!(pair[0].end_at, pair[1].start_at);
+    }
+    let month = timezone_fixture(
+        "month",
+        Some("America/New_York"),
+        midnight + 25 * 3600 + 12 * 3600,
+        &records,
+    );
+    assert_eq!(month.daily.len(), 30);
+    assert_eq!(month.daily[0].day, "2026-10-04");
+    assert_eq!(month.daily.last().unwrap().day, "2026-11-02");
+    assert_eq!(
+        month
+            .daily
+            .iter()
+            .find(|row| row.day == "2026-10-31")
+            .unwrap()
+            .totals
+            .input_tokens,
+        100
+    );
+    assert_eq!(
+        month
+            .daily
+            .iter()
+            .find(|row| row.day == "2026-11-01")
+            .unwrap()
+            .totals
+            .input_tokens,
+        31
+    );
+}
+
+#[test]
+fn named_timezone_utc_future_slots_and_legacy_offset_remain_compatible() {
+    let midnight = 1_767_225_600; // 2026-01-01T00:00Z
+    let records = [
+        ("now", midnight + 3600, 7),
+        ("future", midnight + 7200, 100),
+    ];
+    let named = timezone_fixture("today", Some("UTC"), midnight + 3600, &records);
+    assert_eq!(named.daily.len(), 24);
+    assert_eq!(named.daily[0].day, "2026-01-01T00:00+00:00");
+    assert_eq!(named.totals.input_tokens, 7);
+    assert!(named
+        .daily
+        .iter()
+        .skip(2)
+        .all(|row| row.totals.requests == 0));
+    let legacy = timezone_fixture("today", None, midnight + 3600, &records);
+    assert_eq!(legacy.timezone, None);
+    assert_eq!(legacy.daily.len(), 2);
+    assert_eq!(legacy.daily[0].day, "2026-01-01T00:00");
+    assert!(legacy
+        .daily
+        .iter()
+        .all(|row| row.start_at.is_none() && row.end_at.is_none()));
+    assert_eq!(legacy.totals.input_tokens, named.totals.input_tokens);
+}
+
+#[test]
+fn named_timezone_invalid_input_fails_before_opening_a_ledger() {
+    let dir = temp_dir("invalid-timezone");
+    for timezone in ["", "America/Invented", "UTC+05:00"] {
+        let result = usage::read_at_with_timezone_now(
+            &dir.join("vault"),
+            &dir.join("home"),
+            "today",
+            None,
+            330,
+            None,
+            Some(timezone),
+            1_767_225_600,
+        );
+        assert_eq!(result.err().as_deref(), Some("usage timezone is invalid"));
+        assert!(!dir.join("vault").exists());
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn named_timezone_lord_howe_half_hour_rollback_keeps_exact_intervals() {
+    let midnight = chrono::DateTime::parse_from_rfc3339("2026-04-05T00:00:00+11:00")
+        .unwrap()
+        .timestamp() as u64;
+    let records = [
+        ("first", midnight + 100 * 60, 3),
+        ("repeated", midnight + 130 * 60, 5),
+        ("after", midnight + 151 * 60, 7),
+        ("late", midnight + 1470 * 60 - 1, 11),
+    ];
+    let snapshot = timezone_fixture(
+        "today",
+        Some("Australia/Lord_Howe"),
+        midnight + 1470 * 60 - 1,
+        &records,
+    );
+    assert_eq!(snapshot.daily.len(), 25);
+    assert_eq!(snapshot.daily[1].day, "2026-04-05T01:00+11:00");
+    assert_eq!(snapshot.daily[2].day, "2026-04-05T01:30+10:30");
+    assert_eq!(
+        snapshot.daily[2].end_at.unwrap() - snapshot.daily[2].start_at.unwrap(),
+        1800
+    );
+    assert_eq!(
+        snapshot
+            .daily
+            .iter()
+            .map(|row| row.end_at.unwrap() - row.start_at.unwrap())
+            .sum::<u64>(),
+        1470 * 60
+    );
+    assert_eq!(
+        snapshot
+            .daily
+            .iter()
+            .map(|row| row.totals.input_tokens)
+            .sum::<u64>(),
+        26
+    );
+    assert_eq!(snapshot.totals.input_tokens, 26);
+    for pair in snapshot.daily.windows(2) {
+        assert_eq!(pair[0].end_at, pair[1].start_at);
+    }
+    let week = timezone_fixture(
+        "week",
+        Some("Australia/Lord_Howe"),
+        midnight + 1470 * 60 + 3600,
+        &records,
+    );
+    assert_eq!(
+        week.daily
+            .iter()
+            .find(|row| row.day == "2026-04-05")
+            .unwrap()
+            .totals
+            .input_tokens,
+        26
+    );
+}
+
+#[test]
+fn named_timezone_windows_use_start_date_offset_and_history_keeps_zero_dates() {
+    for (date, timezone) in [
+        ("2026-03-09T12:00:00-04:00", "America/New_York"),
+        ("2026-11-02T12:00:00-05:00", "America/New_York"),
+    ] {
+        let clock = chrono::DateTime::parse_from_rfc3339(date)
+            .unwrap()
+            .timestamp() as u64;
+        for (period, first_date) in [
+            (
+                "week",
+                if date.contains("03-09") {
+                    "2026-03-03T00:00:00-05:00"
+                } else {
+                    "2026-10-27T00:00:00-04:00"
+                },
+            ),
+            (
+                "month",
+                if date.contains("03-09") {
+                    "2026-02-08T00:00:00-05:00"
+                } else {
+                    "2026-10-04T00:00:00-04:00"
+                },
+            ),
+        ] {
+            let start = chrono::DateTime::parse_from_rfc3339(first_date)
+                .unwrap()
+                .timestamp() as u64;
+            let snapshot = timezone_fixture(
+                period,
+                Some(timezone),
+                clock,
+                &[("before", start - 1, 100), ("start", start, 7)],
+            );
+            assert_eq!(snapshot.totals.input_tokens, 7);
+            assert_eq!(snapshot.daily[0].totals.input_tokens, 7);
+        }
+        let past = clock - 10 * 86400;
+        let snapshot = timezone_fixture(
+            "all",
+            Some(timezone),
+            clock,
+            &[("past", past, 7), ("now", clock, 11)],
+        );
+        assert_eq!(snapshot.daily.len(), 11);
+        assert_eq!(
+            snapshot
+                .daily
+                .iter()
+                .map(|row| row.totals.input_tokens)
+                .sum::<u64>(),
+            18
+        );
+        assert!(snapshot.daily[1..10]
+            .iter()
+            .all(|row| row.totals.requests == 0));
+    }
 }

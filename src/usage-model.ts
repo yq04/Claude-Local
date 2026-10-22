@@ -15,7 +15,7 @@ export type UsageTotals = {
   requests: number;
 };
 export type UsageAccount = {id: string; name: string; email: string | null; current: boolean; totals: UsageTotals};
-export type UsageDay = {day: string; totals: UsageTotals; future?: boolean};
+export type UsageDay = {day: string; totals: UsageTotals; future?: boolean; start_at?: number; end_at?: number};
 export type UsageSnapshot = {
   generated_at: number;
   tracking_since: number | null;
@@ -24,6 +24,7 @@ export type UsageSnapshot = {
   accounts: UsageAccount[];
   daily: UsageDay[];
   granularity?: 'hour' | 'day';
+  timezone?: string;
   models: {model: string; totals: UsageTotals}[];
   warnings: string[];
 };
@@ -55,12 +56,20 @@ export function summarizeUsageTrend(days: UsageDay[]): {average: number | null; 
   const elapsed = days.filter(day => !day.future);
   const total = elapsed.reduce((sum, day) => sum + day.totals.total_tokens, 0);
   const peak = elapsed.reduce<UsageDay | null>((highest, day) => day.totals.total_tokens > (highest?.totals.total_tokens ?? 0) ? day : highest, null);
-  return {average: elapsed.length ? total / elapsed.length : null, peak};
+  const hourlyIntervals = elapsed.length > 0 && elapsed.every(day => day.start_at != null && day.end_at != null && Number.isFinite(day.start_at) && Number.isFinite(day.end_at) && day.end_at > day.start_at);
+  const durationHours = hourlyIntervals ? elapsed.reduce((sum, day) => sum + (day.end_at! - day.start_at!) / 3600, 0) : elapsed.length;
+  return {average: durationHours > 0 ? total / durationHours : null, peak};
 }
 /** Match the selected calendar span; future hours remain distinguishable from recorded zero use. */
-export function dailySeries(rows: UsageDay[], period: UsagePeriod, now = new Date()): UsageDay[] {
-  const byDay = new Map(rows.map(row => [row.day, row]));
+export function dailySeries(rows: UsageDay[], period: UsagePeriod, now = new Date(), generatedAt?: number): UsageDay[] {
+  const chronological = [...rows].sort((a, b) => a.start_at != null && b.start_at != null ? a.start_at - b.start_at : a.day.localeCompare(b.day));
+  const byDay = new Map(chronological.map(row => [row.day, row]));
   if (period === 'today') {
+    const actualHourly = chronological.filter(row => row.start_at != null && row.end_at != null);
+    if (actualHourly.length) {
+      const clock = generatedAt ?? now.getTime() / 1000;
+      return actualHourly.map(row => ({...row, future: row.start_at! > clock}));
+    }
     const day = localDayKey(now);
     return Array.from({length: 24}, (_, hour) => {
       const key = `${day}T${String(hour).padStart(2, '0')}:00`;

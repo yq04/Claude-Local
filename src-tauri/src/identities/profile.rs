@@ -1,5 +1,5 @@
 // [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话账单增量、本地 settings.json 代理环境变量、只读外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据；当前无可信订阅到期来源。
-// [OUTPUT]: 当前本地身份与已保存身份的脱敏摘要（用户名/邮箱/组织/套餐档位/OAuth有效状态/可选订阅到期/专属代理/逐窗离线5h与7d额度、含 reset_inferred 来源、真实观测时间及重置时间戳）及有界活动会话列表；保留旧聚合来源/观测时间，不输出令牌、不联网验证账号。
+// [OUTPUT]: 当前本地身份与已保存身份的脱敏摘要（用户名/邮箱/组织/套餐档位/OAuth有效状态/可选订阅到期/专属代理/逐窗离线5h与7d额度、含 reset_inferred 来源、真实观测时间及重置时间戳）及有界活动会话列表；百分比锚点先验证，不输出令牌、不联网验证账号。
 // [POS]: 身份卡片的只读展示边界；账号匹配与旧格式适配留在此处，逐窗合并/过期/推定恢复/聚合复用 quota_core；归档时间不代表额度新鲜度，账本只读且不匹配项不污染摘要。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ pub struct Current {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_expires_at: Option<u64>,
 }
-pub const CURRENT_QUOTA_VERSION: u8 = 6;
+pub const CURRENT_QUOTA_VERSION: u8 = 7;
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Summary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -557,14 +557,16 @@ fn extract_quota(
 
     let raw_7d = w7
         .and_then(|w| w.get("utilization"))
-        .and_then(Value::as_f64);
+        .and_then(Value::as_f64)
+        .and_then(crate::quota_core::observed_percentage);
     let reset_7d = w7
         .and_then(|w| w.get("resets_at"))
         .and_then(parse_reset_value);
 
     let raw_5h = w5
         .and_then(|w| w.get("utilization"))
-        .and_then(Value::as_f64);
+        .and_then(Value::as_f64)
+        .and_then(crate::quota_core::observed_percentage);
     let reset_5h = w5
         .and_then(|w| w.get("resets_at"))
         .and_then(parse_reset_value);
@@ -667,7 +669,8 @@ fn extract_quota(
             .filter(|(ts, _)| *ts >= floor_7d)
             .map(|(_, c)| *c)
             .sum();
-        Some(((cost_7d / usd_per_pct_7d).round() as i64).clamp(0, 100) as u8)
+        (cost_7d > 0.0)
+            .then(|| ((cost_7d / usd_per_pct_7d).round() as i64).clamp(0, 100) as u8)
     };
 
     let mut eff_reset_5h = reset_5h;
@@ -822,7 +825,8 @@ fn window_source(
     let has_server_value = cache_window
         .and_then(|value| value.get("utilization"))
         .and_then(Value::as_f64)
-        .is_some_and(f64::is_finite);
+        .and_then(crate::quota_core::observed_percentage)
+        .is_some();
     let server_reset_is_current = cache_window
         .and_then(|value| value.get("resets_at"))
         .and_then(parse_reset_value)
@@ -1115,7 +1119,7 @@ fn ledger_window_value(
         let used = window
             .get("utilization")
             .and_then(Value::as_f64)
-            .filter(|value| value.is_finite() && *value >= 0.0)?
+            .and_then(crate::quota_core::observed_percentage)?
             .round() as u64;
         let reset = window.get("resets_at").and_then(parse_reset_value)?;
         (used, reset)
@@ -1142,7 +1146,8 @@ fn ledger_window_value(
     } else if reset <= now_sec {
         return None;
     }
-    Some((used.min(100) as u8, reset, observed, source))
+    let used = crate::quota_core::observed_percentage(used as f64)?.round() as u8;
+    Some((used, reset, observed, source))
 }
 
 fn ledger_reset_inferred_value(
@@ -1173,7 +1178,7 @@ fn ledger_reset_inferred_value(
     let _used = anchor_window
         .get("utilization")
         .and_then(Value::as_f64)
-        .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))?;
+        .and_then(crate::quota_core::observed_percentage)?;
     let reset = anchor_window.get("resets_at").and_then(parse_reset_value)?;
     let observed = anchor_window
         .get("fetchedAtMs")

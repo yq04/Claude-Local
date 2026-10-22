@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # [INPUT]: Passive statusLine data, isolated account evidence and the bounded sibling Rust quota protocol.
-# [OUTPUT]: Serialized atomic quota ledger/SQLite summaries with explicit trusted-reset inference and original observations.
+# [OUTPUT]: Serialized atomic quota summaries with validated observed percentages, trusted-reset inference and original observations.
 # [POS]: Sole quota-ledger writer; standalone legacy rules mirror Rust without polling or editing Claude configuration.
 # [PROTOCOL]: Update scripts/CLAUDE.md when changing window evidence or persistence behavior.
 """
@@ -17,6 +17,7 @@ claude-quota v6: passive quota collector with the bundled Rust window-state core
 import sys
 import os
 import json
+import math
 import hashlib
 import struct
 import sqlite3
@@ -35,8 +36,40 @@ sys.stdout.reconfigure(encoding="utf-8")
 # 同时支持从各账号自身官方快照窗口内真实会话流自动计算自适应费率 (Adaptive Calibration)
 PRO_WEEKLY_COST_USD = 242.5
 PRO_5H_COST_USD = 32.0
-CURRENT_QUOTA_VERSION = 6
+CURRENT_QUOTA_VERSION = 7
 QUOTA_SOURCES = ("server_anchor", "local_estimate", "reset_inferred", "unknown")
+
+
+def observed_percentage(value) -> float | None:
+    """Validate observed percentages before rounding; preserve legacy numeric strings."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    # A one-point rounding overshoot is tolerated; timestamps and other
+    # out-of-contract values must not become a trusted exhausted window.
+    return min(100.0, number) if math.isfinite(number) and 0 <= number <= 101 else None
+
+
+def clean_anchor_percentages(anchor):
+    """Copy only valid observed windows; never mutate a source cache in place."""
+    if not isinstance(anchor, dict):
+        return None
+    utilization = anchor.get("utilization")
+    if not isinstance(utilization, dict):
+        return dict(anchor)
+    utilization = dict(utilization)
+    for window in ("five_hour", "seven_day"):
+        raw = utilization.get(window)
+        if isinstance(raw, dict) and raw.get("utilization") is not None:
+            percentage = observed_percentage(raw["utilization"])
+            if percentage is None:
+                utilization.pop(window)
+            else:
+                utilization[window] = {**raw, "utilization": percentage}
+    return {**anchor, "utilization": utilization}
 
 
 def quota_identity(account: dict) -> str | None:
@@ -261,11 +294,8 @@ def _expired_anchor_state(entry: dict, suffix: str, window: str, now_sec: int) -
     raw = (anchor.get("utilization") or {}).get(window)
     if not isinstance(raw, dict):
         return None
-    try:
-        raw_used = float(raw.get("utilization"))
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if not 0 <= raw_used <= 100:
+    raw_used = observed_percentage(raw.get("utilization"))
+    if raw_used is None:
         return None
     reset_dt = parse_reset_dt(raw.get("resets_at"))
     if reset_dt is None:
@@ -304,11 +334,12 @@ def entry_window_state(entry: dict, suffix: str, window: str, now_sec: int | Non
         anchor_used = anchor_window.get("utilization")
         anchor_reset = parse_reset_dt(anchor_window.get("resets_at"))
         if anchor_used is not None:
-            used = int(round(float(anchor_used)))
+            used = observed_percentage(anchor_used)
         if anchor_reset is not None:
             reset = int(anchor_reset.timestamp())
     try:
-        used = max(0, min(100, int(round(float(used))))) if used is not None else None
+        percentage = observed_percentage(used)
+        used = int(round(percentage)) if percentage is not None else None
         reset = int(reset) if reset is not None else None
     except (TypeError, ValueError, OverflowError):
         used, reset = None, None
@@ -339,7 +370,8 @@ def info_window_state(info: dict, suffix: str, window: str, now_sec: int | None 
         if not observed and not explicit_source:
             observed = info.get("quota_observed_at_ms")
     try:
-        used = max(0, min(100, int(round(float(used))))) if used is not None else None
+        percentage = observed_percentage(used)
+        used = int(round(percentage)) if percentage is not None else None
         reset = int(reset) if reset is not None else None
     except (TypeError, ValueError, OverflowError):
         used, reset = None, None
@@ -701,11 +733,11 @@ def evaluate_quota(
     usd_per_pct_5h = default_usd_per_pct_5h
 
     w7 = util.get("seven_day") or {}
-    raw_7d_used = float(w7.get("utilization") or 0.0) if w7.get("utilization") is not None else None
+    raw_7d_used = observed_percentage(w7.get("utilization"))
     reset_7d_dt = parse_reset_dt(w7.get("resets_at"))
 
     w5 = util.get("five_hour") or {}
-    raw_5h_used = float(w5.get("utilization") or 0.0) if w5.get("utilization") is not None else None
+    raw_5h_used = observed_percentage(w5.get("utilization"))
     reset_5h_dt = parse_reset_dt(w5.get("resets_at"))
 
     # Adaptive per-account window rate calibration from official snapshot + pre-snapshot slices
@@ -900,7 +932,7 @@ def format_account(
         auth_status = "expired"
 
     q = evaluate_quota(cj, slices, latest_dt, plan, now_utc, active_since_dt=active_since_dt)
-    candidate_anchor = cj.get("cachedUsageUtilization")
+    candidate_anchor = clean_anchor_percentages(cj.get("cachedUsageUtilization"))
     if not isinstance(candidate_anchor, dict) or (acc.get("accountUuid") and candidate_anchor.get("accountUuid") != acc.get("accountUuid")):
         candidate_anchor = None
     window_results = {}
@@ -910,7 +942,7 @@ def format_account(
     ):
         raw_window = (((candidate_anchor or {}).get("utilization") or {}).get(window) or {})
         raw_reset = parse_reset_dt(raw_window.get("resets_at"))
-        raw_used = raw_window.get("utilization")
+        raw_used = observed_percentage(raw_window.get("utilization"))
         observed = window_fetched_at_ms(candidate_anchor, window) or None
         if (raw_used is not None and raw_reset is not None and raw_reset > now_utc
                 and observed and q.get(used_key) is not None):
@@ -1122,8 +1154,8 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 continue
             key += "#" + item["quota_identity"]
             prev_entry = accs.get(key) or {}
-        prev_anchor = prev_entry.get("server_anchor")
-        incoming_anchor = item.get("server_anchor")
+        prev_anchor = clean_anchor_percentages(prev_entry.get("server_anchor"))
+        incoming_anchor = clean_anchor_percentages(item.get("server_anchor"))
         incoming_ms = anchor_fetched_at_ms(incoming_anchor)
         # Inputs are computed before acquiring this lock. Each window is merged
         # by its own observed time below, so a partial/older anchor cannot erase
@@ -1194,8 +1226,8 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
             "quota_7d_reset_at": item.get("reset_7d_ts"),
             "updated_at_sec": now_sec,
             **(
-                {"server_anchor": item.get("server_anchor") or prev_entry.get("server_anchor")}
-                if (item.get("server_anchor") or prev_entry.get("server_anchor"))
+                {"server_anchor": item.get("server_anchor") or prev_anchor}
+                if (item.get("server_anchor") or prev_anchor)
                 else {}
             ),
         }
@@ -1326,9 +1358,14 @@ def handle_statusline() -> None:
     ctx_pct = ctx_obj.get("used_percentage")
     cost_obj = payload.get("cost") or {}
     sess_cost = cost_obj.get("total_cost_usd")
-    rl = payload.get("rate_limits") or {}
-    rl_5h = rl.get("five_hour") or {}
-    rl_7d = rl.get("seven_day") or {}
+    rl = payload.get("rate_limits")
+    rl = rl if isinstance(rl, dict) else {}
+    rl_5h = rl.get("five_hour")
+    rl_7d = rl.get("seven_day")
+    rl_5h = dict(rl_5h) if isinstance(rl_5h, dict) else {}
+    rl_7d = dict(rl_7d) if isinstance(rl_7d, dict) else {}
+    rl_5h["used_percentage"] = observed_percentage(rl_5h.get("used_percentage"))
+    rl_7d["used_percentage"] = observed_percentage(rl_7d.get("used_percentage"))
 
     if is_isolated_relay:
         parts = [f"🔗 Relay │ {model_name}"]
@@ -1367,10 +1404,10 @@ def handle_statusline() -> None:
 
     # Build server_anchor in memory only (NEVER modify ~/.claude.json; persist only to quota_ledger.json)
     if has_live_rl and isinstance(live_cj, dict):
-        cu = live_cj.get("cachedUsageUtilization")
+        cu = clean_anchor_percentages(live_cj.get("cachedUsageUtilization"))
         if not isinstance(cu, dict) or (acct_uuid and cu.get("accountUuid") not in (None, "", acct_uuid)):
             cu = {}
-        previous_anchor = account_entry.get("server_anchor")
+        previous_anchor = clean_anchor_percentages(account_entry.get("server_anchor"))
         account_matches = same_quota_account(account_info, account_entry)
         if (account_matches and acct_uuid and isinstance(previous_anchor, dict)
                 and previous_anchor.get("accountUuid") == acct_uuid
@@ -1440,8 +1477,10 @@ def handle_statusline() -> None:
             r7_dt = parse_reset_dt(cu_util["seven_day"].get("resets_at"))
             r7_val = int(r7_dt.timestamp()) if r7_dt else None
 
-    used5 = min(100, max(0, int(round(float(u5_val))))) if u5_val is not None else None
-    used7 = min(100, max(0, int(round(float(u7_val))))) if u7_val is not None else None
+    u5_val = observed_percentage(u5_val)
+    u7_val = observed_percentage(u7_val)
+    used5 = int(round(u5_val)) if u5_val is not None else None
+    used7 = int(round(u7_val)) if u7_val is not None else None
     r5_int = int(r5_val) if r5_val else None
     r7_int = int(r7_val) if r7_val else None
     if r7_int and now_sec >= r7_int:

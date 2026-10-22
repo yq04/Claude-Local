@@ -44,6 +44,19 @@ test('today uses distinct hourly buckets and excludes future hours from the reco
   expect(hours.at(-1)?.day).toBe('2026-10-20T23:00');
 });
 
+test('named-timezone hourly rows keep real 23/25 slot counts and repeated wall-clock labels', () => {
+  const make = (count: number, start: number) => Array.from({length: count}, (_, i) => ({day: `2026-11-01T${String(i === 1 ? 1 : i).padStart(2, '0')}:00${i === 1 ? '-04:00' : i === 2 ? '-05:00' : '-04:00'}`, start_at: start + i * 3600, end_at: start + (i + 1) * 3600, totals: emptyUsage()}));
+  const fall = dailySeries(make(25, 1793512800), 'today', new Date(2026, 10, 1, 12), 1793512800 + 12 * 3600);
+  expect(fall).toHaveLength(25);
+  expect(fall[1].day).not.toBe(fall[2].day);
+  expect(fall[24].future).toBe(true);
+  expect(dailySeries(make(23, 1793512800), 'today', new Date(2026, 2, 8, 12), 1793512800 + 22 * 3600)).toHaveLength(23);
+});
+
+test('legacy hourly fixtures keep their 24-slot calendar behavior', () => {
+  expect(dailySeries([{day: '2026-03-08T01:00', totals: emptyUsage()}], 'today', new Date(2026, 2, 8, 4))).toHaveLength(24);
+});
+
 test('all-time spans every day from the oldest record, including history older than 30 days', () => {
   const rows = [{day: '2026-08-01', totals: {...emptyUsage(), total_tokens: 70}}];
   const series = dailySeries(rows, 'all', new Date(2026, 9, 20, 12));
@@ -63,4 +76,13 @@ test('trend averages include elapsed gaps and exclude future hours, including th
   expect(summarizeUsageTrend(rows)).toEqual({average: 60, peak: rows[0]});
   expect(summarizeUsageTrend([])).toEqual({average: null, peak: null});
   expect(summarizeUsageTrend([{day: '2026-10-20', totals: emptyUsage()}])).toEqual({average: 0, peak: null});
+});
+
+test('hourly averages divide by actual elapsed interval duration for partial DST slots', () => {
+  const rows = [
+    {day: '2026-04-05T01:00+11:00', start_at: 1_775_326_800, end_at: 1_775_330_400, totals: {...emptyUsage(), total_tokens: 60}},
+    {day: '2026-04-05T01:30+10:30', start_at: 1_775_330_400, end_at: 1_775_332_200, totals: {...emptyUsage(), total_tokens: 30}},
+    {day: '2026-04-05T02:00+10:30', start_at: 1_775_332_200, end_at: 1_775_335_800, totals: {...emptyUsage(), total_tokens: 900}, future: true},
+  ];
+  expect(summarizeUsageTrend(rows)).toEqual({average: 60, peak: rows[0]});
 });

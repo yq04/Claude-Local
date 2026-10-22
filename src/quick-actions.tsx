@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Independent identity/browser/system/CLI reads, shared effective browser target, page icons and locale.
+ * [INPUT]: Independent identity/browser/system/CLI reads, shared effective browser target, page icons, locale and local refresh event.
  * [OUTPUT]: Progressive environment overview, scoped failure reasons and six consistent configuration destinations.
- * [POS]: Mounted only on the quick page; actions navigate or refresh, never rotate fingerprints, start browsers or change system settings.
+ * [POS]: Mounted only on the quick page; actions navigate or refresh guarded reads, never rotate fingerprints, start browsers or change system settings.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
 import {Button} from 'cromma-ui';
@@ -9,6 +9,7 @@ import {Refresh} from 'cromma-ui/pika';
 import {useEffect, useState, type Dispatch, type SetStateAction} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {useI18n} from './i18n';
+import {usePageRefresh} from './app-events';
 import {effectiveBrowserTarget, type BrowserState} from './browser-model';
 import type {IdentityState} from './identity-model';
 import type {Page} from './navigation';
@@ -27,6 +28,8 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
   const [browser, setBrowser] = useState<ReadState<BrowserState>>(unread);
   const [system, setSystem] = useState<ReadState<SystemSnapshot>>(unread);
   const [cli, setCli] = useState<ReadState<CliSnapshot>>(unread);
+  const busy = [identity, browser, system, cli].some(state => state.pending);
+  usePageRefresh(() => { if (!busy) setRevision(value => value + 1); });
   useEffect(() => {
     let live = true;
     function read<T>(command: string, set: Dispatch<SetStateAction<ReadState<T>>>) {
@@ -45,7 +48,6 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
     return () => { live = false; };
   }, [revision]);
 
-  const busy = [identity, browser, system, cli].some(state => state.pending);
   const status = (state: ReadState<unknown>, value: string) => state.pending ? t('quick.checking') : state.error ? t('quick.unavailable') : value;
   const identityStatus = identity.value?.recovery ? t('quick.recovery') : identity.value?.current.unavailable ? t('quick.unavailable') : t(identity.value?.current.present ? 'quick.identityPresent' : 'quick.identityEmpty');
   const browserStatus = t(browser.value?.engine_ready ? browser.value.running ? 'quick.browserRunning' : 'quick.browserReady' : 'quick.browserMissing');

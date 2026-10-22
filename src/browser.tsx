@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Cromma UI、原生浏览器命令、带回报时间的真实观测事件、共用地区契约与共享活动日志和 YAML 文案。
+ * [INPUT]: Cromma UI、原生浏览器命令、带回报时间的真实观测事件、共用地区契约、共享活动日志、本地刷新事件和 YAML 文案。
  * [OUTPUT]: 使用统一中性操作按钮的浏览器环境控制台（启动与默认浏览器授权、目标地区核验与对齐、缓存释放与排障重置）及默认折叠的高级设置；危险确认保留警告色。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -13,6 +13,7 @@ import { AppDialog } from './dialog';
 import { CleanupActivity, useCleanupActivity } from './cleaner-activity';
 import type { BrowserConfig, BrowserState, DefaultBrowser } from './browser-model';
 import { formatBytes } from './cleaner-model';
+import { usePageRefresh } from './app-events';
 
 export function BrowserPanel({ onBusy }: {
     onBusy?: (busy: boolean) => void;
@@ -71,6 +72,10 @@ export function BrowserPanel({ onBusy }: {
         }
         return next;
     }
+    usePageRefresh(() => {
+        if (!gate.current && live.current)
+            void read().catch(e => setError(String(e)));
+    });
     useEffect(() => {
         live.current = true;
         void read(true).catch(e => setError(String(e)));

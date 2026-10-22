@@ -1,5 +1,5 @@
 <!--
-[INPUT]: 原创项目 MIT 授权、现有 Chromium 许可、本地 UI 与 AI SVG 来源记录及 Token 统计开源设计参考。
+[INPUT]: 原创项目MIT授权、Chromium许可、本地UI与AI SVG来源、Token统计参考及本版时区计算依赖许可。
 [OUTPUT]: 英文第三方归属和分发边界；未发现的许可不推断为 MIT。
 [POS]: LICENSE 的第三方补充说明，供 README 和发布包引用。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -41,3 +41,33 @@ The Usage analytics visual hierarchy was also informed by the MIT-licensed [CPA-
 ## Windows timezone data
 
 Windows/IANA mappings derive from [Unicode CLDR 48](https://github.com/unicode-org/cldr/blob/release-48/common/supplemental/windowsZones.xml) under the [Unicode License](src-tauri/windows/LICENSE.unicode.txt). The license is included with Windows packages.
+
+## Timezone analytics and compile-time lookup dependencies
+
+Version 0.1.7 incorporates native timezone calculations and static lookup tables using the following Rust crates from crates.io:
+
+- `chrono` 0.4.45 (dual-licensed under MIT OR Apache-2.0; MIT selected): Copyright (c) 2014--2026, Kang Seonghoon and contributors.
+- `chrono-tz` 0.10.4 (dual-licensed under MIT OR Apache-2.0; MIT selected): Copyright (c) 2016-2024 Benjamin Sago & the chronotope maintainers. (Upstream tzdb data is in the public domain; parse-zoneinfo was forked from zoneinfo-parse created by Benjamin Sago under MIT).
+- `phf` 0.12.1 and `phf_shared` 0.12.1 (licensed under MIT): Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi.
+
+The MIT License (MIT) text applying to these components:
+
+```
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```

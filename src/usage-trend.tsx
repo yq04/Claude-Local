@@ -8,7 +8,7 @@ import {useEffect, useId, useRef, useState} from 'react';
 import {useI18n} from './i18n';
 import {formatUsageNumber, type UsageDay} from './usage-model';
 
-export function UsageTrend({days, hourly = false}: {days: UsageDay[]; hourly?: boolean}) {
+export function UsageTrend({days, hourly = false, timezone}: {days: UsageDay[]; hourly?: boolean; timezone?: string}) {
   const {t, locale} = useI18n();
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(680);
@@ -38,16 +38,29 @@ export function UsageTrend({days, hourly = false}: {days: UsageDay[]; hourly?: b
   const selected = activeIndex == null ? null : days[activeIndex];
   const firstFuture = days.findIndex(day => day.future);
   const futureStart = firstFuture > 0 ? (points[firstFuture - 1].x + points[firstFuture].x) / 2 : null;
-  const label = (day: string) => hourly ? day.slice(11) : new Date(`${day}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'numeric', day: 'numeric'});
-  const fullLabel = (day: string) => hourly ? `${day.slice(0, 10)} ${t('usage.hourRange', {start: day.slice(11), end: `${String(Number(day.slice(11, 13)) + 1).padStart(2, '0')}:00`})}` : day;
-  const dateIndexes = days.length ? [...new Set(hourly ? [0, 6, 12, 18, 23] : [0, Math.round((days.length - 1) / 3), Math.round((days.length - 1) * 2 / 3), days.length - 1])] : [];
+  const bucketLabel = (day: UsageDay) => {
+    if (!hourly) return new Date(`${day.day}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'numeric', day: 'numeric'});
+    if (day.start_at != null) return new Date(day.start_at * 1000).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US', {hour: '2-digit', minute: '2-digit', ...(timezone ? {timeZone: timezone} : {})});
+    return day.day.slice(11, 16);
+  };
+  const fullLabel = (day: UsageDay) => {
+    if (!hourly) return day.day;
+    if (day.start_at != null && day.end_at != null) {
+      const opts: Intl.DateTimeFormatOptions = {hour: '2-digit', minute: '2-digit', ...(timezone ? {timeZone: timezone} : {})};
+      const start = new Date(day.start_at * 1000).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', {...opts, timeZoneName: 'short'});
+      const end = new Date(day.end_at * 1000).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US', opts);
+      return `${day.day.slice(0, 10)} ${start}–${end}`;
+    }
+    return `${day.day.slice(0, 10)} ${t('usage.hourRange', {start: day.day.slice(11, 16), end: `${String(Number(day.day.slice(11, 13)) + 1).padStart(2, '0')}:00`})}`;
+  };
+  const dateIndexes = days.length ? [...new Set(hourly ? [0, Math.round((days.length - 1) / 3), Math.round((days.length - 1) * 2 / 3), days.length - 1] : [0, Math.round((days.length - 1) / 3), Math.round((days.length - 1) * 2 / 3), days.length - 1])] : [];
   const chartLabel = t(hourly ? 'usage.hourly' : 'usage.daily');
   return <div className="usage-trend" ref={container} role="group" aria-label={chartLabel} tabIndex={0} data-usage-granularity={hourly ? 'hour' : 'day'} data-usage-bucket-count={days.length} onBlur={() => setActive(null)} onKeyDown={event => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return;
     event.preventDefault();
     setActive(index => event.key === 'Home' ? 0 : event.key === 'End' ? days.length - 1 : Math.max(0, Math.min(days.length - 1, (index ?? days.length - 1) + (event.key === 'ArrowLeft' ? -1 : 1))));
   }}>
-    {selected && activeIndex != null && <div className="usage-trend-tooltip" role="status" style={{left: Math.max(100, Math.min(width - 100, points[activeIndex].x))}}><span>{fullLabel(selected.day)}</span>{selected.future ? <strong>{t('usage.future')}</strong> : <><strong>{formatUsageNumber(selected.totals.total_tokens, locale, true)} <small>{t('usage.total')}</small></strong><span>{formatUsageNumber(selected.totals.total_tokens, locale)} Token</span></>}</div>}
+    {selected && activeIndex != null && <div className="usage-trend-tooltip" role="status" style={{left: Math.max(100, Math.min(width - 100, points[activeIndex].x))}}><span>{fullLabel(selected)}</span>{selected.future ? <strong>{t('usage.future')}</strong> : <><strong>{formatUsageNumber(selected.totals.total_tokens, locale, true)} <small>{t('usage.total')}</small></strong><span>{formatUsageNumber(selected.totals.total_tokens, locale)} Token</span></>}</div>}
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={chartLabel} data-usage-total-chart="true" onPointerLeave={() => setActive(null)} onPointerMove={event => {
       const bounds = event.currentTarget.getBoundingClientRect();
       const x = (event.clientX - bounds.left) / bounds.width * width;
@@ -64,7 +77,7 @@ export function UsageTrend({days, hourly = false}: {days: UsageDay[]; hourly?: b
       <path className="usage-total-line" d={line} fill="none" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
       {(recordedPoints.length === 1 || activeIndex != null) && !selected?.future && <circle className="usage-total-point" cx={points[activeIndex ?? 0]?.x} cy={points[activeIndex ?? 0]?.y} r={5} strokeWidth={2.5} />}
       {activeIndex != null && <line className="usage-total-guide" x1={points[activeIndex].x} y1={top} x2={points[activeIndex].x} y2={bottom} />}
-      {dateIndexes.map(index => <text className="usage-axis-label" key={index} x={points[index].x} y={height - 13} textAnchor={days.length === 1 ? 'middle' : index === 0 ? 'start' : index === days.length - 1 ? 'end' : 'middle'}>{label(days[index].day)}</text>)}
+      {dateIndexes.map(index => <text className="usage-axis-label" key={index} x={points[index].x} y={height - 13} textAnchor={days.length === 1 ? 'middle' : index === 0 ? 'start' : index === days.length - 1 ? 'end' : 'middle'}>{bucketLabel(days[index])}</text>)}
     </svg>
   </div>;
 }

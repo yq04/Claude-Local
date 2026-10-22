@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生 CLI 本地状态、用户手动最新版本检查与更新命令和真实任务日志。
- * [OUTPUT]: 紧凑品牌维护卡片、当前/最新版本、检查更新与一键更新；运行中明确阻断更新。
+ * [OUTPUT]: 紧凑品牌维护卡片、可恢复的本地状态读取、当前/最新版本、检查更新与一键更新；读取失败不误报未安装，运行中明确阻断更新。
  * [POS]: 身份页 CLI 程序维护区域；首次挂载只读本地状态，不联网、不结束会话、不修改身份或配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -21,7 +21,8 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
     [loading, setLoading] = useState(true),
     [action, setAction] = useState<Action | null>(null),
     [update, setUpdate] = useState<UpdateStatus | null>(null),
-    [error, setError] = useState('');
+    [error, setError] = useState(''),
+    [readError, setReadError] = useState('');
   const activity = useCleanupActivity();
   useEffect(() => {
     void read();
@@ -34,14 +35,15 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
     setLoading(true);
     try {
       setStatus(await invoke<Status>('claude_cli_read'));
+      setReadError('');
     } catch (e) {
-      setError(String(e));
+      setReadError(String(e));
     } finally {
       setLoading(false);
     }
   }
   async function run(selected: Action) {
-    if (blocked || loading || action) return;
+    if (blocked || loading || action || readError) return;
     setAction(selected);
     setError('');
     const onProgress = activity.start('cli');
@@ -74,18 +76,21 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
           <div>
             <div className="cli-title-cluster">
               <h2>{t('Claude Code CLI')}</h2>
-              <span className={`cli-status-pill ${status?.method ? 'installed' : 'missing'}`}>
-                {loading ? t('正在检查安装状态…') : status?.method ? status.version || t('已安装') : t('未安装')}
+              <span className={`cli-status-pill ${readError ? 'unavailable' : status?.method ? 'installed' : 'missing'}`}>
+                {loading ? t('cli.checking') : readError ? t('cli.statusUnavailable') : status?.method ? status.version || t('已安装') : t('未安装')}
               </span>
             </div>
             {status?.path && <code className="cli-path-code">{status.path}</code>}
           </div>
         </div>
         <div className="cleanup-title-actions">
-          <Button size="small" variant="secondary" disabled={blocked || loading || !!action || !status?.method} onClick={() => void run('check')}>
+          {readError && <Button size="small" variant="secondary" loading={loading} disabled={blocked || loading || !!action} onClick={() => void read()}>
+            {t(loading ? 'cli.checking' : 'cli.retryRead')}
+          </Button>}
+          <Button size="small" variant="secondary" disabled={blocked || loading || !!action || !!readError || !status?.method} onClick={() => void run('check')}>
             {t(action === 'check' ? 'cli.checking' : 'cli.check')}
           </Button>
-          <Button size="small" variant="secondary" disabled={blocked || loading || !!action || !status?.method || status.running || (!!update && !update.update_available)} onClick={() => void run('update')}>
+          <Button size="small" variant="secondary" disabled={blocked || loading || !!action || !!readError || !status?.method || status.running || (!!update && !update.update_available)} onClick={() => void run('update')}>
             {t(action === 'update' ? 'cli.updating' : 'cli.update')}
           </Button>
         </div>
@@ -97,6 +102,7 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
           {t(error)}
         </p>
       )}
+      {readError && <p role="alert" className="cleanup-feedback error">{t(readError)}</p>}
       <CleanupActivity activity={activity.state} />
     </section>
   );

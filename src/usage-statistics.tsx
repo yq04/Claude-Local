@@ -9,10 +9,12 @@ import {invoke} from '@tauri-apps/api/core';
 import {Button, Disclosure, Select, Tabs} from 'cromma-ui';
 import {Refresh} from 'cromma-ui/pika';
 import {useI18n} from './i18n';
+import {usePageRefresh} from './app-events';
 import {maskEmailAddress, usePreferences} from './settings-model';
 import {cacheHitRate, dailySeries, formatUsageNumber, summarizeUsageTrend, type UsagePeriod, type UsageSnapshot, type UsageTotals} from './usage-model';
 import {UsageTrend} from './usage-trend';
 import {UsageTrendTable} from './usage-table';
+import {buildUsageTsv} from './usage-export';
 
 const periods: readonly [UsagePeriod, string][] = [['today', 'usage.today'], ['week', 'usage.week'], ['month', 'usage.month'], ['all', 'usage.allTime']];
 const warningKeys: Record<string, string> = {
@@ -39,10 +41,13 @@ export function UsageStatisticsPanel() {
   const [revision, setRevision] = useState(0);
   const [result, setResult] = useState<{key: string; value: UsageSnapshot} | null>(null);
   const [status, setStatus] = useState<{key: string; busy: boolean; error: string}>({key: '', busy: true, error: ''});
-  const queryKey = `${period}:${account}`;
+  const [exportStatus, setExportStatus] = useState('');
+  const timezone = (() => { try { const value = Intl.DateTimeFormat().resolvedOptions().timeZone; new Intl.DateTimeFormat('en', {timeZone: value}); return value; } catch { return ''; } })();
+  const queryKey = `${period}:${account}:${timezone || `offset:${-new Date().getTimezoneOffset()}`}`;
   const snapshot = result?.key === queryKey ? result.value : null;
   const busy = status.key !== queryKey || status.busy;
   const error = status.key === queryKey ? status.error : '';
+  usePageRefresh(() => { if (!busy) setRevision(value => value + 1); });
   const num = (value: number | null | undefined, compact = false) => formatUsageNumber(value, locale, compact);
   const percent = (value: number | null) => value == null ? '—' : new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {style: 'percent', maximumFractionDigits: 1}).format(value);
 
@@ -57,7 +62,8 @@ export function UsageStatisticsPanel() {
       reading = true;
       setStatus({key: queryKey, busy: true, error: ''});
       try {
-        const value = await invoke<UsageSnapshot>('usage_statistics_read', {period, accountId: account === 'all' ? null : account, offsetMinutes: -new Date().getTimezoneOffset()});
+        const args = {period, accountId: account === 'all' ? null : account, offsetMinutes: -new Date().getTimezoneOffset(), ...(timezone ? {timezone} : {})};
+        const value = await invoke<UsageSnapshot>('usage_statistics_read', args);
         if (live) {setResult({key: queryKey, value}); setStatus({key: queryKey, busy: false, error: ''});}
       } catch (reason) {
         if (live) setStatus({key: queryKey, busy: false, error: String(reason)});
@@ -73,11 +79,11 @@ export function UsageStatisticsPanel() {
     void refresh();
     document.addEventListener('visibilitychange', visibilityChanged);
     return () => { live = false; window.clearTimeout(timer); document.removeEventListener('visibilitychange', visibilityChanged); };
-  }, [period, account, revision, queryKey]);
+  }, [period, account, revision, queryKey, timezone]);
 
   const totals = snapshot?.totals;
   const accounts = result?.value.accounts ?? [];
-  const days = dailySeries(snapshot?.daily ?? [], period, snapshot ? new Date(snapshot.generated_at * 1000) : new Date());
+  const days = dailySeries(snapshot?.daily ?? [], period, snapshot ? new Date(snapshot.generated_at * 1000) : new Date(), snapshot?.generated_at);
   const models = [...(snapshot?.models ?? [])].sort((a, b) => b.totals.total_tokens - a.totals.total_tokens);
   const sortedAccounts = [...(snapshot?.accounts ?? [])].sort((a, b) => Number(b.current) - Number(a.current) || b.totals.total_tokens - a.totals.total_tokens || a.id.localeCompare(b.id));
   const stamp = snapshot ? new Date(snapshot.generated_at * 1000).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US', {hour: '2-digit', minute: '2-digit', second: '2-digit'}) : '';
@@ -86,6 +92,23 @@ export function UsageStatisticsPanel() {
   const dateLabel = (day: string) => new Date(`${day.slice(0, 10)}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {year: 'numeric', month: 'short', day: 'numeric'});
   const range = snapshot ? days.length > 1 && days[0].day.slice(0, 10) !== days.at(-1)!.day.slice(0, 10) ? `${dateLabel(days[0].day)} – ${dateLabel(days.at(-1)!.day)}` : dateLabel(days[0].day) : '—';
   const peakLabel = trend.peak ? period === 'today' ? trend.peak.day.slice(11) : new Date(`${trend.peak.day}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric'}) : '';
+  const selectedAccount = account === 'all' ? t('usage.allAccounts') : prefs.privacyMask ? t('usage.account') : snapshot?.accounts.find(item => item.id === account)?.name ?? t('usage.allAccounts');
+  const offsetMinutes = -new Date().getTimezoneOffset();
+  const offsetZone = `UTC${offsetMinutes >= 0 ? '+' : '-'}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0')}:${String(Math.abs(offsetMinutes) % 60).padStart(2, '0')}`;
+  const makeExport = () => snapshot ? buildUsageTsv({snapshot, period, periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'), accountLabel: selectedAccount, accountIsAll: account === 'all', timezone: snapshot.timezone || timezone || offsetZone, privacy: prefs.privacyMask, days, generatedLabel: new Date(snapshot.generated_at * 1000).toISOString(), coverageLabel: snapshot.tracking_since == null ? t('usage.exportCoverageUnknown') : `${new Date(snapshot.tracking_since * 1000).toISOString()} – ${new Date(snapshot.generated_at * 1000).toISOString()}`, productLabel: 'Claude-Local', labels: {metadata: t('usage.exportTitle'), summary: t('usage.exportSummary'), daily: t('usage.exportBuckets'), time: t('usage.exportTime'), total: t('usage.total'), input: t('usage.input'), output: t('usage.output'), cacheWrite: t('usage.cacheWrite'), cacheRead: t('usage.cacheRead'), requests: t('usage.requests'), account: t('usage.account'), period: t('usage.periodFilter'), timezone: t('usage.exportTimezone'), generated: t('usage.exportGenerated'), coverage: t('usage.exportCoverage')}}) : '';
+  const exportTsv = async (download: boolean) => {
+    if (!snapshot || busy) return;
+    setExportStatus('');
+    const contents = makeExport();
+    if (download) {
+      const url = URL.createObjectURL(new Blob([contents], {type: 'text/tab-separated-values;charset=utf-8'}));
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'claude-local-usage.tsv'; anchor.click(); URL.revokeObjectURL(url);
+      setExportStatus(t('usage.exportDownloaded')); return;
+    }
+    try { await invoke('copy_result', {text: contents}); }
+    catch { if (!navigator.clipboard?.writeText) {setExportStatus(t('usage.exportFailed')); return;} try {await navigator.clipboard.writeText(contents);} catch {setExportStatus(t('usage.exportFailed')); return;} }
+    setExportStatus(t('usage.exportCopied'));
+  };
 
   return (
     <section className="system-page usage-page">
@@ -93,9 +116,12 @@ export function UsageStatisticsPanel() {
         <h1>{t('usage.title')}</h1>
         <div className="usage-header-actions">
           <span role="status">{busy ? t('usage.loading') : stamp ? t('usage.updated', {time: stamp}) : t('usage.localOnly')}</span>
+          <Button variant="secondary" size="small" disabled={busy || !snapshot} onClick={() => void exportTsv(false)}>{t('usage.copyTsv')}</Button>
+          <Button variant="secondary" size="small" disabled={busy || !snapshot} onClick={() => void exportTsv(true)}>{t('usage.downloadTsv')}</Button>
           <Button variant="secondary" size="small" disabled={busy} leftIcon={<Refresh size={15} aria-hidden="true" className={busy ? 'spin' : ''} />} onClick={() => setRevision(value => value + 1)}>{t('usage.refresh')}</Button>
         </div>
       </header>
+      {exportStatus && <p className="usage-export-status" role="status">{exportStatus}</p>}
       <div className="usage-content">
         <div className="settings-card usage-filter-card">
         <div className="usage-toolbar">
@@ -132,7 +158,7 @@ export function UsageStatisticsPanel() {
           <section className="settings-card usage-chart-card">
             <div className="usage-panel-header"><div><GroupTitle>{t('usage.daily')}</GroupTitle><p>{period === 'today' ? t('usage.hourly') : period === 'all' ? t('usage.fullHistory') : t('usage.localDays')}</p></div><Tabs aria-label={t('usage.trendView')} size="small" value={trendView} onValueChange={value => setTrendView(value as 'chart' | 'data')} tabs={[{value: 'chart', label: t('usage.chartView')}, {value: 'data', label: t('usage.dataView')}]} /></div>
             <div className="usage-chart-summary" title={t('usage.averageHint')}><div><span>{t(period === 'today' ? 'usage.averageHour' : 'usage.averageDay')}</span><strong title={num(trend.average)}>{num(trend.average, true)}<small>Token</small></strong></div><div><span>{t(period === 'today' ? 'usage.peakHour' : 'usage.peakDay')}</span><strong title={num(trend.peak?.totals.total_tokens)}>{num(trend.peak?.totals.total_tokens, true)}<small>{peakLabel}</small></strong></div></div>
-            {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={period === 'today'} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={period === 'today'} />}
+            {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={period === 'today'} timezone={snapshot.timezone} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={period === 'today'} timezone={snapshot.timezone} />}
             <div className="usage-chart-caption"><span><i aria-hidden="true" />{t('usage.total')}</span><span>{t(trendView === 'chart' ? 'usage.trendHint' : 'usage.tableHint')}</span></div>
           </section>
           <section className="settings-card usage-model-card">

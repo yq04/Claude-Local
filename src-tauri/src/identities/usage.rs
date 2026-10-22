@@ -1,8 +1,10 @@
-// [INPUT]: Bounded Claude Code project JSONL usage records, identity HMAC keys, and a private independent SQLite ledger.
-// [OUTPUT]: Redacted aggregates with indexed time-range reads, hourly/daily trends and persistent user-selected fallback attribution.
+// [INPUT]: Bounded Claude Code usage JSONL, identity HMAC keys, private SQLite ledger and optional IANA display timezone.
+// [OUTPUT]: Redacted aggregates, DST-correct local calendar trends with explicit hourly intervals, and stable fallback attribution.
 // [POS]: Read-only identity usage command and pre-switch collection boundary; never reads credentials, archives, or session bodies into the ledger.
 // [PROTOCOL]: Complete-line offsets and bounded prefix/tail hashes live only in the usage ledger; identity database user_version remains 3. See identities/CLAUDE.md.
 use super::{catalog, private};
+use chrono::{DateTime, Datelike, Days, LocalResult, NaiveDate, TimeZone, Utc};
+use chrono_tz::{GapInfo, Tz};
 use ring::digest;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -41,6 +43,10 @@ pub struct UsageAccount {
 #[derive(Clone, Serialize)]
 pub struct UsageDaily {
     pub day: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_at: Option<u64>,
     pub totals: UsageTotals,
 }
 #[derive(Clone, Serialize)]
@@ -51,6 +57,8 @@ pub struct UsageModel {
 #[derive(Clone, Serialize)]
 pub struct UsageSnapshot {
     pub generated_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     pub tracking_since: Option<u64>,
     pub totals: UsageTotals,
     pub unattributed: UsageTotals,
@@ -757,6 +765,116 @@ fn offset_start(period: &str, now_sec: u64, offset: i32) -> Result<Option<u64>, 
         ((day - days) * 86400 - offset as i64 * 60).max(0) as u64
     ))
 }
+
+const INVALID_TIMEZONE: &str = "usage timezone is invalid";
+const INVALID_TIME_RANGE: &str = "usage time range is invalid";
+
+fn parse_timezone(timezone: Option<&str>) -> Result<Option<Tz>, String> {
+    timezone
+        .map(|name| name.parse::<Tz>().map_err(|_| INVALID_TIMEZONE.into()))
+        .transpose()
+}
+
+fn local_datetime(timezone: Tz, ts: u64) -> Result<DateTime<Tz>, String> {
+    i64::try_from(ts)
+        .ok()
+        .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0))
+        .map(|utc| utc.with_timezone(&timezone))
+        .ok_or_else(|| INVALID_TIME_RANGE.into())
+}
+
+// Midnight can be ambiguous or absent in IANA history. Choose the earliest
+// occurrence, or the first valid instant of the civil day after a midnight gap.
+// A wholly skipped date shares the next date's boundary and still has a zero row.
+fn local_midnight(timezone: Tz, date: NaiveDate) -> Result<u64, String> {
+    let midnight = date.and_hms_opt(0, 0, 0).ok_or(INVALID_TIME_RANGE)?;
+    timezone
+        .from_local_datetime(&midnight)
+        .earliest()
+        .or_else(|| GapInfo::new(&midnight, &timezone).and_then(|gap| gap.end))
+        .map(|value| value.timestamp().max(0) as u64)
+        .ok_or_else(|| INVALID_TIME_RANGE.into())
+}
+
+fn named_start(period: &str, clock: u64, timezone: Tz) -> Result<Option<u64>, String> {
+    let days = match period {
+        "all" => return Ok(None),
+        "today" => 0,
+        "week" => 6,
+        "month" => 29,
+        _ => return Err("period must be all/today/week/month".into()),
+    };
+    let date = local_datetime(timezone, clock)?
+        .date_naive()
+        .checked_sub_days(Days::new(days))
+        .ok_or(INVALID_TIME_RANGE)?;
+    local_midnight(timezone, date).map(Some)
+}
+
+fn named_hour_slots(timezone: Tz, clock: u64) -> Result<Vec<UsageDaily>, String> {
+    let date = local_datetime(timezone, clock)?.date_naive();
+    let start = local_midnight(timezone, date)?;
+    let end = local_midnight(timezone, date.succ_opt().ok_or(INVALID_TIME_RANGE)?)?;
+    let mut boundaries = vec![start, end];
+    for hour in 0..24 {
+        let local = date.and_hms_opt(hour, 0, 0).ok_or(INVALID_TIME_RANGE)?;
+        match timezone.from_local_datetime(&local) {
+            LocalResult::Single(value) => boundaries.push(value.timestamp().max(0) as u64),
+            LocalResult::Ambiguous(first, second) => {
+                boundaries.push(first.timestamp().max(0) as u64);
+                boundaries.push(second.timestamp().max(0) as u64);
+            }
+            LocalResult::None => {}
+        }
+    }
+    // Include offset changes that occur between wall-hour boundaries (e.g.
+    // Lord Howe's thirty-minute rollback). Read offsets from the IANA database;
+    // locate the exact transition second rather than rounding the interval.
+    let offset = |ts| {
+        local_datetime(timezone, ts).map(|value| {
+            value
+                .naive_local()
+                .signed_duration_since(value.naive_utc())
+                .num_seconds()
+        })
+    };
+    let mut previous = start;
+    let mut previous_offset = offset(start)?;
+    while previous < end {
+        let next = previous.saturating_add(60).min(end);
+        let next_offset = offset(next)?;
+        if next_offset != previous_offset {
+            let (mut left, mut right) = (previous, next);
+            while right - left > 1 {
+                let mid = left + (right - left) / 2;
+                if offset(mid)? == previous_offset {
+                    left = mid;
+                } else {
+                    right = mid;
+                }
+            }
+            boundaries.push(right);
+        }
+        previous = next;
+        previous_offset = next_offset;
+    }
+    boundaries.retain(|boundary| *boundary >= start && *boundary <= end);
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    boundaries
+        .windows(2)
+        .map(|interval| {
+            Ok(UsageDaily {
+                day: local_datetime(timezone, interval[0])?
+                    .format("%Y-%m-%dT%H:%M%:z")
+                    .to_string(),
+                start_at: Some(interval[0]),
+                end_at: Some(interval[1]),
+                totals: UsageTotals::default(),
+            })
+        })
+        .collect()
+}
 pub(super) fn day_label(ts: u64, offset: i32) -> String {
     let z = (ts as i64 + offset as i64 * 60).div_euclid(86400) + 719468;
     let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
@@ -908,7 +1026,9 @@ pub async fn usage_statistics_read(
     account_id: Option<String>,
     offset_minutes: i32,
     fallback_account_name: Option<String>,
+    timezone: Option<String>,
 ) -> Result<UsageSnapshot, String> {
+    parse_timezone(timezone.as_deref())?;
     if !(-840..=840).contains(&offset_minutes) {
         return Err("offset_minutes must be within ±840".into());
     }
@@ -930,13 +1050,15 @@ pub async fn usage_statistics_read(
                 .map_err(|_| "usage ledger unavailable")?
                 .join("identity-vault");
             let home = crate::cleaner::identity::root()?;
-            read_at_with_fallback(
+            read_at_with_timezone_now(
                 &vault,
                 &home,
                 &period,
                 account_id.as_deref(),
                 offset_minutes,
                 fallback_account_name.as_deref(),
+                timezone.as_deref(),
+                now(),
             )
         })();
         cleaner.leave();
@@ -964,6 +1086,42 @@ pub(super) fn read_at_with_fallback(
     offset: i32,
     fallback_name: Option<&str>,
 ) -> Result<UsageSnapshot, String> {
+    read_at_with_timezone_now(
+        vault,
+        home,
+        period,
+        account_id,
+        offset,
+        fallback_name,
+        None,
+        now(),
+    )
+}
+
+pub(super) fn read_at_with_timezone_now(
+    vault: &Path,
+    home: &Path,
+    period: &str,
+    account_id: Option<&str>,
+    offset: i32,
+    fallback_name: Option<&str>,
+    timezone: Option<&str>,
+    snapshot_now: u64,
+) -> Result<UsageSnapshot, String> {
+    let timezone = parse_timezone(timezone)?;
+    // Validate before touching the ledger, including for offset-only callers.
+    offset_start(period, snapshot_now, offset)?;
+    let start = match timezone {
+        Some(timezone) => named_start(period, snapshot_now, timezone)?,
+        None => offset_start(period, snapshot_now, offset)?,
+    };
+    let mut hourly_slots = if period == "today" {
+        timezone
+            .map(|timezone| named_hour_slots(timezone, snapshot_now))
+            .transpose()?
+    } else {
+        None
+    };
     let ledger_path = vault.join("usage.sqlite");
     let mut warnings = Vec::new();
     let conn = open_ledger(&ledger_path)?;
@@ -1138,8 +1296,6 @@ pub(super) fn read_at_with_fallback(
         .optional()
         .map_err(|_| "usage attribution unavailable")?;
     let fallback_id = fallback_id.filter(|id| account_map.values().any(|a| &a.id == id));
-    let snapshot_now = now();
-    let start = offset_start(period, snapshot_now, offset)?;
     let weak_from = start.unwrap_or(0).min(i64::MAX as u64) as i64;
     let has_weak: bool = conn
         .query_row(
@@ -1201,11 +1357,24 @@ pub(super) fn read_at_with_fallback(
         };
         if selected {
             add_row(&mut totals, i, o, c, r, reason);
-            let local_second = (ts as i64).saturating_add(offset as i64 * 60);
-            let bucket = if hourly {
-                local_second.div_euclid(3600)
+            let bucket = if let Some(timezone) = timezone {
+                if let Some(slots) = hourly_slots.as_ref() {
+                    let index = slots
+                        .partition_point(|slot| slot.start_at.unwrap_or(0) <= ts)
+                        .saturating_sub(1);
+                    slots[index].start_at.unwrap_or(0) as i64
+                } else {
+                    local_datetime(timezone, ts)?
+                        .date_naive()
+                        .num_days_from_ce() as i64
+                }
             } else {
-                local_second.div_euclid(86400)
+                let local_second = (ts as i64).saturating_add(offset as i64 * 60);
+                if hourly {
+                    local_second.div_euclid(3600)
+                } else {
+                    local_second.div_euclid(86400)
+                }
             };
             add_row(buckets.entry(bucket).or_default(), i, o, c, r, reason);
             add_row(models.entry(model).or_default(), i, o, c, r, reason);
@@ -1221,17 +1390,44 @@ pub(super) fn read_at_with_fallback(
     let mut accounts: Vec<_> = account_map.into_values().collect();
     accounts.extend(unbound_accounts);
     let earliest = buckets.keys().next().copied();
-    let (first_bucket, last_bucket) = bucket_span(period, snapshot_now, offset, earliest);
-    let daily = if first_bucket <= last_bucket {
+    let (first_bucket, last_bucket) = if let Some(timezone) = timezone {
+        let today = local_datetime(timezone, snapshot_now)?
+            .date_naive()
+            .num_days_from_ce() as i64;
+        (
+            match period {
+                "week" => today - 6,
+                "month" => today - 29,
+                _ => earliest.unwrap_or(today),
+            },
+            today,
+        )
+    } else {
+        bucket_span(period, snapshot_now, offset, earliest)
+    };
+    let daily = if let Some(mut slots) = hourly_slots.take() {
+        for slot in &mut slots {
+            slot.totals = buckets
+                .remove(&(slot.start_at.unwrap_or(0) as i64))
+                .unwrap_or_default();
+        }
+        slots
+    } else if first_bucket <= last_bucket {
         (first_bucket..=last_bucket)
             .map(|bucket| {
-                let label = if hourly {
+                let label = if timezone.is_some() {
+                    NaiveDate::from_num_days_from_ce_opt(bucket as i32)
+                        .map(|date| date.format("%Y-%m-%d").to_string())
+                        .unwrap_or_default()
+                } else if hourly {
                     hour_label((bucket * 3600 - offset as i64 * 60).max(0) as u64, offset)
                 } else {
                     day_label((bucket * 86400 - offset as i64 * 60).max(0) as u64, offset)
                 };
                 UsageDaily {
                     day: label,
+                    start_at: None,
+                    end_at: None,
                     totals: buckets.remove(&bucket).unwrap_or_default(),
                 }
             })
@@ -1241,6 +1437,7 @@ pub(super) fn read_at_with_fallback(
     };
     Ok(UsageSnapshot {
         generated_at: snapshot_now,
+        timezone: timezone.map(|timezone| timezone.name().to_string()),
         tracking_since: tracking,
         totals,
         unattributed: unknown,

@@ -1,7 +1,7 @@
 # identities/
 > L2 | 父级: ../CLAUDE.md
 mod.rs: 当前/空/已保存身份（读取时经 Store::open 完成旧版索引、孤儿摘要清理、摘要离线额度惰性回填、只读 quota_ledger.json 跨账号同步、逐窗更新与可信服务端重置后的明确推定、死锁垃圾清理）、原地加密备份、无需目录扫描的进程停止与切换/恢复/重命名/直接删除 Tauri 命令，复用 Cleaner 全局事务锁；进程停止通道可选且报告开始/真实完成/失败，兼容旧调用；UI 只接收目录和允许的账号显示字段及离线额度百分比。
-usage.rs / usage_tests.rs: 独立私有 SQLite Token 账本；JSONL完整行增量游标、超长半行重试、最多8KiB头部/边界采样哈希检测改写、旧游标兼容、时间/回放索引；哈希去重与累计值合并，保留既有HMAC归属。小时/每日/完整历史聚合排除未来，固定UTC偏移尚未校正历史夏令时；采样不保证任意中段改写均被发现，损坏文件保持重试。只返回脱敏计数，不写 Claude 配置或 Python 配额账本，测试仅用临时虚构会话。
+usage.rs / usage_tests.rs: 独立私有 SQLite Token 账本；JSONL完整行游标、8KiB头部/边界采样哈希、旧游标兼容和时间/回放索引；跨文件去重与累计值合并，保留HMAC归属。命名IANA时区按事件本地日历归组，真实小时含start_at/end_at和偏移标签，保留23/25小时及半小时转换；未来槽无虚构用量，旧offset调用继续兼容。只返回脱敏聚合，不写Claude配置或Python额度账本；采样仍不能证明任意中段从未改写，损坏文件保持重试。测试只用合成目录/日志。
 database.rs: 默认开启联动且保留显式关闭，SQLite v3 管理稳定账号槽位、不可变归档代次、HMAC 索引、脱敏身份摘要（含离线额度与孤儿摘要自动回收）、空身份临时记录回收、切换时间戳（active_since）与持久恢复状态；旧 v1/v2 事务迁移，覆盖指针与恢复标记同事务提交；短期进程内 Mutex 串行化文件创建到初始化提交，避免 Windows 创建句柄令并发 SQLite 打开降级只读，IMMEDIATE 事务继续保护并发迁移，返回后释放锁；凭据正文不入库。
 database_tests.rs: 临时规范目录与合成 SQLite 验证 24 轮 Barrier 并发首次建库、缺失保险库目录创建和旧 v1 迁移至 v3；连接显式释放后清理临时目录，不读取真实身份资料或调用原生/浏览器命令。
 store.rs: 先验收归档再切换工作区、原地保存快照、恢复后即时跨账号残留消毒与旧归档历史会话/项目路径无损合并、切换前采集 Token 用量和成功绑定/切换/恢复后的账号统计边界、失败回滚、独立恢复检查点与无新增备份删除；清除/恢复按完成源数量报告局部进度，凭据/提交/回滚显式阶段；关键阶段强制核验进程，文件循环每 250ms 复查。
@@ -19,5 +19,7 @@ browser_link_tests.rs: 默认勾选/显式关闭保留与身份摘要无令牌/�
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 Quota reset recovery: 已到期的可信服务端窗口以 reset_inferred 保留过去边界与真实观测，允许界面明确显示预计恢复；无证据或纯本地估算到期仍未知。profile 从严格匹配账号/组织的原始锚点恢复旧版已清空的摘要，不推进 reset，不覆盖有效新窗口。quota_regression_tests.rs 覆盖到期、旧账本恢复、隔离和新观测优先；Python 仍为额度账本唯一写入者。
+
+Observed percentage validation: 原始缓存/账本锚点在使用前验证有限性和范围，异常大数/负值不再截成可信的0或100；100–101的轻微超出兼容为100。一窗无有效观测且无实际本地消耗时保持未知，不影响另一合法窗。额度摘要版本7触发旧摘要惰性回填，SQLite仍为3。
 
 usage.rs: Stable fallback account IDs in usage-ledger meta attribute otherwise unresolved rows consistently across totals, trends, models and filters; raw event evidence stays unchanged.

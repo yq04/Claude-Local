@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Cromma UI 表单、原生电脑环境快照与经核验的设置命令与共享 YAML 文案。
+ * [INPUT]: Cromma UI 表单、原生电脑环境快照、经核验的设置命令、本地刷新事件与共享 YAML 文案。
  * [OUTPUT]: 时区/语言并排的紧凑圆角卡片，当前状态与目标选择分层；定位为下方紧凑长条；保留执行记录、授权入口与任务锁。
  * [POS]: 系统设置的交互边界；草稿与当前状态分离，不在页面加载时修改电脑；兼容未含 platform 的旧 macOS 快照。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -10,6 +10,7 @@ import {useEffect, useRef, useState} from 'react';
 import {useI18n} from './i18n';
 import {invoke} from '@tauri-apps/api/core';
 import {CleanupActivity, useCleanupActivity} from './cleaner-activity';
+import {usePageRefresh} from './app-events';
 
 type SystemState = {
   platform?: string;
@@ -65,6 +66,10 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
     }
     return next;
   }
+  usePageRefresh(() => {
+    if (!busyRef.current)
+      void refresh().catch(e => setError(String(e)));
+  });
   useEffect(() => {
     live.current = true;
     void refresh(true).catch(e => {

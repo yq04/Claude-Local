@@ -1,3 +1,7 @@
+# [INPUT]: Fictional statusLine payloads, temporary ledgers and bounded Rust subprocess fixtures.
+# [OUTPUT]: Percentage-input validation, independent window persistence and inferred-reset/bridge regressions.
+# [POS]: Synthetic quota tests; never open real Claude settings, account data or processes.
+# [PROTOCOL]: Keep scripts/CLAUDE.md aligned with the tested input and writer boundaries.
 """Synthetic ledger tests; never open the real Claude home or application data."""
 import importlib.util
 import contextlib
@@ -20,6 +24,61 @@ spec.loader.exec_module(quota)
 
 
 class LocalQuotaTests(unittest.TestCase):
+    def test_statusline_validates_percentage_without_poisoning_other_window(self):
+        cases = [(value, None) for value in [1_800_000_000, float('nan'), float('inf'), -1, True, 'invalid']]
+        cases += [(100.7, 100), (0, 0)]
+        for value, expected in cases:
+            with self.subTest(value=repr(value)), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                home, appdata = root / 'home', root / 'appdata'
+                home.mkdir()
+                app = appdata / 'ai.local.claude-local'
+                app.mkdir(parents=True)
+                (home / '.claude.json').write_text(json.dumps({'oauthAccount': {
+                    'accountUuid': 'a', 'emailAddress': 'input@example.invalid'}}), encoding='utf-8')
+                reset = int(datetime.now(timezone.utc).timestamp()) + 1000
+                payload = {'rate_limits': {'five_hour': {'used_percentage': value, 'resets_at': reset},
+                                           'seven_day': {'used_percentage': 42, 'resets_at': reset + 86400}}}
+                with patch.dict(os.environ, {'USERPROFILE': str(home), 'APPDATA': str(appdata)}, clear=True), \
+                        patch.object(sys, 'stdin', io.StringIO(json.dumps(payload))), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    quota.handle_statusline()
+                entry = quota.load_ledger(str(app))['accounts']['input@example.invalid']
+                self.assertEqual(entry['quota_5h_used'], expected)
+                self.assertEqual(entry['quota_5h_source'], 'unknown' if expected is None else 'server_anchor')
+                self.assertEqual(entry['quota_7d_used'], 42)
+                self.assertEqual(entry['quota_7d_source'], 'server_anchor')
+
+    def test_corrupt_cached_percentage_is_not_recertified_from_a_clamped_ledger_value(self):
+        now = 2_000_000_000
+        entry = {'account_uuid': 'a', 'quota_5h_source': 'server_anchor', 'quota_5h_used': 100,
+                 'quota_5h_reset_at': now + 600, 'quota_5h_observed_at_ms': (now - 1) * 1000,
+                 'server_anchor': {'accountUuid': 'a', 'fetchedAtMs': (now - 1) * 1000,
+                     'utilization': {'five_hour': {'utilization': 1_800_000_000, 'resets_at': now + 600}}}}
+        self.assertEqual(quota.entry_window_state(entry, '5h', 'five_hour', now)[2], 'unknown')
+
+    def test_writer_omits_invalid_anchor_window_without_mutating_the_source(self):
+        now = 2_000_000_000
+        anchor = {'accountUuid': 'a', 'fetchedAtMs': now * 1000, 'utilization': {
+            'five_hour': {'utilization': float('nan'), 'resets_at': now + 600},
+            'seven_day': {'utilization': 42, 'resets_at': now + 86400}}}
+        item = {'role': 'current', 'email': 'input@example.invalid', 'account_uuid': 'a',
+                'used_5h': None, 'quota_5h_source': 'unknown', 'used_7d': 42,
+                'reset_7d_ts': now + 86400, 'quota_7d_source': 'server_anchor',
+                'quota_7d_observed_at_ms': now * 1000, 'server_anchor': anchor}
+        with tempfile.TemporaryDirectory() as temp:
+            quota.save_ledger_and_sync_sqlite(temp, str(Path(temp) / 'no-db'), [item],
+                                            datetime.fromtimestamp(now, timezone.utc))
+            def reject_constant(value):
+                raise ValueError('non-finite JSON is not allowed')
+            stored = json.loads((Path(temp) / 'quota_ledger.json').read_text(encoding='utf-8'),
+                                parse_constant=reject_constant)['accounts']['input@example.invalid']
+        self.assertIsNone(stored['quota_5h_used'])
+        self.assertEqual(stored['quota_7d_used'], 42)
+        self.assertNotIn('five_hour', stored['server_anchor']['utilization'])
+        self.assertNotEqual(anchor['utilization']['five_hour']['utilization'],
+                            anchor['utilization']['five_hour']['utilization'])
+
     def test_quota_core_bridge_uses_fixed_flag_and_schema(self):
         with tempfile.TemporaryDirectory() as temp:
             executable = Path(temp) / "claude-local.exe"
@@ -148,7 +207,7 @@ class LocalQuotaTests(unittest.TestCase):
             self.assertEqual(stored["server_anchor"], anchor)
             self.assertEqual(quota.entry_window_state(stored, "5h", "five_hour", now),
                              (0, reset, "reset_inferred", observed))
-        self.assertEqual(quota.CURRENT_QUOTA_VERSION, 6)
+        self.assertEqual(quota.CURRENT_QUOTA_VERSION, 7)
 
     def test_quota_core_failure_aborts_ledger_write(self):
         with tempfile.TemporaryDirectory() as temp:

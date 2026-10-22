@@ -1,0 +1,21 @@
+/* [INPUT]: Identity workbench aliases, search controls and observation age details.
+ * [OUTPUT]: Compact filter row and inline diagnostic age without changing card geometry.
+ * [POS]: Identity productivity presentation; the 180×286 badge remains owned by style.css.
+ * [PROTOCOL]: Keep additions local to identity workbench controls.
+ */
+.identity-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 8px 0;
+}
+.identity-search-row > input { width: min(280px, 42vw); min-width: 150px; height: 28px; font-size: 12px; }
+.identity-search-row > [role="combobox"] { width: max-content; max-width: min(170px, 36vw); font-size: 12px; }
+.identity-search-privacy-note { color: var(--muted-foreground); font-size: 10px; }
+.identity-filter-empty { display: flex; align-items: center; gap: 10px; min-width: 230px; color: var(--muted-foreground); font-size: 12px; }
+.identity-observation-age { color: var(--muted-foreground); font-size: 10px; font-weight: 400; }
+@media (max-width: 620px) {
+  .identity-search-row { flex-wrap: wrap; }
+  .identity-search-row > input { flex: 1 1 150px; width: auto; }
+}

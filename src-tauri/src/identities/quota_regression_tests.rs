@@ -1,8 +1,106 @@
 // [INPUT]: Temporary fictional quota ledgers and in-memory identity summaries only.
-// [OUTPUT]: Observation-order, account/organization, expired reset inference and return-visit regressions.
+// [OUTPUT]: Observed-percentage bounds, observation-order, account/organization, expired reset inference and return-visit regressions.
 // [POS]: No real Claude home, credentials, processes, browser or network access.
 // [PROTOCOL]: Update identities/CLAUDE.md when changing this test boundary.
 use super::*;
+
+#[test]
+fn invalid_cached_percentages_are_rejected_per_window() {
+    let now = 1_800_000_000;
+    for invalid in [now as f64, -1.0] {
+        let cj = serde_json::json!({
+            "oauthAccount": {"accountUuid": "a"},
+            "cachedUsageUtilization": {
+                "accountUuid": "a", "fetchedAtMs": 1_799_999_000_000u64,
+                "utilization": {
+                    "five_hour": {"utilization": invalid, "resets_at": now + 1000},
+                    "seven_day": {"utilization": 42, "resets_at": now + 86400}
+                }
+            }
+        });
+        let extracted = extract_quota(&cj, None, Some("Pro"), now, 0);
+        let mut summary = Summary::default();
+        summary.quota_5h_used = extracted.used_5h;
+        summary.quota_5h_reset_at = extracted.reset_5h;
+        summary.quota_7d_used = extracted.used_7d;
+        summary.quota_7d_reset_at = extracted.reset_7d;
+        set_summary_quota_evidence(&cj, &extracted, now, &mut summary);
+
+        assert_eq!(summary.quota_5h_source, Some(QuotaSource::Unknown));
+        assert_eq!(summary.quota_5h_used, None);
+        assert_eq!(summary.quota_7d_used, Some(42));
+        assert_eq!(summary.quota_7d_source, Some(QuotaSource::ServerAnchor));
+    }
+
+    let cj = serde_json::json!({
+        "oauthAccount": {"accountUuid": "a"},
+        "cachedUsageUtilization": {
+            "accountUuid": "a", "fetchedAtMs": 1_799_999_000_000u64,
+            "utilization": {
+                "five_hour": {"utilization": 42, "resets_at": now + 1000},
+                "seven_day": {"utilization": now, "resets_at": now + 86400}
+            }
+        }
+    });
+    let extracted = extract_quota(&cj, None, Some("Pro"), now, 0);
+    assert_eq!(extracted.used_7d, None);
+    assert_eq!(
+        window_source(&cj, "seven_day", extracted.used_7d, extracted.reset_7d, false, now),
+        Some(QuotaSource::Unknown)
+    );
+}
+
+#[test]
+fn cached_percentages_preserve_bounds_rounding_tolerance() {
+    let now = 1_800_000_000;
+    let cj = serde_json::json!({
+        "oauthAccount": {"accountUuid": "a"},
+        "cachedUsageUtilization": {
+            "accountUuid": "a", "fetchedAtMs": 1_799_999_000_000u64,
+            "utilization": {
+                "five_hour": {"utilization": 100.7, "resets_at": now + 1000},
+                "seven_day": {"utilization": 0, "resets_at": now + 86400}
+            }
+        }
+    });
+    let extracted = extract_quota(&cj, None, Some("Pro"), now, 0);
+    assert_eq!(extracted.used_5h, Some(100));
+    assert_eq!(extracted.used_7d, Some(0));
+    assert_eq!(window_source(&cj, "five_hour", extracted.used_5h, extracted.reset_5h, false, now), Some(QuotaSource::ServerAnchor));
+}
+
+#[test]
+fn ledger_anchor_and_reset_inference_reject_invalid_percentages_per_window() {
+    let now = 1_800_000_000;
+    let entry = serde_json::json!({
+        "quota_5h_source": "server_anchor",
+        "quota_7d_source": "server_anchor",
+        "quota_5h_observed_at_ms": 1_799_999_000_000u64,
+        "quota_7d_observed_at_ms": 1_799_999_000_000u64,
+        "server_anchor": {
+            "accountUuid": "a", "fetchedAtMs": 1_799_999_000_000u64,
+            "utilization": {
+                "five_hour": {"utilization": 1_800_000_000u64, "resets_at": now + 1000},
+                "seven_day": {"utilization": 42, "resets_at": now + 86400}
+            }
+        }
+    });
+    assert_eq!(ledger_window_value(&entry, "five_hour", now), None);
+    assert_eq!(
+        ledger_window_value(&entry, "seven_day", now),
+        Some((42, now + 86400, 1_799_999_000_000, QuotaSource::ServerAnchor))
+    );
+
+    let inferred = serde_json::json!({
+        "server_anchor": {
+            "accountUuid": "a", "fetchedAtMs": (now - 900) * 1000,
+            "utilization": {
+                "five_hour": {"utilization": -1, "resets_at": now - 1}
+            }
+        }
+    });
+    assert_eq!(ledger_reset_inferred_value(&inferred, "five_hour", now), None);
+}
 
 fn identity(uuid: &str, org: &str) -> String {
     quota_identity(&serde_json::json!({"oauthAccount": {"accountUuid": uuid,

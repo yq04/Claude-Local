@@ -1,13 +1,14 @@
 /**
- * [INPUT]: 原生身份命令、保留策略、带来源与观测时间的离线 5h/7d 额度、重置权益未知状态与固定官方用量入口、订阅到期摘要、经 Cromma 入口的 Motion 弹簧与根级减弱动效（系统设置或「减少动画」偏好）、settings-model 视图偏好、共享确认窗/进度、文件残留与 CLI 维护。
- * [OUTPUT]: 180×286 身份工牌、本地时钟驱动的逐窗额度与可信重置后的预计恢复；预计/未知不推荐，统一中性操作按钮与红色危险确认，详情保留真实观测时间、官网权益入口和进度。
+ * [INPUT]: 原生身份命令、保留策略、离线 5h/7d 额度及逐窗观测、隐私偏好、本地刷新事件与可选身份确认请求、CLI/诊断状态。
+ * [OUTPUT]: 180×286 身份工牌、隐私安全搜索与本地排序、逐窗观测年龄和白名单诊断复制；保留原确认切换/恢复流程、额度推定边界及本地刷新锁。
  * [POS]: 身份管理 GUI；只呈现脱敏元数据与离线额度，身份正文留在原生保险库；可选浏览器绑定/旧资料采用确认与重开重试，关联浏览器资料删除单独选择。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect, useRef, useState, type ReactNode} from 'react';
-import {Button, Checkbox, Disclosure, Input, useReducedMotionConfig, useSpring} from 'cromma-ui';
+import {Button, Checkbox, Disclosure, Input, Select, useReducedMotionConfig, useSpring} from 'cromma-ui';
 import {ShieldCheck, Refresh} from 'cromma-ui/pika';
 import {invoke} from '@tauri-apps/api/core';
+import {getVersion} from '@tauri-apps/api/app';
 import {useI18n} from './i18n';
 import {AppDialog} from './dialog';
 import {IdentityOperationProgress, useCleanupActivity} from './cleaner-activity';
@@ -17,6 +18,10 @@ import {ClaudeResiduePanel} from './claude-residue-panel';
 import {defaultPolicy, policyRows, type Identity, type IdentityState} from './identity-model';
 import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
 import {evaluateQuota, formatCompactEta, formatResetClock} from './identity-quota';
+import {usePageRefresh, type IdentityReviewRequest} from './app-events';
+import {filterAndSortIdentities, formatObservationAge, quotaObservationAge} from './identity-list';
+import {serializeIdentityDiagnostic} from './identity-diagnostics';
+import './identity-productivity.css';
 
 type Target = Identity | 'empty' | 'recovery';
 type QuotaSetupStatus={state:'not_configured'|'custom_statusline'|'invalid_settings_path'|'invalid_settings_json'|'invalid_statusline';collector_bundled:boolean;has_statusline:boolean};
@@ -73,7 +78,7 @@ function IdentityName({name, email, accountName, privacyMask, saved = false, t}:
   return <h3 className="identity-name-with-label" data-identity-name data-identity-username={!saved || undefined} data-identity-saved-name={saved || undefined} aria-description={description}><strong title={description ? `${shownName}\n${description}` : shownName}>{shownName}</strong></h3>;
 }
 
-export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: boolean) => void; initialEmpty?: boolean}) {
+export function IdentityPanel({onBusy, initialEmpty = false, identityReviewRequest = null, onIdentityReviewConsumed}: {onBusy?: (busy: boolean) => void; initialEmpty?: boolean; identityReviewRequest?: IdentityReviewRequest | null; onIdentityReviewConsumed?: (requestId: number) => void}) {
   const {t, locale} = useI18n();
   const prefs = usePreferences();
   const [state, setState] = useState<IdentityState | null>(null);
@@ -98,6 +103,11 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
   const [quotaFeedback, setQuotaFeedback] = useState('');
   const [quotaSetup, setQuotaSetup] = useState<QuotaSetupStatus|null>(null);
   const [quotaSetupError, setQuotaSetupError] = useState(false);
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<'saved'|'name'|'original'>('saved');
+  const [copyDiagnosticStatus, setCopyDiagnosticStatus] = useState<'copied'|'failed'|null>(null);
+  const [readReady, setReadReady] = useState(false);
+  const [diagnosticVersion, setDiagnosticVersion] = useState<string|null>(null);
   const activity = useCleanupActivity();
   const rail = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotionConfig() ?? false;
@@ -107,6 +117,10 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
   const active = state?.records.find(row => row.id === state.active);
   const current = state?.current;
   const saved = state?.records.filter(row => !current?.present || row.id !== state.active) ?? [];
+  const visibleSaved = filterAndSortIdentities(saved.map(row => {
+    const email = state?.summaries?.[row.id]?.email;
+    return {...row, email, visibleName: maskDisplayName(row.name, email, prefs.privacyMask)};
+  }), search, sort, prefs.privacyMask);
   const currentName = active?.name || current?.display_name || current?.email?.split('@')[0] || t('当前身份');
   const blocked = locked || loading || !state || !!state?.recovery;
   const kept = policyRows.filter(([key]) => policy[key]).map(([, label]) => t(label));
@@ -134,6 +148,24 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
 
   useEffect(() => {
     void read();
+  }, []);
+  usePageRefresh(() => { if (!locked && !loading) void read(false); });
+  useEffect(() => {
+    const request = identityReviewRequest;
+    if (!request || !readReady || loading || locked || !state) return;
+    const row = state.records.find(item => item.id === request.identityId);
+    if (!row || (current?.present && request.identityId === state.active)) {
+      setError(row ? '' : t('identityReview.missing'));
+      onIdentityReviewConsumed?.(request.requestId);
+      return;
+    }
+    choose(row);
+    onIdentityReviewConsumed?.(request.requestId);
+  }, [identityReviewRequest, readReady, loading, locked, state, current?.present, onIdentityReviewConsumed]);
+  useEffect(() => {
+    let live=true;
+    void getVersion().then(value => {if(live)setDiagnosticVersion(value);}).catch(()=>{if(live)setDiagnosticVersion(null);});
+    return () => {live=false;};
   }, []);
   useEffect(() => {
     const tick = () => {if (!document.hidden) setNowSec(Math.floor(Date.now() / 1000));};
@@ -207,6 +239,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
     try {
       const next = await invoke<IdentityState>('identities_read');
       setState(next);
+      setReadReady(true);
       if (invalidateResidue) setResidueRevision(value => value + 1);
       setError('');
       if (review === 'empty') {
@@ -219,6 +252,34 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
       return false;
     } finally {
       setLoading(false);
+    }
+  }
+  async function copyQuotaDiagnostic() {
+    if (!quotaDetails) return;
+    setCopyDiagnosticStatus(null);
+    const value = serializeIdentityDiagnostic({
+      version: diagnosticVersion,
+      generatedAtMs: Date.now(),
+      windows: Object.fromEntries((['5h','7d'] as const).map(window => {
+        const source = detailsSummary?.[`quota_${window}_source`] ?? detailsSummary?.quota_source;
+        const observedAtMs = detailsSummary?.[`quota_${window}_source`] != null
+          ? detailsSummary?.[`quota_${window}_observed_at_ms`]
+          : detailsSummary?.quota_observed_at_ms;
+        return [window, {source, observedAtMs}];
+      })) as {'5h': {source: string|null|undefined;observedAtMs?:number|null};'7d': {source: string|null|undefined;observedAtMs?:number|null}},
+      setup: quotaSetup ? {state:quotaSetup.state,collectorBundled:quotaSetup.collector_bundled,hasStatusline:quotaSetup.has_statusline} : null,
+    });
+    try {
+      await invoke('copy_result', {text:value});
+      setCopyDiagnosticStatus('copied');
+    } catch {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+        await navigator.clipboard.writeText(value);
+        setCopyDiagnosticStatus('copied');
+      } catch {
+        setCopyDiagnosticStatus('failed');
+      }
     }
   }
   async function refreshAfterError() {
@@ -471,6 +532,15 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             {t('打开内置浏览器')}
           </Button>
         </div>
+        <div className="identity-search-row">
+          <Input aria-label={t('identitySearch.label')} placeholder={t('identitySearch.placeholder')} value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => {if(event.key==='Escape')setSearch('');}} />
+          <Select aria-label={t('identitySearch.sortLabel')} size="small" value={sort} onValueChange={value => setSort(value as typeof sort)} items={[
+            {value:'saved',label:t('identitySearch.saved')},
+            {value:'name',label:t('identitySearch.name')},
+            {value:'original',label:t('identitySearch.original')},
+          ]} />
+          {!prefs.privacyMask && <span className="identity-search-privacy-note">{t('identitySearch.emailIncluded')}</span>}
+        </div>
         <div className="identity-card-rail" ref={rail} tabIndex={0} role="region" aria-label={t('身份')}>
           {current?.present === false && (
             <IdentityCard className="identity-card empty selected" label={`${t('新身份')} · ${t('当前身份')}`}>
@@ -522,7 +592,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
               </div>
             </IdentityCard>
           )}
-          {saved.map(row => {
+          {visibleSaved.map(row => {
             const summary = state?.summaries?.[row.id];
             const savedQuota = evaluateQuota(summary, nowSec);
             const isRecommended = recommendSaved?.row.id === row.id;
@@ -569,6 +639,7 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
               </IdentityCard>
             );
           })}
+          {saved.length > 0 && visibleSaved.length === 0 && <div className="identity-filter-empty" role="status"><span>{t('identitySearch.empty')}</span><Button variant="secondary" size="small" onClick={() => setSearch('')}>{t('identitySearch.clear')}</Button></div>}
         </div>
         <IdentityOperationProgress activity={activity.state} />
       </section>
@@ -622,9 +693,10 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
             const observed = detailsSummary?.[`quota_${window}_source`] != null
               ? detailsSummary[`quota_${window}_observed_at_ms`]
               : detailsSummary?.quota_observed_at_ms;
+            const age = formatObservationAge(quotaObservationAge(observed, nowSec * 1000));
             return <div key={window}>
               <div className="identity-confirm-target"><span>{window} · {t('quota.source')}</span><strong>{t(source === 'server_anchor' ? 'quota.serverSnapshot' : source === 'local_estimate' ? 'quota.estimated' : source === 'reset_inferred' ? 'quota.resetInferredSource' : 'quota.unverified')}</strong></div>
-              <div className="identity-confirm-target"><span>{window} · {t('quota.observedAt')}</span><strong>{observed ? new Date(observed).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') : t('identityCard.notProvided')}</strong></div>
+              <div className="identity-confirm-target"><span>{window} · {t('quota.observedAt')}</span><strong>{observed ? <>{new Date(observed).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')}{age && <small className="identity-observation-age"> · {t('identitySearch.age.' + age.unit, {v0:age.value})}</small>}</> : t('identityCard.notProvided')}</strong></div>
             </div>;
           })}
           <p className="identity-quota-note">{t('quota.independentWindows')}</p>
@@ -635,6 +707,8 @@ export function IdentityPanel({onBusy, initialEmpty = false}: {onBusy?: (busy: b
           <div className="identity-confirm-target"><span>{t('quotaSetup.status')}</span><strong>{t(quotaSetupError ? 'quotaSetup.unavailable' : !quotaSetup ? 'quotaSetup.checking' : 'quotaSetup.' + quotaSetup.state)}</strong></div>
           <p className="identity-quota-note">{t(quotaSetup?.collector_bundled ? 'quotaSetup.runtimeUnverified' : 'quotaSetup.notBundled')}</p>
           <Disclosure summary={t('quotaSetup.guideTitle')}><p className="identity-quota-note">{t('quotaSetup.guide')}</p></Disclosure>
+          <Button variant="secondary" onClick={() => void copyQuotaDiagnostic()}>{t('identityDiagnostic.copy')}</Button>
+          {copyDiagnosticStatus && <p role={copyDiagnosticStatus === 'failed' ? 'alert' : 'status'}>{t(copyDiagnosticStatus === 'copied' ? 'identityDiagnostic.copied' : 'identityDiagnostic.failed')}</p>}
           {!detailsAreCurrent && <p className="identity-quota-note">{t('quota.currentOnly')}</p>}
           {quotaFeedback && <p role="status">{t(quotaFeedback)}</p>}
         </div>

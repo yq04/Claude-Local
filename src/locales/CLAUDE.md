@@ -11,5 +11,9 @@ identity.* / identityCard.*: 身份工牌本地保存名优先、原账号名的
 quota.independentWindows / quota.resetInferredSource / quota.resetInferredHint / identityCard.resetInferred: 说明5h/7d独立更新，可信服务端重置时间到期后的预计恢复、其他设备用量未知与不推算下一重置；缺证据仍未知，预计值不等于官方实时额度。两语同键且工牌提示保持单行。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
+cli.statusUnavailable / cli.retryRead: CLI状态读取失败与缺少安装分开呈现，允许手动重试。usage.coverageNote: 与实际「全部/已保存账号」筛选和用户明确的稳定兜底聚合规则一致，不再误称存在独立未归属历史入口。
+
+identitySearch.* / identityDiagnostic.*: 可见别名检索、视图排序、观测年龄和白名单诊断复制。commandPalette.* / handoff.*: 受控快捷键入口和纯手填交接预览/复制/下载。usage.export* / usage.timezoneNote / 固定时区错误键: 当前scope导出、真实时区与旧offset兼容；峰值称时段峰值，覆盖半小时区间。
+
 usage.allAccounts: concise All label in both catalogs.
 quick.readFailed / quick.failedChecks / quick.followsMachine: 独立读取失败、具体分区与跟随电脑配置的同键同插槽双语提示。

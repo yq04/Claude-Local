@@ -1,0 +1,53 @@
+/* [INPUT]: Shell and handoff component states plus the current design tokens. */
+/* [OUTPUT]: Width-safe classic and compact command triggers, keyboard palette and bounded handoff dialog layouts. */
+/* [POS]: Productivity surface styling; no new control or animation primitive. */
+/* [PROTOCOL]: Update this header and src/CLAUDE.md with changes. */
+.command-palette-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--landing-line);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.command-palette-trigger:hover:not(:disabled) { color: var(--foreground); background: var(--muted); border-color: var(--panel-outline); }
+.command-palette-trigger:disabled { opacity: .5; cursor: not-allowed; }
+.command-palette-trigger kbd { margin-left: auto; padding: 1px 4px; border: 1px solid var(--landing-line); border-radius: 4px; color: var(--muted-foreground); font: 9px/1.4 var(--font-mono); }
+.app-shell:not(.sidebar-compact) .sidebar-bottom { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; row-gap: 7px; }
+.app-shell:not(.sidebar-compact) .command-palette-trigger { grid-column: 1 / -1; justify-self: start; width: max-content; min-width: max-content; }
+.app-shell:not(.sidebar-compact) .language-switch { grid-column: 1; grid-row: 2; justify-self: start; }
+.app-shell:not(.sidebar-compact) .local-edition { grid-column: 2; grid-row: 2; justify-self: end; margin-left: 0; }
+.app-shell.sidebar-compact .command-palette-trigger { width: 40px; height: 34px; justify-content: center; align-self: center; padding: 0; }
+.app-shell.sidebar-compact .command-palette-trigger > span,
+.app-shell.sidebar-compact .command-palette-trigger kbd { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+
+.command-palette { display: grid; gap: 10px; min-width: 0; }
+.command-palette > input { height: 36px; }
+.command-palette-list { display: grid; gap: 3px; max-height: min(48vh, 390px); overflow: auto; padding: 3px; border: 1px solid var(--landing-line); border-radius: 10px; background: color-mix(in srgb, var(--background) 72%, var(--panel)); }
+.command-palette-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; padding: 6px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--foreground); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.command-palette-option[aria-selected="true"]:not(:disabled), .command-palette-option:hover:not(:disabled) { background: var(--local-accent-soft); color: var(--local-accent-ink); }
+.command-palette-option:disabled { opacity: .48; cursor: not-allowed; }
+.command-palette-option small { color: var(--muted-foreground); font-size: 10px; white-space: nowrap; }
+.command-palette-empty, .command-palette-hint { margin: 0; padding: 6px 8px; color: var(--muted-foreground); font-size: 11px; }
+.command-palette-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted-foreground); font-size: 10px; }
+
+.task-handoff { display: grid; gap: 11px; min-width: 0; }
+.task-handoff > p { margin: 0; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; }
+.task-handoff-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.task-handoff-fields label { display: grid; align-content: start; gap: 5px; min-width: 0; color: var(--foreground); font-size: 11px; }
+.task-handoff-fields input { height: 30px; font-size: 12px; }
+.task-handoff-fields textarea { min-height: 54px; max-height: 112px; padding: 7px 9px; resize: vertical; font-size: 12px; }
+.task-handoff-preview { max-height: 190px; overflow: auto; margin: 0; padding: 10px; border: 1px solid var(--landing-line); border-radius: 8px; background: color-mix(in srgb, var(--background) 72%, var(--panel)); color: var(--foreground); font: 10px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.task-handoff-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.task-handoff-actions > span { color: var(--muted-foreground); font-size: 11px; }
+.task-handoff-actions > span[role="alert"] { color: #ac3025; }
+@media (max-width: 640px) { .task-handoff-fields { grid-template-columns: minmax(0, 1fr); } }

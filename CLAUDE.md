@@ -4,9 +4,10 @@ Independent Windows desktop application: Tauri/Rust native operations, React/Typ
 
 <directory>
 src/ - Main application, browser verification page, shared UI and bilingual catalogs.
-src/identities.tsx - Single-line local identity aliases, independent quota/time typography and a local presentation clock; elapsed trusted server resets show explicitly inferred recovery without additional native polling or automatic recommendation.
+src/identities.tsx - Privacy-safe local identity search/sort, pinned current card, independent quota/observation ages, allowlisted diagnostic copy and review-only shell requests; inferred resets preserve the original evidence and cadence.
 src/quick-actions.tsx - On-demand independent environment reads, scoped recovery and six configuration destinations using shared page icons and effective browser targets.
-src/usage-statistics.tsx - Scoped token analytics with responsive trend/model panels, sortable period details and visible-page refresh; separate from hourly quota refresh.
+src/usage-statistics.tsx - Scoped token analytics, current-snapshot TSV copy/download and real IANA/DST intervals; responsive trend/model panels and visible-page refresh remain separate from hourly quota refresh.
+src/main.tsx / command-palette.tsx / task-handoff.tsx - Guarded Ctrl+K navigation/refresh/review and an in-memory manual handoff form with explicit preview/copy/download; no automatic identity actions or session reads.
 src/vps.tsx - Fixed referral copies without rendered URLs/codes, concise agent setup prompts and truthful clipboard feedback.
 src/system.tsx - Paired rounded timezone/language cards, observed values separate from drafts and a compact full-width location row; narrow content stacks the paired cards.
 src-tauri/ - Native commands, Windows boundaries, vault transactions, local quota consumers and installer configuration.
@@ -18,7 +19,7 @@ vendor/ - Existing UI components with separate attribution/license boundaries in
 docs/ - Local development, data boundaries and distribution documentation.
 docs/plans/2026-10-21-usage-account-safety/ - Historical proposal, source evidence and phased account-safety plan implemented in 0.1.4; 0.1.5 fixes quota evidence compatibility and shares Rust window-state rules.
 .github/workflows/ - Credential-free Windows checks and explicitly dispatched private build artifacts.
-HANDOFF.md - Context-free 0.1.5 mission, verified local update, successful source CI/private prerelease, future work and pitfalls; private machine receipts stay in ignored .local/.
+HANDOFF.md - Current product behavior, verified delivery receipts, outstanding source work and safe next steps; machine-specific receipts stay in ignored .local/.
 </directory>
 
 Product Claude-Local / binary claude-local.exe / identifier ai.local.claude-local. Browser registration Claude-Local-Browser. All data is in the user's independent app-data root; the default Claude workspace is the managed integration boundary, not an OS sandbox. Ordinary startup does not open the browser. The network page bundles owner-approved fixed referral links with copy-only actions for recipients; there is no link editor, automatic vendor navigation or external Skill installation UI.
@@ -39,3 +40,5 @@ docs/RELEASE_NOTES_0.1.3.md - Cromma SegmentedControl/Switch/Disclosure adoption
 docs/RELEASE_NOTES_0.1.4.md - Quota observation order fix, native privacy preference bridge, environment-first navigation, task handoff notes, and device-identifier preservation; manual private delivery only.
 docs/RELEASE_NOTES_0.1.5.md - Independent quota evidence/legacy compatibility and shared Rust window-state core; audited local update and owner-requested private prerelease, without automatic publishing or statusLine migration.
 docs/RELEASE_NOTES_0.1.6.md - Explicitly inferred quota recovery after trusted resets, compact neutral action controls and paired computer setting cards; manual private delivery, preserving the existing data and hook boundaries.
+docs/PRODUCT_REVIEW_2026-10-22.md - Pinned open-source evidence, verified percentage-input/CLI retry fixes and product proposals; distinguishes current unpublished source work from installed 0.1.6.
+docs/RELEASE_NOTES_0.1.7.md - Implemented identity search/diagnostics, command palette/manual handoff, scoped TSV export and IANA/DST analytics, plus verified parsing/retry fixes; uses the owner-authorized private release workflow.

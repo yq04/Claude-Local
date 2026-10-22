@@ -1,5 +1,5 @@
 // [INPUT]: Bounded, credential-free window states and an explicit caller-supplied clock.
-// [OUTPUT]: Pure expiry/merge/provenance decisions, including local reset inference, and schema-1 JSON responses.
+// [OUTPUT]: Pure observed-percentage validation, expiry/merge/provenance decisions, local reset inference, and schema-1 JSON responses.
 // [POS]: Shared quota rules for the read-only GUI and Python ledger writer; no file/network access.
 // [PROTOCOL]: Update this header and src/CLAUDE.md when changing the interface.
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,16 @@ pub enum QuotaSource {
     LocalEstimate,
     ResetInferred,
     Unknown,
+}
+
+/// Validate an observed server percentage before treating it as an anchor.
+/// Values through 101 are accepted to absorb upstream rounding and capped at 100.
+pub(crate) fn observed_percentage(value: f64) -> Option<f64> {
+    if value.is_finite() && (0.0..=101.0).contains(&value) {
+        Some(value.min(100.0))
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,6 +277,19 @@ mod tests {
             source,
             observed_at_ms: observed,
         }
+    }
+
+    #[test]
+    fn observed_percentages_are_finite_and_bounded() {
+        assert_eq!(observed_percentage(0.0), Some(0.0));
+        assert_eq!(observed_percentage(100.0), Some(100.0));
+        assert_eq!(observed_percentage(100.75), Some(100.0));
+        assert_eq!(observed_percentage(101.0), Some(100.0));
+        assert_eq!(observed_percentage(101.01), None);
+        assert_eq!(observed_percentage(-0.01), None);
+        assert_eq!(observed_percentage(f64::INFINITY), None);
+        assert_eq!(observed_percentage(f64::NEG_INFINITY), None);
+        assert_eq!(observed_percentage(f64::NAN), None);
     }
 
     #[test]

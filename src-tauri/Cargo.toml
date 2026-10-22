@@ -1,6 +1,6 @@
 [package]
 name = "claude-local"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 license = "MIT"
 
@@ -27,6 +27,8 @@ ring = "0.17.14"
 zeroize = "1.9.0"
 base64 = "0.22.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+chrono-tz = { version = "0.10.4", default-features = false, features = ["std"] }
 
 [target.'cfg(windows)'.dependencies]
 dunce = "1"
