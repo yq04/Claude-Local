@@ -1,5 +1,5 @@
 // [INPUT]: Main React shell, fake IPC aggregates and an isolated local browser context.
-// [OUTPUT]: Compact account filters without historical/scope clutter, usage chart/data views, identity/privacy and hidden-link copies, plus responsive read-only system cards with verified draft/current state and persistent light/dark preferences; supports --quick-only for focused quick-setup validation.
+// [OUTPUT]: Compact account filters, usage/identity/system checks and isolated read-only layout previews; --quick-only and --layout-only select focused checks without unrelated suites.
 // [POS]: Synthetic UI verification; no live identities, external requests or native mutations.
 // [PROTOCOL]: Update this header and scripts/CLAUDE.md when changing this harness.
 import assert from 'node:assert/strict';
@@ -13,9 +13,10 @@ import {chromium} from 'playwright-core';
 
 const args = process.argv.slice(2);
 const quickOnly = args.includes('--quick-only');
-const outArg = args.find(a => a !== '--quick-only');
+const layoutOnly = args.includes('--layout-only');
+const outArg = args.find(a => !['--quick-only', '--layout-only'].includes(a));
 const root = fileURLToPath(new URL('../', import.meta.url));
-const output = resolve(outArg || join(root, '.local', 'preview', quickOnly ? 'quick-setup-refinements' : 'ui-refinements'));
+const output = resolve(outArg || join(root, '.local', 'preview', layoutOnly ? 'window-layout' : quickOnly ? 'quick-setup-refinements' : 'ui-refinements'));
 await mkdir(output, {recursive: true});
 const privateHome = await mkdtemp(join(tmpdir(), 'claude-local-usage-ui-'));
 await mkdir(join(privateHome, 'config'));
@@ -243,7 +244,10 @@ try {
   page.setDefaultTimeout(15000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  if (quickOnly) {
+  if (layoutOnly) {
+    const {runWindowLayoutChecks} = await import('./window-layout-checks.mjs');
+    await runWindowLayoutChecks({page, output, base, errors});
+  } else if (quickOnly) {
     const {runQuickSetupChecks} = await import('./quick-setup-checks.mjs');
     await runQuickSetupChecks({page, context, output, base, errors});
   } else {

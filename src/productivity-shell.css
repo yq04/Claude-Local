@@ -6,10 +6,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
   height: 28px;
-  padding: 0 9px;
+  padding: 0 7px;
   border: 1px solid var(--landing-line);
   border-radius: 7px;
   background: var(--background);
@@ -22,8 +22,8 @@
 .command-palette-trigger:hover:not(:disabled) { color: var(--foreground); background: var(--muted); border-color: var(--panel-outline); }
 .command-palette-trigger:disabled { opacity: .5; cursor: not-allowed; }
 .command-palette-trigger kbd { margin-left: auto; padding: 1px 4px; border: 1px solid var(--landing-line); border-radius: 4px; color: var(--muted-foreground); font: 9px/1.4 var(--font-mono); }
-.app-shell:not(.sidebar-compact) .sidebar-bottom { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; row-gap: 7px; }
-.app-shell:not(.sidebar-compact) .command-palette-trigger { grid-column: 1 / -1; justify-self: start; width: max-content; min-width: max-content; }
+.app-shell:not(.sidebar-compact) .sidebar-bottom { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; row-gap: 6px; }
+.app-shell:not(.sidebar-compact) .command-palette-trigger { grid-column: 1 / -1; justify-self: stretch; width: 100%; min-width: 0; }
 .app-shell:not(.sidebar-compact) .language-switch { grid-column: 1; grid-row: 2; justify-self: start; }
 .app-shell:not(.sidebar-compact) .local-edition { grid-column: 2; grid-row: 2; justify-self: end; margin-left: 0; }
 .app-shell.sidebar-compact .command-palette-trigger { width: 40px; height: 34px; justify-content: center; align-self: center; padding: 0; }

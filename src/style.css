@@ -1,6 +1,6 @@
 /**
  * [INPUT]: index.css 的系统字体、Cromma UI 控件、Cockpit Tools / CC Switch 座舱卡片与胶囊导航几何、settings-model 主题/强调色/布局/动效属性。
- * [OUTPUT]: 双主题/四色强调色、紧凑侧栏与统一28px操作按钮、固定身份卡额度排版、按文字自适应的网络复制按钮、并排电脑设置卡与下方定位横条；用量专属样式由 usage-statistics.css 提供。控件皮肤归 Cromma UI 原语，本文件统一应用布局和尺寸。
+ * [OUTPUT]: 双主题/四色强调色、192px经典与72px紧凑自适应侧栏、窄身份库内完整换行的账号引导、统一28px操作按钮、固定身份卡额度排版、按文字自适应的网络复制按钮、并排电脑设置卡与下方定位横条；用量专属样式由 usage-statistics.css 提供。控件皮肤归 Cromma UI 原语，本文件统一应用布局和尺寸。
  * [POS]: 应用布局与视觉渲染层；保持 180×286（54:85.6 标准工牌比例）身份工牌几何、#43e484 顶部绿光与 #ac3025 错误色等自动化测试契约。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -174,7 +174,7 @@ code, input { user-select: text; }
   --sidebar-accent: var(--muted);
   display: flex;
   flex-direction: column;
-  width: 232px;
+  width: 192px;
   flex-shrink: 0;
   background: var(--panel);
   overflow: hidden;
@@ -186,11 +186,11 @@ code, input { user-select: text; }
 .app-brand {
   position: relative;
   display: flex;
-  gap: 11px;
+  gap: 8px;
   align-items: center;
   height: 60px;
   flex-shrink: 0;
-  padding: 0 12px 0 15px;
+  padding: 0 8px 0 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--landing-line) 75%, transparent);
   background: radial-gradient(ellipse at 16% 50%, color-mix(in srgb, var(--local-accent) 10%, transparent) 0%, transparent 72%);
 }
@@ -203,9 +203,9 @@ code, input { user-select: text; }
 .app-brand-mark { display: contents; }
 .app-brand-copy { display: grid; gap: 1.5px; min-width: 0; flex: 1; }
 .app-brand strong {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 650;
-  letter-spacing: -0.35px;
+  letter-spacing: -0.3px;
   line-height: 1.25;
   color: var(--foreground);
   white-space: nowrap;
@@ -224,11 +224,11 @@ code, input { user-select: text; }
 .sidebar-collapse-btn {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   border: 1px solid var(--landing-line);
-  border-radius: 7px;
+  border-radius: 6px;
   background: var(--background);
   color: var(--muted-foreground);
   font: 600 13px/1 var(--font-mono);
@@ -244,17 +244,17 @@ code, input { user-select: text; }
   display: flex;
   flex-direction: column;
   flex: 1;
-  gap: 3px;
-  padding: 10px 10px;
+  gap: 2px;
+  padding: 8px 6px;
   margin-top: 0;
   overflow-y: auto;
 }
 .workspace-nav {
-  height: 39px;
-  gap: 10px;
-  padding: 0 12px 0 11px;
+  height: 38px;
+  gap: 8px;
+  padding: 0 8px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 9px;
   overflow: hidden;
   transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
@@ -265,15 +265,16 @@ code, input { user-select: text; }
 .workspace-nav:disabled > span:first-child > span { opacity: 1; transform: none; }
 .workspace-nav:disabled > span:first-child > svg { display: none; }
 .workspace-nav > span:first-child > svg {
-  width: 19px;
-  height: 19px;
+  width: 18px;
+  height: 18px;
   color: var(--muted-foreground);
   transition: color 160ms ease;
 }
 .workspace-nav > span:last-child {
-  font-size: 13.5px;
-  line-height: 20px;
-  letter-spacing: -0.01em;
+  font-size: 13px;
+  line-height: 19px;
+  letter-spacing: -0.015em;
+  white-space: nowrap;
 }
 .workspace-nav[aria-current="page"] {
   background: var(--local-accent-soft);
@@ -287,7 +288,7 @@ code, input { user-select: text; }
   color: var(--local-accent) !important;
 }
 .nav-divider {
-  margin: 7px 6px;
+  margin: 6px 4px;
   border: 0;
   border-top: 1px solid var(--landing-line);
 }
@@ -299,8 +300,8 @@ code, input { user-select: text; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 8px 8px;
   border-top: 1px solid var(--landing-line);
   background: color-mix(in srgb, var(--background) 60%, var(--panel));
 }
@@ -1287,6 +1288,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   box-shadow: var(--card-shadow);
   overflow: hidden;
 }
+.identity-library { container: identity-workbench / inline-size; }
 :root[data-surface="hatched"] .identity-library,
 :root[data-surface="hatched"] .identity-cli,
 :root[data-surface="hatched"] .claude-residue {
@@ -1472,6 +1474,12 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   font-size: 11px;
   font-weight: 700;
   flex-shrink: 0;
+}
+@container identity-workbench (max-width: 600px) {
+  .identity-onboarding-bar { flex-wrap: wrap; }
+  .identity-onboarding-steps { flex: 1 1 100%; flex-wrap: wrap; overflow: visible; }
+  .identity-onboarding-chip { max-width: 100%; white-space: normal; }
+  .identity-onboarding-bar > button { margin-left: auto; }
 }
 .identity-card {
   --identity-muted: #68645c;
@@ -2254,7 +2262,6 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   .help-row { grid-template-columns: 1fr; gap: 10px; }
 }
 @media (max-width: 720px) {
-  .app-sidebar { width: 196px; }
   .cockpit-kpi-grid, .quick-buttons, .browser-check-grid, .network-script-form, .network-topology-flow { grid-template-columns: 1fr; }
 }
 @media (max-height: 760px) {

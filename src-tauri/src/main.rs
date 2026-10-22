@@ -1,5 +1,5 @@
 // [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统、固定网络资源导航、独立界面语言与本地 Token 统计命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
-// [OUTPUT]: Claude-Local 独立窗口、托盘、SQLite 本地身份暂存/恢复、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、固定网络入口与 CI 固定启动诊断；--quota-core 在 GUI 初始化前提供纯 JSON 额度合并。
+// [OUTPUT]: Claude-Local 独立窗口及主窗口尺寸记忆、托盘、SQLite 本地身份暂存/恢复、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、固定网络入口与 CI 固定启动诊断；--quota-core 在 GUI 初始化前提供纯 JSON 额度合并。
 // [POS]: 应用编排层；不注册翻译快捷键，不读取翻译设置或 API 密钥。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -24,6 +24,8 @@ mod system;
 mod ui_language;
 mod ui_privacy;
 mod quota_setup;
+mod window_state;
+mod window_state_model;
 #[cfg(target_os = "windows")]
 mod windows;
 use tauri::{tray::TrayIconBuilder, Manager};
@@ -103,6 +105,7 @@ fn main() {
             app.manage(ui_privacy::UiPrivacy::load(app.handle()));
             app.manage(cleaner::Cleaner::default());
             app.manage(browser::Browser::default());
+            window_state::setup(app.handle());
             #[cfg(target_os = "macos")]
             if local_runtime::wants_browser(&std::env::args().collect::<Vec<_>>()) {
                 browser::companion(app.handle().clone());
@@ -121,7 +124,10 @@ fn main() {
                 .tooltip("Claude-Local")
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => show(app),
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        window_state::flush(app);
+                        app.exit(0)
+                    }
                     _ => {}
                 })
                 .build(app)?;
@@ -129,6 +135,7 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            window_state::on_window_event(window, event);
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
@@ -184,7 +191,10 @@ fn main() {
         .run(|app, event| match event {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => show(app),
-            tauri::RunEvent::Exit => browser::forget_start_url(app),
+            tauri::RunEvent::Exit => {
+                window_state::flush(app);
+                browser::forget_start_url(app)
+            }
             _ => {}
         });
 }

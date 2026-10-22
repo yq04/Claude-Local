@@ -155,7 +155,6 @@ jobs:
         if: inputs.delivery_transport == 'private-draft' && github.event.repository.private == true
         env:
           GH_TOKEN: ${{ github.token }}
-          BUILD_TAG: build-0.1.7-${{ github.run_id }}
         run: |
           $ErrorActionPreference = 'Stop'
           $shareDir = $env:CLAUDE_LOCAL_SHARE
@@ -166,7 +165,12 @@ jobs:
           $repoView = $repoJson | ConvertFrom-Json
           if (-not $repoView.isPrivate) { throw 'Refusing draft upload: target repository is not private' }
 
-          $tag = $env:BUILD_TAG
+          $shareManifest = Get-Content -LiteralPath (Join-Path $shareDir 'manifest.json') -Raw | ConvertFrom-Json
+          $version = [string]$shareManifest.version
+          if ($version -notmatch '^\d+\.\d+\.\d+$' -or $shareManifest.commit -ne $env:GITHUB_SHA) {
+            throw 'Share version or source commit does not match this workflow run'
+          }
+          $tag = "build-$version-$($env:GITHUB_RUN_ID)"
           $tagResponse = @(& gh api --include ('repos/' + $env:GITHUB_REPOSITORY + '/git/ref/tags/' + $tag) 2>&1)
           $tagStatus = $LASTEXITCODE
           if ($tagStatus -eq 0) { throw "Refusing upload: tag $tag already exists" }
@@ -192,7 +196,7 @@ jobs:
           $zipBytes = (Get-Item -LiteralPath $zipPath).Length
 
           $notesLines = @(
-            "# Claude-Local 0.1.7 Private Review Build Draft",
+            "# Claude-Local $version Private Review Build Draft",
             "",
             "- Build Tag: $tag",
             "- Source Commit: $($env:GITHUB_SHA)",
@@ -209,7 +213,7 @@ jobs:
           & gh release create $tag `
             --repo $env:GITHUB_REPOSITORY `
             --target $env:GITHUB_SHA `
-            --title "Claude-Local 0.1.7 Build $($env:GITHUB_RUN_ID) (Draft)" `
+            --title "Claude-Local $version Build $($env:GITHUB_RUN_ID) (Draft)" `
             --notes-file $notesPath `
             --draft `
             --prerelease `
