@@ -1,134 +1,116 @@
 <!--
-[INPUT]: 0.1.5 quota regression fixes, shared Rust core, verified local deployment/package receipts, and the explicitly authorized source/CI/private-release workflow.
-[OUTPUT]: Context-free session handoff: product/task, delivered behavior, evidence, current publication state, next work and pitfalls.
-[POS]: Repository handoff; machine paths, process IDs, private markers and workstation receipts remain in ignored .local/.
+[INPUT]: Verified 0.1.6 quota reset recovery, compact controls/system layout, audited local update and exact-commit private prerelease receipts.
+[OUTPUT]: Context-free product handoff with current behavior, validation, installed/publication state, remaining limits and safe next steps.
+[POS]: Repository handoff; installation paths, process IDs, private probes and machine-specific receipts remain in ignored .local/.
 [PROTOCOL]: Back up to .local/handoff-archive/ and verify the copy before rewriting. Never rebuild or clean merely to refresh this document.
 -->
 # Claude-Local 会话交接
 
-更新日期：2026-10-22，时区 America/New_York。写给完全没有上下文的新会话；以本文件顶部的 0.1.5 状态为准，不要把旧版回执当成本轮交付。
-
-## 当前工作区补丁：紧凑控件与电脑布局（尚未发布）
-
-用户另要求：缩小文字较短的按钮/账号下拉框、统一普通按钮颜色，并将电脑环境的时区与语言卡片并排、定位保留为下方横条。源码与针对性可视验证已完成，**本节与下节的额度补丁均尚未提交、打包、部署或发布**；安装中的 0.1.5 仍是原有发布版。
-
-- 普通操作使用现有 `secondary` 中性皮肤和共享 28px 高/10px 水平内距，移除网络页 128px 最小宽度；实测「复制链接」68×28px、「复制提示词」80×28px。危险确认保留红色，导航、图标和身份工牌内专用几何保留。没有修改 vendor 组件或依赖，无需重装依赖。
-- 用量分析账号筛选改为随所选文字占宽、小档高度，长名最多220px；实测「全部」72×28px，选项弹层仍有可读宽度。
-- 电脑环境时区与语言改为等宽圆角卡片，目标选择独占一行、按钮靠右；定位为下方全宽紧凑横条，内容窄于572px自动单列。保留真实状态/草稿、授权、禁用和任务锁行为。
-- 已通过 TypeScript/Vite 构建及10个隔离视图：中英文网络/浏览/电脑/用量各页，以及720px英文深色经典/紧凑侧栏的电脑布局；未调用真实设置或身份操作。合成预览与测量记录位于 ignored `.local/tasks/20261022-ui-controls/`。检查发现两卡片标题与控制区空隙不齐，已调整并重新验证。未新增本轮单元测试或运行无关 Rust/Python 回归。
-
-## 当前工作区补丁：到期后的预计恢复（尚未发布）
-
-用户随后反馈：保存身份的 5h 额度在已知重置时间到达后变成未知，要求修复。当前工作区已完成源码修复与针对性验证，**尚未提交、构建新版安装包、部署或发布**；以下各节的安装版/标签/CI/发布回执仍描述原有 0.1.5，不能当作本补丁已交付的证据。
-
-- Rust/Python/前端新增 `reset_inferred` 来源：仅可信服务端锚点、有真实且早于 reset 的观测、已到 reset 才显示 0% 已用 / 100% 剩余，并明确标注「预计已恢复」。原始过去 reset 仅作为依据保存，UI 不展示为下一重置时间，也不把当前计算时间当成新观测；纯本地估算或无依据仍未知。预计恢复不参加自动推荐，新实际窗口优先。
-- 从账号/组织匹配的原始缓存/账本恢复旧版已清空的过期证据；额度摘要版本升至 6 触发现有惰性回填，SQLite `user_version=3` 与身份/归档格式不变。Python 仍是额度账本唯一写入者，锁内重读与原子替换不变。
-- 身份页增加可见时的本地显示时钟，静置跨过 reset 即更新，不增加原生读取/联网频率；5h/7d 独立，中英文提示与 180×286 工牌保留。
-- 已通过：Rust core 7 项、profile quota regression 12 项；Python 31 项（含真实 debug Rust 子进程和 legacy 对照）；Bun 额度/双语 12 项；隔离 GUI 6 组；TypeScript/Vite 构建及普通 debug Rust 构建。GUI 持久入口为 `node --experimental-strip-types scripts/test-identities-ui.ts --quota-reset-only`。合成截图与证据位于 ignored `.local/tasks/20261022-quota-reset/`；未读取真实账号资料、修改 hook、切号或中断进程。
-- 设计限制：离线不能确认其他设备后续用量，100% 是明确标注的本地预计值。后续若要求更新安装版，走新版本的中立 `custom-protocol` 构建/审计/备份更新；不要覆盖已发布 0.1.5 附件。原始交接已备份并校验至 ignored `.local/handoff-archive/`。
+更新日期：2026-10-22，时区 America/New_York。以本文件的 **0.1.6** 状态为准；先前 0.1.5 的安装包和回执不能替代本轮证据。
 
 ## 0. 三十秒现状
 
-- 产品版本 **0.1.5**，正式安装包已构建、审计，本机软件已从 0.1.4 安全更新并运行。
-- 已实机确认：有效的 5h/7d 额度恢复百分比，缺少新观测的单个 5h 仍显示未知；这不是未修复的整体未知故障。
-- 原生界面与随包 Python 脚本已复用 Rust 窗口状态核心；安装版 `--quota-backend` 实测为 `rust`。
-- **提交/CI/发布全部完成**：功能提交 `45cdfa6512dd1fbbc0b91b93507eafb31279195a` 已推送 `main`，同提交 Windows CI `39726136357` 成功；私有预发布 `v0.1.5` 已发布，8 个附件独立下载 SHA-256 校验全部一致，标签指向该功能提交。
-- **当前无交付阻塞**。本文件最后仅文档回填另作提交；功能版本、CI、安装包和发布标签均以 `45cdfa6` 为准，最新文档 HEAD 可用 `git log` 核对。
-- 未中断运行中的 Claude Code 会话，未切换真实身份、清理保险库或浏览器资料。
+- 产品版本 **0.1.6**，已完成正式 `custom-protocol` 中立构建、解包审计、本机安全更新和运行窗口核验。
+- 本轮包含两组改动：可信额度窗口到期后的「预计已恢复」，以及紧凑中性按钮、账号筛选框和电脑环境双列卡片。
+- 功能提交 `26f60efeb11913e866d9e431363f596d7b071e03` 已推送 `main`；同提交 Windows CI **39756404149** 全步骤成功。
+- 私有预发布 **v0.1.6** 已发布，`isDraft=false`、`isPrerelease=true`；八个附件已独立下载，SHA-256 全部一致，标签指向上述功能提交。
+- 本机主程序版本 0.1.6、窗口存在、文件哈希与回执一致；随包 Python `--quota-backend` 为 `rust`。更新验证 96 个程序文件，替换其中 10 个；记录中的 Claude Code 进程均仍在运行。
+- **更新、源码上传、CI、发布均已完成，没有交付阻塞。** 最终交接回填另作仅文档提交；产品、标签、安装包与成功 CI 仍固定对应功能提交，不把文档 HEAD 当成另一次构建。
 
-## 1. 我们在做什么任务
+## 1. 项目与本轮任务
 
-Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，主程序 `claude-local.exe`，标识 `ai.local.claude-local`，用户数据在 `%APPDATA%/ai.local.claude-local`。核心功能包括加密身份备份/切换、离线额度观察、独立 Token 用量统计、环境配置与按需启动的伴生浏览器。
+Claude-Local 是独立维护的 Windows x64 桌面产品，主程序 `claude-local.exe`，标识 `ai.local.claude-local`，用户数据按用户存放在 `%APPDATA%/ai.local.claude-local`。功能为加密身份备份/切换、被动额度观察、独立 Token 用量统计、环境配置与可选的伴生浏览器。
 
-技术栈为 Tauri/Rust 原生层、React/TypeScript 界面，以及 Python 被动采集/账本写入。Token 统计与 5h/7d 额度是不同数据链，不能混为一谈。伴生浏览器只由用户操作或 `--browser` 启动；普通启动默认身份管理页，没有上游同步或自动更新源。
+技术栈是 Tauri/Rust 原生层、React/TypeScript 界面，以及 Python 被动采集/额度账本写入。5h/7d 额度和 Token 用量统计是独立数据链。浏览器只由明确用户操作或 `--browser` 启动；普通启动不打开浏览器，默认身份管理页，只记忆白名单页面。不添加上游同步或官方应用更新源。
 
-本轮用户先反馈“上一轮修复后所有身份额度未知”，要求调研修复并评估尽量 Rust 化；随后授权执行建议、全权交付，最后明确要求“完成更新、提交、发布，并更新交接”。本轮选择修复数据模型并收敛 Rust 核心，保留成熟界面，未承诺一次性把整个软件重写为 Rust。
+用户本轮先要求阅读交接；随后反馈保存账号 5h 到重置时间后变成未知，要求调研修复；再要求按钮/账号下拉框缩小、颜色统一及电脑环境双列卡片；最后明确授权「完成更新、上传等操作」。上述工作已一起交付为 0.1.6。
 
-## 2. 已完成的源码与行为
+## 2. 已交付行为与代码定位
 
-### 2.1 额度未知回归修复
+### 2.1 到期后明确预计恢复
 
-根因有两类：5h/7d 共用整体来源，任一窗口过期或缺失便隐藏两窗；旧账本缺少新身份标记时，读取分支会污染本已可信的摘要。另有部分单窗回传借用整体时间戳，导致另一窗旧数据被误认为新观测。
+原 0.1.5 保守逻辑会在到期时清空 usage/reset 并标 unknown，前端也拒绝过期值，导致可信旧重置依据一并丢失。0.1.6 新增逐窗 `reset_inferred` 来源：
 
-- `src-tauri/src/identities/profile.rs`：逐窗来源/实际观测时间、账号与组织隔离、旧格式兼容、原生只读账本合并；旧实时锚点仅在 UUID/组织匹配且无已知组织 UUID 冲突时使用。
-- `quota_5h_source` / `quota_7d_source` 与 `quota_5h_observed_at_ms` / `quota_7d_observed_at_ms` 独立传递，旧聚合字段保留兼容。
-- 单窗到期或无证据保持未知；不得写 0 用量、滚动假 reset 或虚构满额。另一窗有效数据继续显示。未知窗口不参与账号推荐。
-- 同窗口已用额度不回退，较新耗尽锚点优先；新窗口必须有新的真实观测，归档保存时间/计算时间不能充当观测时间。
-- `src/identity-quota.ts`、`identity-model.ts` 与 `identities.tsx` 对齐逐窗证据；详情分别显示来源/时间，保留 180×286 工牌和双语文案。
+- 只有可信 `server_anchor`、存在真实观测、观测严格早于 reset、且 reset 已到期时，才显示 0% 已用 / 100% 剩余，标注「预计已恢复」。
+- 保存原始过去的 reset 边界和观测时间；UI 不把它当成下一重置时间，不把当前计算/归档保存时间当成新观测。纯 `local_estimate` 或无依据窗口到期仍未知。
+- 新的实际窗口优先；旧耗尽锚点、另一窗口时间或旧推定不得覆盖新的实际消耗。5h/7d 各自判断来源与时间。推定值不参与自动账号推荐。
+- 从账号/组织严格匹配的原始缓存/账本恢复旧版已清空的证据。额度摘要版本升至 **6** 触发现有惰性回填；没有重生成身份 ID、密钥或浏览器种子。
+- 身份页增加可见时的本地显示时钟，静置跨过 reset 即变化；原生读取仍为每小时或手动，没有新增 OAuth 查询。
 
-### 2.2 Rust 核心收敛与 Python 兼容
+规则核心为 `src-tauri/src/quota_core.rs`，原生读取/兼容在 `src-tauri/src/identities/profile.rs`；Python 契约和兼容路径在 `scripts/claude_quota.py`；前端模型与呈现在 `src/identity-quota.ts`、`identity-model.ts`、`identities.tsx` 和双语目录。
 
-- 新增 `src-tauri/src/quota_core.rs`，规范化、到期失效、同窗合并、来源聚合等纯规则由 Rust 统一执行；原生 profile 调用同一个核心。
-- 主程序 `--quota-core` 在诊断、Tauri 与单实例初始化之前处理有界 JSON stdin/stdout。schema 1 / `merge_windows`，最多 1 MiB、256 项，仅接收额度数值、reset、source、observed_at_ms，不接受账号正文或路径，不读写文件/联网。
-- 随包 `scripts/claude_quota.py` 在持有跨进程锁、重新读取账本之后批量调用核心；超时/非法返回时，在写 ledger/SQLite 前中止，不静默换算法继续写。
-- **Python 仍是 quota_ledger 唯一写入者**，保留锁与 atomic replace；没有新增 Rust 桌面写入路径。独立旧脚本缺少固定 sibling 主程序时明确使用 `legacy_python`，安装包布局报告 `rust`。
-- Windows 仅新增单个公开脚本资源；未捆绑 Python/cryptography，未自动改现有 statusLine。脚本随包存在和后端可用，不代表旧外部 hook 已自动迁移。
-- React 界面、Python 会话采集/归档读取和部分计费计算继续保留。下一阶段若继续 Rust 化，应逐项迁移纯计算，不能增加第二账本写入者。
+离线无法确认其他设备是否继续使用账号，因此 100% 是有明确标注的本地预计值。官方现行说明确认五小时会话额度重置，但本实现不依赖未证实的新窗口起算规则，也不自行滚动出未来倒计时。
 
-### 2.3 不变的兼容边界
+### 2.2 紧凑控件与电脑环境布局
 
-额度摘要版本为 5；SQLite `user_version=3`、BAGAID01、`.baga` 编码、账号 HMAC、归档密钥和 legacy 浏览器种子域保持不变。不要重生成身份 ID、密钥或浏览器种子。0.1.4 已交付的隐私桥、设备标识保护、历史会话不自动改写、环境优先导航等继续保留，默认首页仍是身份管理。
+- 普通操作使用现有 `secondary` 中性皮肤、共享 28px 高和 10px 水平内距，按文字占宽。移除网络按钮 128px 最小宽度；实测「复制链接」68×28px、「复制提示词」80×28px。
+- 账号筛选随选中文字占宽，短选项不预留大空白；长名最多 220px，选项弹层保持可读宽度。实测「全部」72×28px。
+- 电脑环境的时区/语言为等宽圆角卡片，标题与状态徽章、当前观测、目标选择和紧凑按钮分层；定位为下方全宽小横条。内容宽度不足 572px 时改为单列，保留草稿/实际状态、授权、禁用和任务锁。
+- 深色、英文及经典/紧凑侧栏均已验证。危险确认保留红色；图标、导航和 180×286 身份工牌内的专用几何保留。
 
-## 3. 已完成的验证与本机更新
+主要文件为 `src/style.css`、`system.tsx`、`usage-statistics.tsx/css`、`vps.tsx`、`browser.tsx`、`browser-start.tsx`、`claude-residue-panel.tsx`、`identities.tsx`。未修改 vendor 原语或依赖，不需要通过重装依赖刷新组件副本。
 
-- Rust core 5 项、profile 14 项；Python 26 项（含真实 Rust 子进程、失败不写入与锁内合并）；前端额度 5 项、双语 4 项；包审计 9 项；更新器合成 8 组；隔离 GUI 9 项；TypeScript/Vite 生产构建全部通过。
-- 远端 Windows CI `39726136357` 全步骤成功：前端 41 项、原生主测试 150 项通过/1 项按设计忽略，另有隔离子测试通过；Python 额度 26 项（CI 缺 debug 主程序的真实管道用例按设计跳过，本机此前已实测）、浏览器 4 项、迁移 11 项、Windows CLI 19 项通过。仅临时 runner 执行系统相关 CI。
-- 正式 Windows `custom-protocol` 中立构建通过，NSIS 包 **133.43 MiB**。解包审计 103 文件，原有 13 项私密标记零发现。
-- 安装包：`Claude-Local_0.1.5_x64-setup.exe`。
-- 安装包 SHA-256：`e97caf00f7d1e2811c1cffc829c8ea02ce67d1e69e131aa9f3a063fe21950ed5`。
-- 本机主程序 SHA-256：`e1be324b8196eb2e0aba20101d136559434ee0e939e5ab670178bc0500ee5854`；版本属性 0.1.5，启动窗口已核验。
-- release 管道在旧 GUI 仍运行时通过，随后备份并校验 96 安装文件，替换 8 个变更文件，重启主程序。3 个 Claude Code 会话前后 PID 一致；回执 `updated` / `quotaCoreSmoke=pass` / `missingClaudePids=[]`。
-- 已只读查看本机真实额度区域截图：两个身份双窗有百分比，另一个仅 7d 有效；截图裁掉名字/邮箱，不通过切换真实账号来验证。
+## 3. 架构与格式边界
 
-本地证据全在 ignored 目录：
+Python 仍是 `quota_ledger` 唯一写入者，保留跨进程锁、锁内重读和 atomic replace；Rust UI 只读账本并在内存合并。GUI 与随包脚本复用 schema 1 的 `--quota-core` / `merge_windows` 有界 JSON 协议，最多 1MiB / 256 窗口，不接账号正文/路径、不读文件或联网；入口早于 Tauri 与单实例初始化。安装布局的 Rust 核心失败时中止写入，不静默回退；独立旧脚本缺固定 sibling 程序时明确报告 `legacy_python`。
 
-- `.local/last-local-update.json`：安装更新回执、真实路径/进程、备份位置和哈希。
-- `.local/artifacts/20261022T032618Z-8a71bef456cb461c9d1a304b7fb74274/`：安装包、校验和、隐私审计、资源清单。
-- `.local/tasks/20261021-quota-regression/`：方案、进度、合成 GUI 脚本/报告及裁剪实机截图。
-- `.local/tools/complete-local-update.ps1`：已实测的中立构建、13 标记审计、release 管道预检、精确主程序替换/回滚流程；配套合成测试。不要为了结束会话重复构建或更新。
-- `.local/release-0.1.5/`：本轮 source-snapshot、prepared-assets、独立下载目录与 `published-receipt.json`；发布回执 `updated-and-published`，8 个附件校验一致。
+SQLite `user_version=3`、BAGAID01、`.baga` 编码、账号 HMAC、归档密钥和 legacy 浏览器种子域保持不变。Token 用量使用独立原生账本，不能与额度链混用。0.1.4/0.1.5 的隐私桥、设备标识保护、历史会话不自动改写和逐窗证据兼容继续保留。
 
-## 4. 当前卡在哪、提交与发布状态
+安装包只包含公开采集脚本，不包含 Python/cryptography 运行时；没有自动修改已有 statusLine。随包脚本存在、后端为 Rust，不表示旧外部 hook 已迁移。固定 iKuuu/Kookeey 分发链接仍是 copy-only，不提供安装者编辑或自动跳转。
 
-**没有阻塞；本轮更新、提交、CI、发布和会话交接均已完成。** 后续计划属于可选演进，不是本轮未完成交付。
+## 4. 验证与本机更新证据
 
-- 仓库：`yq04/Claude-Local`，私有，默认分支 `main`。
-- 原远端基线 `c4d722a`，本轮功能提交 `45cdfa6512dd1fbbc0b91b93507eafb31279195a`；`v0.1.4` 旧标签/旧附件未改。
-- 实际发布：`https://github.com/yq04/Claude-Local/releases/tag/v0.1.5`，`isDraft=false`、`isPrerelease=true`，仓库保持私有。
-- 实际 CI：`https://github.com/yq04/Claude-Local/actions/runs/39726136357`，`checks.yml`、headSha=`45cdfa6512dd1fbbc0b91b93507eafb31279195a`、conclusion=`success`。
-- 已完成：源码非强制推送 → 同提交 CI 成功 → 草稿八附件上传 → 独立下载/逐个 SHA-256 一致 → 取消草稿/保持预发布 → 核对标签 SHA/附件数量并保存回执。
-- 八附件为安装包、SHA256SUMS、隐私审计、资源清单、0.1.5 更新说明、对应提交源码 ZIP、LICENSE、NOTICE。
-- 最终交接文档在已验证功能提交后另作仅文档提交，不重复跑全量源码 CI；标签/CI 明确指向功能提交，不能把文档 HEAD 当成另一次已构建产品。Release 源码 ZIP 固定对应标签提交；会话关闭后的最终交接以 main 最新 HANDOFF.md 为准。
+- Rust core 7 项、profile quota regression 12 项；Python 31 项（真实 debug Rust 子进程、legacy 对照、推定持久化往返、失败不写入等）；Bun 额度/双语 12 项通过。
+- 固定时钟额度 GUI 6 组通过：`node --experimental-strip-types scripts/test-identities-ui.ts --quota-reset-only`。另有中英文网络/浏览/电脑/用量及 720px 深色两种侧栏共 10 个隔离视图通过。
+- TypeScript/Vite 生产构建、普通 debug Rust 构建、正式 Windows `custom-protocol` 中立构建通过。CI 在临时 Windows runner 中完成前端、原生、浏览器准备、额度/迁移和 Windows CLI 全部步骤。
+- 包审计合成 9 项、更新器合成 8 组通过。正式包解包 103 文件，原有 13 项私密标记零发现。
+- 安装包 `Claude-Local_0.1.6_x64-setup.exe`，133.43 MiB；SHA-256：`05af14d19e56a5cfd8782ed8f45dc140b6726134f627c3e9adf5e004a6a5ba28`。
+- 本机主程序 SHA-256：`3bfb0e087ade2ab0c089756f9b4654f65d9a01daffa81537aa4942c32b140142`。文件版本 0.1.6，运行窗口已核验。
+- 更新器先在旧 GUI 运行期间核验正式版核心管道，再备份/哈希、替换 10 个变更文件、重启自己的主程序；回执 `updated`、`quotaCoreSmoke=pass`、`missingClaudePids=[]`，安装版采集脚本后端 `rust`。未切换真实身份或清理保险库/浏览器资料。
 
-## 5. 下一步计划
+本轮实机验证是程序文件/版本/窗口和只读后端报告；额度边界验证使用合成数据与隔离 GUI，没有通过真实账号切换做测试。文件式更新与 NSIS 解包审计不等于实际安装/升级/卸载验收；系统相关验收只在一次性 Windows 环境做。
 
-1. 本轮已收尾。新会话先核对 main、`v0.1.5`、成功 CI 和发布回执，无用户新任务时不要重复构建、部署或发布；已发布附件不覆盖，后续代码变更走新版本。
-2. 在一次性 Windows VM/临时 runner 验收 0.1.4 → 0.1.5 NSIS 真实升级、进程占用拦截、卸载与数据保留。本机只做已审计文件更新，不能冒充安装/卸载验收。
-3. 若继续 Rust 化，先拆分并迁移纯额度估算/计费，配跨语言 fixture；最后才评估采集器替换。保持旧 hook 兼容与唯一写入者交接，避免为语言占比重写成熟 UI。
-4. 若要自动接入采集，先解决受控 Python/cryptography 分发、签名与旧 statusLine 兼容；现有配置不可自动覆盖。
-5. 若用户将来转公开，先按 NOTICE.md、docs/DISTRIBUTION.md 和现有合规记录清点第三方许可；私有仓库不消除分发义务。
+本地证据均在 ignored 目录：
 
-## 6. 踩过的坑：绝对不要再踩
+- `.local/last-local-update.json`：当前安装、备份与进程回执；上轮回执另保存于本轮 release 目录。
+- `.local/release-0.1.6/`：source/build/CI/prepared-assets/published/verification 回执、精确提交源码 ZIP、独立下载目录和私有日志。最终状态 `updated-and-published`。
+- `.local/tasks/20261022-quota-reset/`：额度合成测试、GUI 报告和裁剪/合成截图。
+- `.local/tasks/20261022-ui-controls/`：10 视图测量记录及页面预览。
+- `.local/tasks/20261022-release-0.1.6/`：本次交付计划和进度。
+- `.local/tools/complete-local-update-0.1.6.ps1`：保留原 helper 的版本副本；同样的审计/备份/精确进程/回滚边界，核心探针已匹配新推定规则。无需为了结束会话再次构建或更新。
 
-1. **不要用整体来源控制两窗**：单窗 unknown 不应隐藏另一窗；逐窗 source/time 优先，旧聚合字段只兼容。另一窗的新时间绝不能回填当前窗空观测。
-2. **归档时间不是观测时间**：只比较真实服务端/对应窗口观测；相同窗口不让旧估计覆盖耗尽，不把过期窗口写成 0 或推进 reset 假装满额。
-3. **旧账本兼容不能污染数据**：不匹配条目应忽略。恢复 legacy 证据须使用原始未过期窗口的 usage/reset/time，不能把过期 anchor 与已滚动未来 reset/0 拼成新证据；邮箱单独相等不够证明账号/组织。
-4. **合并必须在 writer 锁内**：先锁、重读，再调用核心、atomic replace。安装版核心失败不可静默回落继续落盘；Rust UI 永远不写账本。
-5. **headless 入口先于 Tauri 单实例**：否则可能唤起 GUI、无 stdout 或误当已有实例。Windows GUI-subsystem 的 release/custom-protocol 必须实测管道，debug 成功不够。
-6. **不要中断 claude.exe**：更新只精确验证并重启自己的主程序，先备份/哈希，失败回滚。真实账号切换、清理、系统变更测试只在合成或一次性环境；本机不用 stash/reset/restore/clean 清场。
-7. **固定资源白名单同步**：新增随包脚本必须同步 Tauri resource map、审计 allowlist、部署映射/fixture；只放单个公开脚本，不打包 scripts 整目录或用户运行数据。
-8. **工牌严格 180×286**：可用内宽 160px；不要在头部挤按钮，复用额度区域入口。新增内容放详情弹窗；未知数值不参加推荐。
-9. **GUI 测试必须匹配真实 DOM**：不能查不存在的 class 得到永远为零的假绿；默认隐私打码时测试明文必须在 mockIPC 明确返回隐私关闭。仅看测试截图不能声称实机恢复。
-10. **WinError 10054 mock HTTP**：HTTP/1.1 响应明确 `Connection: close` 并 flush，避免客户端复用而服务端提前关 socket。
-11. **工具/构建纪律**：Windows 只用 pwsh7。既有便携 7z 在 `.local/build-tools/7zip-26.04-f4a03f7e/portable/7z.exe`；release 必须 custom-protocol、中立 Cargo root 与隐私审计。不要因现有 advisory/dead-code warning 做无关重构。
-12. **Cromma 与 Vite**：复用 SegmentedControl/Tabs/Switch/Disclosure 和 MOTION；vendor file 依赖改动后 bun install，再用 --force 刷预构建缓存；无 vendor 变化时不要重装。
-13. **Tauri IPC 参数**：可选进度通道用 Webview + JavaScriptChannelId 转换，避免直接 Option<Channel<T>> 触发宏约束错误。
-14. **工具响应与输出**：functions.exec 禁止 notify/yield_control；批处理只输出最终结果。不要输出账号、凭据、原始 statusLine 命令、私密标记或个人机器路径。
-15. **通过即止**：按改动跑针对性验证；成功后推进交付。不要在真实机器跑 CI-only 系统变更测试，不做多轮无关审计。
+## 5. 提交、CI 与发布状态
 
-## 7. 工作区归属与新会话起步
+仓库 `yq04/Claude-Local` 保持私有，默认分支 `main`。功能提交为 `26f60efeb11913e866d9e431363f596d7b071e03`；`v0.1.5` 及其附件原样保留。
 
-- `AGENTS.md` 本地修改不是本轮产品改动，不暂存；未跟踪 `--help/`、`.planning/`、`.rivet/`、`docs/superpowers/` 原样保留，不删除、不移动、不提交。
-- 本轮 29 个功能/说明文件已提交；最后交接回填仅修改文档。预期工作区只剩上述既有本地规则与临时目录；这不表示产品交付未完成。
-- `.local/`、身份归档、数据库、运行时账本、凭据、构建/安装包和机器笔记不得入 Git。原 MIT 版权和第三方 NOTICE 不变。
-- 下一会话先读本文件、根/相关目录 CLAUDE.md，然后只读核对 `git status`、main/标签/CI/Release 和发布回执。源码已交付且没有用户新需求时，不自动清理或再次部署。
+- 发布：https://github.com/yq04/Claude-Local/releases/tag/v0.1.6，非草稿、预发布，八附件下载哈希全部匹配。
+- CI：https://github.com/yq04/Claude-Local/actions/runs/39756404149，headSha 为上述功能提交，结论 success。
+- 八附件：安装包、SHA256SUMS、隐私审计、资源清单、0.1.6 更新说明、功能提交源码 ZIP、LICENSE、NOTICE。
+- 实际流程：35 个明确产品/说明文件非强制推送 → 同提交 CI 成功 → 八附件草稿上传 → 独立下载/逐项 SHA-256 → 发布并核对标签、附件和仓库隐私。
+
+最终交接仅文档回填另作提交，不重跑全量源码 CI。标签/安装包/源码 ZIP 固定对应已验证功能提交；会话关闭后的最新说明以 main 的 HANDOFF.md 为准。
+
+## 6. 后续可选工作
+
+本轮没有遗留交付阻塞。无用户新任务时不要重复构建、部署、覆盖附件或清理工作区；后续产品改动走新版本。
+
+后续可在一次性 Windows VM/临时 runner 验收 0.1.5 → 0.1.6 的 NSIS 实际升级、占用拦截、卸载与数据保留。继续 Rust 化时先迁移纯计算并配跨语言 fixture，保持唯一账本写入者；自动接入采集前需要受控 Python/cryptography 分发与旧 hook 兼容，不可自动覆盖配置。
+
+若转公开，仍需按 NOTICE.md、docs/DISTRIBUTION.md 清点 Cromma UI 和 Chromium 等第三方许可；私有仓库不消除分发义务，保留原 MIT 版权和全部第三方声明。
+
+## 7. 必须保留的执行纪律
+
+1. 可信 reset 到期可以明确推定恢复，但不能冒充新服务端观测/未来 reset。纯本地估算的窗口边界不够证明恢复；预计值不参与推荐，另一个窗口仍独立。
+2. 归档/计算时间不是观测时间，不能借另一窗的新时间证明当前窗。旧证据回填必须严格账号与组织隔离，新的实际消耗优先。
+3. writer 先锁、重读、调用核心再 atomic replace；Rust UI 不写额度账本。新增资源须同步白名单/部署映射，不打包 scripts 整目录或用户资料。
+4. 正式版必须 custom-protocol、中立 Cargo root 与完整隐私审计，Windows release 管道须实测；debug 成功不足以证明 release 管道可用。
+5. 不中断 claude.exe。更新只核验并重启自己的精确主程序，先备份/哈希、失败回滚；不做真实切号/资料清理，不用 stash/reset/restore/clean 清场。
+6. 复用 Cromma UI 原语；修改 vendor 时才需依赖重装/预构建刷新。电脑网格不能通过自身容器查询改变自身列数，查询容器在页面层；普通动作缩窄不得挤坏工牌、图标和警告确认。
+7. GUI 验证使用实际 DOM、固定时钟和 fake IPC；测试截图不等于实机账号额度已确认。验证与改动对齐，通过后推进交付，不扩做无关多轮审查。
+8. Windows 只用 pwsh7；functions.exec 禁止 notify/yield_control，不输出账号、凭据、原始 statusLine 或私密探针/个人安装路径。
+
+## 8. 工作区归属与新会话起步
+
+`AGENTS.md` 既有本地修改不是产品提交，不暂存。未跟踪 `--help/`、`.planning/`、`.rivet/`、`docs/superpowers/` 原样保留，不删除、不移动、不提交。`.local/`、真实归档、数据库、账本、凭据、安装包和机器笔记不进 Git。
+
+新会话先读本文件和根/相关目录 CLAUDE.md，再只读核对 git status、main、v0.1.6、成功 CI 与本轮回执；不能把既有本地规则/临时目录当作未完成产品工作，也不要再执行更新来刷新交接。
