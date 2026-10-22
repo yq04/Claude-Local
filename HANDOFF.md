@@ -1,135 +1,89 @@
 <!--
-[INPUT]: Verified 0.1.6 quota reset recovery, compact controls/system layout, audited local update and exact-commit private prerelease receipts.
-[OUTPUT]: Context-free product handoff with current behavior, validation, installed/publication state, remaining limits and safe next steps.
-[POS]: Repository handoff; installation paths, process IDs, private probes and machine-specific receipts remain in ignored .local/.
-[PROTOCOL]: Back up to .local/handoff-archive/ and verify the copy before rewriting. Never rebuild or clean merely to refresh this document.
+[INPUT]: Verified0.1.7 productivity features, input/retry fixes, private runner build, local13-probe audit and backed-up update/publication receipts.
+[OUTPUT]: Current product/task, delivered behavior, evidence, remaining limits and safe next steps for a context-free session.
+[POS]: Repository handoff; process IDs, install paths, private probes and machine receipts remain in ignored.local/.
+[PROTOCOL]: Copy to.local/handoff-archive/ and verify SHA256 before rewriting. Do not rebuild or clean merely to refresh this document.
 -->
 # Claude-Local 会话交接
 
-更新日期：2026-10-22，时区 America/New_York。以本文件的 **0.1.6** 状态为准；先前 0.1.5 的安装包和回执不能替代本轮证据。
+更新日期：2026-10-22，时区 America/New_York。以本文件的 **0.1.7** 状态为准；旧版包、CI或安装回执不能替代本轮证据。
 
-## 0.1.7 推荐功能交付执行中
+## 0. 当前交付状态
 
-用户已明确要求“按推荐内容执行”。六项功能现已实现并完成针对性验证：身份可见别名检索/Esc与稳定视图排序、逐窗观测年龄和白名单诊断、Ctrl+K受控命令入口、六字段内存交接便笺、当前聚合TSV复制/下载，以及IANA历史DST归组（23/25小时、重复小时偏移及LordHowe半小时区间）。保留上轮输入验证/CLI重试修复。
+- **0.1.7 已完成更新、源码上传、CI与私有预发布**。最终产品/构建提交 `765148f3e3c4b0d67f4f7e3e6cf6a2370d0ffaa5`；功能主体在其祖先 `06673d8`，后续提交只增强手动私有构建证据与传输，不改六项功能。
+- 精确同提交的 Windows workflow **39777236360** 成功，含源码检查、原生/前端/离线测试、中立 custom-protocol NSIS 构建与受控私有草稿传输。
+- 发布 `https://github.com/yq04/Claude-Local/releases/tag/v0.1.7` 为非草稿的私有预发布；八附件独立下载/SHA256全匹配，v0.1.7指向上述提交。旧v0.1.6与附件未覆盖。
+- 本机文件版本0.1.7、主窗口存在、资源/主程序哈希核验通过；随包采集脚本后端rust。更新验证96个程序文件，替换13个；更新前记录的Claude进程均仍在运行。
+- 最终交接另作仅文档提交，main可能领先产品标签；成功产品CI、安装包和源码ZIP仍固定对应上述提交。没有遗留交付阻塞。
 
-本次源码版本已同步为0.1.7，额外依赖仅chrono/chrono-tz及静态查找库，NOTICE追加对应原版权与所选MIT许可。额度摘要7、SQLite3、schema1额度管道、归档/HMAC/浏览器种子不变。前端聚焦测试36通过、原生用量24通过、身份GUI27断言/用量GUI6组/命令与交接GUI12组通过，生产前端构建通过；最后还核对并修复了经典侧栏按钮内部内容被压缩的问题。
+## 1. 产品与本轮任务
 
-正在沿用前面已授权的中立构建/审计/备份本机更新/同提交CI/私有预发布流程交付0.1.7；当前安装和已发布基线仍是下文0.1.6，不能提前将新源码视为已部署。完成后会以真实回执替换本节。执行计划在ignored `.local/tasks/20261022-productivity-implementation/`，新工具在`.local/tools/complete-local-update-0.1.7.ps1`及`.local/release-0.1.7/`。原AGENTS修改和既有未跟踪目录保持不动。
+Claude-Local是独立维护的Windows x64桌面产品，主程序claude-local.exe，标识ai.local.claude-local，用户数据在 `%APPDATA%/ai.local.claude-local`。提供本地加密身份备份/切换、被动5h/7d额度观察、独立Token统计、环境配置及按需伴生浏览器。技术栈为Tauri/Rust、React/TypeScript与Python被动采集。普通启动不打开浏览器，默认身份页，只记忆合法页面枚举，无上游同步或官方应用更新源。
 
-## 当前研究与源码修复（尚未发布）
+用户先要求继续调研优秀开源项目、修复问题并建议增量功能；随后明确“按推荐内容执行”。本轮已实现六项建议，并保留调研阶段确认的畸形额度输入与CLI读取重试修复，沿用先前授权的完整更新/上传流程交付。
 
-用户在 0.1.6 完整交付后要求继续参考优秀开源项目、分析修复问题并建议新功能。本轮已完成七个项目的许可证/固定源码证据调研，报告在 `docs/PRODUCT_REVIEW_2026-10-22.md`，原始证据与 CLI 合成验证脚本在 ignored `.local/tasks/20261022-product-research/`。
+## 2. 六项已交付功能
 
-- 已修复观测百分比输入缺陷：时间戳量级大数、负数不再截成可信100/0；Python非有限数/布尔值不再造成误报或异常。Rust缓存/账本/推定恢复采用同一验证，Python写入前复制过滤坏锚点，保留另一合法窗及原输入对象。兼容100–101轻微舍入超出为100；额度摘要版本现为 **7**，SQLite仍为3，Python唯一writer与 schema1 协议不变。
-- 已修复 CLI 首次状态读取失败误报“未安装”且无就地重试的问题；读取错误与检查/更新错误分开，双语重试流程通过合成验证，不执行真实 CLI 更新。
-- 已纠正双语统计说明和用量文档：仅有“全部/已保存账号”筛选；未归属历史只有明确稳定兜底适用时计入账号聚合，不声称存在独立筛选入口。根目录旧0.1.5交接描述也已纠正。
-- 验证通过：Rust core 8、profile quota regression 15；Python完整34（含本轮重建debug的真实Rust管道）；Bun额度/双语12；TypeScript/Vite构建；CLI旧版基线和修复后中英文fakeIPC恢复验证。全部使用合成数据，无实际账号/系统设置/进程操作。
-- 建议优先P1身份检索/排序、额度观测新鲜度及白名单采集诊断；P2为Ctrl+K入口、手工任务交接模板、聚合统计复制和单独设计的历史DST归组。它们是建议，尚未实现；已有去重/增量账本/进度回滚不重复计作新功能。
-- **本轮新增修改尚未提交、打包、部署或发布。安装/发布基线仍是下文0.1.6。** 若继续交付，走新版本构建/审计，不重用旧包或覆盖0.1.6附件；下文0.1.6成功CI与发布回执不代表这些新修改已上线。
+1. **身份检索与视图排序**：可见别名搜索、Esc清空，名称/最近保存/原顺序排序；当前身份固定，原生记录顺序和180×286工牌不变。隐私打开时不按隐藏邮箱或原名命中/排序；关闭时可搜索邮箱。
+2. **额度观测与采集诊断**：逐窗来源、观测年龄，缺失或未来时间不伪造年龄；配置存在、脚本随包与运行时未验证分别说明。诊断复制采用字面白名单，仅版本/时间/来源/配置flag，不含账号名、邮箱、ID、代理、路径或原始statusLine。
+3. **Ctrl+K / Cmd+K命令入口**：八页导航、活动页刷新、打开已保存身份的既有确认和交接表单。输入区、IME、其他dialog/alertdialog和任务锁阻止快捷键劫持；方向键/Home/End滚动活动项并保持输入焦点。关闭恢复可用触发入口，回车不直接切号/清理。
+4. **手工任务交接**：任务、目标、进度、下一步、验证、约束六个有界内存字段，Markdown文本预览、复制回退与显式下载task-handoff.md。没有读取会话/项目/凭据，没有自动填写“已验证”，退出应用不自动持久化草稿。
+5. **当前聚合TSV导出**：仅当前有效scope的汇总与已发生时段，含生成时间/时区/覆盖范围，复制或用户点击下载不额外读原生日志。隐私下范围用通用标签；单元格转义与公式前缀保护，不附隐藏未归属桶、独立推理或未来零值，不含原始事件/会话正文。
+6. **IANA/DST统计**：前端传命名时区，原生按逐事件本地日历及午夜边界聚合；今日区间支持23/25小时、重复小时偏移与LordHowe半小时转换，Token不重计/丢失。每小时均值按真实区间时长；当前未结束槽仍按完整区间计入。旧offset-only调用保持兼容，非法时区固定报错。
 
-## 0. 三十秒现状
+主要新增模块：src/app-events.ts、command-palette.tsx/command-model.ts、handoff-model.ts/task-handoff.tsx、identity-list.ts、identity-diagnostics.ts、usage-export.ts及对应测试/CSS。主壳与各页面复用现有控件和刷新逻辑，不新增路由枚举或大列表运行时。
 
-- 产品版本 **0.1.6**，已完成正式 `custom-protocol` 中立构建、解包审计、本机安全更新和运行窗口核验。
-- 本轮包含两组改动：可信额度窗口到期后的「预计已恢复」，以及紧凑中性按钮、账号筛选框和电脑环境双列卡片。
-- 功能提交 `26f60efeb11913e866d9e431363f596d7b071e03` 已推送 `main`；同提交 Windows CI **39756404149** 全步骤成功。
-- 私有预发布 **v0.1.6** 已发布，`isDraft=false`、`isPrerelease=true`；八个附件已独立下载，SHA-256 全部一致，标签指向上述功能提交。
-- 本机主程序版本 0.1.6、窗口存在、文件哈希与回执一致；随包 Python `--quota-backend` 为 `rust`。更新验证 96 个程序文件，替换其中 10 个；记录中的 Claude Code 进程均仍在运行。
-- **更新、源码上传、CI、发布均已完成，没有交付阻塞。** 最终交接回填另作仅文档提交；产品、标签、安装包与成功 CI 仍固定对应功能提交，不把文档 HEAD 当成另一次构建。
+## 3. 数据修复与兼容边界
 
-## 1. 项目与本轮任务
+Rust与Python在把观测当作可信百分比前校验有限性/范围，异常大数、负值、布尔值或NaN/Infinity不再截成假耗尽/满额或让采集崩溃；100–101轻微超出兼容为100。Python在副本上过滤坏锚点，不修改输入缓存对象，不用一窗异常隐藏另一窗。额度摘要版本 **7** 触发旧缓存惰性回填。
 
-Claude-Local 是独立维护的 Windows x64 桌面产品，主程序 `claude-local.exe`，标识 `ai.local.claude-local`，用户数据按用户存放在 `%APPDATA%/ai.local.claude-local`。功能为加密身份备份/切换、被动额度观察、独立 Token 用量统计、环境配置与可选的伴生浏览器。
+CLI首次状态读取失败显示不可读与手动重试，不误报未安装；读取错误和检查/更新错误分别保留。统计说明已对齐“全部/已保存账号”界面；未确定归属历史仅在用户明确的稳定兜底适用时聚合，原始归属证据不改。
 
-技术栈是 Tauri/Rust 原生层、React/TypeScript 界面，以及 Python 被动采集/额度账本写入。5h/7d 额度和 Token 用量统计是独立数据链。浏览器只由明确用户操作或 `--browser` 启动；普通启动不打开浏览器，默认身份管理页，只记忆白名单页面。不添加上游同步或官方应用更新源。
+Python仍是quota_ledger唯一写入者，保留跨进程锁、锁内重读和atomic replace；Rust UI只读该额度账本，Token统计有独立原生私有账本。schema1 `--quota-core` 仍为纯有界JSON（1MiB/256项），入口早于Tauri/单实例初始化，不读文件或联网；安装布局核心失败不得静默fallback写入。
 
-用户本轮先要求阅读交接；随后反馈保存账号 5h 到重置时间后变成未知，要求调研修复；再要求按钮/账号下拉框缩小、颜色统一及电脑环境双列卡片；最后明确授权「完成更新、上传等操作」。上述工作已一起交付为 0.1.6。
+SQLite user_version=3、BAGAID01、.baga编码、账号HMAC、归档密钥与legacy浏览器种子域不变。0.1.6的reset_inferred继续明确预计恢复、不推下一reset、不把计算/保存时间当新观测、不参与推荐。离线仍不能确认其他设备用量。安装包未捆绑Python/cryptography，不自动改现有hook；脚本存在/后端rust不代表旧statusLine已经迁移。
 
-## 2. 已交付行为与代码定位
+## 4. 验证与实际构建路径
 
-### 2.1 到期后明确预计恢复
+- 聚焦Bun36项与TypeScript/Vite构建通过；Rust额度核心8、profile回归15、用量归组24，Python34（含真实debug Rust子进程）通过。
+- 隔离GUI：身份27断言、用量导出/DST6组、命令与交接12组，通过。涵盖隐私搜索、诊断白名单/复制失败、无真实身份写命令、焦点/模态守卫、23/25小时、导出范围/不额外读取、侧栏内部文本边界。最后实测身份排序触发器96×28px，经典侧栏快捷按钮按内容占宽并分行避免内部溢出。
+- 同提交临时Windows runner完成检查与正式中立构建。新增chrono/chrono-tz与phf静态查找依赖保留原版权和所选MIT声明，NOTICE已随包；未升级无关依赖。
+- 本机两次初始release构建因系统提交内存耗尽而停止，未替换安装文件；agent没有结束MATLAB等任务。用户随后回复会自行保存并释放MATLAB内存；已运行的远程构建路线继续完成，未重复编译原生程序。临时runner之后构建成功，但Actions artifact存储配额阻断上传，未删除历史artifact或改系统内存设置。
+- 因此增加显式手动private-draft传输：同样公开的原始主程序、前端、安装包、哈希和审计证据上传到始终draft的内部build release。无私密probe/用户数据/长效发布密钥上传，也无自动产品发布。取回后在本机用原13项probe重新审计，按路径/SHA逐项比对CI和本机提取清单，验证原始host及已知Tauri3字节bundle标记变换；未逆转或猜测二进制。
+- 本机审计103文件、13私密probe零发现，正式版额度管道在停止旧主程序前通过；随后复用既有备份/哈希/精确host身份/回滚事务，只重启本产品主程序。
+- 独立前端核对曾拦截旧工作树CRLF与新检出LF造成的资源哈希差异；从同一Git提交导出源码、锁依赖重建并建立独立Git扫描边界后，10个前端文件与远程全部逐字节相同。无边界的嵌套archive会改变Tailwind自动扫描范围，因此不能只复制源码后直接把差异当随机哈希。完整包审计以新的Git对象源码、已独立复现前端和固定引擎为参考，保留第一次失败记录；没有覆盖旧工作树或旧dist，也没有用包自身作唯一真实性依据。以后复现使用清洁、独立仓库边界。
 
-原 0.1.5 保守逻辑会在到期时清空 usage/reset 并标 unknown，前端也拒绝过期值，导致可信旧重置依据一并丢失。0.1.6 新增逐窗 `reset_inferred` 来源：
+安装包 `Claude-Local_0.1.7_x64-setup.exe`，133.54MiB；SHA256 `7e2272110c8bc7242e1439c402c23d31f620aa4ac8398f1fd05ac83c6b19589d`。
+本机主程序SHA256 `99b15c0e1f5d81cea14133dd8ccf661ecb068a43c8b546ecdeaa8053da1d7979`。
 
-- 只有可信 `server_anchor`、存在真实观测、观测严格早于 reset、且 reset 已到期时，才显示 0% 已用 / 100% 剩余，标注「预计已恢复」。
-- 保存原始过去的 reset 边界和观测时间；UI 不把它当成下一重置时间，不把当前计算/归档保存时间当成新观测。纯 `local_estimate` 或无依据窗口到期仍未知。
-- 新的实际窗口优先；旧耗尽锚点、另一窗口时间或旧推定不得覆盖新的实际消耗。5h/7d 各自判断来源与时间。推定值不参与自动账号推荐。
-- 从账号/组织严格匹配的原始缓存/账本恢复旧版已清空的证据。额度摘要版本升至 **6** 触发现有惰性回填；没有重生成身份 ID、密钥或浏览器种子。
-- 身份页增加可见时的本地显示时钟，静置跨过 reset 即变化；原生读取仍为每小时或手动，没有新增 OAuth 查询。
+文件式更新和NSIS只读解包不等于实际安装/升级/卸载验收；这些系统验收仍只在一次性Windows环境执行。额度/身份功能测试使用合成数据，不通过真实切号验收。
 
-规则核心为 `src-tauri/src/quota_core.rs`，原生读取/兼容在 `src-tauri/src/identities/profile.rs`；Python 契约和兼容路径在 `scripts/claude_quota.py`；前端模型与呈现在 `src/identity-quota.ts`、`identity-model.ts`、`identities.tsx` 和双语目录。
+## 5. 源码、发布与证据
 
-离线无法确认其他设备是否继续使用账号，因此 100% 是有明确标注的本地预计值。官方现行说明确认五小时会话额度重置，但本实现不依赖未证实的新窗口起算规则，也不自行滚动出未来倒计时。
+仓库yq04/Claude-Local保持私有、默认main；最终产品提交 `765148f3e3c4b0d67f4f7e3e6cf6a2370d0ffaa5`，成功workflow https://github.com/yq04/Claude-Local/actions/runs/39777236360 。v0.1.7标签与八附件固定对应该提交，最终交接仅文档回填另作提交，不把文档HEAD当重新构建的产品。
 
-### 2.2 紧凑控件与电脑环境布局
+八附件是安装包、SHA256SUMS、隐私审计、资源清单、0.1.7更新说明、对应提交源码ZIP、LICENSE、NOTICE，均独立下载校验。内部build-*传输release保持草稿，仅用于保留取包证据，不是另一个产品预发布；不覆盖或删除旧v0.1.6附件。
 
-- 普通操作使用现有 `secondary` 中性皮肤、共享 28px 高和 10px 水平内距，按文字占宽。移除网络按钮 128px 最小宽度；实测「复制链接」68×28px、「复制提示词」80×28px。
-- 账号筛选随选中文字占宽，短选项不预留大空白；长名最多 220px，选项弹层保持可读宽度。实测「全部」72×28px。
-- 电脑环境的时区/语言为等宽圆角卡片，标题与状态徽章、当前观测、目标选择和紧凑按钮分层；定位为下方全宽小横条。内容宽度不足 572px 时改为单列，保留草稿/实际状态、授权、禁用和任务锁。
-- 深色、英文及经典/紧凑侧栏均已验证。危险确认保留红色；图标、导航和 180×286 身份工牌内的专用几何保留。
+本地证据全部ignored：
 
-主要文件为 `src/style.css`、`system.tsx`、`usage-statistics.tsx/css`、`vps.tsx`、`browser.tsx`、`browser-start.tsx`、`claude-residue-panel.tsx`、`identities.tsx`。未修改 vendor 原语或依赖，不需要通过重装依赖刷新组件副本。
+- .local/last-local-update.json：实际安装、备份/进程/hash回执。
+- .local/release-0.1.7/：源码/CI/内部传输/本机审计/准备计划/发布/独立下载/最终verification回执及私有日志；失败构建日志也保留。
+- .local/tasks/20261022-productivity-implementation/：任务计划、locale决策、GUI脚本/报告/合成截图与最初未发布补丁快照。
+- .local/tasks/20261022-product-research/：七项目证据、额度坏输入和CLI恢复合成验证。
+- .local/tools/complete-local-update-0.1.7.ps1及release目录的import/apply helpers：原更新器复用与审计导入事务；不要为刷新交接重新运行。
 
-## 3. 架构与格式边界
+报告docs/PRODUCT_REVIEW_2026-10-22.md保留调研时点建议，实际本轮已执行；用户说明见docs/RELEASE_NOTES_0.1.7.md和docs/USAGE_STATISTICS.md。研究Canvas为本机旁挂产物，不是安装包输入。
 
-Python 仍是 `quota_ledger` 唯一写入者，保留跨进程锁、锁内重读和 atomic replace；Rust UI 只读账本并在内存合并。GUI 与随包脚本复用 schema 1 的 `--quota-core` / `merge_windows` 有界 JSON 协议，最多 1MiB / 256 窗口，不接账号正文/路径、不读文件或联网；入口早于 Tauri 与单实例初始化。安装布局的 Rust 核心失败时中止写入，不静默回退；独立旧脚本缺固定 sibling 程序时明确报告 `legacy_python`。
+## 6. 后续与执行纪律
 
-SQLite `user_version=3`、BAGAID01、`.baga` 编码、账号 HMAC、归档密钥和 legacy 浏览器种子域保持不变。Token 用量使用独立原生账本，不能与额度链混用。0.1.4/0.1.5 的隐私桥、设备标识保护、历史会话不自动改写和逐窗证据兼容继续保留。
+本轮六项建议与既有修复均已交付，无待办阻塞。后续可在一次性Windows环境验收0.1.6→0.1.7 NSIS真实升级/卸载数据保留；自动采集接入仍需受控Python依赖分发和既有hook兼容，不可自动覆盖设置。转公开前仍需按NOTICE与DISTRIBUTION核查Cromma/Chromium等既有许可边界，私有仓库不消除分发义务。
 
-安装包只包含公开采集脚本，不包含 Python/cryptography 运行时；没有自动修改已有 statusLine。随包脚本存在、后端为 Rust，不表示旧外部 hook 已迁移。固定 iKuuu/Kookeey 分发链接仍是 copy-only，不提供安装者编辑或自动跳转。
+保持唯一额度writer、账号/组织隔离和原观测时间；预计恢复不等于新服务端证据，缺数值不补0。不得停止claude.exe或强改真实身份/浏览器资料。普通启动不拉起浏览器，命令入口仅打开确认。导出保持隐私和聚合边界，交接只处理用户手填内容。
 
-## 4. 验证与本机更新证据
+Windows用pwsh7，functions.exec禁止notify/yield_control；不输出完整凭据、原始statusLine、私密probe或个人安装路径。按改动验证、通过即止，不用stash/reset/restore/clean清场，也不为结束会话重复建包。
 
-- Rust core 7 项、profile quota regression 12 项；Python 31 项（真实 debug Rust 子进程、legacy 对照、推定持久化往返、失败不写入等）；Bun 额度/双语 12 项通过。
-- 固定时钟额度 GUI 6 组通过：`node --experimental-strip-types scripts/test-identities-ui.ts --quota-reset-only`。另有中英文网络/浏览/电脑/用量及 720px 深色两种侧栏共 10 个隔离视图通过。
-- TypeScript/Vite 生产构建、普通 debug Rust 构建、正式 Windows `custom-protocol` 中立构建通过。CI 在临时 Windows runner 中完成前端、原生、浏览器准备、额度/迁移和 Windows CLI 全部步骤。
-- 包审计合成 9 项、更新器合成 8 组通过。正式包解包 103 文件，原有 13 项私密标记零发现。
-- 安装包 `Claude-Local_0.1.6_x64-setup.exe`，133.43 MiB；SHA-256：`05af14d19e56a5cfd8782ed8f45dc140b6726134f627c3e9adf5e004a6a5ba28`。
-- 本机主程序 SHA-256：`3bfb0e087ade2ab0c089756f9b4654f65d9a01daffa81537aa4942c32b140142`。文件版本 0.1.6，运行窗口已核验。
-- 更新器先在旧 GUI 运行期间核验正式版核心管道，再备份/哈希、替换 10 个变更文件、重启自己的主程序；回执 `updated`、`quotaCoreSmoke=pass`、`missingClaudePids=[]`，安装版采集脚本后端 `rust`。未切换真实身份或清理保险库/浏览器资料。
+## 7. 工作区归属
 
-本轮实机验证是程序文件/版本/窗口和只读后端报告；额度边界验证使用合成数据与隔离 GUI，没有通过真实账号切换做测试。文件式更新与 NSIS 解包审计不等于实际安装/升级/卸载验收；系统相关验收只在一次性 Windows 环境做。
+AGENTS.md既有本地修改不属于产品提交；未跟踪 --help/、.planning/、.rivet/、docs/superpowers/原样保留，不删除、不移动、不暂存。.local/、真实归档/数据库/账本/凭据/包和机器笔记不得进Git。
 
-本地证据均在 ignored 目录：
-
-- `.local/last-local-update.json`：当前安装、备份与进程回执；上轮回执另保存于本轮 release 目录。
-- `.local/release-0.1.6/`：source/build/CI/prepared-assets/published/verification 回执、精确提交源码 ZIP、独立下载目录和私有日志。最终状态 `updated-and-published`。
-- `.local/tasks/20261022-quota-reset/`：额度合成测试、GUI 报告和裁剪/合成截图。
-- `.local/tasks/20261022-ui-controls/`：10 视图测量记录及页面预览。
-- `.local/tasks/20261022-release-0.1.6/`：本次交付计划和进度。
-- `.local/tools/complete-local-update-0.1.6.ps1`：保留原 helper 的版本副本；同样的审计/备份/精确进程/回滚边界，核心探针已匹配新推定规则。无需为了结束会话再次构建或更新。
-
-## 5. 提交、CI 与发布状态
-
-仓库 `yq04/Claude-Local` 保持私有，默认分支 `main`。功能提交为 `26f60efeb11913e866d9e431363f596d7b071e03`；`v0.1.5` 及其附件原样保留。
-
-- 发布：https://github.com/yq04/Claude-Local/releases/tag/v0.1.6，非草稿、预发布，八附件下载哈希全部匹配。
-- CI：https://github.com/yq04/Claude-Local/actions/runs/39756404149，headSha 为上述功能提交，结论 success。
-- 八附件：安装包、SHA256SUMS、隐私审计、资源清单、0.1.6 更新说明、功能提交源码 ZIP、LICENSE、NOTICE。
-- 实际流程：35 个明确产品/说明文件非强制推送 → 同提交 CI 成功 → 八附件草稿上传 → 独立下载/逐项 SHA-256 → 发布并核对标签、附件和仓库隐私。
-
-最终交接仅文档回填另作提交，不重跑全量源码 CI。标签/安装包/源码 ZIP 固定对应已验证功能提交；会话关闭后的最新说明以 main 的 HANDOFF.md 为准。
-
-## 6. 后续可选工作
-
-本轮没有遗留交付阻塞。无用户新任务时不要重复构建、部署、覆盖附件或清理工作区；后续产品改动走新版本。
-
-后续可在一次性 Windows VM/临时 runner 验收 0.1.5 → 0.1.6 的 NSIS 实际升级、占用拦截、卸载与数据保留。继续 Rust 化时先迁移纯计算并配跨语言 fixture，保持唯一账本写入者；自动接入采集前需要受控 Python/cryptography 分发与旧 hook 兼容，不可自动覆盖配置。
-
-若转公开，仍需按 NOTICE.md、docs/DISTRIBUTION.md 清点 Cromma UI 和 Chromium 等第三方许可；私有仓库不消除分发义务，保留原 MIT 版权和全部第三方声明。
-
-## 7. 必须保留的执行纪律
-
-1. 可信 reset 到期可以明确推定恢复，但不能冒充新服务端观测/未来 reset。纯本地估算的窗口边界不够证明恢复；预计值不参与推荐，另一个窗口仍独立。
-2. 归档/计算时间不是观测时间，不能借另一窗的新时间证明当前窗。旧证据回填必须严格账号与组织隔离，新的实际消耗优先。
-3. writer 先锁、重读、调用核心再 atomic replace；Rust UI 不写额度账本。新增资源须同步白名单/部署映射，不打包 scripts 整目录或用户资料。
-4. 正式版必须 custom-protocol、中立 Cargo root 与完整隐私审计，Windows release 管道须实测；debug 成功不足以证明 release 管道可用。
-5. 不中断 claude.exe。更新只核验并重启自己的精确主程序，先备份/哈希、失败回滚；不做真实切号/资料清理，不用 stash/reset/restore/clean 清场。
-6. 复用 Cromma UI 原语；修改 vendor 时才需依赖重装/预构建刷新。电脑网格不能通过自身容器查询改变自身列数，查询容器在页面层；普通动作缩窄不得挤坏工牌、图标和警告确认。
-7. GUI 验证使用实际 DOM、固定时钟和 fake IPC；测试截图不等于实机账号额度已确认。验证与改动对齐，通过后推进交付，不扩做无关多轮审查。
-8. Windows 只用 pwsh7；functions.exec 禁止 notify/yield_control，不输出账号、凭据、原始 statusLine 或私密探针/个人安装路径。
-
-## 8. 工作区归属与新会话起步
-
-`AGENTS.md` 既有本地修改不是产品提交，不暂存。未跟踪 `--help/`、`.planning/`、`.rivet/`、`docs/superpowers/` 原样保留，不删除、不移动、不提交。`.local/`、真实归档、数据库、账本、凭据、安装包和机器笔记不进 Git。
-
-新会话先读本文件和根/相关目录 CLAUDE.md，再只读核对 git status、main、v0.1.6、成功 CI 与本轮回执；不能把既有本地规则/临时目录当作未完成产品工作，也不要再执行更新来刷新交接。
+新会话先读本文件和根/相关CLAUDE.md，再只读核对main、v0.1.7、成功CI、私有发布和本轮回执。无需自动清理或再次部署。
