@@ -26,5 +26,6 @@ Machine-specific proxy integration is deliberately excluded from source and may 
 [PROTOCOL]: Update source headers and this map with changes.
 
 Private share workflow: manually dispatched Windows artifacts also retain the public unbundled host, compiled frontend and canonical build audit evidence with per-file hashes, enabling a second local13-probe audit and backed-up update when the workstation lacks build memory. No runtime user data, private probes or release secrets are uploaded.
+When Actions artifact storage is full, an explicit workflow_dispatch `private-draft` transport can upload the same public-input archive to a private draft build release. It remains draft/prerelease, uses a unique run tag and never overwrites existing releases; final product publication still requires independent local private-probe audit and the separate owner-authorized publication step.
 
 Usage GUI checks also require the concise All selector and absence of history/live/scope clutter.

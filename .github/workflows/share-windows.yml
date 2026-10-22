@@ -2,6 +2,15 @@ name: Build private Windows share artifact
 
 on:
   workflow_dispatch:
+    inputs:
+      delivery_transport:
+        description: 'Delivery transport mechanism'
+        required: true
+        default: 'actions-artifact'
+        type: choice
+        options:
+          - actions-artifact
+          - private-draft
 
 permissions:
   contents: read
@@ -19,6 +28,8 @@ jobs:
     name: Unsigned current-user NSIS package
     needs: checks
     if: github.event.repository.private == true
+    permissions:
+      contents: write
     runs-on: windows-2025
     timeout-minutes: 90
     defaults:
@@ -132,9 +143,85 @@ jobs:
             '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
           } | Set-Content -LiteralPath $sumPath -Encoding utf8
           "CLAUDE_LOCAL_SHARE=$share" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - name: Upload Actions artifact
+        if: inputs.delivery_transport == 'actions-artifact' || inputs.delivery_transport == ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: Claude-Local-windows-x64-${{ github.run_id }}
           path: ${{ env.CLAUDE_LOCAL_SHARE }}/
           if-no-files-found: error
           retention-days: 14
+      - name: Publish private review draft release
+        if: inputs.delivery_transport == 'private-draft' && github.event.repository.private == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_TAG: build-0.1.7-${{ github.run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $shareDir = $env:CLAUDE_LOCAL_SHARE
+          if (-not (Test-Path -LiteralPath $shareDir -PathType Container)) { throw 'Missing share directory' }
+
+          $repoJson = & gh repo view --json isPrivate
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect repository visibility' }
+          $repoView = $repoJson | ConvertFrom-Json
+          if (-not $repoView.isPrivate) { throw 'Refusing draft upload: target repository is not private' }
+
+          $tag = $env:BUILD_TAG
+          $tagResponse = @(& gh api --include ('repos/' + $env:GITHUB_REPOSITORY + '/git/ref/tags/' + $tag) 2>&1)
+          $tagStatus = $LASTEXITCODE
+          if ($tagStatus -eq 0) { throw "Refusing upload: tag $tag already exists" }
+          $tagResponseText = $tagResponse -join "`n"
+          if ($tagResponseText -notmatch '(?m)^HTTP/\S+\s+404\b') {
+            throw "Unable to establish that tag $tag is absent (non-404 error or timeout)"
+          }
+
+          $releaseResponse = @(& gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName 2>&1)
+          $releaseStatus = $LASTEXITCODE
+          if ($releaseStatus -eq 0) { throw "Refusing upload: a release or draft for tag $tag already exists" }
+          $releaseResponseText = $releaseResponse -join "`n"
+          if ($releaseResponseText -notmatch '(?i)(release not found|could not find|404)') {
+            throw "Unable to establish that release for tag $tag is absent"
+          }
+
+          $zipName = "Claude-Local-windows-x64-$tag.zip"
+          $zipPath = Join-Path $env:RUNNER_TEMP $zipName
+          Compress-Archive -Path (Join-Path $shareDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
+          if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) { throw 'Failed to create share zip archive' }
+
+          $zipSha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $zipBytes = (Get-Item -LiteralPath $zipPath).Length
+
+          $notesLines = @(
+            "# Claude-Local 0.1.7 Private Review Build Draft",
+            "",
+            "- Build Tag: $tag",
+            "- Source Commit: $($env:GITHUB_SHA)",
+            "- Workflow Run ID: $($env:GITHUB_RUN_ID)",
+            "- Archive File: $zipName",
+            "- Archive Size: $zipBytes bytes",
+            "- Archive SHA256: $zipSha",
+            "- Transport: private-draft (bypassing Actions artifact storage quota)",
+            "- State: Strictly draft and prerelease. Must not be published directly or made public."
+          )
+          $notesPath = Join-Path $env:RUNNER_TEMP 'draft-release-notes.md'
+          $notesLines | Set-Content -LiteralPath $notesPath -Encoding utf8
+
+          & gh release create $tag `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "Claude-Local 0.1.7 Build $($env:GITHUB_RUN_ID) (Draft)" `
+            --notes-file $notesPath `
+            --draft `
+            --prerelease `
+            $zipPath
+
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
+
+          $created = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft,isPrerelease,tagName,assets | ConvertFrom-Json
+          if (-not $created.isDraft -or -not $created.isPrerelease -or $created.tagName -ne $tag) {
+            throw 'Uploaded release is not strictly draft and prerelease'
+          }
+          if (@($created.assets).Count -ne 1) {
+            throw 'Expected exactly one uploaded zip asset'
+          }
+          Write-Host "Private draft release $tag verified: isDraft=$($created.isDraft), isPrerelease=$($created.isPrerelease), asset=$($created.assets[0].name)"
