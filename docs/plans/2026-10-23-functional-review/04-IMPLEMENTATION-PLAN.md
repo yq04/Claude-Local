@@ -364,4 +364,3 @@ for label, raw in [("complete", header + frame + end),
 ```
 
 实际输出：`complete True`、`missing_authenticated_end True`。预期修复后：完整输入成功；缺少结束帧必须抛出受控完整性错误。源码还需对多余尾部和帧长度作一致校验。该结果证明读取器接受了截断形式，不证明真实凭据泄漏、账号串写或用户归档已经损坏。
-
