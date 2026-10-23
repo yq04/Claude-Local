@@ -23,3 +23,4 @@ usage.attribution* / usage.dst*: P6B 未归属用量稳定账号兜底归属预�
 cli.installGuide / cli.installCommand / cli.copyInstall / cli.recheck: CLI 未安装时官方 Windows 安装指引与复制、重新检查双语文案。
 quick.troubleshoot* / identitySafety.troubleshootHelp: 快速配置排障卡片与使用说明缓存/残留清理入口导航提示。
 浏览器联动确认文案真实说明「运行中的浏览器会自动重开，未启动则保持关闭」。
+identityCard.localQuotaGuide / identityCard.localQuotaSync / identityCard.optionalOnlineQuery / identityCard.onlineQueryDescription / identityCard.queryOnlineNow: 本地与在线额度查询分级双语文案，默认同步本地已保存与 CLI /usage 观测，在线查询需手动确认或可选前台定时轮询。

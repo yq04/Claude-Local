@@ -22,11 +22,14 @@ test('双语目录完整且命名插槽一致',()=>{
   }
 });
 test('每个界面源文案与辅助名称都在 YAML 中',()=>{
-  for(const name of readdirSync(new URL('.',import.meta.url)).filter(name=>name.endsWith('.tsx'))){
+  for(const name of readdirSync(new URL('.',import.meta.url)).filter(name=>(name.endsWith('.tsx')||name.endsWith('.ts'))&&!name.includes('.test.')&&!name.endsWith('.d.ts')&&name!=='i18n.ts')){
     const source=readFileSync(new URL(name,import.meta.url),'utf8');
-    const file=ts.createSourceFile(name,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+    const file=ts.createSourceFile(name,source,ts.ScriptTarget.Latest,true,name.endsWith('.tsx')?ts.ScriptKind.TSX:ts.ScriptKind.TS);
     function walk(node:ts.Node){
-      if(ts.isCallExpression(node)&&node.expression.getText(file)==='t'&&ts.isStringLiteral(node.arguments[0]))expect(Object.hasOwn(zh,node.arguments[0].text)).toBe(true);
+      if(ts.isCallExpression(node)){
+        const exp=node.expression.getText(file);
+        if((exp==='t'||exp==='tRef.current')&&node.arguments[0]&&ts.isStringLiteral(node.arguments[0]))expect(Object.hasOwn(zh,node.arguments[0].text)).toBe(true);
+      }
       if(ts.isJsxText(node))expect(/[\u3400-\u9fff]/.test(node.text)).toBe(false);
       ts.forEachChild(node,walk);
     }

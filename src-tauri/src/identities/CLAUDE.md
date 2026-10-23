@@ -1,6 +1,7 @@
 # identities/
 > L2 | 父级: ../CLAUDE.md
-identities_quota_revision: 只检查产品固定两项账本文件的修改时间/长度，不读取正文、Claude目录或网络；可见身份页每约2秒检查，变化时才读取完整摘要。
+identities_quota_revision: 只检查固定两项产品账本和CLI根目录下 .claude.json 的修改时间/长度，拒绝链接，不读取正文、凭据或项目目录，不联网；可见身份页每约2秒检查，变化时才读取受账号绑定保护的完整本地摘要。
+online_passive_revision_tests.rs: 合成临时根验证固定三文件元数据边界，以及CLI /usage缓存更新→revision变化→本地额度摘要同步；其他账号的较新同邮箱锚点不混入，账本不改写，未知窗口及重置推定保持真实来源。
 online.rs runtime probe: 每候选最多10秒，真实 cryptography/AES-GCM 冷启动、所有解释器候选和网络准备共享一次30秒总预算，并受批次截止时间/取消约束；不重置准备时钟，已授权提交仍保留45秒宽限。
 online.rs: 用户触发的固定端点额度读取与网页摘要导入；批量命令最多256个冻结指纹目标、共享Cleaner事务锁、双worker、按quota_identity去重（current优先）、逐账号quota-batch-progress事件与独立结果，重入固定busy；冻结State预校验一次，Python按expected指纹重新解析并提交校验。隐藏Python子进程、每子进程30s、有界stdin/stdout和固定错误状态，不输出凭据、不轮换授权、不切换身份。结果source仅接受oauth/browser，透传当前/旧真实观测时间。显式allow_browser_fallback=true时仅AuthRequired/Unavailable/NetworkError尝试已运行绑定资料，Python确认browser成功才覆盖OAuth结果；默认关闭。只读按quota_identity重建网页订阅/手动重置及逐字段观测时间，不继承未验证的旧缓存字段；Python保持所有额度/网页元数据文件唯一写入者。
 mod.rs: 当前/空/已保存身份（读取时经 Store::open 完成旧版索引、孤儿摘要清理、摘要离线额度惰性回填、只读 quota_ledger.json 跨账号同步、逐窗更新与可信服务端重置后的明确推定、死锁垃圾清理）、无需目录扫描的进程停止与切换/恢复/重命名/直接删除 Tauri 命令，复用 Cleaner 全局事务锁；进程停止通道可选且报告开始/真实完成/失败，兼容旧调用；UI 只接收目录和允许的账号显示字段及离线额度百分比。

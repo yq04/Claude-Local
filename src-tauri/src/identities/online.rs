@@ -1,4 +1,4 @@
-// [INPUT]: Explicit account selectors and frozen fingerprints, the packaged Python collector and account-bound browser summaries.
+// [INPUT]: Explicit account selectors and frozen fingerprints, packaged Python collector, account-bound browser summaries and fixed local quota/config file metadata.
 // [OUTPUT]: Bounded retained/cancellable batch snapshots and two-phase commit grants; Python owns every ledger write.
 // [POS]: Shared orchestration allows 10s cold runtime probes within one 30s preparation budget outside the identity door; frozen identity/epoch is rechecked at commit.
 // [PROTOCOL]: Batch progress is quota-batch-progress; update identities/CLAUDE.md and the package resource allowlist.
@@ -262,20 +262,25 @@ fn valid_account(account: &str) -> bool {
     account == "current" || super::valid_id(account)
 }
 
-/// Inspect only two fixed product-owned files. Full identity summaries are read
-/// by the visible page only after their local observations have changed.
+/// Inspect fixed local quota/config metadata only. Full identity summaries are
+/// read by the visible page after their local observations have changed.
 #[tauri::command]
 pub fn identities_quota_revision(app: tauri::AppHandle) -> Result<String, String> {
     let root = app
         .path()
         .app_data_dir()
         .map_err(|_| "quotaOnline.unavailable")?;
+    let home = crate::cleaner::identity::root().map_err(|_| "quotaOnline.unavailable")?;
+    quota_revision(&root, &home)
+}
+
+fn quota_revision(root: &Path, home: &Path) -> Result<String, String> {
     let mut revision = String::new();
-    for relative in [
-        "quota_ledger.json",
-        "identity-vault/quota_web_metadata.json",
+    for path in [
+        root.join("quota_ledger.json"),
+        root.join("identity-vault/quota_web_metadata.json"),
+        home.join(".claude.json"),
     ] {
-        let path = root.join(relative);
         match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.is_file() && !crate::cleaner::linked(&metadata) => {
                 let modified = metadata
@@ -1327,6 +1332,10 @@ pub(super) fn apply_metadata(vault: &Path, identity: Option<&str>, output: &mut 
 #[cfg(test)]
 #[path = "online_native_chain_tests.rs"]
 mod native_chain_tests;
+
+#[cfg(test)]
+#[path = "online_passive_revision_tests.rs"]
+mod passive_revision_tests;
 
 #[cfg(test)]
 mod tests {

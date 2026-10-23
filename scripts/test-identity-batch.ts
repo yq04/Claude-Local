@@ -1,7 +1,7 @@
 /**
  * [INPUT]: Isolated browser, controlled clock, locale-catalog labels and account-bound fictional persistent batch IPC.
- * [OUTPUT]: Unified target selection, remount recovery, cancellation, target-change termination, mixed outcomes and passive observation checks.
- * [POS]: Focused identity quota integration tests; no user data, native operations or external requests.
+ * [OUTPUT]: Default local-only sync, collapsed online controls, all-account target selection, remount recovery, cancellation and passive observation checks.
+ * [POS]: Focused identity quota integration tests; synthetic IPC only, with no user data, native operations or external requests.
  * [PROTOCOL]: Keep scripts/CLAUDE.md and the fictional fixture aligned.
  */
 import {strict as assert} from 'node:assert';
@@ -28,15 +28,27 @@ export async function testIdentityBatch(browser:Browser,base:string){
    await prefs.synchronizePrivacyPreference(false);
    (window as any).identityFixture.state.records=(window as any).identityFixture.state.records.slice(0,3);
   });
-  const local=page.getByRole('button',{name:'刷新本地记录',exact:true});
+  const label=(key:string)=>page.evaluate(async key=>(await import('/src/i18n.ts')).translate(key),key);
+  const localLabel=await label('identityCard.localQuotaSync');
+  const local=page.getByRole('button',{name:localLabel,exact:true});
   await local.click();
   const batches=()=>page.evaluate(()=>((window as any).identityFixture.commands as any[]).filter(row=>row.command==='identities_refresh_all_quotas'));
   const current=page.locator('.identity-card.current');
-  const label=(key:string)=>page.evaluate(async key=>(await import('/src/i18n.ts')).translate(key),key);
+  const onlinePanel=page.locator('.identity-online-query');
+  const onlineTrigger=onlinePanel.locator(':scope > button');
+  const onlineReads=()=>page.evaluate(()=>((window as any).identityFixture.commands as any[]).filter(row=>['identities_refresh_quota','identities_refresh_all_quotas'].includes(row.command)));
+  const queryOnlineLabel=await label('identityCard.queryOnlineNow');
+  assert.equal((await batches()).length,0);
+  assert.equal(await page.getByRole('button',{name:queryOnlineLabel,exact:true}).count(),0,'Online querying stays behind the collapsed optional section');
+  assert.equal(await page.getByRole('switch',{name:await label('identityCard.foregroundAutoRefresh'),exact:true}).count(),0,'The OAuth polling toggle is hidden while the optional section is closed');
+  assert.equal(await current.locator('.identity-card-status').count(),0,'No retained online status decorates a fresh mount');
+  assert.equal(await current.locator('.identity-sub-resets-block').count(),0,'Cards omit missing subscription/reset data instead of showing an empty-data placeholder');
+  await page.clock.runFor(7000);
+  assert.equal((await onlineReads()).length,0,'Local refresh and passive polling never start online requests');
+  await onlineTrigger.click();
   const auto=page.getByRole('switch',{name:await label('identityCard.foregroundAutoRefresh'),exact:true});
-  const refreshAllLabel=await label('quotaOnline.refreshAll');
-  assert.equal(await auto.isChecked(),false);assert.equal((await batches()).length,0);
-  assert.equal(await page.getByRole('button',{name:'读取在线额度',exact:true}).count(),0);
+  const refreshAllLabel=queryOnlineLabel;
+  assert.equal(await auto.isChecked(),false);
   assert.equal(await current.locator('h3 .identity-plan-pill').textContent(),'Pro');
   let checks=1;
 
@@ -95,7 +107,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
   await page.evaluate(()=>{
    const f=(window as any).identityFixture;f.state.summaries['00000000000000000000000000000003'].quota_identity='f'.repeat(64);
   });
-  await page.getByRole('button',{name:'刷新本地记录',exact:true}).click();
+  await local.click();
   await page.waitForFunction(()=>((window as any).identityFixture.batch as any)?.state==='cancelled');
   assert.equal(await page.getByRole('button',{name:'取消查询',exact:true}).count(),0,'target-set changes leave the old task terminal in the UI');
   await page.evaluate(()=>(window as any).identityFixture.release('identities_refresh_all_quotas'));
@@ -159,6 +171,10 @@ export async function testIdentityBatch(browser:Browser,base:string){
    '00000000000000000000000000000003','00000000000000000000000000000004',
   ],'Unified retry submits only pending accounts, excluding the two successes');
   await page.evaluate(()=>(window as any).identityFixture.remountIdentity());
+  await onlineTrigger.waitFor();
+  assert.equal(await onlineTrigger.getAttribute('aria-expanded'),'false','Completed online errors remain hidden after remount until the optional section is opened');
+  assert.equal(await page.locator('.identity-card .identity-card-status').count(),0);
+  await onlineTrigger.click();
   await page.locator('.identity-connection-queue li').first().waitFor();
   assert.equal(await page.locator('.identity-connection-queue li').count(),2,'The retry queue survives an IdentityPanel remount');
   await page.evaluate(()=>{
@@ -201,10 +217,10 @@ export async function testIdentityBatch(browser:Browser,base:string){
    },locale);
    const geometry=await page.locator('.identity-card').evaluateAll(cards=>cards.map(card=>{
     const box=card.getBoundingClientRect(),footer=card.querySelector('.identity-card-footer')!.getBoundingClientRect();
-    const meta=card.querySelector('.identity-sub-resets-block')!.getBoundingClientRect();
-    return {width:box.width,height:box.height,overflow:card.scrollWidth>card.clientWidth,footerBottom:footer.bottom,cardBottom:box.bottom,metaBottom:meta.bottom,footerTop:footer.top};
+    const meta=card.querySelector('.identity-sub-resets-block')?.getBoundingClientRect();
+    return {width:box.width,height:box.height,overflow:card.scrollWidth>card.clientWidth,footerBottom:footer.bottom,cardBottom:box.bottom,metaBottom:meta?.bottom??null,footerTop:footer.top};
    }));
-   for(const box of geometry){assert.equal(box.width,180);assert.equal(box.height,286);assert.equal(box.overflow,false);assert.ok(box.metaBottom<=box.footerTop+1);assert.ok(box.footerBottom<=box.cardBottom-2);}
+   for(const box of geometry){assert.equal(box.width,180);assert.equal(box.height,286);assert.equal(box.overflow,false);if(box.metaBottom!==null)assert.ok(box.metaBottom<=box.footerTop+1);assert.ok(box.footerBottom<=box.cardBottom-2);}
    for(const button of await page.locator('.identity-card-footer button').all())assert.ok(await button.evaluate(node=>node.scrollWidth<=node.clientWidth+1));
    if(locale==='en')assert.equal(await page.getByText('fixture@example.invalid',{exact:true}).count(),0);
   }

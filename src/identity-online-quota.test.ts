@@ -5,6 +5,7 @@
  * [PROTOCOL]: Keep this suite aligned with src/CLAUDE.md.
  */
 import { expect, test } from 'bun:test';
+import { translate, setLocale } from './i18n';
 import {
   formatOnlineQuotaStatus,
   formatSubscriptionAndResets,
@@ -20,6 +21,7 @@ import {
   isTerminalBatchState,
   isMatchingBatchTarget,
   type OnlineQuotaResult,
+  type OnlineQuotaStatus,
 } from './identity-online-quota';
 
 test('formatOnlineQuotaStatus correctly resolves status and cooldown remaining', () => {
@@ -450,4 +452,128 @@ test('batch result acceptance requires a matching frozen fingerprint and whiteli
     .toBe('quotaOnline.runtime.probe.noCompatibleRuntime');
   expect(formatOnlineQuotaStatus({status: 'route_unavailable', reason: 'unsupported_proxy'}, 0, key => key).message)
     .toBe('quotaOnline.reason.unsupportedProxy');
+});
+test('formatOnlineQuotaStatus and formatSubscriptionAndResets resolve real bilingual translations without raw keys or leaked slots', () => {
+  const checkNoRawKeyOrLeakedSlot = (text: string, locale: 'zh' | 'en') => {
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).not.toMatch(/^[a-zA-Z0-9_-]+\.[a-zA-Z0-9_.-]+$/);
+    expect(text).not.toMatch(/\{[a-zA-Z0-9_]+\}/);
+    if (locale === 'en') {
+      expect(/[\u3400-\u9fff]/.test(text)).toBe(false);
+    } else {
+      expect(/[\u3400-\u9fff]/.test(text)).toBe(true);
+    }
+  };
+
+  const allStatuses: OnlineQuotaStatus[] = [
+    'updated',
+    'cached',
+    'cooldown',
+    'rate_limited',
+    'auth_required',
+    'account_mismatch',
+    'route_unavailable',
+    'cancelled',
+    'not_run',
+    'deadline_exceeded',
+    'network_error',
+    'invalid_response',
+    'unavailable',
+  ];
+
+  for (const lang of ['zh', 'en'] as const) {
+    setLocale(lang);
+    const t = (k: string, slots?: Record<string, string | number>) => translate(k, slots, lang);
+
+    for (const status of allStatuses) {
+      const res = formatOnlineQuotaStatus(
+        {
+          status,
+          updated_windows: status === 'updated' ? ['5h'] : undefined,
+          retry_at_ms: status === 'cooldown' || status === 'rate_limited' ? Date.now() + 60_000 : undefined,
+        },
+        Date.now(),
+        t
+      );
+      checkNoRawKeyOrLeakedSlot(res.message, lang);
+      if (status === 'updated' || status === 'cached' || status === 'cancelled' || status === 'not_run' || status === 'cooldown') {
+        expect(res.isError).toBe(false);
+      } else {
+        expect(res.isError).toBe(true);
+      }
+    }
+
+    const cdZero = formatOnlineQuotaStatus({ status: 'cooldown' }, Date.now(), t);
+    checkNoRawKeyOrLeakedSlot(cdZero.message, lang);
+    expect(cdZero.isError).toBe(false);
+
+    const rlZero = formatOnlineQuotaStatus({ status: 'rate_limited' }, Date.now(), t);
+    checkNoRawKeyOrLeakedSlot(rlZero.message, lang);
+    expect(rlZero.isError).toBe(true);
+
+    const emptyUpdated = formatOnlineQuotaStatus({ status: 'updated', updated_windows: [] }, Date.now(), t);
+    checkNoRawKeyOrLeakedSlot(emptyUpdated.message, lang);
+    expect(emptyUpdated.isError).toBe(true);
+
+    const stages = ['probe', 'execute'] as const;
+    const runtimeReasons = [
+      'missing_resource',
+      'no_compatible_runtime',
+      'missing_dependency',
+      'probe_failed',
+      'timeout',
+      'invalid_response',
+    ] as const;
+
+    for (const stage of stages) {
+      for (const reason of runtimeReasons) {
+        const res = formatOnlineQuotaStatus(
+          { status: 'unavailable', runtime_stage: stage, runtime_reason: reason },
+          Date.now(),
+          t
+        );
+        checkNoRawKeyOrLeakedSlot(res.message, lang);
+        expect(res.isError).toBe(true);
+      }
+    }
+
+    const reasons = ['unsupported_proxy', 'route_changed', 'auth_required', 'rate_limited'] as const;
+    for (const reason of reasons) {
+      const res = formatOnlineQuotaStatus(
+        { status: 'unavailable', reason },
+        Date.now(),
+        t
+      );
+      checkNoRawKeyOrLeakedSlot(res.message, lang);
+    }
+
+    const empty = formatSubscriptionAndResets(null, lang, t);
+    expect(empty.hasAnyData).toBe(false);
+    checkNoRawKeyOrLeakedSlot(empty.emptyNotice!, lang);
+
+    const renewal = formatSubscriptionAndResets(
+      { billing_date_kind: 'next_renewal', billing_date: 1735689600 },
+      lang,
+      t
+    );
+    expect(renewal.hasAnyData).toBe(true);
+    checkNoRawKeyOrLeakedSlot(renewal.billing!.label, lang);
+
+    const access = formatSubscriptionAndResets(
+      { billing_date_kind: 'access_until', billing_date: 1735689600 },
+      lang,
+      t
+    );
+    expect(access.hasAnyData).toBe(true);
+    checkNoRawKeyOrLeakedSlot(access.billing!.label, lang);
+
+    const resets = formatSubscriptionAndResets(
+      { manual_resets_remaining: 3 },
+      lang,
+      t
+    );
+    expect(resets.hasAnyData).toBe(true);
+    checkNoRawKeyOrLeakedSlot(resets.manualResets!.label, lang);
+  }
+  setLocale('zh');
 });

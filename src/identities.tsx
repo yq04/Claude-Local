@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 原生身份命令、可恢复的原生额度批次状态/取消、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
- * [OUTPUT]: 180×286 身份工牌、脱敏搜索、严格指纹绑定的批次进度/取消/恢复与清晰的已更新/缓存/冷却/未执行结果呈现。
- * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载仅恢复状态，导航不取消工作，身份破坏性操作在批次期间锁定。
+ * [OUTPUT]: 180×286 身份工牌、默认本地额度刷新、折叠的显式在线查询与严格指纹绑定的批次进度/取消/恢复。
+ * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect, useRef, useState, type ReactNode} from 'react';
@@ -74,13 +74,7 @@ function IdentityQuota({quota, display, nowSec, t, onOpenDetails}: {quota: Retur
 
 function SubscriptionAndResets({meta, locale, t}: {meta: IdentitySubscriptionMetadata | null | undefined; locale: string; t: (key: string, slots?: Record<string, string | number>) => string}) {
   const display = formatSubscriptionAndResets(meta, locale, t);
-  if (!display.hasAnyData) {
-    return (
-      <div className="identity-sub-resets-block" title={t('identityCard.subscriptionSourceMissing')}>
-        <span className="identity-sub-resets-empty">{display.emptyNotice}</span>
-      </div>
-    );
-  }
+  if (!display.hasAnyData) return null;
   return (
     <div className="identity-sub-resets-block">
       {display.billing && (
@@ -142,6 +136,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [readReady, setReadReady] = useState(false);
   const [diagnosticVersion, setDiagnosticVersion] = useState<string|null>(null);
   const [foregroundAutoRefresh, setForegroundAutoRefresh] = useState(false);
+  const [onlinePanelOpen, setOnlinePanelOpen] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
   const batchBusyRef = useRef(false);
   batchBusyRef.current = batchBusy;
@@ -342,11 +337,17 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     let live = true;
     void invoke<BatchQuotaResult | null>('identities_quota_batch_state', {requestId: null})
       .then(batch => {
-        if (live && batch) adoptBatchSnapshot(batch, true);
+        if (!live || !batch) return;
+        if (!isTerminalBatchState(batch.state)) {
+          setOnlinePanelOpen(true);
+          adoptBatchSnapshot(batch, true);
+        } else if (onlinePanelOpen) {
+          adoptBatchSnapshot(batch, true);
+        }
       })
       .catch(() => {});
     return () => { live = false; };
-  }, [readReady]);
+  }, [readReady, onlinePanelOpen]);
 
   useEffect(() => {
     const requestId = currentBatchRequestIdRef.current;
@@ -962,7 +963,31 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           <Button
             variant="secondary"
             size="small"
-            disabled={actionLocked || batchBusy}
+            disabled={actionLocked || loading}
+            loading={loading}
+            leftIcon={<Refresh aria-hidden size={16} className={loading ? 'spin' : ''} />}
+            title={t('identityCard.localQuotaSync')}
+            onClick={() => void read(false)}
+          >
+            {t('identityCard.localQuotaSync')}
+          </Button>
+        </div>
+      </header>
+
+      <p className="identity-quota-note">{t('identityCard.localQuotaGuide')}</p>
+
+      <Disclosure
+        className="identity-online-query"
+        triggerClassName="identity-policy-trigger"
+        open={onlinePanelOpen || batchBusy}
+        onOpenChange={open => {if (!batchBusy) {setOnlinePanelOpen(open);if (!open) setForegroundAutoRefresh(false);}}}
+        summary={<><strong>{t('identityCard.optionalOnlineQuery')}</strong><span className="identity-policy-hint">{t('identityCard.onlineQueryDescription')}</span></>}
+      >
+        <div className="identity-online-query-controls">
+          <Button
+            variant="secondary"
+            size="small"
+            disabled={actionLocked || batchBusy || loading}
             loading={batchBusy}
             leftIcon={<Refresh aria-hidden size={16} className={batchBusy ? 'spin' : ''} />}
             title={t('quotaOnline.browserFallbackHint')}
@@ -970,19 +995,17 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           >
             {batchBusy && batchSummary.total > 0
               ? t('quotaOnline.queryingCount', {completed: batchSummary.completed, total: batchSummary.total})
-              : t('quotaOnline.refreshAll')}
+              : t('identityCard.queryOnlineNow')}
           </Button>
-          <Button
-            variant="secondary"
-            size="small"
-            disabled={locked || loading}
-            onClick={() => void read(false)}
-          >
-            {t('quota.refreshLocal')}
-          </Button>
+          <label className="identity-auto-refresh-toggle" title={t('identityCard.foregroundAutoRefreshHint')}>
+            <Switch
+              checked={foregroundAutoRefresh}
+              onCheckedChange={checked => setForegroundAutoRefresh(checked)}
+              aria-label={t('identityCard.foregroundAutoRefresh')}
+            />
+            <span>{t('identityCard.foregroundAutoRefresh')}</span>
+          </label>
         </div>
-      </header>
-
       {batchBusy && <div className="identity-batch-task" role="status" aria-live="polite">
         <span>{t('quotaOnline.taskRunning', {completed: batchSummary.completed, total: batchSummary.total})}</span>
         {batchSummary.deadlineAtMs && <span>{t('quotaOnline.taskDeadline', {v0: Math.max(0, Math.ceil((batchSummary.deadlineAtMs - Date.now()) / 1000))})}</span>}
@@ -999,6 +1022,8 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         onOpen={target => void openAccountBrowser(target)}
         onRetry={targets => void refreshAllQuotas(true, targets)}
       />
+      {!quotaDetails && (quotaFeedback || batchSummary.completed > 0) && <p className="identity-online-feedback" role="status">{quotaFeedback || formatBatchProgress(batchSummary, t)}{unverifiedQuotaTargets > 0 && <> · {t('quotaOnline.unverifiedTargets', {count:unverifiedQuotaTargets})}</>}</p>}
+      </Disclosure>
 
       {error && (
         <p role="alert" className="cleanup-feedback error">
@@ -1023,14 +1048,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             </span>
           </div>
           <div className="identity-library-controls">
-            <label className="identity-auto-refresh-toggle" title={t('identityCard.foregroundAutoRefreshHint')}>
-              <Switch
-                checked={foregroundAutoRefresh}
-                onCheckedChange={checked => setForegroundAutoRefresh(checked)}
-                aria-label={t('identityCard.foregroundAutoRefresh')}
-              />
-              <span>{t('identityCard.foregroundAutoRefresh')}</span>
-            </label>
             <Button variant="secondary" size="small" disabled={blocked || current?.present === false} onClick={() => choose('empty')}>
               {current?.present === false ? t('当前为新身份') : t('新身份')}
             </Button>
@@ -1135,7 +1152,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               )}
               <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:active?.id || 'current', name:currentName});setQuotaFeedback('');}} />
               <SubscriptionAndResets meta={current} locale={locale} t={t} />
-              {cardStatusMap['current'] && cardStatusMap['current'].expectedIdentity === current?.quota_identity && <span className={`identity-card-status ${cardStatusMap['current'].isError ? 'error' : ''}`} title={formatOnlineQuotaStatus(cardStatusMap['current'].result, nowSec * 1000, t).message}>{formatOnlineQuotaStatus(cardStatusMap['current'].result, nowSec * 1000, t).message}</span>}
+              {onlinePanelOpen && cardStatusMap['current'] && cardStatusMap['current'].expectedIdentity === current?.quota_identity && <span className={`identity-card-status ${cardStatusMap['current'].isError ? 'error' : ''}`} title={formatOnlineQuotaStatus(cardStatusMap['current'].result, nowSec * 1000, t).message}>{formatOnlineQuotaStatus(cardStatusMap['current'].result, nowSec * 1000, t).message}</span>}
               <div className="identity-card-footer">
                 <Button variant="secondary" size="small" disabled={blocked} onClick={openSnapshot}>
                   {t(active ? '更新备份' : '保存备份')}
@@ -1190,7 +1207,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                 )}
                 <IdentityQuota quota={savedQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:row.id, name:row.name});setQuotaFeedback('');}} />
                 <SubscriptionAndResets meta={summary} locale={locale} t={t} />
-                {cardStatusMap[row.id]?.expectedIdentity === summary?.quota_identity && cardStatusMap[row.id] && <span className={`identity-card-status ${cardStatusMap[row.id].isError ? 'error' : ''}`} title={formatOnlineQuotaStatus(cardStatusMap[row.id].result, nowSec * 1000, t).message}>{formatOnlineQuotaStatus(cardStatusMap[row.id].result, nowSec * 1000, t).message}</span>}
+                {onlinePanelOpen && cardStatusMap[row.id]?.expectedIdentity === summary?.quota_identity && cardStatusMap[row.id] && <span className={`identity-card-status ${cardStatusMap[row.id].isError ? 'error' : ''}`} title={formatOnlineQuotaStatus(cardStatusMap[row.id].result, nowSec * 1000, t).message}>{formatOnlineQuotaStatus(cardStatusMap[row.id].result, nowSec * 1000, t).message}</span>}
                 <div className="identity-card-footer">
                   <Button variant="secondary" size="small" disabled={blocked} onClick={() => choose(row)}>
                     {t('切换')}
@@ -1201,7 +1218,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           })}
           {saved.length > 0 && visibleSaved.length === 0 && <div className="identity-filter-empty" role="status"><span>{t('identitySearch.empty')}</span><Button variant="secondary" size="small" onClick={() => setSearch('')}>{t('identitySearch.clear')}</Button></div>}
         </div>
-        {!quotaDetails && (quotaFeedback || batchSummary.completed > 0) && <p className="identity-online-feedback" role="status">{quotaFeedback || formatBatchProgress(batchSummary, t)}{unverifiedQuotaTargets > 0 && <> · {t('quotaOnline.unverifiedTargets', {count:unverifiedQuotaTargets})}</>}</p>}
         <IdentityOperationProgress activity={activity.state} />
       </section>
       <Disclosure

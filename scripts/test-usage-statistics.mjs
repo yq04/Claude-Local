@@ -1,5 +1,5 @@
 // [INPUT]: Main React shell, fake IPC aggregates and an isolated local browser context.
-// [OUTPUT]: Compact account filters, usage/identity/system checks and isolated read-only layout previews; --quick-only and --layout-only select focused checks without unrelated suites.
+// [OUTPUT]: Compact account filters, usage/identity/system checks including cards with optional subscription metadata, and isolated read-only layout previews; --quick-only and --layout-only select focused checks without unrelated suites.
 // [POS]: Synthetic UI verification; no live identities, external requests or native mutations.
 // [PROTOCOL]: Update this header and scripts/CLAUDE.md when changing this harness.
 import assert from 'node:assert/strict';
@@ -217,7 +217,8 @@ try {
       return {className:element.className,percentage:element.matches('.identity-quota-value > strong'),text:element.textContent,fontFamily:style.fontFamily,fontSize:style.fontSize,lineHeight:style.lineHeight,fontWeight:style.fontWeight,numeric:style.fontVariantNumeric,...box(element)};
     });
     const resets=[...node.querySelectorAll('.identity-quota-reset')].map(element=>({box:box(element),clock:element.querySelector('.identity-reset-time')?box(element.querySelector('.identity-reset-time')):null,countdown:element.querySelector('.identity-quota-countdown')?box(element.querySelector('.identity-quota-countdown')):null}));
-    return {card:box(node),heading:box(node.querySelector('h3[data-identity-name]')),email:box(node.querySelector('.identity-email')),windows:[...node.querySelectorAll('[data-quota-window]')].map(box),subscription:box(node.querySelector('.identity-sub-resets-block')),footer:box(node.querySelector('.identity-card-footer')),bars:[...node.querySelectorAll('.identity-quota-track')].map(box),typography,resets,fontSans:getComputedStyle(node).getPropertyValue('--font-sans'),width:node.clientWidth,scrollWidth:node.scrollWidth};
+    const subscription=node.querySelector('.identity-sub-resets-block');
+    return {card:box(node),heading:box(node.querySelector('h3[data-identity-name]')),email:box(node.querySelector('.identity-email')),windows:[...node.querySelectorAll('[data-quota-window]')].map(box),subscription:subscription?box(subscription):null,footer:box(node.querySelector('.identity-card-footer')),bars:[...node.querySelectorAll('.identity-quota-track')].map(box),typography,resets,fontSans:getComputedStyle(node).getPropertyValue('--font-sans'),width:node.clientWidth,scrollWidth:node.scrollWidth};
   }));
   const verifyIdentityGeometry=(geometries,label)=>{
     const normalizeFamily=value=>value.replaceAll('"','').replaceAll("'",'').replaceAll(' ','').toLowerCase();
@@ -227,8 +228,8 @@ try {
       assert.ok(geometry.heading.bottom<=geometry.email.y,label+': title and email must not overlap');
       assert.ok(geometry.email.bottom<=geometry.windows[0].y,label+': the email must remain above quota details');
       assert.equal(geometry.windows.length,2);assert.ok(geometry.windows[0].bottom<=geometry.windows[1].y);
-      assert.ok(geometry.windows[1].bottom<=geometry.subscription.y,label+': quota windows and subscription must not overlap');
-      assert.ok(geometry.subscription.bottom<=geometry.footer.y,label+': subscription and action buttons must not overlap');
+      assert.ok(geometry.windows[1].bottom<=(geometry.subscription?.y??geometry.footer.y),label+': quota windows and subscription/actions must not overlap');
+      if(geometry.subscription)assert.ok(geometry.subscription.bottom<=geometry.footer.y,label+': subscription and action buttons must not overlap');
       assert.ok(geometry.footer.bottom<=geometry.card.bottom-2,label+': identity actions must remain inside the card');
       assert.ok(geometry.bars.every(bar=>bar.height===6&&bar.width>140));
       for(const text of geometry.typography){
