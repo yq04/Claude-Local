@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Isolated browser, controlled clock and account-bound fictional persistent batch IPC.
+ * [INPUT]: Isolated browser, controlled clock, locale-catalog labels and account-bound fictional persistent batch IPC.
  * [OUTPUT]: Unified target selection, remount recovery, cancellation, target-change termination, mixed outcomes and passive observation checks.
  * [POS]: Focused identity quota integration tests; no user data, native operations or external requests.
  * [PROTOCOL]: Keep scripts/CLAUDE.md and the fictional fixture aligned.
@@ -21,7 +21,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   await page.clock.install({time:new Date('2026-10-23T18:00:00Z')});
   await page.clock.pauseAt(new Date('2026-10-23T18:00:01Z'));
-  await page.goto(base+'/tests/identities.html');
+  await page.goto(base+'/tests/identities.html',{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>Boolean((window as any).identityFixture?.identityReads));
   await page.evaluate(async()=>{
    const prefs=await import('/src/settings-model.ts');prefs.updatePreferences({reduceMotion:true});
@@ -32,7 +32,9 @@ export async function testIdentityBatch(browser:Browser,base:string){
   await local.click();
   const batches=()=>page.evaluate(()=>((window as any).identityFixture.commands as any[]).filter(row=>row.command==='identities_refresh_all_quotas'));
   const current=page.locator('.identity-card.current');
-  const auto=page.getByRole('switch',{name:'前台 3 分钟自动刷新',exact:true});
+  const label=(key:string)=>page.evaluate(async key=>(await import('/src/i18n.ts')).translate(key),key);
+  const auto=page.getByRole('switch',{name:await label('identityCard.foregroundAutoRefresh'),exact:true});
+  const refreshAllLabel=await label('quotaOnline.refreshAll');
   assert.equal(await auto.isChecked(),false);assert.equal((await batches()).length,0);
   assert.equal(await page.getByRole('button',{name:'读取在线额度',exact:true}).count(),0);
   assert.equal(await current.locator('h3 .identity-plan-pill').textContent(),'Pro');
@@ -40,7 +42,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
 
   await page.locator('.identity-search-row input').fill('Identity 2');
   await page.evaluate(()=>(window as any).identityFixture.defer('identities_refresh_all_quotas'));
-  await page.getByRole('button',{name:'刷新全部额度',exact:true}).click();
+  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   await page.waitForFunction(()=>(window as any).identityFixture.pending.includes('identities_refresh_all_quotas'));
   const request=(await batches()).at(-1).args;
   assert.equal(request.targets.length,3,'Search filters and hidden current backups must not change the batch');
@@ -51,7 +53,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
   assert.equal(await page.evaluate(()=>(window as any).identityFixture.pending.includes('identities_refresh_all_quotas')),true);
   await page.getByRole('button',{name:/查询 1\/3/}).waitFor();
   await page.evaluate(()=>(window as any).identityFixture.release('identities_refresh_all_quotas'));
-  await page.getByRole('button',{name:'刷新全部额度',exact:true}).waitFor();
+  await page.getByRole('button',{name:refreshAllLabel,exact:true}).waitFor();
   await page.locator('.identity-search-row input').fill('');
   const saved=page.locator('.identity-card').filter({has:page.getByRole('heading',{name:'Identity 2',exact:true})});
   await saved.locator('[data-quota-window="5h"]').getByText('75%',{exact:true}).waitFor();
@@ -61,7 +63,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
 
   const beforeRecovery=(await batches()).length;
   await page.evaluate(()=>(window as any).identityFixture.defer('identities_refresh_all_quotas'));
-  await page.getByRole('button',{name:'刷新全部额度',exact:true}).click();
+  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   await page.waitForFunction(()=>(window as any).identityFixture.pending.includes('identities_refresh_all_quotas'));
   const recoveredRequest=(await batches()).at(-1).args.requestId;
   await page.evaluate(()=>(window as any).identityFixture.remountIdentity());
@@ -88,7 +90,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
   checks++;
 
   await page.evaluate(()=>(window as any).identityFixture.defer('identities_refresh_all_quotas'));
-  await page.getByRole('button',{name:'刷新全部额度',exact:true}).click();
+  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   await page.waitForFunction(()=>(window as any).identityFixture.pending.includes('identities_refresh_all_quotas'));
   await page.evaluate(()=>{
    const f=(window as any).identityFixture;f.state.summaries['00000000000000000000000000000003'].quota_identity='f'.repeat(64);
@@ -100,13 +102,13 @@ export async function testIdentityBatch(browser:Browser,base:string){
   checks++;
 
   await page.evaluate((observed)=>{(window as any).identityFixture.onlineResultsById['00000000000000000000000000000002']={status:'cooldown',reason:'auth_required',retry_scope:'oauth',last_observed_at_ms:observed,retry_at_ms:Date.now()+60000};},observed);
-  await page.getByRole('button',{name:'刷新全部额度',exact:true}).click();
+  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   await saved.locator('.identity-card-status').waitFor();
   assert.equal(await saved.locator('.identity-card-status.error').count(),0,'OAuth-scoped cooldown preserves recent truth without becoming a generic failure');
   assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.summaries['00000000000000000000000000000002'].quota_5h_observed_at_ms),observed);
   assert.match(await saved.locator('[data-quota-window="5h"]').innerText(),/75%/);
   await page.evaluate(()=>(window as any).identityFixture.onlineResultsById['00000000000000000000000000000002']={status:'rate_limited',reason:'rate_limited',retry_scope:'all',retry_at_ms:Date.now()+60000});
-  await page.getByRole('button',{name:'刷新全部额度',exact:true}).click();
+  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   await saved.locator('.identity-card-status.error').waitFor();
   assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.summaries['00000000000000000000000000000002'].quota_5h_observed_at_ms),observed,'server-wide 429 cannot replace a recent observation');
   assert.equal(await page.evaluate(()=>((window as any).identityFixture.commands as any[]).some(row=>['identities_switch','identities_stop','identities_refresh_quota'].includes(row.command))),false);
@@ -130,7 +132,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
   });
   await local.click();
   const batchesBeforeQueue=(await batches()).length;
-  await page.getByRole('button',{name:'刷新全部额度',exact:true}).click();
+  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   const queue=page.locator('.identity-connection-queue');
   await queue.waitFor();
   const queueRows=queue.locator('li');
