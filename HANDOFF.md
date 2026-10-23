@@ -1,14 +1,24 @@
 <!--
-[INPUT]: Verified 0.1.8 delivery history and owner-authorized 2026-10-23 functional-reliability source implementation with layered synthetic evidence.
-[OUTPUT]: Current unreleased source handoff, execution/candidate references, unchanged installed baseline, remaining real-account/installer acceptance and preserved delivery history.
+[INPUT]: Verified 0.2.0 CI/private publication, independent package audit, backed-up local update/runtime receipts and retained history.
+[OUTPUT]: Current 0.2.0 delivery handoff, exact source/build references and remaining real-account/installer acceptance.
 [POS]: Repository root handoff; private installation details, probes, PIDs and receipts stay in ignored .local/.
 [PROTOCOL]: Copy this file into .local/handoff-archive/ and verify SHA256 before any rewrite. Documentation-only changes do not rebuild or move product tags.
 -->
 # Claude-Local 会话交接与下一步指南
 
-更新日期：2026-10-23。新会话先完整阅读本文与根目录 `CLAUDE.md`、`AGENTS.md`。已安装及已发布基线仍为 **0.1.8**；本轮新增功能是未安装、未发布的源码候选。第0节描述当前源码，后续章节保留0.1.8交付历史，其中“额度尚未实现”等旧描述不能再用于判断当前工作树。
+更新日期：2026-10-23。新会话先完整阅读本文与根目录 `CLAUDE.md`、`AGENTS.md`。当前已安装并私有预发布 **0.2.0**；下文保留实施阶段和0.1.8历史，旧“尚未发布/实现”描述不代表当前状态。
 
-## 0. 当前功能改进源码接续
+## 当前交付：0.2.0
+
+用户已明确授权更新、打包和发布0.2.0。产品提交及固定标签为 `774e41a2b982db31cf3241104d119c4edebda0ea` / `v0.2.0`；[正式构建39985744960](https://github.com/yq04/Claude-Local/actions/runs/39985744960)及主分支独立检查39985743576均成功。[私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.2.0)含8项已逐项下载并验SHA256的资产，仓库仍为私有，内部build草稿不发布，旧标签不移动。
+
+已完成16个文件的先备份后替换，102个安装文件核验通过；109项解包资源及13项私密探针独立审计零发现，前端10个文件独立复现一致。新宿主窗口、版本、额度核心和已安装Python探针通过。没有停止Claude或浏览器；早期Claude进程在更新前已退出，更新前后数量均为0，不宣称其贯穿整个构建期存活。
+
+完整事实及安装包哈希见 [0.2.0交付核验](docs/RELEASE_VERIFICATION_0.2.0.md)。本机采用备份文件覆盖，未执行NSIS安装器；真实账号及安装升级卸载验收仍与合成检查分开。外部Python、代理协议、独立恢复副本及首次扩展激活边界继续适用。
+
+证据在 `.local/release-0.2.0/`，最新更新和备份位置见 `.local/last-local-update.json`。本次修改前已备份HANDOFF并验SHA256。交付已完成；无新增需求时不要重复构建、安装、发布或移动标签。后续文档提交可前移HEAD，不改变产品二进制基线。
+
+## 0. 功能改进实施历史（发布前记录）
 
 用户已授权按 `docs/plans/2026-10-23-functional-review/04-IMPLEMENTATION-PLAN.md` 推荐内容自主实施。工作分支为 `feature/functional-reliability-20261023`，保留了开始任务前的改动及用户未跟踪文件。实际实现、分层验证及未执行验收见 [执行记录](docs/plans/2026-10-23-functional-review/05-EXECUTION-RESULTS.md)；最终源码指纹见 [候选清单](docs/plans/2026-10-23-functional-review/06-SOURCE-CANDIDATE.json)。原始00–04报告中的pending描述属于规划时点，未被改写为历史上已完成。
 
