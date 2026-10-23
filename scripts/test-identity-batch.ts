@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Isolated browser, controlled clock, locale-catalog labels and account-bound fictional persistent batch IPC.
- * [OUTPUT]: Default local-only sync, collapsed online controls, all-account target selection, remount recovery, cancellation and passive observation checks.
+ * [OUTPUT]: Default local-only sync, menu-opened online dialog, all-account target selection, remount recovery, cancellation and passive observation checks.
  * [POS]: Focused identity quota integration tests; synthetic IPC only, with no user data, native operations or external requests.
  * [PROTOCOL]: Keep scripts/CLAUDE.md and the fictional fixture aligned.
  */
@@ -34,18 +34,29 @@ export async function testIdentityBatch(browser:Browser,base:string){
   await local.click();
   const batches=()=>page.evaluate(()=>((window as any).identityFixture.commands as any[]).filter(row=>row.command==='identities_refresh_all_quotas'));
   const current=page.locator('.identity-card.current');
-  const onlinePanel=page.locator('.identity-online-query');
-  const onlineTrigger=onlinePanel.locator(':scope > button');
   const onlineReads=()=>page.evaluate(()=>((window as any).identityFixture.commands as any[]).filter(row=>['identities_refresh_quota','identities_refresh_all_quotas'].includes(row.command)));
   const queryOnlineLabel=await label('identityCard.queryOnlineNow');
+  const onlineMenuLabel=await label('identityCard.onlineQuery');
+  const openOnline=async()=>{
+   if(await page.getByRole('dialog').count())return;
+   await page.getByRole('button',{name:await label('identityCard.quotaMoreActions'),exact:true}).click();
+   await page.getByRole('menuitem',{name:onlineMenuLabel,exact:true}).click();
+   await page.getByRole('dialog').waitFor();
+  };
+  const closeOnline=async()=>{
+   if(await page.getByRole('dialog').count())await page.getByRole('dialog').getByRole('button',{name:await label('关闭弹窗'),exact:true}).click();
+  };
   assert.equal((await batches()).length,0);
-  assert.equal(await page.getByRole('button',{name:queryOnlineLabel,exact:true}).count(),0,'Online querying stays behind the collapsed optional section');
-  assert.equal(await page.getByRole('switch',{name:await label('identityCard.foregroundAutoRefresh'),exact:true}).count(),0,'The OAuth polling toggle is hidden while the optional section is closed');
+  assert.equal(await page.getByRole('button',{name:queryOnlineLabel,exact:true}).count(),0,'Online controls stay out of the default identity page');
+  assert.equal(await page.getByText(await label('identityCard.localQuotaGuide'),{exact:true}).count(),0,'The redundant local quota guide is absent');
+  assert.equal(await page.getByText(await label('identityCard.onlineQueryDescription'),{exact:true}).count(),0,'The redundant online explanation is absent');
+  assert.equal(await page.getByRole('switch',{name:await label('identityCard.foregroundAutoRefresh'),exact:true}).count(),0,'The online polling toggle is hidden while the dialog is closed');
   assert.equal(await current.locator('.identity-card-status').count(),0,'No retained online status decorates a fresh mount');
   assert.equal(await current.locator('.identity-sub-resets-block').count(),0,'Cards omit missing subscription/reset data instead of showing an empty-data placeholder');
   await page.clock.runFor(7000);
   assert.equal((await onlineReads()).length,0,'Local refresh and passive polling never start online requests');
-  await onlineTrigger.click();
+  await openOnline();
+  assert.equal((await batches()).length,0,'Opening the online dialog does not start a request');
   const auto=page.getByRole('switch',{name:await label('identityCard.foregroundAutoRefresh'),exact:true});
   const refreshAllLabel=queryOnlineLabel;
   assert.equal(await auto.isChecked(),false);
@@ -54,7 +65,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
 
   await page.locator('.identity-search-row input').fill('Identity 2');
   await page.evaluate(()=>(window as any).identityFixture.defer('identities_refresh_all_quotas'));
-  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
+  await openOnline(); await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   await page.waitForFunction(()=>(window as any).identityFixture.pending.includes('identities_refresh_all_quotas'));
   const request=(await batches()).at(-1).args;
   assert.equal(request.targets.length,3,'Search filters and hidden current backups must not change the batch');
@@ -64,8 +75,14 @@ export async function testIdentityBatch(browser:Browser,base:string){
   await current.locator('[data-quota-window="5h"]').getByText('75%',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>(window as any).identityFixture.pending.includes('identities_refresh_all_quotas')),true);
   await page.getByRole('button',{name:/查询 1\/3/}).waitFor();
+  await closeOnline();
+  await page.locator('.identity-batch-task-compact').waitFor();
+  assert.equal(await page.getByRole('dialog').count(),0,'Closing the online dialog leaves the native batch running and keeps the page available');
+  assert.equal(await page.locator('.identity-search-row input').isEnabled(),true,'Closing the online dialog does not lock page navigation or search');
+  await openOnline();
   await page.evaluate(()=>(window as any).identityFixture.release('identities_refresh_all_quotas'));
   await page.getByRole('button',{name:refreshAllLabel,exact:true}).waitFor();
+  await closeOnline();
   await page.locator('.identity-search-row input').fill('');
   const saved=page.locator('.identity-card').filter({has:page.getByRole('heading',{name:'Identity 2',exact:true})});
   await saved.locator('[data-quota-window="5h"]').getByText('75%',{exact:true}).waitFor();
@@ -75,11 +92,12 @@ export async function testIdentityBatch(browser:Browser,base:string){
 
   const beforeRecovery=(await batches()).length;
   await page.evaluate(()=>(window as any).identityFixture.defer('identities_refresh_all_quotas'));
-  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
+  await openOnline(); await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   await page.waitForFunction(()=>(window as any).identityFixture.pending.includes('identities_refresh_all_quotas'));
   const recoveredRequest=(await batches()).at(-1).args.requestId;
   await page.evaluate(()=>(window as any).identityFixture.remountIdentity());
-  await page.getByRole('button',{name:'取消查询',exact:true}).waitFor();
+  await page.getByRole('dialog').waitFor({state:'detached'});
+  await page.locator('.identity-batch-task-compact').getByRole('button',{name:'取消查询',exact:true}).waitFor();
   assert.equal((await batches()).length,beforeRecovery+1,'remount recovers the native task instead of starting another batch');
   await page.evaluate(requestId=>{
    const f=(window as any).identityFixture;const target=f.batch.targets.find((row:any)=>row.account_id==='current');
@@ -87,8 +105,8 @@ export async function testIdentityBatch(browser:Browser,base:string){
    f.emitEvent('quota-batch-progress',{request_id:requestId,account_id:'current',expected_identity:'e'.repeat(64),result:{status:'auth_required'},completed:1,total:f.batch.total});
   },recoveredRequest);
   await page.waitForTimeout(50);
-  assert.equal(await page.locator('.identity-card.current .identity-card-status').count(),0,'wrong request IDs and fingerprints cannot attach results to the current card');
-  await page.getByRole('button',{name:'取消查询',exact:true}).click();
+  assert.equal(await page.locator('.identity-card.current .identity-card-status').count(),0,'Online results never decorate the default identity card');
+  await page.locator('.identity-batch-task-compact').getByRole('button',{name:'取消查询',exact:true}).click();
   await page.waitForFunction(()=>{
    const batch=(window as any).identityFixture.batch;
    return batch?.request_id&&batch.state==='cancelled'&&batch.results.length===batch.targets.length;
@@ -102,26 +120,28 @@ export async function testIdentityBatch(browser:Browser,base:string){
   checks++;
 
   await page.evaluate(()=>(window as any).identityFixture.defer('identities_refresh_all_quotas'));
-  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
+  await openOnline(); await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   await page.waitForFunction(()=>(window as any).identityFixture.pending.includes('identities_refresh_all_quotas'));
   await page.evaluate(()=>{
    const f=(window as any).identityFixture;f.state.summaries['00000000000000000000000000000003'].quota_identity='f'.repeat(64);
   });
+  await closeOnline();
   await local.click();
   await page.waitForFunction(()=>((window as any).identityFixture.batch as any)?.state==='cancelled');
-  assert.equal(await page.getByRole('button',{name:'取消查询',exact:true}).count(),0,'target-set changes leave the old task terminal in the UI');
+  assert.equal(await page.locator('.identity-batch-task-compact').getByRole('button',{name:'取消查询',exact:true}).count(),0,'target-set changes leave the old task terminal in the UI');
   await page.evaluate(()=>(window as any).identityFixture.release('identities_refresh_all_quotas'));
   checks++;
 
   await page.evaluate((observed)=>{(window as any).identityFixture.onlineResultsById['00000000000000000000000000000002']={status:'cooldown',reason:'auth_required',retry_scope:'oauth',last_observed_at_ms:observed,retry_at_ms:Date.now()+60000};},observed);
-  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
-  await saved.locator('.identity-card-status').waitFor();
-  assert.equal(await saved.locator('.identity-card-status.error').count(),0,'OAuth-scoped cooldown preserves recent truth without becoming a generic failure');
+  await openOnline(); await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
+  await closeOnline();
+  assert.equal(await saved.locator('.identity-card-status').count(),0,'Online cooldowns never decorate the identity card');
   assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.summaries['00000000000000000000000000000002'].quota_5h_observed_at_ms),observed);
   assert.match(await saved.locator('[data-quota-window="5h"]').innerText(),/75%/);
   await page.evaluate(()=>(window as any).identityFixture.onlineResultsById['00000000000000000000000000000002']={status:'rate_limited',reason:'rate_limited',retry_scope:'all',retry_at_ms:Date.now()+60000});
-  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
-  await saved.locator('.identity-card-status.error').waitFor();
+  await openOnline(); await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
+  await closeOnline();
+  assert.equal(await saved.locator('.identity-card-status').count(),0,'Online failures stay out of the identity card');
   assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.summaries['00000000000000000000000000000002'].quota_5h_observed_at_ms),observed,'server-wide 429 cannot replace a recent observation');
   assert.equal(await page.evaluate(()=>((window as any).identityFixture.commands as any[]).some(row=>['identities_switch','identities_stop','identities_refresh_quota'].includes(row.command))),false);
   checks++;
@@ -144,7 +164,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
   });
   await local.click();
   const batchesBeforeQueue=(await batches()).length;
-  await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
+  await openOnline(); await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   const queue=page.locator('.identity-connection-queue');
   await queue.waitFor();
   const queueRows=queue.locator('li');
@@ -171,17 +191,18 @@ export async function testIdentityBatch(browser:Browser,base:string){
    '00000000000000000000000000000003','00000000000000000000000000000004',
   ],'Unified retry submits only pending accounts, excluding the two successes');
   await page.evaluate(()=>(window as any).identityFixture.remountIdentity());
-  await onlineTrigger.waitFor();
-  assert.equal(await onlineTrigger.getAttribute('aria-expanded'),'false','Completed online errors remain hidden after remount until the optional section is opened');
+  assert.equal(await page.getByRole('dialog').count(),0,'Remount does not force-open the online dialog');
   assert.equal(await page.locator('.identity-card .identity-card-status').count(),0);
-  await onlineTrigger.click();
+  await openOnline();
   await page.locator('.identity-connection-queue li').first().waitFor();
   assert.equal(await page.locator('.identity-connection-queue li').count(),2,'The retry queue survives an IdentityPanel remount');
   await page.evaluate(()=>{
    const f=(window as any).identityFixture;
    f.state.summaries['00000000000000000000000000000003'].quota_identity='f'.repeat(64);
   });
+  await closeOnline();
   await local.click();
+  await openOnline();
   await page.waitForFunction(()=>document.querySelectorAll('.identity-connection-queue li').length===1);
   assert.equal(await page.locator('.identity-connection-queue li').first().getAttribute('data-connection-issue'),'retry');
   assert.equal(await page.evaluate(()=>((window as any).identityFixture.commands as any[]).filter(row=>row.command==='browser_open_identity_profile').length),1,'A stale fingerprint cannot trigger a second account browser action');
@@ -192,14 +213,15 @@ export async function testIdentityBatch(browser:Browser,base:string){
   await auto.click();
   await page.waitForFunction(count=>((window as any).identityFixture.commands as any[]).filter(row=>row.command==='identities_refresh_all_quotas').length===count,before+1);
   assert.equal((await batches()).at(-1).args.allowBrowserFallback,false,'Automatic refresh cannot navigate browsers');
-  await page.evaluate(()=>{(window as any).__quotaForeground=false;window.dispatchEvent(new Event('blur'));});
-  await page.clock.runFor(360001);assert.equal((await batches()).length,before+1);
-  await page.evaluate(()=>{(window as any).__quotaForeground=true;window.dispatchEvent(new Event('focus'));});
-  await page.waitForFunction(count=>((window as any).identityFixture.commands as any[]).filter(row=>row.command==='identities_refresh_all_quotas').length===count,before+2);
-  await auto.click();
+  await closeOnline();
+  await page.clock.runFor(360001);
+  assert.equal((await batches()).length,before+1,'Closing the dialog turns off automatic refresh and leaves no hidden polling');
+  await openOnline();
+  assert.equal(await auto.isChecked(),false,'Reopening the dialog does not restore the prior polling opt-in');
   checks++;
 
   // A local passive observation appears without any online request.
+  await closeOnline();
   const onlineBeforeLocal=(await batches()).length;
   await page.evaluate(()=>{
    const f=(window as any).identityFixture;

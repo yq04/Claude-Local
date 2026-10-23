@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生身份命令、可恢复的原生额度批次状态/取消、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
- * [OUTPUT]: 180×286 身份工牌、默认本地额度刷新、折叠的显式在线查询与严格指纹绑定的批次进度/取消/恢复。
+ * [OUTPUT]: 180×286 身份工牌、默认本地额度刷新、按需打开的在线查询弹窗与严格指纹绑定的批次进度/取消/恢复。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -339,7 +339,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       .then(batch => {
         if (!live || !batch) return;
         if (!isTerminalBatchState(batch.state)) {
-          setOnlinePanelOpen(true);
           adoptBatchSnapshot(batch, true);
         } else if (onlinePanelOpen) {
           adoptBatchSnapshot(batch, true);
@@ -971,17 +970,41 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           >
             {t('identityCard.localQuotaSync')}
           </Button>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button type="button" className="identity-menu-trigger" aria-label={t('identityCard.quotaMoreActions')} title={t('identityCard.quotaMoreActions')}>
+                ⋯
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
+                <DropdownMenu.Item className="identity-menu-item" onSelect={() => setOnlinePanelOpen(true)}>
+                  {t('identityCard.onlineQuery')}
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         </div>
       </header>
 
-      <p className="identity-quota-note">{t('identityCard.localQuotaGuide')}</p>
+      {batchBusy && <div className="identity-batch-task identity-batch-task-compact" role="status" aria-live="polite">
+        <span>{t('quotaOnline.taskRunning', {completed: batchSummary.completed, total: batchSummary.total})}</span>
+        {batchSummary.deadlineAtMs && <span>{t('quotaOnline.taskDeadline', {v0: Math.max(0, Math.ceil((batchSummary.deadlineAtMs - Date.now()) / 1000))})}</span>}
+        {batchSummary.notRunCount ? <span>{t('quotaOnline.taskRemaining', {count: batchSummary.notRunCount})}</span> : null}
+        <Button variant="secondary" size="small" onClick={() => setOnlinePanelOpen(true)}>
+          {t('identityCard.onlineQuery')}
+        </Button>
+        <Button variant="secondary" size="small" disabled={batchCancelingRef.current} loading={batchCancelingRef.current} onClick={() => void cancelBatch()}>
+          {t(batchCancelingRef.current ? 'quotaOnline.cancelling' : 'quotaOnline.cancelBatch')}
+        </Button>
+      </div>}
 
-      <Disclosure
-        className="identity-online-query"
-        triggerClassName="identity-policy-trigger"
-        open={onlinePanelOpen || batchBusy}
-        onOpenChange={open => {if (!batchBusy) {setOnlinePanelOpen(open);if (!open) setForegroundAutoRefresh(false);}}}
-        summary={<><strong>{t('identityCard.optionalOnlineQuery')}</strong><span className="identity-policy-hint">{t('identityCard.onlineQueryDescription')}</span></>}
+      <AppDialog
+        open={onlinePanelOpen}
+        onOpenChange={open => {setOnlinePanelOpen(open);if (!open) setForegroundAutoRefresh(false);}}
+        title={t('identityCard.onlineQuery')}
+        width={680}
+        className="identity-online-query-dialog"
       >
         <div className="identity-online-query-controls">
           <Button
@@ -1006,15 +1029,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             <span>{t('identityCard.foregroundAutoRefresh')}</span>
           </label>
         </div>
-      {batchBusy && <div className="identity-batch-task" role="status" aria-live="polite">
-        <span>{t('quotaOnline.taskRunning', {completed: batchSummary.completed, total: batchSummary.total})}</span>
-        {batchSummary.deadlineAtMs && <span>{t('quotaOnline.taskDeadline', {v0: Math.max(0, Math.ceil((batchSummary.deadlineAtMs - Date.now()) / 1000))})}</span>}
-        {batchSummary.notRunCount ? <span>{t('quotaOnline.taskRemaining', {count: batchSummary.notRunCount})}</span> : null}
-        <Button variant="secondary" size="small" disabled={batchCancelingRef.current} loading={batchCancelingRef.current} onClick={() => void cancelBatch()}>
-          {t(batchCancelingRef.current ? 'quotaOnline.cancelling' : 'quotaOnline.cancelBatch')}
-        </Button>
-      </div>}
-
       <IdentityConnections
         items={connectionQueueItems}
         busy={batchBusy || busy || loading || !!state?.recovery}
@@ -1023,7 +1037,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         onRetry={targets => void refreshAllQuotas(true, targets)}
       />
       {!quotaDetails && (quotaFeedback || batchSummary.completed > 0) && <p className="identity-online-feedback" role="status">{quotaFeedback || formatBatchProgress(batchSummary, t)}{unverifiedQuotaTargets > 0 && <> · {t('quotaOnline.unverifiedTargets', {count:unverifiedQuotaTargets})}</>}</p>}
-      </Disclosure>
+      </AppDialog>
 
       {error && (
         <p role="alert" className="cleanup-feedback error">
@@ -1152,7 +1166,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               )}
               <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:active?.id || 'current', name:currentName});setQuotaFeedback('');}} />
               <SubscriptionAndResets meta={current} locale={locale} t={t} />
-              {onlinePanelOpen && cardStatusMap['current'] && cardStatusMap['current'].expectedIdentity === current?.quota_identity && <span className={`identity-card-status ${cardStatusMap['current'].isError ? 'error' : ''}`} title={formatOnlineQuotaStatus(cardStatusMap['current'].result, nowSec * 1000, t).message}>{formatOnlineQuotaStatus(cardStatusMap['current'].result, nowSec * 1000, t).message}</span>}
               <div className="identity-card-footer">
                 <Button variant="secondary" size="small" disabled={blocked} onClick={openSnapshot}>
                   {t(active ? '更新备份' : '保存备份')}
@@ -1207,7 +1220,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                 )}
                 <IdentityQuota quota={savedQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:row.id, name:row.name});setQuotaFeedback('');}} />
                 <SubscriptionAndResets meta={summary} locale={locale} t={t} />
-                {onlinePanelOpen && cardStatusMap[row.id]?.expectedIdentity === summary?.quota_identity && cardStatusMap[row.id] && <span className={`identity-card-status ${cardStatusMap[row.id].isError ? 'error' : ''}`} title={formatOnlineQuotaStatus(cardStatusMap[row.id].result, nowSec * 1000, t).message}>{formatOnlineQuotaStatus(cardStatusMap[row.id].result, nowSec * 1000, t).message}</span>}
                 <div className="identity-card-footer">
                   <Button variant="secondary" size="small" disabled={blocked} onClick={() => choose(row)}>
                     {t('切换')}

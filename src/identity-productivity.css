@@ -1,4 +1,4 @@
-/* [INPUT]: Identity workbench aliases, search controls, online quota scheduler, observation age and recovery queue.
+/* [INPUT]: Identity workbench aliases, search controls, online quota dialog, observation age and recovery queue.
  * [OUTPUT]: Compact filter row, accessible ⋯ dropdown menu, quota estimation track, result ages and centralized connection recovery styling without changing card geometry.
  * [POS]: Identity productivity presentation; the 180×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
@@ -200,6 +200,8 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+.identity-online-query-dialog { display: grid; gap: 12px; }
+.identity-online-query-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 .identity-header-actions {
   display: flex;
@@ -223,6 +225,7 @@
   color: var(--identity-empty, #b42318);
 }
 .identity-batch-task{display:flex;align-items:center;justify-content:flex-start;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--muted);font-size:12px}
+.identity-batch-task-compact { margin: 0 0 10px; }
 .identity-batch-task>span+span{color:var(--muted-foreground);font-variant-numeric:tabular-nums}
 .identity-connection-queue{display:grid;gap:8px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)}
 .identity-connection-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
