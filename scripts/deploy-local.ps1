@@ -1,5 +1,5 @@
-# [INPUT]: 已编译的本地版宿主、构建后的 UI 与固定 Windows 浏览器引擎。
-# [OUTPUT]: 独立安装目录、原有本地程序/采集脚本备份和专属桌面快捷方式；不写入用户身份数据或配置 statusLine。
+# [INPUT]: 已编译的本地版宿主、构建后的 UI、固定浏览器引擎与受控 quota resource manifest。
+# [OUTPUT]: 独立安装目录、逐文件资源备份/哈希和专属桌面快捷方式；不写入用户身份数据或配置 statusLine。
 # [POS]: Windows 本地部署入口；拒绝运行中的本地宿主，不结束 Claude，不调用官方安装/更新器。
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 param([string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'Programs\Claude-Local'))
@@ -34,11 +34,37 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'browser-runtime\LICENSE.fingerpr
 Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\ai-icons\LICENSE.lobehub.txt') -Destination (Join-Path $installRoot 'licenses\LICENSE.lobehub.txt') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'src-tauri\windows\LICENSE.unicode.txt') -Destination (Join-Path $installRoot 'licenses\LICENSE.unicode.txt') -Force
 Copy-Item -LiteralPath $binary -Destination (Join-Path $installRoot 'claude-local.exe') -Force
-$collectorDestination = Join-Path $installRoot 'scripts\claude_quota.py'
-if (Test-Path -LiteralPath $collectorDestination -PathType Leaf) {
-    Copy-Item -LiteralPath $collectorDestination -Destination ($collectorDestination + '.backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$resourceManifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'runtime-resources.json') -Raw | ConvertFrom-Json -AsHashtable
+$resourceBackups = [Collections.Generic.List[object]]::new()
+try {
+    foreach ($mapping in $resourceManifest.resources.GetEnumerator()) {
+        $sourceRelative = $mapping.Key -replace '^\.\./', ''
+        $source = [IO.Path]::GetFullPath((Join-Path $projectRoot $sourceRelative))
+        $destination = [IO.Path]::GetFullPath((Join-Path $installRoot ($mapping.Value -replace '/', '\')))
+        if (-not $source.StartsWith($projectRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+            -not $destination.StartsWith($installRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $source -PathType Leaf)) { throw 'Quota resource manifest contains an invalid or missing file.' }
+        $parent = Split-Path -Parent $destination
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        $backup = $null
+        if (Test-Path -LiteralPath $destination -PathType Leaf) {
+            $backup = $destination + '.backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
+            Copy-Item -LiteralPath $destination -Destination $backup
+        }
+        $resourceBackups.Add([pscustomobject]@{ Destination = $destination; Backup = $backup })
+        Copy-Item -LiteralPath $source -Destination $destination -Force
+        if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash) {
+            throw 'Quota resource hash mismatch.'
+        }
+    }
+} catch {
+    foreach ($item in $resourceBackups) {
+        if ($item.Backup) { Copy-Item -LiteralPath $item.Backup -Destination $item.Destination -Force }
+        elseif (Test-Path -LiteralPath $item.Destination -PathType Leaf) { Remove-Item -LiteralPath $item.Destination }
+    }
+    throw
 }
-Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\claude_quota.py') -Destination $collectorDestination -Force
+$collectorDestination = Join-Path $installRoot 'scripts\claude_quota.py'
 $sourceHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
 if ((Get-FileHash -LiteralPath (Join-Path $installRoot 'claude-local.exe') -Algorithm SHA256).Hash -ne $sourceHash) { throw 'Installed binary hash mismatch.' }
 $desktop = [Environment]::GetFolderPath('Desktop')

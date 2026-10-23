@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# [INPUT]: Fixed Windows Tauri resources including the public collector source, optional extracted NSIS payload and caller-owned marker file.
+# [INPUT]: Fixed Windows Tauri resources including both public quota collectors, optional extracted NSIS payload and caller-owned marker file.
 # [OUTPUT]: Relative-path SHA-256 manifest and privacy findings in a caller-selected ignored directory.
 # [POS]: Read-only release boundary; never reads live profiles, installs software or deletes source files.
 # [PROTOCOL]: Update this header and scripts/CLAUDE.md when changing the packaging boundary.
@@ -30,8 +30,17 @@ RESOURCE_MAP = {
     "../browser-runtime/WindowsBrowser/": "browser-runtime/WindowsBrowser/",
     "../browser-runtime/icons/browser.ico": "browser-runtime/icons/browser.ico",
     "windows/LICENSE.unicode.txt": "licenses/LICENSE.unicode.txt",
-    "../scripts/claude_quota.py": "scripts/claude_quota.py",
 }
+
+
+def load_resource_manifest(root):
+    manifest = json.loads((root / "scripts/runtime-resources.json").read_text(encoding="utf-8"))
+    if manifest.get("schema") != 1 or not isinstance(manifest.get("resources"), dict):
+        raise ValueError("invalid runtime resource manifest")
+    resources = manifest["resources"]
+    if set(resources) & set(manifest.get("planned_resources", {})):
+        raise ValueError("active and planned runtime resources overlap")
+    return resources
 ENGINE_FILES = {
     "chrome.exe", "chrome.dll", "chrome_elf.dll", "chrome_wer.dll", "chrome_proxy.exe",
     "chrome_pwa_launcher.exe", "chrome_100_percent.pak", "chrome_200_percent.pak",
@@ -66,7 +75,8 @@ def linked(path):
 
 def forbidden(name):
     lower = name.lower()
-    return (lower in RUNTIME_NAMES or lower.startswith((".env", "profile ", "quota_", "usage_ledger"))
+    return (lower in RUNTIME_NAMES or (lower.startswith("quota_") and lower not in {"quota_runtime.py", "quota_archive.py"})
+            or lower.startswith((".env", "profile ", "usage_ledger"))
             or bool(re.search(r"(?:credential|private.*key|token|secret|ledger)", lower))
             or bool(re.search(r"\.(?:sqlite(?:3)?|db)(?:$|[-.])|\.(?:baga|log|key|pem|pfx|p12)$", lower)))
 
@@ -159,6 +169,7 @@ class Audit:
 
 
 def preflight(root, audit):
+    resource_map = RESOURCE_MAP | load_resource_manifest(root)
     config_root = root / "src-tauri"
     merged = {}
     for filename in ("tauri.conf.json", "tauri.windows.conf.json"):
@@ -180,10 +191,10 @@ def preflight(root, audit):
             audit.fail("resource-map-must-be-fixed", filename)
             return
         merged.update(resources)
-    if merged != RESOURCE_MAP:
+    if merged != resource_map:
         audit.fail("unexpected-resource-map", "src-tauri/tauri.windows.conf.json")
         return
-    for source, destination in RESOURCE_MAP.items():
+    for source, destination in resource_map.items():
         audit.tree(config_root / source, destination, engine=source.endswith("WindowsBrowser/"))
     for icon in ("icons/icon.ico", "icons/icon.png"):
         audit.tree(config_root / icon, "build-icons/" + Path(icon).name)

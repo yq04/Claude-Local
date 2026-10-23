@@ -1552,10 +1552,14 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   background: #d8d2c7;
   box-shadow: inset 0 1px 2px #0003, 0 1px 0 #fff;
 }
-.identity-card.current::before,
+.identity-card.current:not([data-running="false"])::before,
 .identity-card.empty.selected::before {
   background: linear-gradient(#98f8b2, #37d675 55%, #20ac52);
   box-shadow: inset 0 1px 1px #e7ffefaa, 0 0 4px #43e484, 0 0 11px #36df7299, 0 0 22px #37da6b44;
+}
+.identity-card.current[data-running="false"]::before {
+  background: #7d786f;
+  box-shadow: inset 0 1px 1px #ffffff22, 0 0 2px rgba(0, 0, 0, 0.3);
 }
 .identity-card-head { display: flex; align-items: center; gap: 6px; min-height: 28px; flex-shrink: 0; }
 .identity-avatar {
@@ -1595,9 +1599,17 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.05);
 }
-.current .identity-live-badge {
+.current .identity-live-badge.running {
   background: rgba(67, 228, 132, 0.16);
   color: #a7f3d0;
+}
+.current .identity-live-badge.stopped {
+  background: rgba(255, 255, 255, 0.08);
+  color: #c5c2bb;
+}
+.current .identity-live-badge:not(.running):not(.stopped) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #c5c2bb;
 }
 .identity-card h2, .identity-card h3 {
   flex-shrink: 0;
@@ -2008,7 +2020,10 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .claude-residue-review li { display: grid; gap: 5px; padding: 10px 0; border-top: 1px solid var(--landing-line); font-size: 11px; }
 .claude-residue-review strong { font-weight: 500; }
 .claude-residue-review code { overflow-wrap: anywhere; font-size: 10px; line-height: 1.5; }
-.identity-cli > .cleanup-activity, .identity-cli > .cleanup-feedback { margin: 0 18px 12px; }
+.identity-cli > .cleanup-activity, .identity-cli > .cleanup-feedback, .identity-cli > .cli-install-guide { margin: 0 18px 12px; }
+.cli-install-guide > .cleanup-feedback { margin: 0 0 8px; }
+.cli-install-command-row { display: flex; align-items: center; gap: 8px; }
+.cli-install-code { flex: 1; min-width: 0; padding: 6px 10px; background: var(--muted); border: 1px solid var(--landing-line); border-radius: 6px; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; overflow-x: auto; user-select: all; }
 
 /* ----- 伴生页身份工牌 ----- */
 .verification-identity { position: relative; display: flex; align-items: center; gap: 18px; min-height: 116px; margin: 16px 20px; padding: 22px 24px 18px; background: linear-gradient(145deg, #242424, #141414); color: #fafafa; border: 1px solid #373737; border-radius: 12px; box-shadow: 0 4px 0 #080808, 0 7px 14px #00000016; }

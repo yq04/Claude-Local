@@ -2,6 +2,11 @@
 > L2 | 父级: ../CLAUDE.md
 清理在本机执行；网络页仅提供用户触发的固定 Claude 服务连通性诊断，没有供应商导航或 Skill 依赖。生产命令提供身份压缩暂存、空身份切换、恢复、独立确认的直接删除及当前默认 Claude 文件残留维护。用户选择保留或随身份暂存，文件残留另经扫描和选择清理，系统设置独立。
 identities/ - SQLite 身份目录、用户保留策略、加密压缩暂存、空身份切换、恢复、选择性直接删除与独立本地 Token 统计账本；见其 CLAUDE.md。
+identities/online.rs - 固定端点在线额度与账号绑定的网页元数据桥，原生仅编排隐藏Python进程并读取白名单摘要；前台近实时需用户显式开启，后台不轮询。
+identities/backup.rs / backup_tests.rs: 口令派生（ring PBKDF2/AES-GCM）身份全量与救援备份/恢复、SQLite 在线快照、归档清单与记录强校验（version=1、id/HMAC 强一致、data/n 完整性）、有界解包防护。
+identities/quota_connection.rs: 集中连接与路由修复队列；打开独立绑定浏览器登录，不切换全局 CLI，不重放未经验证路由。
+identities/online_native_chain_tests.rs: 真实原生编排核心、资源解析、系统 Python、回环接收器与单写者账本的闭环测试夹具。
+
 cleaner_identity.rs: 身份目标与保留策略适配（含个人设置下的独立代理环境变量与项目记录下的 githubRepoPaths 隔离与无损合并）、跨账号混杂残留清理（含 plugins/synced、model-catalog、groveConfigCache、异号 .claude.json 备份隔离、共享会话 credential_org/userEmail/thinking 签名与 api-request-blob/bridge-session 脱敏、跨账号中断 tool_use/孤儿 tool_result 成对自愈修复、异号会话 tengu_exit 遥测拆弹）及协作式 Claude 进程锁年龄协议清理；测试显式断言规范源路径，复用白名单、完整快照与窄 JSON 键操作，不扫描源码。
 local_edition_tests.rs: 独立应用标识/产品/二进制与无更新插件、权限、配置的离线回归，不读取真实数据。
 main.rs: 本地版 Tauri 生命周期、主窗口尺寸恢复与事件/退出保存、双语托盘、身份/文件残留/CLI 手动检查与更新/用量分析/浏览器/网络命令注册；--quota-core 在启动诊断与单实例之前执行纯 JSON 合并；普通启动不打开浏览器，发布必须 custom-protocol，Windows GUI 子系统和固定脱敏启动诊断；无官方应用更新或重启插件。
@@ -14,7 +19,7 @@ windows.rs: Win32 剪贴板、当前用户 TokenUser/TokenOwner/管理员组文�
 windows_tests.rs: 临时文件所有者/长路径、虚构输入的空白代理回退与 SOCKS 协议回归；本机不修改系统设置，时区还原测试仅允许一次性 CI。
 windows_timezones.rs: CLDR 48 固定全量 Windows/IANA 映射与目录别名，无运行时下载或猜测；原始许可证作为 Windows 资源交付。
 windows_process.rs: 当前用户 Toolhelp/MSIX 固定 Claude 包族（含 cowork-svc/claude-ssh 辅助进程）与精确 CLI 参数/WinGet 链接识别、创建时间和句柄复核、终止等待收敛、独立资料主浏览器进程的正常窗口关闭；原始参数不序列化，超时子进程使用 Job Object；Windows CI 回归实际映射时区写入后还原。
-system.rs: 电脑环境查询、独立修改命令与目录限定的地区时区/语言/区域应用；后台执行原生操作，错误后重新读取系统状态。
+system.rs: 电脑环境查询、系统修改历史记录（system_changes）before/after 事务包装、多字段冲突检查恢复与 restore_operation 范围判定；后台执行原生操作，错误后重新读取系统状态并保存已发生修改。
 native.rs: 剪贴板、辅助功能设置、进程编号与凭据解锁桥；旧扫描只读凭据属性，已移除旧批量单项凭据删除包装；身份快照/恢复仅原生可用，默认服务正文不送 UI。
 cleaner.rs: 共享精确进程停止、文件扫描/快照保护/只读进程状态与独立残留扫描计划；Windows 外置 AppData 只允许同一目标白名单与受限旧组织会话且复核规范路径/用户所有权；原生 CLI 识别当前用户官方 versions 下的精确数字版本程序；结束全部已识别的 Claude 进程时逐轮核验与收敛；CLI/身份/残留修改共用事务锁，各调用独立进度通道。
 claude_cli.rs: 本地安装方式/路径/版本/运行状态，用户手动固定公开版本检查与安全原位更新；限制元数据大小、重定向和超时，通过既有代理读取但不发送账号凭据；更新前拒绝运行中的 CLI，不自动结束会话，经原安装方式更新并核验。旧管理脚本/失败回滚与隔离测试保留兼容，Windows 子进程清理继承 PSModulePath，测试不操作真实安装。

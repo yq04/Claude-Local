@@ -1,5 +1,5 @@
-/* [INPUT]: Identity workbench aliases, search controls and observation age details.
- * [OUTPUT]: Compact filter row and inline diagnostic age without changing card geometry.
+/* [INPUT]: Identity workbench aliases, search controls, online quota scheduler, observation age and recovery queue.
+ * [OUTPUT]: Compact filter row, accessible ⋯ dropdown menu, quota estimation track, result ages and centralized connection recovery styling without changing card geometry.
  * [POS]: Identity productivity presentation; the 180×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
  */
@@ -19,3 +19,217 @@
   .identity-search-row { flex-wrap: wrap; }
   .identity-search-row > input { flex: 1 1 150px; width: auto; }
 }
+
+/* ⋯ 菜单触发器与下拉菜单 */
+.identity-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--identity-line);
+  background: var(--identity-inset);
+  color: var(--identity-muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  margin-left: auto;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.identity-menu-trigger:hover,
+.identity-menu-trigger:focus-visible {
+  color: var(--foreground);
+  border-color: var(--local-accent);
+  background: rgba(0, 0, 0, 0.08);
+  outline: 2px solid var(--local-accent);
+  outline-offset: 1px;
+}
+:root.dark .identity-menu-trigger:hover,
+:root.dark .identity-menu-trigger:focus-visible,
+.current .identity-menu-trigger:hover,
+.current .identity-menu-trigger:focus-visible {
+  background: rgba(255, 255, 255, 0.15);
+  color: #faf9f5;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.identity-menu-content {
+  min-width: 140px;
+  padding: 4px;
+  background: var(--background);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  z-index: 9999;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  animation: dialog-fade 0.12s ease-out;
+}
+:root.dark .identity-menu-content {
+  background: #1e2027;
+  border-color: #363944;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.identity-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  color: var(--foreground);
+  user-select: none;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.identity-menu-item[data-highlighted] {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.identity-menu-item[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.identity-menu-item.danger {
+  color: var(--destructive, #dc2626);
+}
+.identity-menu-item.danger[data-highlighted] {
+  background: rgba(220, 38, 38, 0.12);
+  color: #ef4444;
+}
+.identity-menu-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* 名称旁 Pro/Max 药丸标签 */
+.identity-plan-pill {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 1px 4.5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  background: rgba(16, 185, 129, 0.15);
+  color: #065f46;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+:root.dark .identity-plan-pill,
+.current .identity-plan-pill {
+  background: rgba(52, 211, 153, 0.2);
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.4);
+}
+
+/* 预计额度进度条弱化 */
+.identity-quota-track.quota-track-inferred {
+  opacity: 0.55;
+}
+.identity-quota-track.quota-track-inferred > i {
+  filter: saturate(0.65);
+}
+
+/* 订阅与重置展示区 */
+.identity-sub-resets-block {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin-top: 3px;
+  font: 400 11.5px/15px var(--font-sans);
+  color: var(--identity-muted);
+}
+.identity-sub-resets-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.identity-sub-resets-row > strong {
+  font-weight: 400;
+  color: inherit;
+}
+.identity-sub-resets-row > span {
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.identity-sub-resets-empty {
+  font-size: 11px;
+  color: var(--identity-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 前台 3 分钟自动刷新开关 */
+.identity-auto-refresh-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--foreground);
+  user-select: none;
+  cursor: pointer;
+}
+.identity-auto-refresh-toggle > span {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.identity-card .identity-card-footer.dual-actions {
+  grid-template-columns: minmax(0, 1fr);
+}
+.identity-head-title {
+  flex-shrink: 0;
+}
+.identity-head-title .identity-policy-mode {
+  white-space: nowrap;
+}
+.identity-online-feedback {
+  margin: 8px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.identity-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.identity-card-status {
+  display: block;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--identity-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.identity-card-status.error {
+  color: var(--identity-empty, #b42318);
+}
+.identity-batch-task{display:flex;align-items:center;justify-content:flex-start;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--muted);font-size:12px}
+.identity-batch-task>span+span{color:var(--muted-foreground);font-variant-numeric:tabular-nums}
+.identity-connection-queue{display:grid;gap:8px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)}
+.identity-connection-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.identity-connection-heading h3{margin:0;font-size:13px;font-weight:600}
+.identity-connection-heading p{margin:2px 0 0;color:var(--muted-foreground);font-size:11px}
+.identity-connection-queue ul{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.identity-connection-queue li{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;color:var(--muted-foreground);font-size:11px}
+.identity-connection-account{color:var(--foreground);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+.identity-connection-queue li[data-connection-issue="login"]{color:var(--destructive,#b42318)}
+.identity-connection-queue li[data-connection-issue="route"]{color:var(--muted-foreground)}

@@ -1,8 +1,9 @@
-// [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务锁与 Tauri 进度通道。
-// [OUTPUT]: 当前/空/已保存身份、有界账号显示信息、用户保留选项、浏览器联动确认及真实阶段进度的停止/切换/恢复/删除命令。
-// [POS]: GUI 身份管理的原生入口；不提供凭据读取、任意文件或网络接口。
+// [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务门与显式身份写入代次、Tauri 进度通道。
+// [OUTPUT]: 当前/空/已保存身份、有界账号显示信息、只读网页权益摘要、用户保留选项、浏览器联动确认及真实阶段进度的停止/切换/恢复/删除命令。
+// [POS]: GUI 身份管理的原生入口；在线子模块仅允许固定额度端点和白名单回执，不提供凭据读取或任意文件/网络接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 mod archive;
+pub mod backup;
 pub(crate) mod browser_link;
 #[cfg(test)]
 mod browser_link_tests;
@@ -13,6 +14,7 @@ mod credentials;
 pub(crate) mod database;
 #[cfg(test)]
 mod database_tests;
+pub(crate) mod online;
 #[cfg(test)]
 mod optimization_tests;
 pub(crate) mod private;
@@ -145,7 +147,12 @@ fn state(app: &tauri::AppHandle) -> Result<State, String> {
         .unwrap_or(0);
     let active =
         catalog::current_id(&vault_path, &root_path, &db)?.unwrap_or_else(|| "current".into());
-    let current = profile::read_live(&root_path, &vault_path);
+    let mut current = profile::read_live(&root_path, &vault_path);
+    online::apply_metadata(
+        &vault_path,
+        current.quota_identity.as_deref(),
+        &mut current.web,
+    );
     if current.present {
         if active != "current" && records.iter().any(|r| r.id == active) {
             let live_sum = profile::Summary::from_current(&current);
@@ -161,6 +168,11 @@ fn state(app: &tauri::AppHandle) -> Result<State, String> {
         let saved_at = saved_map.get(id).copied().unwrap_or(0);
         profile::apply_ledger_to_summary(&vault_path, summary, saved_at, now_sec);
         summary.refresh_for_now(now_sec);
+        online::apply_metadata(
+            &vault_path,
+            summary.quota_identity.as_deref(),
+            &mut summary.web,
+        );
     }
     Ok(State {
         browser: db.browser_link()?,
@@ -222,6 +234,7 @@ pub async fn identities_save(
     let current_name = name(&current_name)?;
     let cleaner = app.state::<crate::cleaner::Cleaner>();
     cleaner.enter()?;
+    cleaner.begin_identity_change();
     let worker = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(Some(on_progress));
@@ -258,6 +271,7 @@ pub async fn identities_switch(
     }
     let cleaner = app.state::<crate::cleaner::Cleaner>();
     cleaner.enter()?;
+    cleaner.begin_identity_change();
     let worker = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(Some(on_progress));
@@ -295,6 +309,7 @@ pub async fn identities_rename(
     let value = name(&value)?;
     let cleaner = app.state::<crate::cleaner::Cleaner>();
     cleaner.enter()?;
+    cleaner.begin_identity_change();
     let worker = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let db = database::Database::open(&vault(&worker)?)?;
@@ -324,6 +339,7 @@ pub async fn identities_delete(
     }
     let cleaner = app.state::<crate::cleaner::Cleaner>();
     cleaner.enter()?;
+    cleaner.begin_identity_change();
     let worker = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(Some(on_progress));
@@ -359,6 +375,7 @@ pub async fn identities_browser(
 ) -> Result<State, String> {
     let cleaner = app.state::<crate::cleaner::Cleaner>();
     cleaner.enter()?;
+    cleaner.begin_identity_change();
     let worker = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(None);

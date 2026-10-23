@@ -18,6 +18,8 @@ python -m pip install -r scripts/requirements-ci.txt
 
 The Python requirements cover the quota encryption dependency and workflow YAML parser. The application does not obtain these packages on behalf of a user's Python installation.
 
+The optional online quota helper requires Python 3.10+ with the existing `cryptography` dependency; the application never auto-installs them. Capability is probed under `-E -s` before execution without network access or environment modifications; missing dependencies must be installed in the external Python interpreter directly. Quota setup diagnostics remain read-only and unverified, without pretending passive hookup applies to online probing. One manual batch reads all accounts, with two workers, exact fingerprint binding, per-account status and shared cooldown. The server profile determines whether an access credential is still valid even if its archived expiry metadata has elapsed; shared refresh credentials are never rotated. Manual batches may use a separately paired, already running managed browser profile for live usage after eligible OAuth failures. This does not change the selected CLI identity, copy profile data or export cookies; automatic batches never open browser pages. The foreground opt-in applies to the frozen account set and pauses while hidden/unfocused. A two-second local metadata check picks up passive ledger changes without network requests or repeated full scans. Actual account permissions, authorization expiry and first extension activation remain separate runtime acceptance boundaries.
+
 ## Build and run
 
 ```powershell
@@ -52,6 +54,7 @@ bun run build
 python scripts/browser_ui.py dist
 python scripts/test-fetch-browser.py
 python scripts/test-claude-quota-local.py
+python scripts/test-claude-quota-online.py
 python scripts/test-migrate-local-data.py
 # Windows system-changing tests run only on disposable CI, not a personal machine.
 ```

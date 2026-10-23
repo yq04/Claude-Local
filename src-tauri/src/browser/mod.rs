@@ -1,5 +1,5 @@
 // [INPUT]: 本机指纹引擎（优先 /Applications/Claude-Local Browser.app，回退 ~/Applications）、本地版浏览器包标识、配置/资料边界、真实浏览器观测、宿主界面语言与共享操作日志。
-// [OUTPUT]: 有界绑定身份上下文与浏览器设置/启动/缓存清理、显式完整资料重置和环境核验；完整重置只处理当前绑定 user-data-dir，按真实项目计数；launch.args 与 SQLite 共用资料/指纹参数，恢复期间阻断启动。
+// [OUTPUT]: 有界绑定身份上下文与浏览器设置/启动/缓存清理、显式完整资料重置、环境核验、用户触发的一次性订阅资料桥及按已保存账号打开既有绑定资料的固定用量页命令；测试构建只向合成链路导出回环接收器；账号连接命令不改全局 slot、launch.args 或系统浏览器注册。
 // [POS]: 独立浏览器模块的唯一编排入口；改变资料前必须退出浏览器；不自行改系统默认浏览器，只发起系统确认。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub(crate) mod config;
@@ -26,6 +26,11 @@ pub(crate) fn sync_current_launch_args(app: &tauri::AppHandle) {
 include!("linux.rs");
 #[cfg(target_os = "windows")]
 include!("windows.rs");
+pub(crate) mod quota_bridge;
+pub(crate) mod quota_connection;
+mod quota_existing;
+#[cfg(test)]
+pub(crate) use quota_existing::receive_for_test;
 pub(crate) mod server;
 #[cfg(test)]
 mod tests;
@@ -65,10 +70,12 @@ pub struct Browser {
     gate: Mutex<()>,
     pub(crate) warning: Mutex<Option<String>>,
     session: Mutex<Option<Session>>,
+    quota_sync: Mutex<Option<quota_bridge::Ticket>>,
     host: Mutex<Option<Exit>>,
 }
 struct Session {
     token: String,
+    port: u16,
     received_at: Option<u64>,
     report: Option<Report>,
 }
@@ -228,8 +235,10 @@ fn open_session(
         engine_version,
     };
     let web = web(app)?;
+    *state.quota_sync.lock().unwrap() = None;
     *state.session.lock().unwrap() = Some(Session {
         token: token.clone(),
+        port,
         report: None,
         received_at: None,
     });
@@ -258,6 +267,7 @@ fn renew_session(app: &tauri::AppHandle) {
 }
 /// 宿主退出时删除 start.url，避免 CCBrowser 入口读到失效令牌。
 pub fn forget_start_url(app: &tauri::AppHandle) {
+    *app.state::<Browser>().quota_sync.lock().unwrap() = None;
     if let Ok(root) = root(app) {
         let _ = fs::remove_file(root.join("start.url"));
     }
@@ -678,12 +688,13 @@ pub async fn browser_align(
     if exit.country != "US" {
         return Err("实际代理出口不是美国，未修改机器。".into());
     }
-    run(move || {
-        let state = app.state::<Browser>();
+    let app_align = app.clone();
+    crate::system::run_change(app.clone(), "align", move || {
+        let state = app_align.state::<Browser>();
         let _guard = state.gate.lock().unwrap();
-        workspaces::ready(&root(&app)?)?;
+        workspaces::ready(&root(&app_align)?)?;
         let log = Reporter::channel(Some(on_progress));
-        if workspaces::scope(&root(&app)?)? != settings { return Err("浏览器身份已变化，请重试。".into()); }
+        if workspaces::scope(&root(&app_align)?)? != settings { return Err("浏览器身份已变化，请重试。".into()); }
         if profile::running(&settings.join("profile"))? {
             return Err("先退出浏览器，再对齐机器。".into());
         }
@@ -729,9 +740,9 @@ pub async fn browser_align(
         config.follow_machine = true;
         config.language = "en-US".into();
         config.timezone = exit.timezone;
-        config::save(&workspaces::scope(&root(&app)?)?, &config)?;
-        refresh_launch_args(&app)?;
-        renew_session(&app);
+        config::save(&workspaces::scope(&root(&app_align)?)?, &config)?;
+        refresh_launch_args(&app_align)?;
+        renew_session(&app_align);
         log.log(
             "browser",
             "ok",
@@ -739,9 +750,10 @@ pub async fn browser_align(
             3,
             Some(3),
         );
-        snapshot(&app)
+        Ok(serde_json::json!({ "message": "完成" }))
     })
-    .await
+    .await?;
+    run(move || snapshot(&app)).await
 }
 
 pub fn mask_email(email: &str) -> String {

@@ -1,5 +1,5 @@
 // [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话账单增量、本地 settings.json 代理环境变量、只读外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据；当前无可信订阅到期来源。
-// [OUTPUT]: 当前本地身份与已保存身份的脱敏摘要（用户名/邮箱/组织/套餐档位/OAuth有效状态/可选订阅到期/专属代理/逐窗离线5h与7d额度、含 reset_inferred 来源、真实观测时间及重置时间戳）及有界活动会话列表；百分比锚点先验证，不输出令牌、不联网验证账号。
+// [OUTPUT]: 当前本地身份与已保存身份的脱敏摘要（用户名/邮箱/组织/套餐档位/OAuth有效状态/可选网页权益/专属代理/逐窗5h与7d额度、含 reset_inferred 来源、真实观测时间及重置时间戳）及有界活动会话列表；百分比锚点先验证，不输出令牌，本模块不联网验证账号。
 // [POS]: 身份卡片的只读展示边界；账号匹配与旧格式适配留在此处，逐窗合并/过期/推定恢复/聚合复用 quota_core；归档时间不代表额度新鲜度，账本只读且不匹配项不污染摘要。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,8 @@ struct Config {
 }
 #[derive(Clone, Default, Serialize)]
 pub struct Current {
+    #[serde(flatten)]
+    pub web: super::online::WebMetadata,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quota_identity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,6 +65,8 @@ pub struct Current {
 pub const CURRENT_QUOTA_VERSION: u8 = 7;
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Summary {
+    #[serde(default, flatten)]
+    pub web: super::online::WebMetadata,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_identity: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -149,6 +153,7 @@ impl Summary {
     }
     pub fn from_current(cur: &Current) -> Self {
         Self {
+            web: cur.web.clone(),
             quota_identity: cur.quota_identity.clone(),
             quota_observed_at_ms: cur.quota_observed_at_ms,
             quota_source: cur.quota_source,
@@ -1452,6 +1457,7 @@ fn parse(bytes: &[u8]) -> Result<Current, serde_json::Error> {
     let config: Config = serde_json::from_slice(bytes)?;
     Ok(match config.account {
         Some(account) => Current {
+            web: super::online::WebMetadata::default(),
             quota_identity: None,
             quota_observed_at_ms: None,
             quota_source: None,

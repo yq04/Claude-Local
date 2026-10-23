@@ -95,9 +95,19 @@ jobs:
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol -- --test-threads=1
       - name: Offline browser preparation fixtures
         run: python scripts/test-fetch-browser.py
-      - name: Offline quota and migration fixtures
+      - name: Offline quota, runtime resources and migration fixtures
         run: |
+          python scripts/test-runtime-resources.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/test-quota-runtime.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/test-quota-archive.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/test-audit-windows-package.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python scripts/test-claude-quota-local.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/test-claude-quota-online.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python scripts/test-migrate-local-data.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

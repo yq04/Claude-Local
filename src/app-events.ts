@@ -1,12 +1,13 @@
 /**
  * [INPUT]: Local application event dispatches and current React callbacks.
- * [OUTPUT]: Stable page-refresh listener and identity-review request contract.
+ * [OUTPUT]: Stable page-refresh listener, fault navigation and identity-review request contract.
  * [POS]: Frontend-only coordination events; no native commands or persistence.
  * [PROTOCOL]: Keep shell and page owners on this shared event contract.
  */
 import { useEffect, useRef } from 'react'
 
 export const APP_REFRESH_EVENT = 'claude-local:refresh'
+export const FAULT_NAVIGATE_EVENT = 'claude-local:fault-navigate'
 
 export type IdentityReviewRequest = {
   identityId: string

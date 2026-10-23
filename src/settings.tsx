@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 共享界面语言状态、宿主语言写入命令、Tauri 本机应用版本、settings-model 响应式视图偏好与 Cromma UI 的 Tabs / SegmentedControl / Switch / Select。
- * [OUTPUT]: 「软件设置」页面：分段分栏、资料目录卡片、显示语言/明暗主题/强调色/减少动画/侧栏布局/表面风格/额度口径/隐私打码与只读版本信息。
- * [POS]: 独立设置面板；仅修改本地视图偏好与界面语言，不联网、不检查或安装更新，不触碰本机数据边界。所有选择控件复用 Cromma 原语，不另写分段、开关或页签。
+ * [INPUT]: 共享界面语言状态、宿主语言写入命令、Tauri 本机应用版本、settings-model 响应式视图偏好、身份备份组件与 Cromma UI 控件。
+ * [OUTPUT]: 「软件设置」页面：资料目录、加密身份备份/新目标恢复、显示语言/主题/布局/隐私与只读版本信息。
+ * [POS]: 独立设置面板；视图偏好与身份备份均由用户手动触发，不联网、不检查或安装更新、不替换当前身份库。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect, useState, type ReactNode} from 'react';
@@ -12,6 +12,7 @@ import {invoke} from '@tauri-apps/api/core';
 import appLogo from '../assets/claude-local-mark.svg';
 import {useI18n, setLocale, type Locale} from './i18n';
 import {resetPreferences, updatePreferences, usePreferences, usePrivacySyncError, type AccentTone} from './settings-model';
+import {BackupPanel} from './backup-panel';
 
 type SettingsTab = 'general' | 'appearance' | 'data' | 'about';
 
@@ -110,6 +111,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: 'cleaner' | 'br
 
       <div className="settings-sections">
         {showData && (
+          <>
           <section className="settings-group">
             <GroupHeading>{t('独立资料与保险库目录')}</GroupHeading>
             <div className="settings-card settings-directory-card">
@@ -139,6 +141,8 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: 'cleaner' | 'br
               )}
             </div>
           </section>
+          <BackupPanel locale={locale} />
+          </>
         )}
 
         {showAppearance && (

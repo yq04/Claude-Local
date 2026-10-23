@@ -15,6 +15,7 @@ import {cacheHitRate, dailySeries, formatUsageNumber, summarizeUsageTrend, type 
 import {UsageTrend} from './usage-trend';
 import {UsageTrendTable} from './usage-table';
 import {buildUsageTsv} from './usage-export';
+import {formatTimezoneContext, getDstDayType, maskAccountLabel, previewAttributionScope} from './usage-attribution';
 
 const periods: readonly [UsagePeriod, string][] = [['today', 'usage.today'], ['week', 'usage.week'], ['month', 'usage.month'], ['all', 'usage.allTime']];
 const warningKeys: Record<string, string> = {
@@ -42,6 +43,9 @@ export function UsageStatisticsPanel() {
   const [result, setResult] = useState<{key: string; value: UsageSnapshot} | null>(null);
   const [status, setStatus] = useState<{key: string; busy: boolean; error: string}>({key: '', busy: true, error: ''});
   const [exportStatus, setExportStatus] = useState('');
+  const [pendingTargetId, setPendingTargetId] = useState('');
+  const [attributionBusy, setAttributionBusy] = useState(false);
+  const [attributionFeedback, setAttributionFeedback] = useState<{type: 'success' | 'error'; message: string} | null>(null);
   const timezone = (() => { try { const value = Intl.DateTimeFormat().resolvedOptions().timeZone; new Intl.DateTimeFormat('en', {timeZone: value}); return value; } catch { return ''; } })();
   const queryKey = `${period}:${account}:${timezone || `offset:${-new Date().getTimezoneOffset()}`}`;
   const snapshot = result?.key === queryKey ? result.value : null;
@@ -95,6 +99,42 @@ export function UsageStatisticsPanel() {
   const selectedAccount = account === 'all' ? t('usage.allAccounts') : prefs.privacyMask ? t('usage.account') : snapshot?.accounts.find(item => item.id === account)?.name ?? t('usage.allAccounts');
   const offsetMinutes = -new Date().getTimezoneOffset();
   const offsetZone = `UTC${offsetMinutes >= 0 ? '+' : '-'}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0')}:${String(Math.abs(offsetMinutes) % 60).padStart(2, '0')}`;
+  const handleSetAttribution = async (targetId: string) => {
+    if (!targetId || attributionBusy) return;
+    setAttributionBusy(true);
+    setAttributionFeedback(null);
+    try {
+      await invoke('usage_attribution_set', {accountId: targetId});
+      setAttributionFeedback({type: 'success', message: t('usage.attributionApplied')});
+      setPendingTargetId('');
+      setRevision(value => value + 1);
+    } catch (err) {
+      setAttributionFeedback({type: 'error', message: t('usage.attributionFailed') + ': ' + String(err)});
+    } finally {
+      setAttributionBusy(false);
+    }
+  };
+
+  const handleClearAttribution = async () => {
+    if (attributionBusy) return;
+    setAttributionBusy(true);
+    setAttributionFeedback(null);
+    try {
+      await invoke('usage_attribution_clear');
+      setAttributionFeedback({type: 'success', message: t('usage.attributionCleared')});
+      setPendingTargetId('');
+      setRevision(value => value + 1);
+    } catch (err) {
+      setAttributionFeedback({type: 'error', message: t('usage.attributionFailed') + ': ' + String(err)});
+    } finally {
+      setAttributionBusy(false);
+    }
+  };
+
+  const timezoneContext = formatTimezoneContext(snapshot?.timezone || timezone);
+  const dstType = period === 'today' ? getDstDayType(days) : null;
+  const previewScope = previewAttributionScope(snapshot?.attribution, pendingTargetId, accounts);
+
   const makeExport = () => snapshot ? buildUsageTsv({snapshot, period, periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'), accountLabel: selectedAccount, accountIsAll: account === 'all', timezone: snapshot.timezone || timezone || offsetZone, privacy: prefs.privacyMask, days, generatedLabel: new Date(snapshot.generated_at * 1000).toISOString(), coverageLabel: snapshot.tracking_since == null ? t('usage.exportCoverageUnknown') : `${new Date(snapshot.tracking_since * 1000).toISOString()} – ${new Date(snapshot.generated_at * 1000).toISOString()}`, productLabel: 'Claude-Local', labels: {metadata: t('usage.exportTitle'), summary: t('usage.exportSummary'), daily: t('usage.exportBuckets'), time: t('usage.exportTime'), total: t('usage.total'), input: t('usage.input'), output: t('usage.output'), cacheWrite: t('usage.cacheWrite'), cacheRead: t('usage.cacheRead'), requests: t('usage.requests'), account: t('usage.account'), period: t('usage.periodFilter'), timezone: t('usage.exportTimezone'), generated: t('usage.exportGenerated'), coverage: t('usage.exportCoverage')}}) : '';
   const exportTsv = async (download: boolean) => {
     if (!snapshot || busy) return;
@@ -128,9 +168,66 @@ export function UsageStatisticsPanel() {
           <div className="usage-period-filter"><span className="usage-filter-label">{t('usage.periodFilter')}</span>
           <Tabs aria-label={t('usage.periodFilter')} className="usage-periods" value={period} onValueChange={value => setPeriod(value as UsagePeriod)} tabs={periods.map(([value, label]) => ({value, label: t(label)}))} />
           </div>
-          <div className="usage-account-filter"><span className="usage-filter-label">{t('usage.accountFilter')}</span><Select aria-label={t('usage.accountFilter')} size="small" value={account} onValueChange={setAccount} items={[{value: 'all', label: t('usage.allAccounts')}, ...accounts.map(row => ({value: row.id, label: row.name}))]} /></div>
+          <div className="usage-account-filter"><span className="usage-filter-label">{t('usage.accountFilter')}</span><Select aria-label={t('usage.accountFilter')} size="small" value={account} onValueChange={setAccount} items={[{value: 'all', label: t('usage.allAccounts')}, ...accounts.map(row => ({value: row.id, label: prefs.privacyMask ? maskAccountLabel(row, true) : row.name}))]} /></div>
         </div>
-        <div className="usage-filter-footer"><div className="usage-context"><strong>{range}</strong></div>{(period !== 'all' || account !== 'all') && <Button variant="ghost" size="small" onClick={() => {setPeriod('all'); setAccount('all');}}>{t('usage.resetFilters')}</Button>}</div>
+        <div className="usage-filter-footer">
+          <div className="usage-context">
+            <strong>{range}</strong>
+            <span className="usage-section-caption" title={t('usage.activeTimezoneTitle')}>{timezoneContext}</span>
+            {dstType && <span className="usage-section-caption" title={t(dstType === '23h' ? 'usage.dst23Hint' : 'usage.dst25Hint')}>{t(dstType === '23h' ? 'usage.dst23' : 'usage.dst25')}</span>}
+            {snapshot?.tracking_since != null && <span className="usage-section-caption" title={t('usage.coverageHint')}>{t('usage.trackingSince', {date: dateLabel(new Date(snapshot.tracking_since * 1000).toISOString())})}</span>}
+          </div>
+          {(period !== 'all' || account !== 'all') && <Button variant="ghost" size="small" onClick={() => {setPeriod('all'); setAccount('all');}}>{t('usage.resetFilters')}</Button>}
+        </div>
+        </div>
+
+        <div className="settings-card usage-attribution-card" style={{display: 'grid', gap: '8px', padding: '12px 16px'}}>
+          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px'}}>
+            <div style={{display: 'grid', gap: '2px'}}>
+              <strong>{t('usage.attributionTitle')}</strong>
+              <span style={{fontSize: '11px', color: 'var(--usage-secondary)'}}>{t('usage.attributionDesc')}</span>
+            </div>
+            {snapshot?.attribution?.fallback_account_id ? (
+              <Button variant="ghost" size="small" disabled={busy || attributionBusy} onClick={() => void handleClearAttribution()}>{t('usage.attributionClear')}</Button>
+            ) : null}
+          </div>
+
+          {snapshot?.attribution?.fallback_account_id ? (
+            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', fontSize: '12px'}}>
+              <div>
+                <span>{t('usage.attributionCurrentAccount')}: </span>
+                <strong>{prefs.privacyMask ? maskAccountLabel({id: snapshot.attribution.fallback_account_id, name: snapshot.attribution.fallback_account_name || snapshot.attribution.fallback_account_id}, true) : (snapshot.attribution.fallback_account_name || snapshot.attribution.fallback_account_id)}</strong>
+                <span style={{marginLeft: '10px', fontSize: '11px', color: 'var(--usage-secondary)'}}>
+                  {t('usage.attributionCoveredScope', {requests: num(snapshot.attribution.unassigned_requests, true), tokens: num(snapshot.attribution.unassigned_tokens, true)})}
+                </span>
+              </div>
+              <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                <Select aria-label={t('usage.attributionChange')} size="small" value="" onValueChange={(id) => { if (id && id !== snapshot.attribution?.fallback_account_id) void handleSetAttribution(id); }} items={[{value: '', label: t('usage.attributionChange')}, ...accounts.filter(a => a.id !== snapshot.attribution?.fallback_account_id).map(a => ({value: a.id, label: prefs.privacyMask ? maskAccountLabel(a, true) : a.name}))]} />
+              </div>
+            </div>
+          ) : (
+            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', fontSize: '12px'}}>
+              <div style={{display: 'grid', gap: '2px'}}>
+                <span>
+                  {snapshot?.attribution?.unassigned_requests
+                    ? t('usage.attributionUnassignedAvailable', {requests: num(snapshot.attribution.unassigned_requests, true), tokens: num(snapshot.attribution.unassigned_tokens, true)})
+                    : t('usage.attributionNoUnassigned')}
+                </span>
+                {previewScope && (
+                  <small style={{color: 'var(--usage-secondary)'}}>
+                    {t('usage.attributionPreviewPrompt', {account: previewScope.targetName, requests: num(previewScope.requests, true), tokens: num(previewScope.tokens, true)})}
+                  </small>
+                )}
+              </div>
+              <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                <Select aria-label={t('usage.attributionSelectAccount')} size="small" value={pendingTargetId} onValueChange={setPendingTargetId} items={[{value: '', label: t('usage.attributionSelectPlaceholder')}, ...accounts.map(a => ({value: a.id, label: prefs.privacyMask ? maskAccountLabel(a, true) : a.name}))]} />
+                <Button variant="primary" size="small" disabled={!pendingTargetId || busy || attributionBusy} onClick={() => void handleSetAttribution(pendingTargetId)}>{t('usage.attributionConfirm')}</Button>
+              </div>
+            </div>
+          )}
+          {attributionFeedback && (
+            <p className="usage-attribution-feedback" style={{margin: '2px 0 0', color: attributionFeedback.type === 'error' ? 'var(--error, #e5484d)' : 'var(--usage-secondary)'}}>{attributionFeedback.message}</p>
+          )}
         </div>
 
         {error && <p role="alert" className="system-feedback error usage-error">{t('usage.readFailed')} {t(error)}</p>}

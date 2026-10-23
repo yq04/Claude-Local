@@ -38,6 +38,9 @@ export function HelpPanel() {
         { title: t('电脑环境'), lines: [
             t('分别调整时区、语言和地区，不会改变公网 IP。'),
             t('系统可能要求授权、重启或重新登录。')
+        ] },
+        { title: t('排障与缓存清理'), lines: [
+            t('identitySafety.troubleshootHelp')
         ] }
     ];
     return <section className="system-page help-page">

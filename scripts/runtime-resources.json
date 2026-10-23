@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "resources": {
+    "../scripts/claude_quota.py": "scripts/claude_quota.py",
+    "../scripts/claude_quota_online.py": "scripts/claude_quota_online.py",
+    "../scripts/quota_runtime.py": "scripts/quota_runtime.py",
+    "../scripts/quota_archive.py": "scripts/quota_archive.py",
+    "../browser-runtime/quota-bridge/manifest.json": "browser-runtime/quota-bridge/manifest.json",
+    "../browser-runtime/quota-bridge/background.js": "browser-runtime/quota-bridge/background.js",
+    "../browser-runtime/quota-bridge/content.js": "browser-runtime/quota-bridge/content.js"
+  },
+  "planned_resources": {}
+}

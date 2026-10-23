@@ -66,6 +66,7 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
     {page: 'system', title: '电脑环境', description: 'quick.systemHint', action: '前往电脑环境'},
     {page: 'vps', title: '网络环境', description: 'quick.networkHint', action: '前往网络环境'},
     {page: 'cleaner', title: '身份管理', description: 'quick.identityHint', action: '前往身份管理'},
+    {page: 'cleaner', title: 'quick.troubleshootCard', description: 'quick.troubleshootHint', action: 'quick.troubleshootAction', target: 'residue'},
     {page: 'usage', title: 'usage.title', description: 'quick.usageHint', action: '查看用量统计'},
     {page: 'settings', title: '软件设置', description: 'quick.settingsHint', action: '前往软件设置'},
   ] as const;
@@ -85,11 +86,23 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
       </section>
       <div className="settings-group-heading"><span className="settings-group-bar" aria-hidden="true" /><h2>{t('推荐设置流程')}</h2></div>
       <div className="quick-setup-grid">
-        {cards.map(({page, title, description, action}) => {
-          const Icon = pageIcons[page];
-          return <section className="settings-card quick-setup-card" key={page} data-quick-destination={page}>
-          <div className="quick-card-title"><span className="settings-icon-badge" aria-hidden="true"><Icon size={19} /></span><h3>{t(title)}</h3></div>
-          <p>{t(description)}</p><Button size="small" variant="secondary" onClick={() => onNavigate(page)}>{t(action)}</Button>
+        {cards.map((card, index) => {
+          const Icon = pageIcons[card.page];
+          const isResidueTarget = 'target' in card && card.target === 'residue';
+          return <section className="settings-card quick-setup-card" key={isResidueTarget ? 'residue' : card.page} data-quick-destination={card.page}>
+          <div className="quick-card-title"><span className="settings-icon-badge" aria-hidden="true"><Icon size={19} /></span><h3>{t(card.title)}</h3></div>
+          <p>{t(card.description)}</p><Button size="small" variant="secondary" onClick={() => {
+            onNavigate(card.page);
+            if (isResidueTarget) {
+              window.setTimeout(() => {
+                const el = document.querySelector('.claude-residue');
+                if (el instanceof HTMLElement) {
+                  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  el.focus();
+                }
+              }, 100);
+            }
+          }}>{t(card.action)}</Button>
         </section>})}
       </div>
     </div>

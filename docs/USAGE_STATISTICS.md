@@ -78,4 +78,13 @@ Claude-Local 在这些口径上适配现有 Rust 原生边界、独立账号索�
 
 ## Explicit fallback attribution
 
-A private workstation setup can initialize `fallback_account_id` in usage-ledger meta from a unique, bound catalog account. The value is a stable account ID; no personal account name, ID or selection seed is bundled with the distributed frontend or installer. The optional native name input remains available for explicit initialization. Later renames do not redirect the saved rule. Unresolved rows (including removed-account keys) then contribute once to that account in every period, model, trend and account aggregate; explicit ownership of other known accounts stays unchanged. Raw event ownership is preserved. If the target is absent or ambiguous, no arbitrary replacement is chosen. The UI exposes only All and saved accounts, removes the historical bucket and repetitive scope/live copy, and retains actionable scan errors.
+A private workstation setup can configure `fallback_account_id` in the usage ledger (`usage.sqlite`'s `meta` table) using explicit native commands: `usage_attribution_read`, `usage_attribution_set`, and `usage_attribution_clear`.
+
+- Setting a fallback account requires a verified, stable account ID that exists in catalog identities (`empty = 0`). Invalid or non-existent IDs are rejected with an error and never write to the ledger.
+- Operations use the shared identity/usage Cleaner lock to serialize concurrent access.
+- Statistics reads (`usage_statistics_read`) are strictly read-only and never silently seed or mutate attribution configuration into `meta`. The optional legacy `fallback_account_name` argument remains supported in memory for backwards compatibility without persisting changes.
+- Renaming an account in the catalog preserves the binding because attribution is keyed to the immutable account ID, not a mutable display name.
+- Totals, daily trend series, model rankings, and account filters absorb unassigned rows into the designated fallback account.
+- The raw event records in the `events` table are never rewritten or mutated, preserving immutable evidence for auditing.
+- Clearing the configuration via `usage_attribution_clear` is fully reversible, immediately restoring unassigned usage to separate unattributed totals without data loss.
+- The UI presents candidate accounts with privacy-masked labels when privacy mode is enabled, displays a preview of the unassigned requests and token scope before confirmation, and displays active IANA timezone and real 23/25-hour DST context badges.

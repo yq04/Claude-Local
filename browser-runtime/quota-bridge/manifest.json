@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Claude-Local Quota Bridge",
+  "version": "1.0.0",
+  "description": "User-triggered, read-only subscription metadata sync for the isolated Claude-Local Browser.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApqiYNxlJhru3VOF1g9cdW1aBmfPbKqc3yX16c6Df2CwoG1rfoHP4WykNUi2bWybmJZ6C+n9wyxFOfL/1M6rH1PAz5F1EHfcQuFph593snh5VsvO3iA5SOarhsI0XaF/IADiGJnrikZ2ZA7nQVe3tNAkQFKDTYS1UJe0Csis/votmeKTc3stRVkwDjvD6M7iqEv0qj6/7uAgyAx0KHWbYpcJaFIfOQ469vfIxx6XS9QVBuVbsRG1bRv4wSt4HSGvNQtooFhkkGpTX4SGeEg8lJbPgxD/embuIprJ708f7sLMAx21QH36FliTmOwpZh9/feXPyPQtTkxjn0ynNGmkbdQIDAQAB",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://claude.ai/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*/browser.html"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://claude.ai/settings/usage*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

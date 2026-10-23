@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Tauri 官方 mockIPC、真实身份/浏览器组件与虚构的内存状态。
- * [OUTPUT]: 40 个虚构身份、残留清单、可显式释放的 IPC 与官方 Channel 事件，供无头浏览器验证真实进度/失败、额度官网入口与隐私偏好 IPC；browser 模式检查仅缓存与全清理确认，不触碰磁盘资料。
+ * [OUTPUT]: 40 个虚构身份、可控在线结果、持久批次快照/取消/恢复、残留清单与可释放 IPC，供无头浏览器验证任务恢复和身份隔离。
  * [POS]: 独立测试入口；没有原生命令、真实目录、账号或网络，生产 rollup 不包含此入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -17,8 +17,9 @@ import {setLocale} from '../src/i18n';
 import '../src/index.css';
 import '../src/style.css';
 const id=(number:number)=>number.toString(16).padStart(32,'0');
-const user={present:true,display_name:'Fixture user',email:'fixture@example.invalid',organization:'Fixture team',plan:'Pro',auth_status:'valid',proxy:null,quota_5h_used:35,quota_7d_used:40,unavailable:false};
-const summaries=Object.fromEntries(Array.from({length:40},(_,n)=>[id(n+1),{display_name:`Identity ${n+1}`,email:`user${n+1}@example.invalid`,organization:`Org ${n+1}`,plan:n%2===0?'Max 20x':'Pro',auth_status:'valid',proxy:null,quota_5h_used:20,quota_7d_used:30}]));
+const fingerprint=(number:number)=>number.toString(16).padStart(64,'0');
+const user={present:true,display_name:'Fixture user',email:'fixture@example.invalid',organization:'Fixture team',plan:'Pro',auth_status:'valid',proxy:null,quota_5h_used:35,quota_7d_used:40,unavailable:false,quota_identity:fingerprint(1)};
+const summaries=Object.fromEntries(Array.from({length:40},(_,n)=>[id(n+1),{display_name:`Identity ${n+1}`,email:`user${n+1}@example.invalid`,organization:`Org ${n+1}`,plan:n%2===0?'Max 20x':'Pro',auth_status:'valid',proxy:null,quota_5h_used:20,quota_7d_used:30,quota_identity:fingerprint(n+1)}]));
 const state:IdentityState={browser:{enabled:true,bound_ids:[]},browser_warning:null,active:id(1),recovery:null,running:true,sessions:[{pid:4201,workspace:'Claude-Local',entrypoint:'VS Code'}],current:{...user},summaries,records:Array.from({length:40},(_,n)=>({id:id(n+1),name:`Identity ${n+1}`,saved_at:1780000000000+n,bytes:2048,policy:{...defaultPolicy}}))};
 const browserMode=new URLSearchParams(location.search).get('panel')==='browser';
 const browserState:BrowserState={ui_language:'zh',exit_services:[],region:null,config:{seed:123,proxy:'',follow_machine:true,language:'en-US',timezone:'America/New_York',native_graphics:true},machine:{platform:'macos',version:'fixture',cores:8,timezone:'America/New_York',languages:['en-US'],locale:'en_US',locale_country:'US',location_enabled:false,timezones:['America/New_York']},engine_version:'fixture',engine_ready:true,running:false,profile:'/fixture/profiles/current',identity_linked:true,cache:[],cache_error:'',report:null,report_received_at:null,machine_exit:null,checks:[]};
@@ -34,7 +35,25 @@ const residueItems:Scan['items']=[
 ];
 type Pending={command:string;args:any;resolve:(value:unknown)=>void;reject:(error:Error)=>void;index:number};
 const deferred=new Set<string>(),pending:Pending[]=[];
-const fixture={commands,state,residue,browser:browserState,browserBusy:false,get identityReads(){return identityReads;},get pending(){return pending.map(row=>row.command);},language:setLocale,setFailure:(command:string)=>{fail=command;},recover:()=>{state.recovery=id(1);},
+let batchState:any=null;
+const eventListeners=new Map<number,{event:string;handler:number}>();let nextEventId=1;
+function emitFixtureEvent(event:string,payload:unknown){for(const [id,listener] of eventListeners){if(listener.event===event)(window as any).__TAURI_INTERNALS__.runCallback(listener.handler,{event,id,payload});}}
+const fixture={commands,state,residue,browser:browserState,browserBusy:false,quotaRevision:1,onlineResultsById:{} as Record<string,any>,onlineResult:{status:'updated',updated_windows:['5h','7d'],verified_at_ms:Date.now(),retry_at_ms:0},root:null as any,get identityReads(){return identityReads;},get pending(){return pending.map(row=>row.command);},language:setLocale,setFailure:(command:string)=>{fail=command;},recover:()=>{state.recovery=id(1);},
+ emitEvent:emitFixtureEvent,
+ get batch(){return batchState?structuredClone(batchState):null;},
+ remountIdentity:()=>{
+  const host=document.getElementById('fixture')!;fixture.root.unmount();fixture.root=createRoot(host);
+  fixture.root.render(<MotionRoot><TooltipProvider><div style={{width:740,height:752,margin:'20px auto',border:'1px solid #ddd'}}><IdentityPanel/></div></TooltipProvider></MotionRoot>);
+ },
+ publishBatchProgress:(accountId:string)=>{
+  const batch=pending.find(row=>row.command==='identities_refresh_all_quotas');if(!batch)throw Error('No pending fictional batch');
+  if(batchState?.request_id!==batch.args.requestId||batchState.state==='cancelled')return;
+  const target=batch.args.targets.find((row:any)=>row.account_id===accountId);if(!target)throw Error('Unknown fictional batch target');
+  const result=execute('identities_refresh_quota',{accountId,expectedIdentity:target.expected_identity});
+  if(!batchState.results.some((row:any)=>row.account_id===accountId))batchState.results.push({...target,result});
+  batchState.completed=batchState.results.length;batchState.state='running';
+  emitFixtureEvent('quota-batch-progress',{request_id:batch.args.requestId,...target,result,completed:1,total:batch.args.targets.length});
+ },
  defer:(...names:string[])=>{for(const name of names)deferred.add(name);},
  emitProgress:(command:string,event:Progress)=>{
   const entry=pending.find(row=>row.command===command);if(!entry)throw Error(`No pending command: ${command}`);
@@ -50,10 +69,20 @@ const fixture={commands,state,residue,browser:browserState,browserBusy:false,get
   if(error){entry.reject(Error(error));return;}
   try{entry.resolve(execute(command,entry.args));}catch(error){entry.reject(error as Error);}
  },
+ cancelBatch:()=>{
+  if(!batchState)return null;
+  if(batchState.state==='queued'||batchState.state==='running'){
+   const completeIds=new Set(batchState.results.map((row:any)=>row.account_id));
+   for(const target of batchState.targets){if(!completeIds.has(target.account_id))batchState.results.push({...target,result:{status:'not_run'}});}
+   batchState.state='cancelled';batchState.completed=batchState.results.filter((row:any)=>row.result.status!=='not_run').length;
+  }
+  return structuredClone(batchState);
+ },
 };
 Object.assign(window,{identityFixture:fixture});
 mockIPC((command,args:any)=>{
- if(!['identities_read','claude_cli_read'].includes(command))commands.push({command,args});
+ if(!['identities_read','identities_quota_revision','claude_cli_read'].includes(command))commands.push({command,args});
+ if(command==='identities_refresh_all_quotas')batchState={request_id:args.requestId,results:[],completed:0,total:args.targets.length,state:'running',targets:structuredClone(args.targets),started_at_ms:Date.now(),deadline_at_ms:Date.now()+120000};
  if(deferred.delete(command))return new Promise((resolve,reject)=>pending.push({command,args,resolve,reject,index:0}));
  return execute(command,args);
 });
@@ -61,16 +90,44 @@ function execute(command:string,args:any){
  if(command==='quota_setup_status')return {state:'not_configured',collector_bundled:false,has_statusline:false};
   if(command==='ui_privacy_read')return (window as any).__privacyPreference ?? null;
  if(command==='ui_privacy_write'){(window as any).__privacyPreference=args.masked;return;}
- if(command==='plugin:event|listen')return 1;
- if(command==='plugin:event|unlisten')return;
+ if(command==='plugin:event|listen'){const id=nextEventId++;eventListeners.set(id,{event:args.event,handler:args.handler});return id;}
+ if(command==='plugin:event|unlisten'){eventListeners.delete(args.eventId);return;}
  if(fail===command){fail='';throw Error('fixture operation failed');}
  if(browserMode&&command==='browser_read')return structuredClone(browserState);
  if(browserMode&&command==='browser_default_read')return {is_default:true,http:'fixture',https:'fixture',installed:true,app:'Claude-Local Browser'};
  if(browserMode&&command==='browser_clear'){browserState.cache=[];return structuredClone(browserState);}
  if(command==='identities_browser'){state.browser.enabled=args.enabled;if(args.enabled&&!state.browser.bound_ids.includes(state.active))state.browser.bound_ids.push(state.active);return structuredClone(state);}
  if(command==='browser_open_usage')return structuredClone(browserState);
+ if(command==='browser_open_identity_profile')return;
  if(command==='browser_launch'){state.browser_warning=null;return {};}
  if(command==='identities_read'){identityReads++;return structuredClone(state);}
+ if(command==='identities_quota_revision')return String(fixture.quotaRevision);
+ if(command==='identities_quota_batch_state')return args.requestId===null?structuredClone(batchState):batchState?.request_id===args.requestId?structuredClone(batchState):null;
+ if(command==='identities_cancel_quota_batch')return fixture.cancelBatch();
+ if(command==='identities_refresh_all_quotas'){
+  if(batchState?.request_id===args.requestId&&batchState.state==='cancelled')return structuredClone(batchState);
+  const results=args.targets.map((target:any,index:number)=>{
+   const result=execute('identities_refresh_quota',{accountId:target.account_id,expectedIdentity:target.expected_identity});
+   emitFixtureEvent('quota-batch-progress',{request_id:args.requestId,...target,result,completed:index+1,total:args.targets.length});
+   return {...target,result};
+  });
+  batchState={...batchState,results,completed:results.length,total:results.length,state:'completed'};
+  return structuredClone(batchState);
+ }
+ if(command==='identities_refresh_quota'){
+  const summary=args.accountId==='current'?state.current:state.summaries[args.accountId];
+  if(!summary||!args.expectedIdentity||summary.quota_identity!==args.expectedIdentity)return {status:'account_mismatch'};
+  const result=fixture.onlineResultsById[args.accountId]??fixture.onlineResult;
+  if(result.status==='updated'){
+   Object.assign(summary,{quota_5h_used:25,quota_5h_reset_at:Math.floor(Date.now()/1000)+7200,quota_5h_source:'server_anchor',quota_5h_observed_at_ms:Date.now(),quota_7d_used:45,quota_7d_reset_at:Math.floor(Date.now()/1000)+86400,quota_7d_source:'server_anchor',quota_7d_observed_at_ms:Date.now()});
+  }
+  return {...result,source:'oauth',observed_at_ms:result.status==='updated'?Date.now():undefined,retry_at_ms:result.retry_at_ms||Date.now()+60000};
+ }
+ if(command==='identities_sync_subscription'){
+  if(!args.expectedIdentity||state.current.quota_identity!==args.expectedIdentity)throw 'quotaOnline.accountMismatch';
+  Object.assign(state.current,{billing_date_kind:'next_renewal',billing_date:Math.floor(Date.now()/1000)+86400*20,billing_observed_at_ms:Date.now(),manual_resets_remaining:0,manual_resets_observed_at_ms:Date.now()});
+  return;
+ }
  if(command==='claude_residue_scan'){
   residue.scans++;
   return {folder:'/fixture',items:structuredClone(residueItems.filter(row=>residue.remaining.includes(row.id))),running:state.running,processes:state.running?[{pid:100,name:'Claude fixture'}]:[],message:'虚构扫描完成',warnings:['虚构警告：部分目录无法完整统计。'],diagnostics:[],org_id:''} satisfies Scan;
@@ -109,4 +166,5 @@ function execute(command:string,args:any){
  }
  throw Error(`Unexpected fixture command: ${command}`);
 }
-createRoot(document.getElementById('fixture')!).render(<MotionRoot><TooltipProvider><div style={{width:740,height:752,margin:'20px auto',border:'1px solid #ddd'}}>{browserMode?<BrowserPanel onBusy={value=>{fixture.browserBusy=value;}}/>:<IdentityPanel/>}</div></TooltipProvider></MotionRoot>);
+fixture.root=createRoot(document.getElementById('fixture')!);
+fixture.root.render(<MotionRoot><TooltipProvider><div style={{width:740,height:752,margin:'20px auto',border:'1px solid #ddd'}}>{browserMode?<BrowserPanel onBusy={value=>{fixture.browserBusy=value;}}/>:<IdentityPanel/>}</div></TooltipProvider></MotionRoot>);

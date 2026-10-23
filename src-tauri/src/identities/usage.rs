@@ -7,7 +7,7 @@ use chrono::{DateTime, Datelike, Days, LocalResult, NaiveDate, TimeZone, Utc};
 use chrono_tz::{GapInfo, Tz};
 use ring::digest;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -54,6 +54,14 @@ pub struct UsageModel {
     pub model: String,
     pub totals: UsageTotals,
 }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UsageAttributionConfig {
+    pub fallback_account_id: Option<String>,
+    pub fallback_account_name: Option<String>,
+    pub unassigned_requests: u64,
+    pub unassigned_tokens: u64,
+}
+
 #[derive(Clone, Serialize)]
 pub struct UsageSnapshot {
     pub generated_at: u64,
@@ -67,6 +75,7 @@ pub struct UsageSnapshot {
     pub granularity: String,
     pub models: Vec<UsageModel>,
     pub warnings: Vec<String>,
+    pub attribution: UsageAttributionConfig,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1068,6 +1077,208 @@ pub async fn usage_statistics_read(
     .map_err(|_| "usage statistics worker interrupted".to_string())?
 }
 
+#[allow(dead_code)]
+#[tauri::command]
+pub async fn usage_attribution_read(
+    app: tauri::AppHandle,
+) -> Result<UsageAttributionConfig, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cleaner = app.state::<crate::cleaner::Cleaner>();
+        cleaner.enter()?;
+        let result = (|| {
+            let vault = app
+                .path()
+                .app_data_dir()
+                .map_err(|_| "usage ledger unavailable")?
+                .join("identity-vault");
+            read_attribution_config(&vault)
+        })();
+        cleaner.leave();
+        result
+    })
+    .await
+    .map_err(|_| "usage attribution worker interrupted".to_string())?
+}
+
+#[allow(dead_code)]
+#[tauri::command]
+pub async fn usage_attribution_set(
+    app: tauri::AppHandle,
+    account_id: String,
+) -> Result<UsageAttributionConfig, String> {
+    if !super::valid_id(&account_id) {
+        return Err("account_id is invalid".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let cleaner = app.state::<crate::cleaner::Cleaner>();
+        cleaner.enter()?;
+        let result = (|| {
+            let vault = app
+                .path()
+                .app_data_dir()
+                .map_err(|_| "usage ledger unavailable")?
+                .join("identity-vault");
+            set_fallback_account_id(&vault, &account_id)
+        })();
+        cleaner.leave();
+        result
+    })
+    .await
+    .map_err(|_| "usage attribution worker interrupted".to_string())?
+}
+
+#[allow(dead_code)]
+#[tauri::command]
+pub async fn usage_attribution_clear(
+    app: tauri::AppHandle,
+) -> Result<UsageAttributionConfig, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cleaner = app.state::<crate::cleaner::Cleaner>();
+        cleaner.enter()?;
+        let result = (|| {
+            let vault = app
+                .path()
+                .app_data_dir()
+                .map_err(|_| "usage ledger unavailable")?
+                .join("identity-vault");
+            clear_fallback_account_id(&vault)
+        })();
+        cleaner.leave();
+        result
+    })
+    .await
+    .map_err(|_| "usage attribution worker interrupted".to_string())?
+}
+
+pub(crate) fn validate_account_id_exists(vault: &Path, id: &str) -> Result<String, String> {
+    if !super::valid_id(id) {
+        return Err("account_id is invalid".into());
+    }
+    let db = identity_db_readonly(vault)?;
+    let exists: bool = db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM identities WHERE id=?1 AND empty=0)",
+            [id],
+            |r| r.get(0),
+        )
+        .map_err(|_| "identity catalog query failed")?;
+    if !exists {
+        return Err("account_id does not exist in catalog".into());
+    }
+    Ok(id.to_string())
+}
+
+pub(crate) fn set_fallback_account_id(
+    vault: &Path,
+    account_id: &str,
+) -> Result<UsageAttributionConfig, String> {
+    let verified_id = validate_account_id_exists(vault, account_id)?;
+    let ledger_path = vault.join("usage.sqlite");
+    let conn = open_ledger(&ledger_path)?;
+    conn.execute(
+        "INSERT INTO meta(key,value) VALUES('fallback_account_id',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [&verified_id],
+    )
+    .map_err(|_| "usage attribution write failed")?;
+    read_attribution_config(vault)
+}
+
+pub(crate) fn clear_fallback_account_id(
+    vault: &Path,
+) -> Result<UsageAttributionConfig, String> {
+    let ledger_path = vault.join("usage.sqlite");
+    let conn = open_ledger(&ledger_path)?;
+    conn.execute(
+        "DELETE FROM meta WHERE key='fallback_account_id'",
+        [],
+    )
+    .map_err(|_| "usage attribution clear failed")?;
+    read_attribution_config(vault)
+}
+
+pub(crate) fn read_attribution_config(
+    vault: &Path,
+) -> Result<UsageAttributionConfig, String> {
+    let ledger_path = vault.join("usage.sqlite");
+    let conn = open_ledger(&ledger_path)?;
+    let saved_fallback: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key='fallback_account_id'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| "usage attribution unavailable")?;
+
+    let db = identity_db_readonly(vault).ok();
+    let fallback_account_name = if let (Some(id), Some(db)) = (saved_fallback.as_ref(), db.as_ref()) {
+        db.query_row(
+            "SELECT name FROM identities WHERE id=?1 AND empty=0",
+            [id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+
+    let effective_fallback_id = if fallback_account_name.is_some() {
+        saved_fallback
+    } else {
+        None
+    };
+
+    let mut known_keys = std::collections::HashSet::new();
+    if let Some(db) = db.as_ref() {
+        if let Ok(mut q) = db.prepare(
+            "SELECT account_key FROM identities WHERE empty=0 AND account_key IS NOT NULL AND account_key != ''",
+        ) {
+            if let Ok(rows) = q.query_map([], |r| r.get::<_, String>(0)) {
+                for k in rows.flatten() {
+                    known_keys.insert(k);
+                }
+            }
+        }
+    }
+
+    let mut unassigned_requests = 0u64;
+    let mut unassigned_tokens = 0u64;
+    if let Ok(mut q) = conn.prepare(
+        "SELECT COALESCE(account_key,''),input,output,creation,cache_read FROM events",
+    ) {
+        if let Ok(rows) = q.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?.max(0) as u64,
+                r.get::<_, i64>(2)?.max(0) as u64,
+                r.get::<_, i64>(3)?.max(0) as u64,
+                r.get::<_, i64>(4)?.max(0) as u64,
+            ))
+        }) {
+            for row in rows.flatten() {
+                let (owner, i, o, c, r) = row;
+                if owner.is_empty() || !known_keys.contains(&owner) {
+                    unassigned_requests = unassigned_requests.saturating_add(1);
+                    unassigned_tokens = unassigned_tokens
+                        .saturating_add(i)
+                        .saturating_add(o)
+                        .saturating_add(c)
+                        .saturating_add(r);
+                }
+            }
+        }
+    }
+
+    Ok(UsageAttributionConfig {
+        fallback_account_id: effective_fallback_id,
+        fallback_account_name,
+        unassigned_requests,
+        unassigned_tokens,
+    })
+}
+
 pub(super) fn read_at(
     vault: &Path,
     home: &Path,
@@ -1280,22 +1491,16 @@ pub(super) fn read_at_with_timezone_now(
         .values()
         .filter(|a| Some(a.name.as_str()) == fallback_name)
         .collect();
-    if saved_fallback.is_none() && candidates.len() == 1 {
-        conn.execute(
-            "INSERT OR IGNORE INTO meta(key,value) VALUES('fallback_account_id',?1)",
-            [&candidates[0].id],
-        )
-        .map_err(|_| "usage attribution unavailable")?;
-    }
-    let fallback_id: Option<String> = conn
-        .query_row(
-            "SELECT value FROM meta WHERE key='fallback_account_id'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(|_| "usage attribution unavailable")?;
-    let fallback_id = fallback_id.filter(|id| account_map.values().any(|a| &a.id == id));
+    let fallback_id = saved_fallback
+        .clone()
+        .filter(|id| account_map.values().any(|a| &a.id == id))
+        .or_else(|| {
+            if candidates.len() == 1 {
+                Some(candidates[0].id.clone())
+            } else {
+                None
+            }
+        });
     let weak_from = start.unwrap_or(0).min(i64::MAX as u64) as i64;
     let has_weak: bool = conn
         .query_row(
@@ -1435,6 +1640,45 @@ pub(super) fn read_at_with_timezone_now(
     } else {
         Vec::new()
     };
+    let attribution = {
+        let effective_id = saved_fallback.filter(|id| accounts.iter().any(|a| &a.id == id));
+        let fallback_account_name = effective_id.as_ref().and_then(|id| {
+            accounts.iter().find(|a| &a.id == id).map(|a| a.name.clone())
+        });
+        let mut unassigned_requests = 0u64;
+        let mut unassigned_tokens = 0u64;
+        if let Ok(mut q) = conn.prepare(
+            "SELECT COALESCE(account_key,''),input,output,creation,cache_read FROM events",
+        ) {
+            if let Ok(rows) = q.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?.max(0) as u64,
+                    r.get::<_, i64>(2)?.max(0) as u64,
+                    r.get::<_, i64>(3)?.max(0) as u64,
+                    r.get::<_, i64>(4)?.max(0) as u64,
+                ))
+            }) {
+                for row in rows.flatten() {
+                    let (owner, i, o, c, r) = row;
+                    if owner.is_empty() || !key_to_id.contains_key(&owner) {
+                        unassigned_requests = unassigned_requests.saturating_add(1);
+                        unassigned_tokens = unassigned_tokens
+                            .saturating_add(i)
+                            .saturating_add(o)
+                            .saturating_add(c)
+                            .saturating_add(r);
+                    }
+                }
+            }
+        }
+        UsageAttributionConfig {
+            fallback_account_id: effective_id,
+            fallback_account_name,
+            unassigned_requests,
+            unassigned_tokens,
+        }
+    };
     Ok(UsageSnapshot {
         generated_at: snapshot_now,
         timezone: timezone.map(|timezone| timezone.name().to_string()),
@@ -1449,5 +1693,6 @@ pub(super) fn read_at_with_timezone_now(
             .map(|(model, totals)| UsageModel { model, totals })
             .collect(),
         warnings,
+        attribution,
     })
 }

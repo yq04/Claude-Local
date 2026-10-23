@@ -1,5 +1,5 @@
-// [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统、固定网络资源导航、独立界面语言与本地 Token 统计命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
-// [OUTPUT]: Claude-Local 独立窗口及主窗口尺寸记忆、托盘、SQLite 本地身份暂存/恢复、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、固定网络入口与 CI 固定启动诊断；--quota-core 在 GUI 初始化前提供纯 JSON 额度合并。
+// [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统及系统修改记录/恢复命令、固定网络资源导航、独立界面语言与本地 Token 统计命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
+// [OUTPUT]: Claude-Local 独立窗口及主窗口尺寸记忆、托盘、SQLite 本地身份暂存/恢复、用户触发的有界在线额度读取、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、系统修改历史与冲突检查恢复、固定网络入口与 CI 固定启动诊断；--quota-core 在 GUI 初始化前提供纯 JSON 额度合并。
 // [POS]: 应用编排层；不注册翻译快捷键，不读取翻译设置或 API 密钥。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -21,6 +21,7 @@ mod progress;
 mod quota_core;
 mod regions;
 mod system;
+mod system_changes;
 mod ui_language;
 mod ui_privacy;
 mod quota_setup;
@@ -157,8 +158,24 @@ fn main() {
             cleaner::residue::claude_residue_scan,
             cleaner::residue::claude_residue_clean,
             identities::identities_read,
+            identities::online::identities_refresh_quota,
+            identities::online::identities_refresh_all_quotas,
+            identities::online::identities_quota_revision,
+            identities::online::identities_quota_batch_state,
+            identities::online::identities_cancel_quota_batch,
+            browser::quota_bridge::identities_sync_subscription,
             identities::usage::usage_statistics_read,
+            identities::usage::usage_attribution_read,
+            identities::usage::usage_attribution_set,
+            identities::usage::usage_attribution_clear,
+            identities::backup::identities_backup_location,
+            identities::backup::identities_backup_open_location,
+            identities::backup::identities_backup_preview,
+            identities::backup::identities_backup_export,
+            identities::backup::identities_backup_inspect,
+            identities::backup::identities_backup_restore_new,
             identities::identities_browser,
+            browser::quota_connection::browser_open_identity_profile,
             identities::identities_stop,
             identities::identities_save,
             identities::identities_switch,
@@ -174,6 +191,9 @@ fn main() {
             system::system_disable_location,
             system::system_open_settings,
             system::system_set_region,
+            system::system_change_history,
+            system::system_change_restore_plan,
+            system::system_change_restore,
             browser::browser_read,
             browser::browser_save,
             browser::browser_launch,

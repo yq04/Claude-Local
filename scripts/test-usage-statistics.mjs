@@ -60,7 +60,9 @@ window.usageFixture.releaseIdentity=function(){
 };
 window.usageFixture.systemState={platform:'windows',timezone:'America/New_York',timezones:['America/New_York','America/Los_Angeles','Asia/Shanghai'],automatic_timezone:false,languages:['en-US'],location_enabled:false,accessibility:true};
 let cliVersion = '2.1.303';
-const cliStatus = () => ({method:'native',path:'C:/fixture/claude.exe',version:cliVersion,running:window.usageFixture.cliRunning});
+const cliStatus = () => window.usageFixture.cliMissing
+  ? {method:'',path:'',version:'',running:false}
+  : ({method:'native',path:'C:/fixture/claude.exe',version:cliVersion,running:window.usageFixture.cliRunning});
 function dailyRows(value,period){
   const count=period==='today'?new Date().getHours()+1:period==='week'?7:period==='month'?30:81;
   const weights=Array.from({length:count},(_,index)=>4+index%7);
@@ -136,6 +138,9 @@ mockIPC(async (command,args)=>{
   if(command==='claude_cli_check')return {current:cliStatus(),latest_version:'2.1.304',update_available:cliVersion!=='2.1.304'};
   if(command==='claude_cli_manage' && args.action==='update') {if(window.usageFixture.cliRunning)throw Error('cli.error.running');cliVersion='2.1.304';return cliStatus();}
   if(command==='system_read')return structuredClone(window.usageFixture.systemState);
+  if(command==='identities_quota_revision')return 1;
+  if(command==='identities_quota_batch_state')return null;
+  if(command==='identities_backup_location')return 'C:/fixture/data';
   if(command==='plugin:event|listen')return 1;
   if(command==='plugin:event|unlisten')return;
   throw Error('Unexpected native command: '+command);
@@ -212,7 +217,7 @@ try {
       return {className:element.className,percentage:element.matches('.identity-quota-value > strong'),text:element.textContent,fontFamily:style.fontFamily,fontSize:style.fontSize,lineHeight:style.lineHeight,fontWeight:style.fontWeight,numeric:style.fontVariantNumeric,...box(element)};
     });
     const resets=[...node.querySelectorAll('.identity-quota-reset')].map(element=>({box:box(element),clock:element.querySelector('.identity-reset-time')?box(element.querySelector('.identity-reset-time')):null,countdown:element.querySelector('.identity-quota-countdown')?box(element.querySelector('.identity-quota-countdown')):null}));
-    return {card:box(node),heading:box(node.querySelector('h3[data-identity-name]')),email:box(node.querySelector('.identity-email')),windows:[...node.querySelectorAll('[data-quota-window]')].map(box),subscription:box(node.querySelector('.identity-subscription')),footer:box(node.querySelector('.identity-card-footer')),bars:[...node.querySelectorAll('.identity-quota-track')].map(box),typography,resets,fontSans:getComputedStyle(node).getPropertyValue('--font-sans'),width:node.clientWidth,scrollWidth:node.scrollWidth};
+    return {card:box(node),heading:box(node.querySelector('h3[data-identity-name]')),email:box(node.querySelector('.identity-email')),windows:[...node.querySelectorAll('[data-quota-window]')].map(box),subscription:box(node.querySelector('.identity-sub-resets-block')),footer:box(node.querySelector('.identity-card-footer')),bars:[...node.querySelectorAll('.identity-quota-track')].map(box),typography,resets,fontSans:getComputedStyle(node).getPropertyValue('--font-sans'),width:node.clientWidth,scrollWidth:node.scrollWidth};
   }));
   const verifyIdentityGeometry=(geometries,label)=>{
     const normalizeFamily=value=>value.replaceAll('"','').replaceAll("'",'').replaceAll(' ','').toLowerCase();

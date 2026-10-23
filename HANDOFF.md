@@ -1,12 +1,28 @@
 <!--
-[INPUT]: Verified 0.1.8 source/CI/private release, independent package audit, safe local overwrite and actual window-size/maximization restart receipts.
-[OUTPUT]: Context-free end-of-session handoff covering the original tasks, verified delivery, unresolved quota requirements, concrete next steps and operational pitfalls.
+[INPUT]: Verified 0.1.8 delivery history and owner-authorized 2026-10-23 functional-reliability source implementation with layered synthetic evidence.
+[OUTPUT]: Current unreleased source handoff, execution/candidate references, unchanged installed baseline, remaining real-account/installer acceptance and preserved delivery history.
 [POS]: Repository root handoff; private installation details, probes, PIDs and receipts stay in ignored .local/.
 [PROTOCOL]: Copy this file into .local/handoff-archive/ and verify SHA256 before any rewrite. Documentation-only changes do not rebuild or move product tags.
 -->
 # Claude-Local 会话交接与下一步指南
 
-更新日期：2026-10-22。新会话先完整阅读本文与根目录 `CLAUDE.md`、`AGENTS.md`。当前产品版本为 **0.1.8**，已完成安全覆盖更新、打包及 GitHub 私有预发布。
+更新日期：2026-10-23。新会话先完整阅读本文与根目录 `CLAUDE.md`、`AGENTS.md`。已安装及已发布基线仍为 **0.1.8**；本轮新增功能是未安装、未发布的源码候选。第0节描述当前源码，后续章节保留0.1.8交付历史，其中“额度尚未实现”等旧描述不能再用于判断当前工作树。
+
+## 0. 当前功能改进源码接续
+
+用户已授权按 `docs/plans/2026-10-23-functional-review/04-IMPLEMENTATION-PLAN.md` 推荐内容自主实施。工作分支为 `feature/functional-reliability-20261023`，保留了开始任务前的改动及用户未跟踪文件。实际实现、分层验证及未执行验收见 [执行记录](docs/plans/2026-10-23-functional-review/05-EXECUTION-RESULTS.md)；最终源码指纹见 [候选清单](docs/plans/2026-10-23-functional-review/06-SOURCE-CANDIDATE.json)。原始00–04报告中的pending描述属于规划时点，未被改写为历史上已完成。
+
+当前源码包括统一额度查询的原生任务、取消/截止时间/页面恢复、指纹去重与集中待办重试；运行环境能力探针、受控安装资源、严格认证归档最小读取与账号代理；网络等待和短提交门分离、一次性许可及Python唯一账本写入。前台近实时查询仍默认关闭，需要明确开启，隐藏或失焦后暂停；手动批次仅可借已运行且正确绑定的隔离浏览器，连接队列只有明确点击才打开指定已绑定资料。不会切换CLI身份、接管共享续期凭据或复制Cookie。
+
+卡片按真实观测显示额度与订阅/重置资料，各字段有独立时间；手动重置余额有有界有效期，过期不伪造新观测或零余额。已补充实际MV3自动注入/导航/worker重启合成通路，以及共享原生命令编排核心到安装资源、系统Python、回环接收、账本和摘要的合成闭环。Tauri IPC/WebView与真实浏览器启动边界单独说明，不能把这些测试写成已安装应用或真实账号验收。
+
+其他实现包括稳定账号ID的用量归属设置、每次系统修改前后的私有记录与冲突安全恢复、CLI未安装时的官方命令复制/重新检查、保留浏览器原运行状态、排障只读导航，以及用户选定Markdown交接文件的有界载入和替换确认。
+
+保险库备份使用独立口令派生和认证加密，正常SQLite采用一致性快照，检查完整归档清单/账号映射并恢复到全新私有副本。救援资料明确标记未验证，原始WAL只作证据；源现场保留。**恢复副本不会自动激活或并入当前身份库**，不包含尚未保存的当前CLI内容或浏览器资料。跨机激活/迁移需要独立工作流程，不能冒充已经完成。
+
+本轮没有提交、推送、触发远程CI、构建正式release、发布或替换安装；源码版本号仍为0.1.8，旧正式标签保持不变。CI增加的检查仅做了静态验证。真实首次登录/授权、安装升级卸载及实际系统设置修改验收仍未执行；系统变更只在合成适配器验证，安装/系统变更实测限一次性Windows环境。Python3.10+及cryptography仍为外部运行依赖，不由应用自动安装。额度HTTP代理目前仅支持无认证HTTP CONNECT，未支持的HTTPS代理协议、SOCKS及代理认证明确拒绝，禁止静默直连。
+
+新会话先核对执行记录、候选哈希与 `git status`，不要根据下文历史描述重复实现、清理现有工作树或重新发布0.1.8。本次编辑前已备份原HANDOFF到忽略的 `.local/handoff-archive/` 并核对SHA256。
 
 ## 1. 我们在做什么任务
 

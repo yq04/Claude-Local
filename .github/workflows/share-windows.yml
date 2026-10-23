@@ -62,6 +62,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           bun install --frozen-lockfile
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pip install --disable-pip-version-check -r scripts/requirements-ci.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: src-tauri -> target
@@ -69,6 +71,12 @@ jobs:
           cache-on-failure: true
       - name: Fetch the pinned browser engine
         run: python scripts/fetch-browser.py
+      - name: Verify the isolated quota bridge
+        run: node scripts/test-quota-browser-bridge.mjs
+      - name: Verify real navigation quota integration
+        run: node scripts/test-quota-integration.mjs
+      - name: Verify online quota controls with synthetic identities
+        run: node --experimental-strip-types scripts/test-identities-ui.ts --online-only
       - name: Build the host and browser in one installer
         run: |
           $ErrorActionPreference = 'Stop'

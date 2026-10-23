@@ -173,6 +173,38 @@ pub fn directory(path: &Path) -> Result<(), String> {
     }
     safe(path)
 }
+pub fn create_new_directory(path: &Path) -> Result<bool, String> {
+    parents(path.parent().ok_or("身份目录路径无效。")?)?;
+    #[cfg(unix)]
+    let created = {
+        use std::os::unix::fs::DirBuilderExt;
+        match fs::DirBuilder::new().mode(0o700).create(path) {
+            Ok(()) => true,
+            Err(cause) if cause.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(_) => return Err("无法创建身份目录。".into()),
+        }
+    };
+    #[cfg(windows)]
+    let created = {
+        use windows_sys::Win32::{
+            Foundation::{GetLastError, ERROR_ALREADY_EXISTS},
+            Storage::FileSystem::CreateDirectoryW,
+        };
+        windows_create(path, |wide, attributes| {
+            if unsafe { CreateDirectoryW(wide, attributes) } != 0 {
+                Ok(true)
+            } else if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+                Ok(false)
+            } else {
+                Err("无法创建身份目录。".into())
+            }
+        })?
+    };
+    if created {
+        protect(path)?;
+    }
+    Ok(created)
+}
 pub fn create(path: &Path) -> Result<fs::File, String> {
     parents(path.parent().ok_or("身份路径无效。")?)?;
     #[cfg(unix)]

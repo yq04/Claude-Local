@@ -24,7 +24,13 @@ class PackageAuditTests(unittest.TestCase):
         self.root = Path(self.temporary.name) / "repo"
         self.root.mkdir()
         self.engine = self.root / "browser-runtime/WindowsBrowser"
-        for source in audit.RESOURCE_MAP:
+        runtime_resources = audit.load_resource_manifest(Path(__file__).resolve().parent.parent)
+        self.resource_map = audit.RESOURCE_MAP | runtime_resources
+        (self.root / "scripts").mkdir()
+        (self.root / "scripts/runtime-resources.json").write_text(json.dumps({
+            "schema": 1, "resources": runtime_resources,
+            "planned_resources": json.loads((Path(__file__).resolve().parent / "runtime-resources.json").read_text())["planned_resources"]}))
+        for source in self.resource_map:
             path = self.root / "src-tauri" / source
             if source.endswith("/"):
                 path.mkdir(parents=True, exist_ok=True)
@@ -48,7 +54,7 @@ class PackageAuditTests(unittest.TestCase):
         for filename in ("tauri.conf.json", "tauri.windows.conf.json"):
             (self.root / "src-tauri" / filename).write_text(json.dumps({
                 "build": {"frontendDist": "../dist"},
-                "bundle": {"resources": audit.RESOURCE_MAP, "icon": ["icons/icon.ico", "icons/icon.png"]}}))
+                "bundle": {"resources": self.resource_map, "icon": ["icons/icon.ico", "icons/icon.png"]}}))
 
     def preflight(self):
         result = audit.Audit()

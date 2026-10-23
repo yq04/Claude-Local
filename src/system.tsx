@@ -11,6 +11,7 @@ import {useI18n} from './i18n';
 import {invoke} from '@tauri-apps/api/core';
 import {CleanupActivity, useCleanupActivity} from './cleaner-activity';
 import {usePageRefresh} from './app-events';
+import {AppDialog} from './dialog';
 
 type SystemState = {
   platform?: string;
@@ -25,6 +26,9 @@ type SystemResult = {
   state: SystemState;
   message: string;
 };
+type ChangeRecord = {id: string; operation: string; before: Record<string, unknown>; after: Record<string, unknown>; restorable: string[]; completed: boolean; message: string; changedAt: string};
+type RestoreField = {field: string; before: unknown; appWritten: unknown; current: unknown; conflict: boolean};
+type RestorePlan = {record: ChangeRecord; fields: RestoreField[]};
 const languages: Record<string, string> = {
   'zh-Hans': '简体中文',
   'zh-Hant': '繁體中文',
@@ -49,6 +53,10 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
   const [language, setLanguage] = useState('en');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<ChangeRecord[]>([]);
+  const [restorePlan, setRestorePlan] = useState<RestorePlan | null>(null);
+  const [restoreFields, setRestoreFields] = useState<string[]>([]);
   const busyRef = useRef(false);
   const live = useRef(true);
   const activity = useCleanupActivity();
@@ -141,6 +149,32 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
       setError(String(e));
     }
   }
+  async function openHistory() {
+    try {
+      setHistory(await invoke<ChangeRecord[]>('system_change_history'));
+      setRestorePlan(null);
+      setHistoryOpen(true);
+    } catch (e) { setError(String(e)); }
+  }
+  async function prepareRestore(id: string) {
+    try {
+      const plan = await invoke<RestorePlan>('system_change_restore_plan', {id});
+      setRestorePlan(plan);
+      const pairedConflict = plan.fields.some(field => field.conflict && (field.field === 'language' || field.field === 'locale'));
+      setRestoreFields(plan.fields.filter(field => !field.conflict && !(pairedConflict && (field.field === 'language' || field.field === 'locale'))).map(field => field.field));
+    } catch (e) { setError(String(e)); }
+  }
+  async function restoreSelected() {
+    if (!restorePlan || !restoreFields.length || busyRef.current) return;
+    busyRef.current = true; setBusy('restore'); setError('');
+    try {
+      await invoke('system_change_restore', {id: restorePlan.record.id, fields: restoreFields});
+      await refresh();
+      setHistory(await invoke<ChangeRecord[]>('system_change_history'));
+      setRestorePlan(null);
+    } catch (e) { setError(String(e)); try { await refresh(); } catch { setState(null); } }
+    finally { busyRef.current = false; setBusy(null); }
+  }
   const zones = state ? Object.fromEntries(state.timezones.map(value => [value, value.replaceAll('_', ' ')])) : {};
   const disabled = busy !== null || !state;
   // The legacy macOS snapshot omits platform; Windows and Linux always provide it.
@@ -152,6 +186,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
           <h1>{t('电脑环境')}</h1>
         </div>
         <div className="cleanup-title-actions">
+          <Button variant="secondary" size="small" disabled={busy !== null} onClick={() => void openHistory()}>{t('查看/恢复本次环境修改')}</Button>
           {isMacOS && (
             <Button
               variant="ghost"
@@ -273,6 +308,9 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
       </div>
       <p className="system-page-note">{t(isMacOS ? '需要管理员授权。' : '需要时请完成系统授权。')}</p>
       <CleanupActivity activity={activity.state} />
+      <AppDialog open={historyOpen} onOpenChange={setHistoryOpen} title={t('查看/恢复本次环境修改')} description={t('恢复前会比较当前值；发生冲突的字段不会覆盖。')} width={640} footer={<><Button variant="secondary" data-dialog-cancel onClick={() => setHistoryOpen(false)}>{t('关闭')}</Button>{restorePlan && <Button variant="secondary" disabled={!restoreFields.length || busy !== null} loading={busy === 'restore'} onClick={() => void restoreSelected()}>{t('恢复所选字段')}</Button>}</>}>
+        {!restorePlan ? <div className="system-change-history">{history.length ? history.map(record => <article key={record.id} className="system-change-entry"><div><strong>{t(record.operation === 'timezone' ? '设备时区' : record.operation === 'language' ? '系统语言' : record.operation === 'region' ? '语言与区域' : record.operation === 'align' ? '环境对齐' : '地理位置')}</strong><small>{record.changedAt}</small></div><p>{record.message}</p><div className="system-change-values">{Object.entries(record.before).map(([field, value]) => <span key={field}>{t(field === 'timezone' ? '设备时区' : field === 'language' ? '系统语言' : field === 'locale' ? '区域格式' : '地理位置')}：{String(value)} → {String(record.after[field] ?? t('未核验'))}</span>)}</div><Button size="small" variant="secondary" disabled={!record.restorable.length} onClick={() => void prepareRestore(record.id)}>{t('查看/恢复')}</Button></article>) : <p>{t('尚无本次环境修改记录。')}</p>}</div> : <div className="system-change-restore"><p>{restorePlan.record.message}</p>{restorePlan.fields.length ? restorePlan.fields.map(field => <label key={field.field} className="system-change-field"><input type="checkbox" checked={restoreFields.includes(field.field)} disabled={field.conflict || (restorePlan.fields.some(item => item.conflict && (item.field === 'language' || item.field === 'locale')) && (field.field === 'language' || field.field === 'locale'))} onChange={event => setRestoreFields(current => event.target.checked ? [...current, field.field] : current.filter(value => value !== field.field))}/><span><strong>{t(field.field === 'timezone' ? '设备时区' : field.field === 'language' ? '系统语言' : '区域格式')}</strong><span>{t('恢复值')}：{String(field.before)}</span><span>{t('应用修改后')}：{String(field.appWritten)}</span><span>{t('当前值')}：{String(field.current)}</span>{field.conflict && <em>{t('当前值已变化，存在冲突；请手动处理。')}</em>}</span></label>) : <p>{t('没有可安全恢复的字段。')}</p>}<Button variant="ghost" size="small" onClick={() => setRestorePlan(null)}>{t('返回修改记录')}</Button></div>}
+      </AppDialog>
     </section>
   );
 }

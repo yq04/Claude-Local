@@ -17,6 +17,8 @@ browser-runtime/ - Pinned browser metadata, licenses and ignored local engine fi
 assets/ - Independent CL marks and retained third-party notices.
 vendor/ - Existing UI components with separate attribution/license boundaries in NOTICE.md.
 docs/ - Local development, data boundaries and distribution documentation.
+docs/plans/2026-10-22-identity-quota.md - Owner-requested online quota/card implementation scope, foreground refresh opt-in and synthetic verification boundaries; no installed/released update claim.
+docs/plans/2026-10-23-functional-review/ - Read-only Astra software review: independent quota and product evidence, public-source constraints, and a phased functional reliability/improvement plan; no implementation or release performed by the review.
 docs/plans/2026-10-21-usage-account-safety/ - Historical proposal, source evidence and phased account-safety plan implemented in 0.1.4; 0.1.5 fixes quota evidence compatibility and shares Rust window-state rules.
 .github/workflows/ - Credential-free Windows checks and explicitly dispatched private build artifacts.
 .github/workflows/share-windows.yml - Private manual artifact build with public original host/frontend inputs and audit evidence, allowing independent workstation re-audit without recompilation or binary reconstruction; no private probes or automatic release.
@@ -25,6 +27,10 @@ HANDOFF.md - Current product behavior, verified delivery receipts, outstanding s
 </directory>
 
 Product Claude-Local / binary claude-local.exe / identifier ai.local.claude-local. Browser registration Claude-Local-Browser. All data is in the user's independent app-data root; the default Claude workspace is the managed integration boundary, not an OS sandbox. Ordinary startup does not open the browser. The network page bundles owner-approved fixed referral links with copy-only actions for recipients; there is no link editor, automatic vendor navigation or external Skill installation UI.
+
+The quota workbench uses one all-account query with two workers and fingerprint deduplication. The optional foreground three-minute batch defaults off and pauses when hidden/unfocused; it never navigates browsers. Manual batches may obtain fresh usage through a short-lived paired extension in an already running managed profile after eligible OAuth failures, with exact account/organization checks. Local ledger changes are noticed via a cheap two-second metadata check. Python remains the sole ledger/metadata writer; no shared refresh credential is rotated. This source work has not been installed or published as a new release.
+
+Account isolation takes priority over freshness: each request freezes its displayed fingerprint, the OAuth credential must prove its account and organization through a matching profile, and commit rechecks the target and credential. Missing verification refuses the update and preserves prior evidence. A changed target account set revokes the foreground opt-in; switching the current identity within the same known set does not require separate query settings. No fallback to a different account is permitted.
 
 Persistent archive magic, IDs, encryption keys and browser seed derivation must remain compatible with imported local data. Never delete live data or stop Claude sessions during maintenance. Only Python writes the external quota ledger; the Rust UI path reads it and merges newer same-account anchors in memory. Token statistics use a separate native usage ledger containing numeric metadata and hashed request identifiers; a private user-selected stable account ID can absorb unresolved historical and future usage in aggregates while preserving event evidence.
 
@@ -47,3 +53,6 @@ docs/RELEASE_NOTES_0.1.7.md - Implemented identity search/diagnostics, command p
 docs/QUOTA_CARD_RESEARCH_2026-10-22.md - Source-anchored quota-card research distinguishing credential expiry, subscription renewal/access dates and manual reset grants; proposes explicit online reads and browser-scoped metadata without changing the current passive implementation.
 docs/WINDOW_LAYOUT_2026-10-22.md - Sidebar/content adaptation and native main-window size memory; distinguishes synthetic layout/model checks and Rust integration checking from installation/runtime verification.
 docs/RELEASE_NOTES_0.1.8.md - Narrower navigation, wrapped identity onboarding and native main-window size/maximization memory; owner-authorized private delivery with separate audit/update receipts. Private build-draft tags and titles derive from the packaged version manifest.
+docs/plans/2026-10-23-functional-review/05-EXECUTION-RESULTS.md - Owner-authorized functional implementation, layered synthetic checks, preserved account isolation and explicit unexecuted real-account/installer boundaries; separate from the historical review.
+docs/plans/2026-10-23-functional-review/06-SOURCE-CANDIDATE.json - Hashes of the selected changed source/test/config/document files against the recorded base commit; source candidate only, without a new release or installation claim.
+docs/RELEASE_NOTES_0.2.0.md - Online quota orchestration, authenticated archive/backup rescue, system modification auditing, proxy and runtime capability gates, and manual handoff import/export; release delivery with separate build and verification receipts.

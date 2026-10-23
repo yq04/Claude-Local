@@ -196,6 +196,28 @@ pub fn arguments(
             }
         }
     }
+    #[cfg(target_os = "windows")]
+    if let Some(extension) = quota_bridge_extension() {
+        args.push(format!("--load-extension={}", extension.display()));
+    }
     args.push(page.into());
     args
+}
+
+#[cfg(target_os = "windows")]
+fn quota_bridge_extension() -> Option<std::path::PathBuf> {
+    let installed = std::env::current_exe()
+        .ok()?
+        .parent()?
+        .join("browser-runtime/quota-bridge");
+    if installed.join("manifest.json").is_file() {
+        return Some(installed);
+    }
+    if cfg!(debug_assertions) {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../browser-runtime/quota-bridge");
+        if source.join("manifest.json").is_file() {
+            return Some(source);
+        }
+    }
+    None
 }

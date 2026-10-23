@@ -161,7 +161,7 @@ pub(super) fn transition(
     let finish = (|| {
         reporter.log("browser", "running", "正在同步关联浏览器资料。", 0, None);
         refresh_launch_args(app)?;
-        if (result.is_ok() && database(&root)?.browser_link()?.enabled) || was_running {
+        if result.is_ok() && was_running && database(&root)?.browser_link()?.enabled {
             launch_locked(app, reporter)?;
         }
         Ok::<_, String>(())

@@ -24,7 +24,7 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
 
   // Verify alignment and initial overview structure
   await page.locator('.quick-overview[aria-busy="false"]').waitFor();
-  assert.equal(await page.locator('[data-quick-destination]').count(), 6, 'Must render exactly 6 destination cards');
+  assert.equal(await page.locator('[data-quick-destination]').count(), 7, 'Must render exactly 7 destination cards');
   const quickAlignment = await page.locator('.quick-page').evaluate(node => ({
     title: node.querySelector('h1').getBoundingClientRect().left,
     card: node.querySelector('.quick-overview').getBoundingClientRect().left,
@@ -162,13 +162,66 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
     ['usage', '用量分析'],
     ['settings', '软件设置'],
   ]) {
-    await page.locator(`[data-quick-destination="${dest}"]`).getByRole('button').click();
+    const card = dest === 'cleaner'
+      ? page.locator('[data-quick-destination="cleaner"]').first()
+      : page.locator(`[data-quick-destination="${dest}"]`);
+    await card.getByRole('button').click();
     await page.getByRole('heading', {name: title, exact: true}).waitFor();
     assert.equal(await page.getByRole('dialog').count(), 0, `Navigating to ${dest} must not open a confirmation dialog`);
     assert.equal(await page.evaluate(() => localStorage.getItem('claude-local.page.v1')), dest);
     await page.getByRole('button', {name: '快速配置', exact: true}).click();
     await page.locator('.quick-overview[aria-busy="false"]').waitFor();
   }
+
+  // 6b. Troubleshooting destination navigation: navigates to cleaner, locates residue, never calls scan/clean
+  const initialTroubleshootCmds = await page.evaluate(() => window.usageFixture.commands.length);
+  const troubleshootCard = page.locator('.quick-setup-card').filter({hasText: /系统与缓存排障|Troubleshoot/});
+  assert.equal(await troubleshootCard.count(), 1, 'Troubleshooting card must be rendered');
+  await troubleshootCard.getByRole('button').click();
+  await page.getByRole('heading', {name: '身份管理', exact: true}).waitFor();
+  assert.equal(await page.evaluate(() => localStorage.getItem('claude-local.page.v1')), 'cleaner');
+  const residueSection = page.locator('.claude-residue');
+  await residueSection.waitFor({state: 'visible'});
+  assert.equal(await residueSection.count(), 1, 'Residue section must be located and visible');
+
+  // Verify that troubleshooting navigation never calls scan or clean commands
+  const postTroubleshootCmds = await page.evaluate(() => window.usageFixture.commands);
+  const newCmds = postTroubleshootCmds.slice(initialTroubleshootCmds);
+  const scanOrCleanCmds = newCmds.filter(c => c.command.includes('scan') || c.command.includes('clean'));
+  assert.deepEqual(scanOrCleanCmds, [], 'Troubleshooting card click must never invoke scan or clean commands');
+
+  // Return to quick setup
+  await page.getByRole('button', {name: '快速配置', exact: true}).click();
+  await page.locator('.quick-overview[aria-busy="false"]').waitFor();
+
+  // 6c. CLI missing guide, copy command, and recheck verification
+  await page.evaluate(() => {
+    window.usageFixture.cliMissing = true;
+  });
+  await page.locator('[data-quick-destination="cleaner"]').first().getByRole('button').click();
+  await page.getByRole('heading', {name: '身份管理', exact: true}).waitFor();
+  const cliPanel = page.locator('.identity-cli');
+  await cliPanel.locator('.cli-install-guide').waitFor({state: 'visible'});
+  assert.match(await cliPanel.locator('.cli-install-code').innerText(), /irm https:\/\/claude\.ai\/install\.ps1 \| iex/);
+
+  // Test copy command
+  const copyBtn = cliPanel.getByRole('button', {name: /复制命令|Copy command/});
+  await copyBtn.click();
+  const copied = await page.evaluate(() => window.usageFixture.copied);
+  assert.ok(copied.includes('irm https://claude.ai/install.ps1 | iex'), 'Copy button must invoke copy_result with official install command');
+
+  // Restore CLI installed and test recheck
+  await page.evaluate(() => {
+    window.usageFixture.cliMissing = false;
+  });
+  const recheckBtn = cliPanel.getByRole('button', {name: /重新检查|Recheck/});
+  await recheckBtn.click();
+  await page.locator('.cli-install-guide').waitFor({state: 'detached'});
+  assert.match(await cliPanel.locator('.cli-status-pill').innerText(), /2\.1\.303/);
+
+  // Return to quick setup
+  await page.getByRole('button', {name: '快速配置', exact: true}).click();
+  await page.locator('.quick-overview[aria-busy="false"]').waitFor();
 
   // 7. English, Dark Theme, 720px narrow window, sidebar modes & geometry
   await page.getByRole('radio', {name: 'EN', exact: true}).click();
@@ -266,6 +319,12 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
     'browser_default_read',
     'plugin:event|listen',
     'plugin:event|unlisten',
+    'copy_result',
+    'quota_setup_status',
+    'ui_privacy_read',
+    'identities_quota_revision',
+    'identities_quota_batch_state',
+    'identities_backup_location',
   ]);
   const disallowed = commands.filter(item => !allowedCommands.has(item.command));
   assert.deepEqual(disallowed, [], `All invoked commands must be within read-only allowlist: ${disallowed.map(d => d.command).join(', ')}`);

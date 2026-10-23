@@ -1,0 +1,24 @@
+.backup-panel .backup-card { display: grid; gap: 16px; }
+.backup-panel .backup-card > p { margin: 0; color: var(--text-secondary, #666); line-height: 1.5; }
+.backup-location { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 8px 14px; align-items: center; }
+.backup-location code, .backup-receipt code { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.backup-location > span { grid-column: 2; }
+.backup-location-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; }
+.backup-preview { display: flex; flex-wrap: wrap; gap: 10px; }
+.backup-preview > span { display: flex; align-items: baseline; gap: 6px; min-width: 112px; padding: 8px 10px; border: 1px solid var(--border-color, #ddd); border-radius: 10px; font-size: 12px; }
+.backup-preview strong { font-variant-numeric: tabular-nums; }
+.backup-note, .backup-form > p, .backup-inspection > span { color: var(--text-secondary, #666); font-size: 12px; line-height: 1.5; }
+.backup-diagnostics { display: grid; gap: 5px; padding: 10px 12px; border: 1px solid var(--border-color, #ddd); border-radius: 8px; font-size: 12px; line-height: 1.5; }
+.backup-note { padding: 10px 12px; background: var(--surface-subtle, #f6f6f6); border-radius: 8px; }
+.backup-form { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-color, #ddd); }
+.backup-form h3 { margin: 0; font-size: 14px; }
+.backup-form label, .backup-inspection label { display: grid; gap: 6px; font-size: 12px; }
+.backup-form input, .backup-inspection input { width: 100%; min-width: 0; min-height: 34px; padding: 6px 9px; border: 1px solid var(--border-color, #bbb); border-radius: 8px; color: inherit; background: var(--surface, #fff); font: inherit; }
+.backup-form > p { margin: -4px 0 0; }
+.backup-rescue-toggle { display: flex !important; align-items: center; gap: 9px !important; }
+.backup-inspection, .backup-receipt { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border-color, #ddd); border-radius: 10px; }
+.backup-receipt code { display: block; }
+@media (max-width: 560px) {
+  .backup-location { grid-template-columns: minmax(0, 1fr); }
+  .backup-location > span, .backup-location-actions { grid-column: 1; }
+}

@@ -15,8 +15,8 @@ export async function testQuotaReset(browser:Browser,base:string) {
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   const now=2_000_000_000;
   await page.clock.install({time:new Date(now*1000)});
-  await page.clock.pauseAt(new Date(now*1000));
-  await page.goto(base+'/tests/identities.html');
+  await page.clock.pauseAt(new Date((now+1)*1000));
+  await page.goto(base+'/tests/identities.html',{waitUntil:'domcontentloaded',timeout:30000});
   await page.waitForFunction(()=>Boolean((window as any).identityFixture?.identityReads));
   await page.evaluate(async now=>{
    const prefs=await import('/src/settings-model.ts');await prefs.synchronizePrivacyPreference(false);
@@ -27,7 +27,7 @@ export async function testQuotaReset(browser:Browser,base:string) {
    Object.assign(state.summaries[state.records[2].id],{quota_5h_source:'reset_inferred',quota_5h_used:0,quota_5h_reset_at:now-20,quota_5h_observed_at_ms:(now-100)*1000});
    Object.assign(state.summaries[state.records[3].id],{quota_5h_source:'local_estimate',quota_5h_used:100,quota_5h_reset_at:now+2,quota_5h_observed_at_ms:(now-100)*1000});
   },now);
-  await page.getByRole('button',{name:'刷新',exact:true}).click();
+  await page.getByRole('button',{name:'刷新本地记录',exact:true}).click();
   const cards=page.locator('.identity-card');
   const current5h=cards.first().locator('[data-quota-window="5h"]');
   await current5h.getByText('0%',{exact:true}).waitFor();
@@ -63,7 +63,7 @@ export async function testQuotaReset(browser:Browser,base:string) {
   checks++;
 
   await page.evaluate(now=>Object.assign((window as any).identityFixture.state.current,{quota_5h_source:'server_anchor',quota_5h_used:23,quota_5h_reset_at:now+18000,quota_5h_observed_at_ms:(now+3)*1000}),now);
-  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.getByRole('button',{name:'Refresh local records',exact:true}).click();
   await current5h.getByText('77%',{exact:true}).waitFor();
   assert.equal(await current5h.getAttribute('data-quota-inferred'),null);
   assert.equal(await current5h.locator('time').count(),1);

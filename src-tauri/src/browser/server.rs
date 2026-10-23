@@ -1,6 +1,6 @@
-// [INPUT]: 只读有界身份显示摘要、打包的起始页、一次启动的随机令牌、机器上下文、共享界面语言、共用出口服务目录和浏览器实测。
-// [OUTPUT]: 仅 127.0.0.1 的起始页、绑定身份/有效国家/机器上下文与观测接口；32 个并发请求、请求头与正文共用读取截止，响应前复核会话令牌；资源限定在打包目录。
-// [POS]: Chromium 与工具箱之间的窄桥；不提供文件写入、脚本执行或 Tauri 命令。
+// [INPUT]: 只读有界身份摘要、打包起始页、随机会话令牌、机器上下文与显式触发的一次性扩展快照。
+// [OUTPUT]: 仅 127.0.0.1 的起始页、观测接口和严格扩展 Origin 的额度回传路由；有界并发、正文与时限，资源限定在打包目录。
+// [POS]: Chromium 与工具箱之间的窄桥；额度路由只经单次身份绑定票据调用既有白名单账本接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{network::Report, Browser, Context};
 use std::{
@@ -16,6 +16,7 @@ use std::{
 use tauri::{Emitter, Manager};
 const MAX_REQUESTS: usize = 32;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+const QUOTA_BRIDGE_ORIGIN: &str = "chrome-extension://ejcmmmehjkifepdoejgbaleeogcfagjg";
 struct RequestPermit(Arc<AtomicUsize>);
 impl RequestPermit {
     fn acquire(active: &Arc<AtomicUsize>) -> Option<Self> {
@@ -57,6 +58,11 @@ fn current_session(session: &Option<super::Session>, token: &str) -> bool {
 }
 fn answer(stream: &mut TcpStream, status: &str, kind: &str, body: &[u8]) {
     let header = format!("HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; frame-ancestors 'none'; connect-src 'self' https://ipwho.is https://ipapi.co; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'\r\n\r\n", body.len());
+    let _ = stream.write_all(header.as_bytes());
+    let _ = stream.write_all(body);
+}
+fn answer_quota(stream: &mut TcpStream, status: &str, body: &[u8]) {
+    let header = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nAccess-Control-Allow-Origin: {QUOTA_BRIDGE_ORIGIN}\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nAccess-Control-Allow-Headers: content-type\r\nVary: Origin\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\n\r\n", body.len());
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body);
 }
@@ -195,6 +201,8 @@ fn handle(
     let mut content_length_valid = true;
     let mut content_type: Option<String> = None;
     let mut origin: Option<String> = None;
+    let mut requested_method: Option<String> = None;
+    let mut requested_headers: Option<String> = None;
     let mut has_transfer_encoding = false;
 
     for line in header.lines().skip(1) {
@@ -222,6 +230,10 @@ fn handle(
                 }
                 "content-type" => content_type = Some(val.to_ascii_lowercase()),
                 "origin" => origin = Some(val.to_string()),
+                "access-control-request-method" => requested_method = Some(val.to_string()),
+                "access-control-request-headers" => {
+                    requested_headers = Some(val.to_ascii_lowercase())
+                }
                 "transfer-encoding" => has_transfer_encoding = true,
                 _ => {}
             }
@@ -238,18 +250,6 @@ fn handle(
         return;
     }
 
-    if let Some(ref org) = origin {
-        let valid_origin = if port > 0 {
-            org == &format!("http://127.0.0.1:{port}") || org == &format!("http://localhost:{port}")
-        } else {
-            org.starts_with("http://127.0.0.1") || org.starts_with("http://localhost")
-        };
-        if !valid_origin {
-            answer(stream, "403 Forbidden", "text/plain", b"Invalid origin");
-            return;
-        }
-    }
-
     let mut words = header.lines().next().unwrap_or("").split_whitespace();
     let method = words.next().unwrap_or("");
     let url = words.next().unwrap_or("");
@@ -258,8 +258,130 @@ fn handle(
         answer(stream, "404 Not Found", "text/plain", b"Not found");
         return;
     };
+    let quota_route = path == "quota-sync";
+    if let Some(ref org) = origin {
+        let valid_origin = if port > 0 {
+            org == &format!("http://127.0.0.1:{port}") || org == &format!("http://localhost:{port}")
+        } else {
+            org.starts_with("http://127.0.0.1") || org.starts_with("http://localhost")
+        };
+        if !valid_origin && !(quota_route && org == QUOTA_BRIDGE_ORIGIN) {
+            answer(stream, "403 Forbidden", "text/plain", b"Invalid origin");
+            return;
+        }
+    }
     if !current_session(&app.state::<Browser>().session.lock().unwrap(), token) {
         answer(stream, "410 Gone", "text/plain", b"Session expired");
+        return;
+    }
+    if quota_route && method == "OPTIONS" {
+        if origin.as_deref() == Some(QUOTA_BRIDGE_ORIGIN)
+            && requested_method.as_deref() == Some("POST")
+            && requested_headers.as_deref() == Some("content-type")
+        {
+            answer_quota(stream, "204 No Content", b"");
+        } else {
+            answer(stream, "403 Forbidden", "text/plain", b"Invalid preflight");
+        }
+        return;
+    }
+    if quota_route && method == "POST" {
+        if origin.as_deref() != Some(QUOTA_BRIDGE_ORIGIN)
+            || content_type.as_deref() != Some("application/json")
+            || content_length_count != 1
+        {
+            answer(
+                stream,
+                "403 Forbidden",
+                "text/plain",
+                b"Invalid quota bridge request",
+            );
+            return;
+        }
+        let length = header
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+            .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+            .filter(|n| *n > 0 && *n <= 16_384);
+        let Some(length) = length else {
+            answer(stream, "400 Bad Request", "text/plain", b"Invalid length");
+            return;
+        };
+        let mut body = vec![0u8; length];
+        if read_before(stream, &mut body, deadline).is_err() {
+            return;
+        }
+        let incoming = serde_json::from_slice::<super::quota_bridge::Incoming>(&body);
+        let Ok(incoming) = incoming else {
+            answer(
+                stream,
+                "400 Bad Request",
+                "text/plain",
+                b"Invalid quota snapshot",
+            );
+            return;
+        };
+        let ticket = {
+            let browser = app.state::<Browser>();
+            let mut pending = browser.quota_sync.lock().unwrap();
+            super::quota_bridge::take_ticket(&mut pending, token, &incoming.nonce, Instant::now())
+        };
+        let Some(ticket) = ticket else {
+            answer_quota(stream, "410 Gone", b"{\"ok\":false}");
+            return;
+        };
+        let result = (|| -> Result<(), String> {
+            let (current_id, current_quota_identity) =
+                crate::identities::online::current_browser_binding(app)?;
+            if current_id != ticket.account_id || current_quota_identity != ticket.quota_identity {
+                return Err("quotaOnline.accountMismatch".into());
+            }
+            let observed_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| "quotaOnline.unavailable")?
+                .as_millis() as u64;
+            let snapshot = super::quota_bridge::snapshot(incoming, observed_ms)?;
+            if snapshot.billing_date.is_none() && snapshot.manual_resets_remaining.is_none() && snapshot.usage.is_none() {
+                return Err("quotaOnline.bridgeUnavailable".into());
+            }
+            let value = crate::identities::online::import_browser_snapshot(
+                app,
+                &ticket.account_id,
+                &ticket.quota_identity,
+                serde_json::to_value(snapshot).map_err(|_| "quotaOnline.unavailable")?,
+            )?;
+            let status = value
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            if !matches!(status, "updated" | "cached") {
+                return Err(match status {
+                    "account_mismatch" => "quotaOnline.accountMismatch".into(),
+                    "auth_required" => "quotaOnline.authRequired".into(),
+                    _ => "quotaOnline.unavailable".into(),
+                });
+            }
+            if value
+                .get("metadata_updated")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
+                let _ = app.emit("quota-metadata-updated", ());
+            }
+            Ok(())
+        })();
+        let ok = result.is_ok();
+        let _ = ticket.reply.send(result);
+        answer_quota(
+            stream,
+            if ok { "200 OK" } else { "409 Conflict" },
+            if ok {
+                b"{\"ok\":true}"
+            } else {
+                b"{\"ok\":false}"
+            },
+        );
         return;
     }
     if method == "GET" && path == "context" {
@@ -458,6 +580,7 @@ mod tests {
         client.join().unwrap();
         let session = Some(super::super::Session {
             token: "new".into(),
+            port: 0,
             received_at: None,
             report: None,
         });

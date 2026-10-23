@@ -16,6 +16,12 @@ export type UsageTotals = {
 };
 export type UsageAccount = {id: string; name: string; email: string | null; current: boolean; totals: UsageTotals};
 export type UsageDay = {day: string; totals: UsageTotals; future?: boolean; start_at?: number; end_at?: number};
+export type UsageAttributionConfig = {
+  fallback_account_id: string | null;
+  fallback_account_name: string | null;
+  unassigned_requests: number;
+  unassigned_tokens: number;
+};
 export type UsageSnapshot = {
   generated_at: number;
   tracking_since: number | null;
@@ -27,6 +33,7 @@ export type UsageSnapshot = {
   timezone?: string;
   models: {model: string; totals: UsageTotals}[];
   warnings: string[];
+  attribution?: UsageAttributionConfig;
 };
 export const emptyUsage = (): UsageTotals => ({input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: 0, reasoning_tokens: null, requests: 0});
 export function cacheHitRate(totals: UsageTotals): number | null {

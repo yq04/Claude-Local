@@ -3,6 +3,7 @@
 // [POS]: Unit tests for identities::usage; never touches the user's Claude profile or identity vault.
 // [PROTOCOL]: Keep all fixtures synthetic and scoped to temporary directories.
 use super::usage::{self, Counts, Event};
+use rusqlite::OptionalExtension;
 use serde_json::json;
 use std::{
     collections::HashMap,
@@ -346,6 +347,27 @@ fn aggregate_filters_keep_account_and_unattributed_totals_global_and_ignore_remo
             .sum::<u64>(),
         1
     );
+    // A statistics read with fallback_name does NOT silently write to meta.
+    let in_memory_read =
+        usage::read_at_with_fallback(&vault, &home, "all", None, 0, Some("Alpha")).unwrap();
+    assert_eq!(in_memory_read.totals.input_tokens, 4);
+    let meta_conn = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
+    let has_meta: Option<String> = meta_conn
+        .query_row(
+            "SELECT value FROM meta WHERE key='fallback_account_id'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .unwrap();
+    assert_eq!(has_meta, None, "read() must not auto-seed fallback_account_id into meta");
+    drop(meta_conn);
+
+    // Explicit fallback command sets the stable ID in meta.
+    let config = usage::set_fallback_account_id(&vault, aid).unwrap();
+    assert_eq!(config.fallback_account_id.as_deref(), Some(aid));
+    assert_eq!(config.fallback_account_name.as_deref(), Some("Alpha"));
+
     // An explicit fallback absorbs both unknown and no-longer-mapped owners.
     let assigned =
         usage::read_at_with_fallback(&vault, &home, "all", None, 0, Some("Alpha")).unwrap();
@@ -1092,4 +1114,117 @@ fn named_timezone_windows_use_start_date_offset_and_history_keeps_zero_dates() {
             .iter()
             .all(|row| row.totals.requests == 0));
     }
+}
+
+#[test]
+fn fallback_attribution_stable_id_lifecycle_and_invariance() {
+    let dir = temp_dir("attribution-lifecycle");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    fs::create_dir_all(&vault).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let db_path = vault.join("identities.sqlite");
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    db.execute_batch(
+        "CREATE TABLE identities(id TEXT PRIMARY KEY,name TEXT NOT NULL,account_key TEXT,saved_at INTEGER NOT NULL,empty INTEGER NOT NULL DEFAULT 0);
+         CREATE TABLE state(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+         CREATE TABLE identity_summaries(id TEXT PRIMARY KEY,summary TEXT NOT NULL);"
+    ).unwrap();
+
+    let acc1_id = "0192e2b3aaaa70008000000000000001";
+    let acc2_id = "0192e2b3bbbb70008000000000000002";
+    db.execute("INSERT INTO identities(id,name,account_key,saved_at,empty) VALUES(?1,'Work','hmac-work-1',100,0)", [acc1_id]).unwrap();
+    db.execute("INSERT INTO identities(id,name,account_key,saved_at,empty) VALUES(?1,'Work','hmac-work-2',100,0)", [acc2_id]).unwrap();
+
+    let ledger = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
+    let mut initial_events = HashMap::new();
+    initial_events.insert("e-work-1".into(), event("e-work-1", 100, Counts { input: 10, output: 5, ..Counts::default() }));
+    initial_events.insert("e-work-2".into(), event("e-work-2", 101, Counts { input: 20, output: 10, ..Counts::default() }));
+    initial_events.insert("e-unassigned-1".into(), event("e-unassigned-1", 102, Counts { input: 30, output: 15, ..Counts::default() }));
+    initial_events.insert("e-unassigned-2".into(), event("e-unassigned-2", 103, Counts { input: 40, output: 20, ..Counts::default() }));
+    usage::persist_scan(&ledger, initial_events, &[
+        (100, Some("hmac-work-1".into())),
+        (101, Some("hmac-work-2".into())),
+        (102, None),
+    ], &[]).unwrap();
+    drop(ledger);
+
+    // 1. Initial state: no fallback set
+    let snap0 = usage::read_at(&vault, &home, "all", None, 0).unwrap();
+    assert_eq!(snap0.attribution.fallback_account_id, None);
+    assert_eq!(snap0.attribution.unassigned_requests, 2);
+    assert_eq!(snap0.attribution.unassigned_tokens, 105);
+    assert_eq!(snap0.unattributed.requests, 2);
+    assert_eq!(snap0.unattributed.total_tokens, 105);
+    let acc1_tokens = snap0.accounts.iter().find(|a| a.id == acc1_id).unwrap().totals.total_tokens;
+    let acc2_tokens = snap0.accounts.iter().find(|a| a.id == acc2_id).unwrap().totals.total_tokens;
+    assert_eq!(acc1_tokens, 15);
+    assert_eq!(acc2_tokens, 30);
+    assert_eq!(snap0.totals.total_tokens, 45);
+
+    // 2. Invalid ID: no write to meta
+    let invalid_id = "0192e2b3ffff70008000000000000099";
+    assert!(usage::set_fallback_account_id(&vault, invalid_id).is_err());
+    let ledger = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
+    let meta_val: Option<String> = ledger.query_row(
+        "SELECT value FROM meta WHERE key='fallback_account_id'",
+        [],
+        |r| r.get(0),
+    ).optional().unwrap();
+    assert_eq!(meta_val, None);
+    drop(ledger);
+
+    // 3. Same-name / two accounts: explicitly bind acc2_id (both named 'Work')
+    let config = usage::set_fallback_account_id(&vault, acc2_id).unwrap();
+    assert_eq!(config.fallback_account_id.as_deref(), Some(acc2_id));
+    assert_eq!(config.fallback_account_name.as_deref(), Some("Work"));
+
+    // 4. Totals / trends / models / filters consistency with fallback active
+    let snap1 = usage::read_at(&vault, &home, "all", None, 0).unwrap();
+    assert_eq!(snap1.attribution.fallback_account_id.as_deref(), Some(acc2_id));
+    assert_eq!(snap1.attribution.fallback_account_name.as_deref(), Some("Work"));
+    assert_eq!(snap1.unattributed.requests, 0);
+    assert_eq!(snap1.accounts.iter().find(|a| a.id == acc1_id).unwrap().totals.total_tokens, 15);
+    assert_eq!(snap1.accounts.iter().find(|a| a.id == acc2_id).unwrap().totals.total_tokens, 135);
+    assert_eq!(snap1.totals.total_tokens, 150);
+    assert_eq!(snap1.daily.iter().map(|d| d.totals.total_tokens).sum::<u64>(), 150);
+    assert_eq!(snap1.models.iter().map(|m| m.totals.total_tokens).sum::<u64>(), 150);
+    let snap_acc2 = usage::read_at(&vault, &home, "all", Some(acc2_id), 0).unwrap();
+    assert_eq!(snap_acc2.totals.total_tokens, 135);
+
+    // 5. Raw events table remains completely unchanged (unaltered event evidence)
+    let ledger = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
+    let unassigned_count: i64 = ledger.query_row(
+        "SELECT COUNT(*) FROM events WHERE account_key IS NULL OR account_key=''",
+        [],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(unassigned_count, 2, "Raw event ownership in events table must never be rewritten");
+    drop(ledger);
+
+    // 6. Rename: Renaming acc2 in catalog preserves binding
+    db.execute("UPDATE identities SET name='Work (Personal)' WHERE id=?1", [acc2_id]).unwrap();
+    let snap_renamed = usage::read_at(&vault, &home, "all", None, 0).unwrap();
+    assert_eq!(snap_renamed.attribution.fallback_account_id.as_deref(), Some(acc2_id));
+    assert_eq!(snap_renamed.attribution.fallback_account_name.as_deref(), Some("Work (Personal)"));
+    assert_eq!(snap_renamed.accounts.iter().find(|a| a.id == acc2_id).unwrap().totals.total_tokens, 135);
+
+    // 7. Clear fallback rule: reversible back to unassigned state
+    let cleared = usage::clear_fallback_account_id(&vault).unwrap();
+    assert_eq!(cleared.fallback_account_id, None);
+    assert_eq!(cleared.fallback_account_name, None);
+    let snap_cleared = usage::read_at(&vault, &home, "all", None, 0).unwrap();
+    assert_eq!(snap_cleared.attribution.fallback_account_id, None);
+    assert_eq!(snap_cleared.unattributed.requests, 2);
+    assert_eq!(snap_cleared.unattributed.total_tokens, 105);
+    assert_eq!(snap_cleared.accounts.iter().find(|a| a.id == acc2_id).unwrap().totals.total_tokens, 30);
+    assert_eq!(snap_cleared.totals.total_tokens, 45);
+
+    // 8. Timezone source preserved
+    let snap_tz = usage::read_at_with_timezone_now(&vault, &home, "today", None, 0, None, Some("America/New_York"), 1000).unwrap();
+    assert_eq!(snap_tz.timezone.as_deref(), Some("America/New_York"));
+
+    drop(db);
+    fs::remove_dir_all(dir).unwrap();
 }

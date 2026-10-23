@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# [INPUT]: Passive statusLine data, isolated account evidence and the bounded sibling Rust quota protocol.
+# [INPUT]: Passive statusLine data, isolated account evidence, strict quota_archive frames and bounded sibling Rust quota protocol.
 # [OUTPUT]: Serialized atomic quota summaries with validated observed percentages, trusted-reset inference and original observations.
 # [POS]: Sole quota-ledger writer; standalone legacy rules mirror Rust without polling or editing Claude configuration.
 # [PROTOCOL]: Update scripts/CLAUDE.md when changing window evidence or persistence behavior.
@@ -414,30 +414,11 @@ def parse_reset_dt(val) -> datetime | None:
 
 
 def decrypt_baga(vault_dir: str, master_key: bytes, filename: str) -> bytes:
+    from quota_archive import authenticated_chunks
+
     path = os.path.join(vault_dir, filename)
     with open(path, "rb") as f:
-        magic = f.read(8)
-        if magic != b"BAGAID01":
-            raise ValueError(f"Invalid magic in {filename}")
-        nonce0 = f.read(12)
-        wrapped = f.read(48)
-        data_key = AESGCM(master_key).decrypt(nonce0, wrapped, b"BAGAID01")
-        aes = AESGCM(data_key)
-        counter = 0
-        out = bytearray()
-        while True:
-            len_bytes = f.read(4)
-            if not len_bytes:
-                break
-            frame_len = struct.unpack(">I", len_bytes)[0]
-            ct = f.read(frame_len)
-            nonce = b"\x00\x00\x00\x00" + struct.pack(">Q", counter)
-            pt = aes.decrypt(nonce, ct, len_bytes)
-            counter += 1
-            if len(pt) == 0:
-                break
-            out.extend(pt)
-    return bytes(out)
+        return b"".join(authenticated_chunks(f, master_key))
 
 
 def estimate_turn_cost_usd(model: str, usage: dict) -> float:

@@ -1,5 +1,5 @@
 // [INPUT]: Claude 白名单、所选文件夹发现、配置变换、原子写入、官方原生 CLI 版本路径及 macOS/Linux/Windows 白名单路径边界。
-// [OUTPUT]: 全机/文件夹元数据扫描、文件残留专用快照与选择清理、实时 Claude 进程检查与停止；CLI、身份和残留操作共用互斥锁。
+// [OUTPUT]: 全机/文件夹元数据扫描、文件残留专用快照与选择清理、实时 Claude 进程检查与停止；CLI、身份和残留操作共用互斥门，身份写入显式提升代次，额度短提交门保持只读代次。
 // [POS]: 白名单与进程共用边界；身份由 identities 编排，残留入口仅允许文件操作且不访问钥匙串。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use crate::native;
@@ -145,6 +145,7 @@ pub struct Cleaner {
     plan: Mutex<Option<Scan>>,
     residue_plan: Mutex<Option<Scan>>,
     active: AtomicBool,
+    identity_epoch: std::sync::atomic::AtomicU64,
 }
 impl Cleaner {
     pub(crate) fn enter(&self) -> Result<(), String> {
@@ -153,6 +154,20 @@ impl Cleaner {
         } else {
             Ok(())
         }
+    }
+    // Quota reads/commits use the same door without pretending to mutate identity.
+    pub(crate) fn enter_quota(&self) -> Result<(), String> {
+        self.active
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .map(|_| ())
+            .map_err(|_| "quotaOnline.busy".into())
+    }
+    pub(crate) fn identity_epoch(&self) -> u64 {
+        self.identity_epoch.load(Ordering::SeqCst)
+    }
+    // Call only inside the held door, before a real identity/configuration mutation.
+    pub(crate) fn begin_identity_change(&self) {
+        self.identity_epoch.fetch_add(1, Ordering::SeqCst);
     }
     pub(crate) fn leave(&self) {
         self.active.store(false, Ordering::SeqCst);

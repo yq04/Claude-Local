@@ -1,11 +1,15 @@
 /**
- * [INPUT]: 原生身份命令、保留策略、离线 5h/7d 额度及逐窗观测、隐私偏好、本地刷新事件与可选身份确认请求、CLI/诊断状态。
- * [OUTPUT]: 180×286 身份工牌、隐私安全搜索与本地排序、逐窗观测年龄和白名单诊断复制；保留原确认切换/恢复流程、额度推定边界及本地刷新锁。
- * [POS]: 身份管理 GUI；只呈现脱敏元数据与离线额度，身份正文留在原生保险库；可选浏览器绑定/旧资料采用确认与重开重试，关联浏览器资料删除单独选择。
+ * [INPUT]: 原生身份命令、可恢复的原生额度批次状态/取消、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
+ * [OUTPUT]: 180×286 身份工牌、脱敏搜索、严格指纹绑定的批次进度/取消/恢复与清晰的已更新/缓存/冷却/未执行结果呈现。
+ * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载仅恢复状态，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect, useRef, useState, type ReactNode} from 'react';
-import {Button, Checkbox, Disclosure, Input, Select, useReducedMotionConfig, useSpring} from 'cromma-ui';
+import {Button, Checkbox, Disclosure, Input, Select, Switch, useReducedMotionConfig, useSpring} from 'cromma-ui';
+import {DropdownMenu} from 'radix-ui';
+import {listen} from '@tauri-apps/api/event';
+import {formatOnlineQuotaStatus, formatSubscriptionAndResets, ForegroundQuotaScheduler, isExpectedCurrentTarget, isExpectedSavedTarget, buildBatchTargets, generateBatchRequestId, formatBatchProgress, isSuccessfulOnlineResult, aggregateBatchProgress, summarizeBatchResult, isTerminalBatchState, isMatchingBatchTarget, type OnlineQuotaResult, type OnlineQuotaStatus, type BatchQuotaResult, type QuotaBatchProgress, type BatchProgressSummary, type QuotaBatchTarget} from './identity-online-quota';
+import type {IdentitySubscriptionMetadata} from './identity-model';
 import {ShieldCheck, Refresh} from 'cromma-ui/pika';
 import {invoke} from '@tauri-apps/api/core';
 import {getVersion} from '@tauri-apps/api/app';
@@ -21,6 +25,7 @@ import {evaluateQuota, formatCompactEta, formatResetClock} from './identity-quot
 import {usePageRefresh, type IdentityReviewRequest} from './app-events';
 import {filterAndSortIdentities, formatObservationAge, quotaObservationAge} from './identity-list';
 import {serializeIdentityDiagnostic} from './identity-diagnostics';
+import {connectionHistory, IdentityConnections, isValidQuotaTargetSubset} from './identity-connections';
 import './identity-productivity.css';
 
 type Target = Identity | 'empty' | 'recovery';
@@ -45,9 +50,9 @@ function QuotaWindow({label, used, remaining, resetAt, resetComplete = false, in
     <div className={`identity-quota-window ${known ? `quota-${level}` : 'quota-unknown'}`} data-quota-window={label} data-quota-inferred={inferred || undefined} title={inferred ? t('quota.resetInferredHint') : undefined} aria-label={`${label} ${known ? `${t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')} ${Math.round(value)}%` : t('identityCard.quotaUnknown')}${inferred ? ` · ${resetLabel}` : ''}`}>
       <div className="identity-quota-copy">
         <strong>{label}</strong>
-        <span className="identity-quota-value">{known ? <><span>{t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')}</span>{' '}<strong>{Math.round(value)}%</strong></> : t('identityCard.unknown')}</span>
+        <span className="identity-quota-value">{known ? <><span>{inferred ? t('identityCard.estimated') : t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')}</span>{' '}<strong>{Math.round(value)}%</strong></> : t('identityCard.unknown')}</span>
       </div>
-      <span className="identity-quota-track" role="img" aria-label={known ? `${Math.round(value)}%` : t('identityCard.quotaUnknown')}>
+      <span className={`identity-quota-track ${inferred ? "quota-track-inferred" : ""}`} role="img" aria-label={known ? `${Math.round(value)}%` : t('identityCard.quotaUnknown')}>
         {known && <i style={{width: `${Math.max(0, Math.min(100, value))}%`}} />}
       </span>
       <span className="identity-quota-reset" title={countdown ? `${resetLabel} · ${countdown}` : resetLabel}>
@@ -67,15 +72,43 @@ function IdentityQuota({quota, display, nowSec, t, onOpenDetails}: {quota: Retur
   );
 }
 
-function SubscriptionExpiry({expiresAt, locale, t}: {expiresAt?: number | null; locale: string; t: (key: string) => string}) {
-  const value = expiresAt == null ? t('identityCard.notProvided') : new Date(expiresAt * 1000).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {year: 'numeric', month: 'short', day: 'numeric'});
-  return <div className="identity-subscription" data-subscription-expiry={expiresAt ?? 'unknown'} title={expiresAt == null ? t('identityCard.subscriptionSourceMissing') : undefined}><strong>{t('identityCard.subscriptionExpiry')}</strong><span>{value}</span></div>;
+function SubscriptionAndResets({meta, locale, t}: {meta: IdentitySubscriptionMetadata | null | undefined; locale: string; t: (key: string, slots?: Record<string, string | number>) => string}) {
+  const display = formatSubscriptionAndResets(meta, locale, t);
+  if (!display.hasAnyData) {
+    return (
+      <div className="identity-sub-resets-block" title={t('identityCard.subscriptionSourceMissing')}>
+        <span className="identity-sub-resets-empty">{display.emptyNotice}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="identity-sub-resets-block">
+      {display.billing && (
+        <div className="identity-sub-resets-row">
+          <strong>{display.billing.label}</strong>
+          <span>{display.billing.formattedDate}</span>
+        </div>
+      )}
+      {display.manualResets && (
+        <div className="identity-sub-resets-row">
+          <strong>{display.manualResets.label}</strong>
+          <span>{t('identityCard.manualResetsCount', {v0: display.manualResets.remaining})}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
-function IdentityName({name, email, accountName, privacyMask, saved = false, t}: {name: string; email?:string|null; accountName?: string | null; privacyMask: boolean; saved?: boolean; t: (key: string) => string}) {
+function IdentityName({name, email, accountName, plan, privacyMask, saved = false, t}: {name: string; email?:string|null; accountName?: string | null; plan?: string | null; privacyMask: boolean; saved?: boolean; t: (key: string) => string}) {
   const shownName = maskDisplayName(name, email, privacyMask);
   const description = !privacyMask && accountName && accountName !== name ? `${t('identityCard.accountName')}: ${accountName}` : undefined;
-  return <h3 className="identity-name-with-label" data-identity-name data-identity-username={!saved || undefined} data-identity-saved-name={saved || undefined} aria-description={description}><strong title={description ? `${shownName}\n${description}` : shownName}>{shownName}</strong></h3>;
+  const hasPlan = plan && plan.trim().length > 0;
+  return (
+    <h3 className="identity-name-with-label" data-identity-name data-identity-username={!saved || undefined} data-identity-saved-name={saved || undefined} aria-label={shownName} aria-description={description}>
+      <strong title={description ? `${shownName}\n${description}` : shownName}>{shownName}</strong>
+      {hasPlan && <span className={`identity-plan-pill plan-${plan.toLowerCase()}`}>{plan}</span>}
+    </h3>
+  );
 }
 
 export function IdentityPanel({onBusy, initialEmpty = false, identityReviewRequest = null, onIdentityReviewConsumed}: {onBusy?: (busy: boolean) => void; initialEmpty?: boolean; identityReviewRequest?: IdentityReviewRequest | null; onIdentityReviewConsumed?: (requestId: number) => void}) {
@@ -108,12 +141,84 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [copyDiagnosticStatus, setCopyDiagnosticStatus] = useState<'copied'|'failed'|null>(null);
   const [readReady, setReadReady] = useState(false);
   const [diagnosticVersion, setDiagnosticVersion] = useState<string|null>(null);
+  const [foregroundAutoRefresh, setForegroundAutoRefresh] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const batchBusyRef = useRef(false);
+  batchBusyRef.current = batchBusy;
+  const [batchSummary, setBatchSummary] = useState<BatchProgressSummary>({
+    inProgress: false,
+    requestId: null,
+    total: 0,
+    completed: 0,
+    successCount: 0,
+    authRequiredCount: 0,
+    errorCount: 0,
+  });
+  const [cardStatusMap, setCardStatusMap] = useState<Record<string, {
+    status: OnlineQuotaStatus;
+    message: string;
+    isError: boolean;
+    observedAtMs?: number;
+    result: OnlineQuotaResult;
+    expectedIdentity: string;
+  }>>({});
+  const currentBatchRequestIdRef = useRef<string | null>(null);
+  const frozenBatchTargetsRef = useRef<QuotaBatchTarget[]>([]);
+  const batchCancelingRef = useRef(false);
+  const prevTargetSetKeyRef = useRef<string | null>(null);
+  const batchResultsMapRef = useRef<Record<string, OnlineQuotaResult>>({});
+  const batchSummaryRef = useRef(batchSummary);
+  batchSummaryRef.current = batchSummary;
+  const readSeqRef = useRef(0);
+  const schedulerRef = useRef<ForegroundQuotaScheduler | null>(null);
+  const lockedRef = useRef(false);
+  const busyRef = useRef(false);
   const activity = useCleanupActivity();
   const rail = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotionConfig() ?? false;
   const scrollSpring = useSpring(0, {stiffness: 170, damping: 25, mass: 0.8});
   const scrollTarget = useRef(0);
   const locked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!deletion || browserReview !== null || quotaDetails !== null;
+  const actionLocked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!deletion || browserReview !== null;
+  lockedRef.current = locked;
+  busyRef.current = busy;
+  const actionLockedRef = useRef(false);
+  actionLockedRef.current = actionLocked;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const tRef = useRef(t);
+  tRef.current = t;
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const quotaTargets = buildBatchTargets(state).targets;
+  const currentTargetSetKey = quotaTargets.map(target => `${target.account_id}:${target.expected_identity.toLowerCase()}`).sort().join(',');
+  const unverifiedQuotaTargets = buildBatchTargets(state).unverifiedCount;
+  useEffect(() => {
+    if (prevTargetSetKeyRef.current !== null && prevTargetSetKeyRef.current !== currentTargetSetKey) {
+      setForegroundAutoRefresh(false);
+      schedulerRef.current?.setEnabled(false, false);
+      schedulerRef.current?.invalidate();
+      const frozenStillValid = frozenBatchTargetsRef.current.length === 0 ||
+        isValidQuotaTargetSubset(frozenBatchTargetsRef.current, quotaTargets);
+      if (batchBusyRef.current && currentBatchRequestIdRef.current && !frozenStillValid) {
+        void cancelBatchForTargetChange(currentBatchRequestIdRef.current);
+        currentBatchRequestIdRef.current = null;
+        frozenBatchTargetsRef.current = [];
+        batchBusyRef.current = false;
+        setBatchBusy(false);
+        batchSummaryRef.current = {...batchSummaryRef.current, inProgress: false, state: 'cancelled', notRunCount: Math.max(0, batchSummaryRef.current.total - batchSummaryRef.current.completed)};
+        setBatchSummary(batchSummaryRef.current);
+        setQuotaFeedback(tRef.current('quotaOnline.targetSetChanged'));
+      }
+      setCardStatusMap({});
+    }
+    prevTargetSetKeyRef.current = currentTargetSetKey;
+  }, [currentTargetSetKey]);
   const active = state?.records.find(row => row.id === state.active);
   const current = state?.current;
   const saved = state?.records.filter(row => !current?.present || row.id !== state.active) ?? [];
@@ -122,7 +227,13 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     return {...row, email, visibleName: maskDisplayName(row.name, email, prefs.privacyMask)};
   }), search, sort, prefs.privacyMask);
   const currentName = active?.name || current?.display_name || current?.email?.split('@')[0] || t('当前身份');
-  const blocked = locked || loading || !state || !!state?.recovery;
+  const connectionQueueItems = connectionHistory.matching(quotaTargets).map(item => {
+    const row = state?.records.find(record => record.id === item.target.account_id);
+    const email = item.target.account_id === 'current' ? current?.email : state?.summaries?.[item.target.account_id]?.email;
+    const label = item.target.account_id === 'current' ? currentName : row?.name ?? t('quotaOnline.unknownAccount');
+    return {...item, label: maskDisplayName(label, email, prefs.privacyMask)};
+  });
+  const blocked = locked || batchBusy || loading || !state || !!state?.recovery;
   const kept = policyRows.filter(([key]) => policy[key]).map(([, label]) => t(label));
   const removed = policyRows.filter(([key]) => !policy[key]).map(([, label]) => t(label));
   const isDefaultPolicy = policyRows.every(([key]) => policy[key] === defaultPolicy[key]);
@@ -131,6 +242,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const detailsAreCurrent = quotaDetails?.id === 'current' || (!!quotaDetails && quotaDetails.id === state?.active);
   const detailsSummary = detailsAreCurrent ? current : quotaDetails ? state?.summaries[quotaDetails.id] : undefined;
   const detailsQuota = evaluateQuota(detailsSummary, nowSec);
+  const detailsSavedRecord = quotaDetails && quotaDetails.id !== 'current' ? state?.records.find(row => row.id === quotaDetails.id) : undefined;
   const recoveryRecord = state?.records.find(row => row.id === state.recovery);
   const targetSummary = typeof review === 'object' && review ? state?.summaries?.[review.id] : undefined;
   const targetQuota = evaluateQuota(targetSummary, nowSec);
@@ -150,6 +262,165 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     void read();
   }, []);
   usePageRefresh(() => { if (!locked && !loading) void read(false); });
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    void listen('quota-metadata-updated', () => {
+      if (active && mountedRef.current) void read(false);
+    })
+      .then(fn => {
+        if (!active || !mountedRef.current) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    void listen<QuotaBatchProgress>('quota-batch-progress', event => {
+      if (!active || !mountedRef.current) return;
+      const payload = event.payload;
+      if (!payload || payload.request_id !== currentBatchRequestIdRef.current) return;
+      const frozenTarget = frozenBatchTargetsRef.current.find(target => target.account_id === payload.account_id);
+      const expectedFp = payload.account_id === 'current'
+        ? stateRef.current?.current?.quota_identity
+        : stateRef.current?.summaries?.[payload.account_id]?.quota_identity;
+      if (!frozenTarget || frozenTarget.expected_identity !== payload.expected_identity ||
+          !isMatchingBatchTarget(frozenTarget, expectedFp)) return;
+      connectionHistory.merge(frozenBatchTargetsRef.current, [{target: frozenTarget, result: payload.result}],
+        buildBatchTargets(stateRef.current).targets);
+
+      const { nextSummary, updatedResultsMap } = aggregateBatchProgress(
+        batchSummaryRef.current,
+        batchResultsMapRef.current,
+        payload
+      );
+      batchResultsMapRef.current = updatedResultsMap;
+      batchSummaryRef.current = nextSummary;
+      setBatchSummary(nextSummary);
+
+      const statusInfo = formatOnlineQuotaStatus(payload.result, Date.now(), tRef.current);
+      setCardStatusMap(prev => ({
+        ...prev,
+        [payload.account_id]: {
+          status: payload.result.status,
+          message: statusInfo.message,
+          isError: statusInfo.isError,
+          observedAtMs: payload.result.observed_at_ms ?? payload.result.last_observed_at_ms,
+          result: payload.result,
+          expectedIdentity: payload.expected_identity,
+        },
+      }));
+
+      void read(false);
+    })
+      .then(fn => {
+        if (!active || !mountedRef.current) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!readReady) return;
+    let live = true;
+    void invoke<BatchQuotaResult | null>('identities_quota_batch_state', {requestId: null})
+      .then(batch => {
+        if (live && batch) adoptBatchSnapshot(batch, true);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [readReady]);
+
+  useEffect(() => {
+    const requestId = currentBatchRequestIdRef.current;
+    if (!batchBusy || !requestId) return;
+    let live = true;
+    const poll = async () => {
+      try {
+        const snapshot = await invoke<BatchQuotaResult | null>('identities_quota_batch_state', {requestId});
+        if (live && snapshot) adoptBatchSnapshot(snapshot, false);
+      } catch {
+        // The native task remains authoritative; a transient state-read error cannot unlock destructive actions.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 500);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [batchBusy, batchSummary.requestId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let revision: string | undefined;
+    const check = async () => {
+      try {
+        if (!document.hidden && !busyRef.current && !batchBusyRef.current && !actionLockedRef.current) {
+          const next = await invoke<string>('identities_quota_revision');
+          if (!cancelled && revision !== undefined && next !== revision) {
+            revision = next;
+            await read(false);
+          }
+          revision = next;
+        }
+      } catch {
+        // A failed local metadata check does not clear any quota observation.
+      } finally {
+        if (!cancelled) timer = setTimeout(() => void check(), 2000);
+      }
+    };
+    void check();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, []);
+
+  useEffect(() => {
+    const scheduler = new ForegroundQuotaScheduler({
+      intervalMs: 180_000,
+      isForeground: () => !document.hidden && document.hasFocus(),
+      poll: async (gen) => {
+        if (actionLockedRef.current || busyRef.current || batchBusyRef.current || !mountedRef.current) return null;
+        await refreshAllQuotas(false);
+        return null;
+      },
+    });
+    schedulerRef.current = scheduler;
+
+    const onForegroundChange = () => {
+      scheduler.onForegroundChange();
+    };
+    document.addEventListener('visibilitychange', onForegroundChange);
+    window.addEventListener('focus', onForegroundChange);
+    window.addEventListener('blur', onForegroundChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onForegroundChange);
+      window.removeEventListener('focus', onForegroundChange);
+      window.removeEventListener('blur', onForegroundChange);
+      scheduler.destroy();
+      schedulerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    schedulerRef.current?.setEnabled(foregroundAutoRefresh, true);
+  }, [foregroundAutoRefresh]);
+
   useEffect(() => {
     const request = identityReviewRequest;
     if (!request || !readReady || loading || locked || !state) return;
@@ -234,10 +505,222 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     onBusy?.(locked);
     return () => onBusy?.(false);
   }, [locked, onBusy]);
+
+  function currentFingerprint(accountId: string): string | null | undefined {
+    return accountId === 'current'
+      ? stateRef.current?.current?.quota_identity
+      : stateRef.current?.summaries?.[accountId]?.quota_identity;
+  }
+
+  function hasRecentOnlineVerification(accountId: string, fingerprint: string | null | undefined): boolean {
+    const record = cardStatusMap[accountId];
+    const verifiedAt = record?.result.verified_at_ms;
+    return !!fingerprint && record?.expectedIdentity.toLowerCase() === fingerprint.toLowerCase() &&
+      typeof verifiedAt === 'number' && Number.isFinite(verifiedAt) && verifiedAt > 0 && verifiedAt <= Date.now();
+  }
+
+  function adoptBatchSnapshot(batch: BatchQuotaResult, restore: boolean): void {
+    if (!batch || !/^[0-9a-f]{32}$/i.test(batch.request_id) || !Array.isArray(batch.targets) || !Array.isArray(batch.results)) return;
+    if (!restore && currentBatchRequestIdRef.current !== batch.request_id) return;
+    const currentTargets = buildBatchTargets(stateRef.current).targets;
+    const targetSetMatches = isValidQuotaTargetSubset(batch.targets, currentTargets);
+    if (!targetSetMatches) {
+      if (!restore && batch.state !== 'cancelled' && batch.state !== 'deadline_exceeded' && batch.state !== 'completed') {
+        void cancelBatchForTargetChange(batch.request_id);
+      }
+      return;
+    }
+    if (restore || currentBatchRequestIdRef.current === null) {
+      currentBatchRequestIdRef.current = batch.request_id;
+      frozenBatchTargetsRef.current = batch.targets.map(target => ({...target}));
+    }
+    if (currentBatchRequestIdRef.current !== batch.request_id) return;
+
+    const validResults = batch.results.filter(item => {
+      const frozen = frozenBatchTargetsRef.current.find(target => target.account_id === item.account_id);
+      return !!frozen && frozen.expected_identity.toLowerCase() === item.expected_identity.toLowerCase() &&
+        isMatchingBatchTarget(frozen, currentFingerprint(item.account_id));
+    });
+    connectionHistory.merge(batch.targets, validResults.map(item => ({
+      target: {account_id: item.account_id, expected_identity: item.expected_identity},
+      result: item.result,
+    })), currentTargets);
+    const resultsById = Object.fromEntries(validResults.map(item => [item.account_id, item.result]));
+    batchResultsMapRef.current = resultsById;
+    setCardStatusMap(previous => {
+      const next = {...previous};
+      for (const item of validResults) {
+        const statusInfo = formatOnlineQuotaStatus(item.result, Date.now(), tRef.current);
+        next[item.account_id] = {
+          status: item.result.status,
+          message: statusInfo.message,
+          isError: statusInfo.isError,
+          observedAtMs: item.result.verified_at_ms ?? item.result.observed_at_ms ?? item.result.last_observed_at_ms,
+          result: item.result,
+          expectedIdentity: item.expected_identity,
+        };
+      }
+      return next;
+    });
+    const nextSummary = summarizeBatchResult({...batch, results: validResults});
+    batchSummaryRef.current = nextSummary;
+    setBatchSummary(nextSummary);
+    const activeTask = !isTerminalBatchState(batch.state);
+    batchBusyRef.current = activeTask;
+    setBatchBusy(activeTask);
+    if (!activeTask) batchCancelingRef.current = false;
+  }
+
+  async function cancelBatchForTargetChange(requestId: string): Promise<void> {
+    try {
+      await invoke<BatchQuotaResult>('identities_cancel_quota_batch', {requestId});
+    } catch {
+      // The native task may already have reached a terminal state; the new target set is still isolated in the UI.
+    }
+  }
+
+  async function cancelBatch(): Promise<void> {
+    const requestId = currentBatchRequestIdRef.current;
+    if (!requestId || batchCancelingRef.current) return;
+    batchCancelingRef.current = true;
+    setQuotaFeedback(tRef.current('quotaOnline.cancelling'));
+    try {
+      const result = await invoke<BatchQuotaResult>('identities_cancel_quota_batch', {requestId});
+      adoptBatchSnapshot(result, false);
+    } catch (e) {
+      setQuotaFeedback(tRef.current(String(e)));
+      batchCancelingRef.current = false;
+    }
+  }
+
+  async function refreshAllQuotas(allowBrowserFallback = true, requestedTargets?: QuotaBatchTarget[]): Promise<void> {
+    if (actionLockedRef.current || busyRef.current) return;
+    if (batchBusyRef.current) return; // Manual and automatic triggers share the active native batch.
+    const inventory = buildBatchTargets(stateRef.current).targets;
+    const targets = requestedTargets ?? inventory;
+    if (requestedTargets && !isValidQuotaTargetSubset(requestedTargets, inventory)) {
+      setQuotaFeedback(tRef.current('quotaOnline.accountMismatch'));
+      return;
+    }
+    if (targets.length === 0) {
+      setQuotaFeedback(tRef.current('quotaOnline.noValidTargets'));
+      return;
+    }
+
+    const reqId = generateBatchRequestId();
+    currentBatchRequestIdRef.current = reqId;
+    frozenBatchTargetsRef.current = targets.map(target => ({...target}));
+    batchResultsMapRef.current = {};
+    batchBusyRef.current = true;
+    setBatchBusy(true);
+
+    const initialSummary: BatchProgressSummary = {
+      inProgress: true,
+      requestId: reqId,
+      state: 'queued',
+      total: targets.length,
+      completed: 0,
+      successCount: 0,
+      authRequiredCount: 0,
+      errorCount: 0,
+    };
+    batchSummaryRef.current = initialSummary;
+    setBatchSummary(initialSummary);
+    setQuotaFeedback('');
+
+    try {
+      const res = await invoke<BatchQuotaResult>('identities_refresh_all_quotas', {
+        targets,
+        requestId: reqId,
+        allowBrowserFallback,
+      });
+
+      if (currentBatchRequestIdRef.current !== reqId) return;
+      adoptBatchSnapshot(res, false);
+      if (mountedRef.current) await read(false);
+      setQuotaFeedback('');
+    } catch (e) {
+      setQuotaFeedback(tRef.current(String(e)));
+    } finally {
+      // Native task state owns the lock. A dropped frontend promise must not unlock an active worker.
+      if (currentBatchRequestIdRef.current === reqId) {
+        try {
+          const latest = await invoke<BatchQuotaResult | null>('identities_quota_batch_state', {requestId: reqId});
+          if (latest) adoptBatchSnapshot(latest, false);
+          else if (batchBusyRef.current) {
+            batchBusyRef.current = false;
+            setBatchBusy(false);
+            batchSummaryRef.current = {...batchSummaryRef.current, inProgress: false, state: 'cancelled'};
+            setBatchSummary(batchSummaryRef.current);
+          }
+        } catch { /* periodic state recovery remains active while the panel is mounted */ }
+      }
+    }
+  }
+
+  async function openAccountBrowser(target: QuotaBatchTarget): Promise<void> {
+    if (actionLockedRef.current || batchBusyRef.current || busyRef.current) return;
+    if (!isValidQuotaTargetSubset([target], buildBatchTargets(stateRef.current).targets)) {
+      setQuotaFeedback(tRef.current('quotaOnline.accountMismatch'));
+      return;
+    }
+    busyRef.current = true;
+    setBusy(true);
+    setQuotaFeedback(tRef.current('quotaOnline.openingAccountBrowser'));
+    try {
+      await invoke('browser_open_identity_profile', {
+        accountId: target.account_id,
+        expectedIdentity: target.expected_identity,
+      });
+      setQuotaFeedback(tRef.current('quotaOnline.accountBrowserOpened'));
+    } catch (error) {
+      setQuotaFeedback(tRef.current(String(error)));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function syncSubscription() {
+    const currentQuotaIdentity = current?.quota_identity;
+    if (!currentQuotaIdentity || !currentQuotaIdentity.trim()) {
+      setQuotaFeedback(tRef.current('quotaOnline.accountMismatch'));
+      return;
+    }
+    if (actionLockedRef.current || busyRef.current || batchBusyRef.current) return;
+    const frozenExpectedIdentity = currentQuotaIdentity.trim();
+    const frozenActive = stateRef.current?.active;
+
+    busyRef.current = true;
+    setBusy(true);
+    setQuotaFeedback(tRef.current('identityCard.syncInitiated'));
+    try {
+      await invoke('identities_sync_subscription', { expectedIdentity: frozenExpectedIdentity });
+      if (!mountedRef.current) return;
+      if (!isExpectedCurrentTarget(stateRef.current, { active: frozenActive, expectedIdentity: frozenExpectedIdentity })) {
+        setQuotaFeedback(tRef.current('quotaOnline.accountMismatch'));
+        return;
+      }
+      if (mountedRef.current) {
+        await read(false);
+        setQuotaFeedback(tRef.current('identityCard.syncCompleted'));
+      }
+    } catch (e) {
+      setQuotaFeedback(tRef.current(String(e)));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
   async function read(invalidateResidue = true) {
+    const seq = ++readSeqRef.current;
     setLoading(true);
     try {
       const next = await invoke<IdentityState>('identities_read');
+      if (!mountedRef.current || seq < readSeqRef.current) {
+        return false;
+      }
       setState(next);
       setReadReady(true);
       if (invalidateResidue) setResidueRevision(value => value + 1);
@@ -248,10 +731,14 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       }
       return true;
     } catch (e) {
-      setError(String(e));
+      if (mountedRef.current && seq >= readSeqRef.current) {
+        setError(String(e));
+      }
       return false;
     } finally {
-      setLoading(false);
+      if (mountedRef.current && seq >= readSeqRef.current) {
+        setLoading(false);
+      }
     }
   }
   async function copyQuotaDiagnostic() {
@@ -471,10 +958,47 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     <section className="identity-page">
       <header className="cleanup-title">
         <h1>{t('身份管理')}</h1>
-        <Button variant="secondary" size="small" disabled={locked || loading} leftIcon={<Refresh aria-hidden size={16} className={loading ? 'spin' : ''} />} onClick={() => void read()}>
-          {t('刷新')}
-        </Button>
+        <div className="identity-header-actions">
+          <Button
+            variant="secondary"
+            size="small"
+            disabled={actionLocked || batchBusy}
+            loading={batchBusy}
+            leftIcon={<Refresh aria-hidden size={16} className={batchBusy ? 'spin' : ''} />}
+            title={t('quotaOnline.browserFallbackHint')}
+            onClick={() => void refreshAllQuotas(true)}
+          >
+            {batchBusy && batchSummary.total > 0
+              ? t('quotaOnline.queryingCount', {completed: batchSummary.completed, total: batchSummary.total})
+              : t('quotaOnline.refreshAll')}
+          </Button>
+          <Button
+            variant="secondary"
+            size="small"
+            disabled={locked || loading}
+            onClick={() => void read(false)}
+          >
+            {t('quota.refreshLocal')}
+          </Button>
+        </div>
       </header>
+
+      {batchBusy && <div className="identity-batch-task" role="status" aria-live="polite">
+        <span>{t('quotaOnline.taskRunning', {completed: batchSummary.completed, total: batchSummary.total})}</span>
+        {batchSummary.deadlineAtMs && <span>{t('quotaOnline.taskDeadline', {v0: Math.max(0, Math.ceil((batchSummary.deadlineAtMs - Date.now()) / 1000))})}</span>}
+        {batchSummary.notRunCount ? <span>{t('quotaOnline.taskRemaining', {count: batchSummary.notRunCount})}</span> : null}
+        <Button variant="secondary" size="small" disabled={batchCancelingRef.current} loading={batchCancelingRef.current} onClick={() => void cancelBatch()}>
+          {t(batchCancelingRef.current ? 'quotaOnline.cancelling' : 'quotaOnline.cancelBatch')}
+        </Button>
+      </div>}
+
+      <IdentityConnections
+        items={connectionQueueItems}
+        busy={batchBusy || busy || loading || !!state?.recovery}
+        t={t}
+        onOpen={target => void openAccountBrowser(target)}
+        onRetry={targets => void refreshAllQuotas(true, targets)}
+      />
 
       {error && (
         <p role="alert" className="cleanup-feedback error">
@@ -499,6 +1023,14 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             </span>
           </div>
           <div className="identity-library-controls">
+            <label className="identity-auto-refresh-toggle" title={t('identityCard.foregroundAutoRefreshHint')}>
+              <Switch
+                checked={foregroundAutoRefresh}
+                onCheckedChange={checked => setForegroundAutoRefresh(checked)}
+                aria-label={t('identityCard.foregroundAutoRefresh')}
+              />
+              <span>{t('identityCard.foregroundAutoRefresh')}</span>
+            </label>
             <Button variant="secondary" size="small" disabled={blocked || current?.present === false} onClick={() => choose('empty')}>
               {current?.present === false ? t('当前为新身份') : t('新身份')}
             </Button>
@@ -560,15 +1092,35 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             </IdentityCard>
           )}
           {(loading || current?.present) && (
-            <IdentityCard className="identity-card current" label={t('当前身份')}>
+            <IdentityCard className={`identity-card current ${state?.running ? 'running' : 'stopped'}`} running={state?.running} label={t('当前身份')}>
               <div className="identity-card-head">
                 <div className="identity-avatar" aria-hidden="true">
                   {active?.name || current?.display_name || current?.email ? Array.from(currentName)[0]?.toUpperCase() : <ShieldCheck size={20} />}
                 </div>
-                <span className="identity-live-badge">{loading ? t('检查中') : state?.running ? t('运行中') : t('进程已停止')}</span>
-
+                <span className={`identity-live-badge ${state?.running ? 'running' : 'stopped'}`}>{loading ? t('检查中') : state?.running ? t('运行中') : t('进程已停止')}</span>
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button type="button" className="identity-menu-trigger" aria-label={t('identityCard.moreActions')}>
+                      ⋯
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
+                      <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={() => void syncSubscription()}>
+                        {t('identityCard.syncSubscription')}
+                      </DropdownMenu.Item>
+                      <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={openSnapshot}>
+                        {t(active ? '更新备份' : '保存备份')}
+                      </DropdownMenu.Item>
+                      <DropdownMenu.Separator className="identity-menu-separator" />
+                      <DropdownMenu.Item className="identity-menu-item danger" disabled={blocked} onSelect={() => confirmDelete('current')}>
+                        {t('直接删除')}
+                      </DropdownMenu.Item>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
               </div>
-              <IdentityName name={currentName} email={current?.email} accountName={current?.display_name} privacyMask={prefs.privacyMask} t={t} />
+              <IdentityName name={currentName} email={current?.email} accountName={current?.display_name} plan={current?.plan} privacyMask={prefs.privacyMask} t={t} />
               <div className="identity-account identity-email-line">
                 {current?.email ? (
                   <span className="identity-email" title={maskEmailAddress(current.email, prefs.privacyMask)}>{maskEmailAddress(current.email, prefs.privacyMask)}</span>
@@ -576,18 +1128,17 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   <span className="identity-account-unknown">{t(current?.unavailable ? '账号信息暂不可读' : '账号信息未识别')}</span>
                 )}
               </div>
-              <div className="identity-meta-line" title={prefs.privacyMask ? undefined : current?.proxy || undefined}>
-                <span className={`identity-meta-badge plan ${current?.plan ? '' : 'unknown'}`}>{current?.plan || t('identityCard.planUnknown')}</span>
-                {current?.auth_status && <span className={`identity-meta-badge auth-${current.auth_status}`}>{authBadgeLabel(current.auth_status, t)}</span>}
-              </div>
+              {current?.auth_status === 'expired' && !hasRecentOnlineVerification('current', current.quota_identity) && (
+                <div className="identity-meta-line" title={prefs.privacyMask ? undefined : current?.proxy || undefined}>
+                  <span className="identity-meta-badge auth-expired">{t('identityCard.reauthRequired')}</span>
+                </div>
+              )}
               <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:active?.id || 'current', name:currentName});setQuotaFeedback('');}} />
-              <SubscriptionExpiry expiresAt={current?.subscription_expires_at} locale={locale} t={t} />
+              <SubscriptionAndResets meta={current} locale={locale} t={t} />
+              {cardStatusMap['current'] && cardStatusMap['current'].expectedIdentity === current?.quota_identity && <span className={`identity-card-status ${cardStatusMap['current'].isError ? 'error' : ''}`} title={formatOnlineQuotaStatus(cardStatusMap['current'].result, nowSec * 1000, t).message}>{formatOnlineQuotaStatus(cardStatusMap['current'].result, nowSec * 1000, t).message}</span>}
               <div className="identity-card-footer">
                 <Button variant="secondary" size="small" disabled={blocked} onClick={openSnapshot}>
                   {t(active ? '更新备份' : '保存备份')}
-                </Button>
-                <Button variant="ghost" size="small" disabled={blocked} onClick={() => confirmDelete('current')}>
-                  {t('直接删除')}
                 </Button>
               </div>
             </IdentityCard>
@@ -595,45 +1146,54 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           {visibleSaved.map(row => {
             const summary = state?.summaries?.[row.id];
             const savedQuota = evaluateQuota(summary, nowSec);
-            const isRecommended = recommendSaved?.row.id === row.id;
             return (
-              <IdentityCard className="identity-card" key={row.id} title={new Date(row.saved_at).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})}>
+              <IdentityCard className="identity-card" key={row.id} title={`${new Date(row.saved_at).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})} · ${formatBytes(row.bytes)}`}>
                 <div className="identity-card-head">
                   <div className="identity-avatar" aria-hidden="true">
                     {Array.from(row.name)[0]?.toUpperCase()}
                   </div>
-                  <span className="identity-size">{formatBytes(row.bytes)}</span>
-
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button type="button" className="identity-menu-trigger" aria-label={t('identityCard.moreActions')}>
+                        ⋯
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
+                        <DropdownMenu.Item
+                          className="identity-menu-item"
+                          disabled={blocked}
+                          onSelect={() => {
+                            setRename(row);
+                            setRenameValue(row.name);
+                            setError('');
+                          }}
+                        >
+                          {t('重命名')}
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Separator className="identity-menu-separator" />
+                        <DropdownMenu.Item className="identity-menu-item danger" disabled={blocked} onSelect={() => confirmDelete(row)}>
+                          {t('删除')}
+                        </DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
                 </div>
-                <IdentityName name={row.name} email={summary?.email} accountName={summary?.display_name} privacyMask={prefs.privacyMask} saved t={t} />
+                <IdentityName name={row.name} email={summary?.email} accountName={summary?.display_name} plan={summary?.plan} privacyMask={prefs.privacyMask} saved t={t} />
                 <div className="identity-account identity-email-line saved">
                   {summary?.email ? <span className="identity-email" title={maskEmailAddress(summary.email, prefs.privacyMask)}>{maskEmailAddress(summary.email, prefs.privacyMask)}</span> : <span className="identity-account-unknown">{t('identityCard.emailUnavailable')}</span>}
                 </div>
-                <div className="identity-meta-line" title={prefs.privacyMask ? undefined : summary?.proxy || undefined}>
-                  <span className={`identity-meta-badge plan ${summary?.plan ? '' : 'unknown'}`}>{summary?.plan || t('identityCard.planUnknown')}</span>
-                  {summary?.auth_status && <span className={`identity-meta-badge auth-${summary.auth_status}`}>{authBadgeLabel(summary.auth_status, t)}</span>}
-                  {isRecommended && <span className="identity-meta-badge ok">{t('推荐切换')}</span>}
-                </div>
+                {summary?.auth_status === 'expired' && !hasRecentOnlineVerification(row.id, summary.quota_identity) && (
+                  <div className="identity-meta-line" title={prefs.privacyMask ? undefined : summary?.proxy || undefined}>
+                    <span className="identity-meta-badge auth-expired">{t('identityCard.reauthRequired')}</span>
+                  </div>
+                )}
                 <IdentityQuota quota={savedQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:row.id, name:row.name});setQuotaFeedback('');}} />
-                <SubscriptionExpiry expiresAt={summary?.subscription_expires_at} locale={locale} t={t} />
+                <SubscriptionAndResets meta={summary} locale={locale} t={t} />
+                {cardStatusMap[row.id]?.expectedIdentity === summary?.quota_identity && cardStatusMap[row.id] && <span className={`identity-card-status ${cardStatusMap[row.id].isError ? 'error' : ''}`} title={formatOnlineQuotaStatus(cardStatusMap[row.id].result, nowSec * 1000, t).message}>{formatOnlineQuotaStatus(cardStatusMap[row.id].result, nowSec * 1000, t).message}</span>}
                 <div className="identity-card-footer">
                   <Button variant="secondary" size="small" disabled={blocked} onClick={() => choose(row)}>
                     {t('切换')}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="small"
-                    disabled={blocked}
-                    onClick={() => {
-                      setRename(row);
-                      setRenameValue(row.name);
-                      setError('');
-                    }}
-                  >
-                    {t('重命名')}
-                  </Button>
-                  <Button variant="ghost" size="small" disabled={blocked} onClick={() => confirmDelete(row)}>
-                    {t('删除')}
                   </Button>
                 </div>
               </IdentityCard>
@@ -641,6 +1201,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           })}
           {saved.length > 0 && visibleSaved.length === 0 && <div className="identity-filter-empty" role="status"><span>{t('identitySearch.empty')}</span><Button variant="secondary" size="small" onClick={() => setSearch('')}>{t('identitySearch.clear')}</Button></div>}
         </div>
+        {!quotaDetails && (quotaFeedback || batchSummary.completed > 0) && <p className="identity-online-feedback" role="status">{quotaFeedback || formatBatchProgress(batchSummary, t)}{unverifiedQuotaTargets > 0 && <> · {t('quotaOnline.unverifiedTargets', {count:unverifiedQuotaTargets})}</>}</p>}
         <IdentityOperationProgress activity={activity.state} />
       </section>
       <Disclosure
@@ -681,6 +1242,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         description={t('quota.localOnly')}
         footer={<>
           <Button variant="secondary" disabled={busy || loading} onClick={() => void read(false)}>{t('quota.refreshLocal')}</Button>
+          {detailsAreCurrent && (
+            <Button variant="secondary" disabled={busy || loading || !state?.browser.enabled} onClick={() => void syncSubscription()}>{t('quota.syncSubscription')}</Button>
+          )}
           <Button variant="secondary" loading={busy} disabled={busy || !detailsAreCurrent || !!state?.recovery} onClick={() => void openUsagePage()}>{t('quota.openOfficial')}</Button>
         </>}
       >
@@ -701,8 +1265,62 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           })}
           <p className="identity-quota-note">{t('quota.independentWindows')}</p>
           {(detailsQuota?.inferred5h || detailsQuota?.inferred7d) && <p className="identity-quota-note">{t('quota.resetInferredHint')}</p>}
-          <div className="identity-confirm-target"><span>{t('quota.resetCount')}</span><strong>{t('identityCard.notProvided')}</strong></div>
-          <div className="identity-confirm-target"><span>{t('quota.resetSchedule')}</span><strong>{t('identityCard.notProvided')}</strong></div>
+          <div className="identity-confirm-target">
+            <span>{t('quota.resetSchedule')}</span>
+            <strong>
+              {detailsSummary?.billing_date && (detailsSummary.billing_date_kind === 'next_renewal' || detailsSummary.billing_date_kind === 'access_until') ? (
+                `${formatSubscriptionAndResets(detailsSummary, locale, t).billing?.label || t('identityCard.nextRenewal')}: ${new Date(detailsSummary.billing_date * 1000).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {year: 'numeric', month: 'short', day: 'numeric'})}`
+              ) : (
+                t('identityCard.notProvided')
+              )}
+            </strong>
+          </div>
+          {detailsSummary?.billing_date && (detailsSummary.billing_date_kind === 'next_renewal' || detailsSummary.billing_date_kind === 'access_until') && (
+            <div className="identity-confirm-target">
+              <span>{t('quota.billingObservedAt')}</span>
+              <strong>
+                {detailsSummary.billing_observed_at_ms || detailsSummary.metadata_observed_at_ms ? (
+                  new Date(detailsSummary.billing_observed_at_ms ?? detailsSummary.metadata_observed_at_ms!).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')
+                ) : (
+                  t('identityCard.notProvided')
+                )}
+              </strong>
+            </div>
+          )}
+          <div className="identity-confirm-target">
+            <span>{t('quota.resetCount')}</span>
+            <strong>
+              {typeof detailsSummary?.manual_resets_remaining === 'number' && Number.isInteger(detailsSummary.manual_resets_remaining) && detailsSummary.manual_resets_remaining >= 0 ? (
+                t('identityCard.manualResetsCount', {v0: detailsSummary.manual_resets_remaining})
+              ) : (
+                t('identityCard.notProvided')
+              )}
+            </strong>
+          </div>
+          {typeof detailsSummary?.manual_resets_remaining === 'number' && Number.isInteger(detailsSummary.manual_resets_remaining) && detailsSummary.manual_resets_remaining >= 0 && (
+            <div className="identity-confirm-target">
+              <span>{t('quota.manualResetsObservedAt')}</span>
+              <strong>
+                {detailsSummary.manual_resets_observed_at_ms || detailsSummary.metadata_observed_at_ms ? (
+                  new Date(detailsSummary.manual_resets_observed_at_ms ?? detailsSummary.metadata_observed_at_ms!).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')
+                ) : (
+                  t('identityCard.notProvided')
+                )}
+              </strong>
+            </div>
+          )}
+          {detailsSavedRecord && (
+            <>
+              <div className="identity-confirm-target">
+                <span>{t('quota.backupArchive')}</span>
+                <strong>{formatBytes(detailsSavedRecord.bytes)}</strong>
+              </div>
+              <div className="identity-confirm-target">
+                <span>{t('quota.savedAt')}</span>
+                <strong>{new Date(detailsSavedRecord.saved_at).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')}</strong>
+              </div>
+            </>
+          )}
           <p className="identity-quota-note">{t('quota.resetHint')}</p>
           <div className="identity-confirm-target"><span>{t('quotaSetup.status')}</span><strong>{t(quotaSetupError ? 'quotaSetup.unavailable' : !quotaSetup ? 'quotaSetup.checking' : 'quotaSetup.' + quotaSetup.state)}</strong></div>
           <p className="identity-quota-note">{t(quotaSetup?.collector_bundled ? 'quotaSetup.runtimeUnverified' : 'quotaSetup.notBundled')}</p>
@@ -963,12 +1581,13 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 }
 
 // ----- 工牌保留清晰文字与 CSS 阴影悬停，不用 3D 变换栅格化文字 -----
-function IdentityCard({className, children, label, title}: {className: string; children: ReactNode; label?: string; title?: string}) {
+function IdentityCard({className, children, label, title, running}: {className: string; children: ReactNode; label?: string; title?: string; running?: boolean}) {
   return (
     <article
       className={className}
       aria-label={label}
       title={title}
+      data-running={running !== undefined ? (running ? "true" : "false") : undefined}
     >
       {children}
     </article>

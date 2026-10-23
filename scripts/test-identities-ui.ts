@@ -9,7 +9,7 @@ import {resolve,join} from 'node:path';
 import {mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {createServer} from 'vite';
-import {chromium} from 'playwright-core';
+import {chromium, type Locator} from 'playwright-core';
 import {testBrowserVerification} from './test-browser-verification.ts';
 import {testBrowserProfiles} from './test-browser-profiles.ts';
 import {testBrowserCleanup} from './test-browser-cleanup.ts';
@@ -17,7 +17,14 @@ import {testNetworkDiagnostics} from './test-network-diagnostics.ts';
 import {testClaudeResidue} from './test-claude-residue.ts';
 import {testIdentityOperation} from './test-identity-operation.ts';
 import {testQuotaReset} from './test-quota-reset.ts';
+import {testIdentityOnline} from './test-identity-online.ts';
 const quotaResetOnly=process.argv.includes('--quota-reset-only');
+const onlineOnly=process.argv.includes('--online-only');
+const cardsOnly=process.argv.includes('--cards-only');
+async function cardAction(card:Locator,name:string){
+ await card.getByRole('button',{name:/^(更多操作|More actions)$/}).click();
+ await card.page().getByRole('menuitem',{name,exact:true}).click();
+}
 const engine=process.platform==='darwin'?'Browser.app/Contents/MacOS/Chromium':process.platform==='win32'?'WindowsBrowser/chrome.exe':'LinuxBrowser/chrome';
 const server=await createServer({server:{host:'127.0.0.1',port:0,strictPort:false,watch:{ignored:['**/src-tauri/**','**/browser-runtime/**','**/releases/**','**/dist/**']}},optimizeDeps:{include:['@tauri-apps/api/mocks']}});
 await server.listen();
@@ -33,7 +40,10 @@ try{browser=await chromium.launch({executablePath:resolve('browser-runtime',engi
 catch(error){await server.close();await rm(temporary,{recursive:true,force:true});throw error;}
 let checks=0;
 try{
- if(quotaResetOnly){
+ if(onlineOnly){
+  checks+=await testIdentityOnline(browser,base);
+  console.log(`${checks} online quota/card UI checks passed; synthetic IPC only.`);
+ }else if(quotaResetOnly){
   checks+=await testQuotaReset(browser,base);
   console.log(`${checks} quota reset UI simulation checks passed; no native commands or user data used.`);
  }else{
@@ -41,7 +51,7 @@ try{
  await context.route('**/*',route=>route.request().url().startsWith(base+'/')?route.continue():route.abort());
  const page=await context.newPage();page.setDefaultTimeout(10000);
  const errors:string[]=[];page.on('console',message=>{if(message.type()==='error')console.error(message.text());});page.on('pageerror',error=>{errors.push(error.message);console.error(error.message);});
- await page.goto(base+'/tests/identities.html');
+ await page.goto(base+'/tests/identities.html',{waitUntil:'domcontentloaded',timeout:30000});
  await page.evaluate(async()=>{const prefs=await import('/src/settings-model.ts');await prefs.synchronizePrivacyPreference(false);});
  const cards=page.locator('.identity-card');
  await page.getByText('fixture@example.invalid',{exact:true}).waitFor();
@@ -82,7 +92,7 @@ try{
  quotaDialog=page.getByRole('dialog');
  assert.equal(await quotaDialog.getByRole('button',{name:'打开官方用量页',exact:true}).isEnabled(),false);
  await quotaDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();checks++;
- await current.getByRole('button',{name:'直接删除',exact:true}).click();
+ await cardAction(current,'直接删除');
  await page.getByRole('alertdialog').getByText('PID 4201',{exact:true}).waitFor();
  await page.getByRole('alertdialog').getByRole('button',{name:'取消',exact:true}).click();checks++;
 
@@ -99,14 +109,14 @@ try{
  await rail.evaluate(node=>{node.scrollLeft=0;});
  await page.waitForFunction(()=>document.querySelector('.identity-card-rail')!.scrollLeft<1);
  await page.mouse.move(10,10);
- await current.getByRole('button',{name:'直接删除',exact:true}).click();
+ await cardAction(current,'直接删除');
   let dialog=page.getByRole('alertdialog');await dialog.waitFor();
  assert.match(await dialog.innerText(),/不可撤销/);assert.equal(await dialog.getByRole('button',{name:'确认直接删除'}).isEnabled(),false);
  assert.equal(await dialog.getByRole('button',{name:'取消'}).evaluate(node=>node===document.activeElement),true);
  await page.mouse.click(3,3);assert.equal(await dialog.count(),1);
  await dialog.getByRole('button',{name:'取消'}).click();
  assert.equal(await page.evaluate(()=>((window as any).identityFixture.commands as any[]).filter(row=>row.command==='identities_delete').length),0);checks++;
- assert.match(await current.innerText(),/Pro/);assert.match(await current.innerText(),/凭据有效/);
+ assert.match(await current.innerText(),/Pro/i);assert.doesNotMatch(await current.innerText(),/凭据有效|待自动续期|推荐切换/);
  assert.match(await current.locator('[data-quota-window="5h"]').innerText(),/剩余 65%/);
  assert.match(await current.locator('[data-quota-window="7d"]').innerText(),/剩余 60%/);
  const savedSecond=cards.filter({has:page.getByRole('heading',{name:'Identity 2',exact:true})});
@@ -136,14 +146,14 @@ try{
  await page.getByRole('dialog').getByRole('button',{name:'确认暂存并切换'}).click();await page.locator('.identity-card.current').getByRole('heading',{name:'Identity 3',exact:true}).waitFor();checks++;
  assert.equal(await target.count(),0);checks++;
  const bound=cards.filter({has:page.getByRole('heading',{name:'Identity 1',exact:true})});
- await bound.getByRole('button',{name:'删除',exact:true}).click();
+ await cardAction(bound,'删除');
  const browserDeletion=page.getByRole('alertdialog');
  assert.equal(await browserDeletion.getByRole('checkbox',{name:'同时永久删除关联浏览器资料'}).isChecked(),false);
  await browserDeletion.getByRole('button',{name:'取消',exact:true}).click();checks++;
  const other=page.locator('.identity-card:not(.current)').filter({has:page.getByRole('heading',{name:'Identity 4',exact:true})});
  const beforeRename=await other.evaluate(node=>{const card=node.getBoundingClientRect(),heading=node.querySelector('h3')!.getBoundingClientRect(),email=node.querySelector('.identity-email')!.getBoundingClientRect();return {width:card.width,height:card.height,headingHeight:heading.height,emailOffset:email.top-card.top};});
  const renamedLabel='Renamed fixture — synthetic long local account archive name';
- await other.getByRole('button',{name:'重命名',exact:true}).click();
+ await cardAction(other,'重命名');
  await page.getByRole('dialog').getByRole('textbox',{name:'身份名称'}).fill(renamedLabel);
  await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click();
  const renamed=cards.filter({has:page.getByRole('heading',{name:renamedLabel,exact:true})});await renamed.waitFor();
@@ -161,13 +171,13 @@ try{
  const renamedSummary=await page.evaluate(()=>(window as any).identityFixture.state.summaries['00000000000000000000000000000004']);
  assert.equal(renamedSummary.display_name,'Identity 4','Renaming a local archive must preserve its account metadata');
  await page.evaluate(async()=>{const {updatePreferences}=await import('/src/settings-model.ts');updatePreferences({privacyMask:true});});
- await page.waitForFunction(label=>{const heading=Array.from(document.querySelectorAll('h3[data-identity-name]')).find(node=>node.textContent===label);return heading&&!heading.getAttribute('aria-description')?.includes('Identity 4');},renamedLabel);
+ await page.waitForFunction(label=>{const heading=Array.from(document.querySelectorAll('h3[data-identity-name]')).find(node=>node.querySelector('strong')?.textContent===label);return heading&&!heading.getAttribute('aria-description')?.includes('Identity 4');},renamedLabel);
  assert.equal((await renamedTitle.getAttribute('title')||'').includes('Identity 4'),false);
  assert.equal((await renamed.locator('h3[data-identity-name]').getAttribute('aria-description')||'').includes('Identity 4'),false);
  assert.equal((await renamed.locator('.identity-email').getAttribute('title')||'').includes('user4@example.invalid'),false);
  await page.evaluate(async()=>{const {updatePreferences}=await import('/src/settings-model.ts');updatePreferences({privacyMask:false});});
  checks++;
- await renamed.getByRole('button',{name:'删除',exact:true}).click();dialog=page.getByRole('alertdialog');
+ await cardAction(renamed,'删除');dialog=page.getByRole('alertdialog');
  await dialog.getByRole('checkbox',{name:'我知道此操作无法撤销'}).check();
  await dialog.getByRole('button',{name:'确认直接删除'}).click();await renamed.waitFor({state:'detached'});
  assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);checks++;
@@ -178,7 +188,7 @@ try{
  await page.getByRole('dialog').getByRole('button',{name:'Archive & switch'}).click();
  await page.getByText(/fixture operation failed/).first().waitFor();assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);checks++;
  await page.evaluate(()=>{(window as any).identityFixture.recover();});
- await page.getByRole('button',{name:'Refresh',exact:true}).click();
+ await page.getByRole('button',{name:'Refresh local records',exact:true}).click();
  await page.getByRole('button',{name:'Restore previous identity',exact:true}).click();
  await page.getByRole('dialog').getByRole('button',{name:'Restore'}).click();
  await page.waitForFunction(()=>(window as any).identityFixture.state.recovery===null);checks++;
@@ -186,18 +196,20 @@ try{
  await page.mouse.move(10,10);await page.waitForTimeout(250);
  const before=await current.getAttribute('style');await current.hover();await page.waitForTimeout(150);
  assert.equal(await current.getAttribute('style'),before);checks++;
- await current.getByRole('button',{name:'Delete permanently',exact:true}).click();dialog=page.getByRole('alertdialog');
+ await cardAction(current,'Delete permanently');dialog=page.getByRole('alertdialog');
  await dialog.getByRole('checkbox',{name:'I understand this cannot be undone'}).check();
  const count=await page.evaluate(()=>(window as any).identityFixture.state.records.length);
  await dialog.getByRole('button',{name:'Confirm deletion',exact:true}).click();
  await current.waitFor({state:'detached'});assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.records.length),count);checks++;
  assert.equal(errors.length,0,errors.join('\n'));
+ if(!cardsOnly){
  checks+=await testBrowserVerification(browser,base);
  checks+=await testBrowserCleanup(browser,base);
  checks+=await testNetworkDiagnostics(browser,base);
  checks+=await testClaudeResidue(browser,base);
  checks+=await testIdentityOperation(browser,base);
  checks+=await testBrowserProfiles(resolve('browser-runtime',engine),base,temporary,env);
+ }
   checks+=await testQuotaReset(browser,base);
   console.log(`${checks} identity, browser, network and quota reset UI simulation checks passed; no native commands or user data used.`);
  }
