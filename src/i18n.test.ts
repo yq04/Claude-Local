@@ -71,3 +71,23 @@ test('YAML 目录中无重复顶级键',()=>{
     expect(dupes).toEqual([]);
   }
 });
+
+test('原生额度命令错误也能在两种语言中显示人类可读文案',()=>{
+  const nativeFiles=[
+    '../src-tauri/src/identities/online.rs',
+    '../src-tauri/src/browser/quota_bridge.rs',
+    '../src-tauri/src/browser/quota_connection.rs',
+    '../src-tauri/src/browser/quota_existing.rs',
+  ];
+  const nativeKeys=new Set(nativeFiles.flatMap(path=>
+    [...readFileSync(new URL(path,import.meta.url),'utf8').matchAll(/"(quotaOnline\.[A-Za-z0-9_.]+)"/g)].map(match=>match[1])));
+  expect(nativeKeys.has('quotaOnline.unavailable')).toBe(true);
+  expect(nativeKeys.has('quotaOnline.busy')).toBe(true);
+  for(const language of ['zh','en'] as const){
+    for(const key of nativeKeys){
+      const message=translate(key,{},language);
+      expect(message).not.toBe(key);
+      expect(message).not.toMatch(/\{\w+\}/);
+    }
+  }
+});
