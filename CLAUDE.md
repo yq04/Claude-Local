@@ -58,3 +58,4 @@ docs/plans/2026-10-23-functional-review/06-SOURCE-CANDIDATE.json - Hashes of the
 docs/RELEASE_NOTES_0.2.0.md - Online quota orchestration, authenticated archive/backup rescue, system modification auditing, proxy and runtime capability gates, and manual handoff import/export; release delivery with separate build and verification receipts.
 docs/RELEASE_VERIFICATION_0.2.0.md - Exact CI/source tag, independent frontend/package audit, backed-up local update and eight-asset private publication; real-account and installer acceptance remain separate.
 docs/RELEASE_NOTES_0.2.1.md - Local quota synchronization restored as default, CLI-cache metadata change detection and repaired helper translations; optional online controls preserve account isolation.
+docs/QUOTA_RECOVERY_0.2.1.md - User-selected passive quota recovery, metadata/translation root causes, isolated checks and verified 0.2.1 package/local update/private delivery.

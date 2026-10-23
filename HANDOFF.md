@@ -1,14 +1,24 @@
 <!--
-[INPUT]: Verified 0.2.0 CI/private publication, independent package audit, backed-up local update/runtime receipts and retained history.
-[OUTPUT]: Current 0.2.0 delivery handoff, exact source/build references and remaining real-account/installer acceptance.
+[INPUT]: Verified 0.2.1 passive-quota recovery, CI/private publication, independent audit and backed-up local update receipts.
+[OUTPUT]: Current local-first quota behavior, 0.2.1 delivery references and retained prior release history.
 [POS]: Repository root handoff; private installation details, probes, PIDs and receipts stay in ignored .local/.
 [PROTOCOL]: Copy this file into .local/handoff-archive/ and verify SHA256 before any rewrite. Documentation-only changes do not rebuild or move product tags.
 -->
 # Claude-Local 会话交接与下一步指南
 
-更新日期：2026-10-23。新会话先完整阅读本文与根目录 `CLAUDE.md`、`AGENTS.md`。当前已安装并私有预发布 **0.2.0**；下文保留实施阶段和0.1.8历史，旧“尚未发布/实现”描述不代表当前状态。
+更新日期：2026-10-23。新会话先完整阅读本文与根目录 `CLAUDE.md`、`AGENTS.md`。当前已安装并私有预发布 **0.2.1**，恢复本地额度同步为默认。下文保留0.2.0及更早历史，旧默认在线查询/未发布描述不代表当前状态。
 
-## 当前交付：0.2.0
+## 当前交付：0.2.1 额度同步恢复
+
+用户反馈0.2.0在线刷新难用，明确选择保留其他功能、恢复旧版本地同步，不回退整个程序。顶部“同步本地额度”统一读取本地观测；CLI `/usage` 或既有采集器写入新缓存后，可见身份页约两秒拾取。在线查询及错误队列默认折叠，关闭即停用定时在线查询；默认卡片不显示旧在线错误或空订阅占位。
+
+修复了监测遗漏CLI配置变化及额度辅助模块文案缺失，保留账号隔离和真实来源标记。详细原因、用法与边界见 [0.2.1额度恢复记录](docs/QUOTA_RECOVERY_0.2.1.md)。产品标签 `v0.2.1` 固定指向 `08326745c6b44b43237fdadbb50c07d10d4a9541`；[构建39997277428](https://github.com/yq04/Claude-Local/actions/runs/39997277428)及主分支独立检查39997273081均成功。
+
+本机102个文件核验通过，7个文件先备份后替换，主窗口/额度核心/Rust后端通过。109项资源及13项私密探针审计零发现，前端10个文件独立复现一致。[私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.2.1)的8项资产逐项下载验SHA256，旧版本及内部build草稿保持不变。证据在 `.local/release-0.2.1/`，备份位置由 `.local/last-local-update.json` 记录。
+
+没有切换真实身份、执行在线额度查询或改写Claude配置，没有结束Claude/浏览器进程；更新前后Claude进程均为0。同步仍依赖CLI实际落盘，不承诺所有保存账号的服务器额度实时更新。本次交付完成，不因旧报告再次重装或重发；后续文档提交不移动产品标签。
+
+## 0.2.0 交付历史
 
 用户已明确授权更新、打包和发布0.2.0。产品提交及固定标签为 `774e41a2b982db31cf3241104d119c4edebda0ea` / `v0.2.0`；[正式构建39985744960](https://github.com/yq04/Claude-Local/actions/runs/39985744960)及主分支独立检查39985743576均成功。[私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.2.0)含8项已逐项下载并验SHA256的资产，仓库仍为私有，内部build草稿不发布，旧标签不移动。
 
