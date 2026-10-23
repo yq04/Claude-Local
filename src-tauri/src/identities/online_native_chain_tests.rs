@@ -1,5 +1,5 @@
 // [INPUT]: Fresh synthetic private roots, staged public Python sources and a deterministic test transport.
-// [OUTPUT]: Shared native command core -> runtime/resource resolution -> real grant/ledger -> native projection evidence.
+// [OUTPUT]: Real cold-runtime deadline/cancellation and shared native core -> runtime/resource resolution -> grant/ledger -> projection evidence.
 // [POS]: cfg(test)-only integration fixture; the Tauri adapter and browser launch/WebView remain separately tested seams.
 // [PROTOCOL]: No HOME/AppData resolution, external network, real accounts, process stopping or recursive cleanup.
 use super::*;
@@ -88,6 +88,61 @@ impl CollectorContext for Fixture {
         self.grants.fetch_add(1, Ordering::SeqCst);
         Ok(Door(self.cleaner.clone()))
     }
+}
+
+#[test]
+fn runtime_probe_accepts_delayed_real_crypto_once() {
+    let fixture = Fixture::new();
+    let script = fixture.root.join("installed/scripts/delayed_runtime.py");
+    fs::write(&script, r#"
+import pathlib,runpy,time
+root=pathlib.Path(__file__).parent
+with (root/'probe-starts.txt').open('a') as output: output.write('started\n')
+time.sleep(4.2)
+runpy.run_path(str(root/'quota_runtime.py'),run_name='__main__')
+"#).unwrap();
+    let mut attempts = 0;
+    let selected = select_runtime(|candidate| {
+        attempts += 1;
+        let result = runtime_probe(candidate, &script, None, Instant::now() + PREPARATION_BUDGET);
+        assert_eq!(result, Ok(()), "a valid cold runtime must survive a 4.2s startup");
+        result
+    });
+    assert_eq!(selected, Ok("python"));
+    assert_eq!(attempts, 1);
+    let starts = fs::read_to_string(script.with_file_name("probe-starts.txt")).unwrap();
+    assert_eq!(starts.lines().collect::<Vec<_>>(), vec!["started"]);
+}
+
+#[test]
+fn runtime_probe_deadline_and_cancellation_stop_slow_child() {
+    let fixture = Fixture::new();
+    let script = fixture.root.join("installed/scripts/slow_runtime.py");
+    fs::write(&script, "import time\ntime.sleep(20)\n").unwrap();
+    let started = Instant::now();
+    assert_eq!(runtime_probe("python", &script, None, started + Duration::from_millis(120)), Err("timeout"));
+    assert!(started.elapsed() < Duration::from_secs(5), "preparation deadline must stop a 20s child");
+
+    let task = Arc::new(QuotaTask {
+        snapshot: Mutex::new(BatchQuotaResult {
+            request_id: "synthetic-probe-cancellation".into(), results: vec![],
+            completed: 0, total: 0, state: QuotaTaskState::Running, targets: vec![],
+            started_at_ms: now_ms(), deadline_at_ms: now_ms() + 30_000,
+        }),
+        cancel: AtomicBool::new(false), deadline: Instant::now() + PREPARATION_BUDGET,
+    });
+    let cancel_task = task.clone();
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(120));
+        cancel_task.cancel.store(true, Ordering::SeqCst);
+    });
+    let started = Instant::now();
+    assert_eq!(runtime_probe("python", &script, Some(&task), started + PREPARATION_BUDGET), Err("timeout"));
+    canceller.join().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(5), "cancellation must not wait for the 10s probe limit");
+    assert_eq!(task.stopped(), Some(OnlineStatus::Cancelled));
+    // An expired preparation budget must reject before spawning any candidate.
+    assert_eq!(runtime_probe("definitely-missing-synthetic-runtime", &script, None, Instant::now()), Err("timeout"));
 }
 
 #[test]

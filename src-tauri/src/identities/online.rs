@@ -1,6 +1,6 @@
 // [INPUT]: Explicit account selectors and frozen fingerprints, the packaged Python collector and account-bound browser summaries.
 // [OUTPUT]: Bounded retained/cancellable batch snapshots and two-phase commit grants; Python owns every ledger write.
-// [POS]: Shared collector orchestration resolves installed resources outside the identity door and rechecks frozen identity/epoch at commit; synthetic fixtures inject only local context/transport.
+// [POS]: Shared orchestration allows 10s cold runtime probes within one 30s preparation budget outside the identity door; frozen identity/epoch is rechecked at commit.
 // [PROTOCOL]: Batch progress is quota-batch-progress; update identities/CLAUDE.md and the package resource allowlist.
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -20,6 +20,8 @@ use tauri::{Emitter, Manager};
 
 const MAX_QUOTA_BATCH: usize = 256;
 const BATCH_BUDGET: Duration = Duration::from_secs(120);
+const PREPARATION_BUDGET: Duration = Duration::from_secs(30);
+const RUNTIME_PROBE_BUDGET: Duration = Duration::from_secs(10);
 const COMMIT_GRACE: Duration = Duration::from_secs(45);
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -492,8 +494,12 @@ fn runtime_probe(
     executable: &str,
     script: &Path,
     task: Option<&QuotaTask>,
+    preparation_deadline: Instant,
 ) -> Result<(), &'static str> {
-    if task.is_some_and(|t| t.stopped().is_some()) {
+    let deadline = preparation_deadline
+        .min(task.map(|t| t.deadline).unwrap_or(preparation_deadline))
+        .min(Instant::now() + RUNTIME_PROBE_BUDGET);
+    if Instant::now() >= deadline || task.is_some_and(|t| t.stopped().is_some()) {
         return Err("timeout");
     }
     let mut command = Command::new(executable);
@@ -534,15 +540,19 @@ fn runtime_probe(
         let _ = stdout.take(4097).read_to_end(&mut bytes);
         let _ = tx.send(bytes);
     });
-    let started = Instant::now();
     let status = loop {
+        if Instant::now() >= deadline || task.is_some_and(|t| t.stopped().is_some()) {
+            #[cfg(windows)]
+            job.stop();
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
-            Ok(None)
-                if started.elapsed() < Duration::from_secs(4)
-                    && !task.is_some_and(|t| t.stopped().is_some()) =>
-            {
-                std::thread::sleep(Duration::from_millis(40))
+            Ok(None) => {
+                std::thread::sleep(deadline.saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(40)))
             }
             _ => {
                 #[cfg(windows)]
@@ -555,10 +565,14 @@ fn runtime_probe(
     };
     #[cfg(windows)]
     job.stop();
-    let bytes = rx
-        .recv_timeout(Duration::from_millis(250))
-        .unwrap_or_default();
     if status.is_none() {
+        return Err("timeout");
+    }
+    let bytes = rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(250)))
+        .unwrap_or_default();
+    if Instant::now() >= deadline || task.is_some_and(|t| t.stopped().is_some()) {
         return Err("timeout");
     }
     if !status.is_some_and(|status| status.success()) || bytes.len() > 4096 {
@@ -620,9 +634,14 @@ fn execute_with_gate<G>(
     task: Option<&QuotaTask>,
     mut acquire_grant: impl FnMut(Instant) -> Result<G, OnlineQuotaResult>,
 ) -> OnlineQuotaResult {
+    // Runtime selection and network preparation consume the same budget. A
+    // slow cold import must not reset the clock for every interpreter alias.
+    let deadline = task.map(|t| t.deadline)
+        .unwrap_or_else(|| Instant::now() + BATCH_BUDGET)
+        .min(Instant::now() + PREPARATION_BUDGET);
     let probe_script = script.with_file_name("quota_runtime.py");
     let executable =
-        match select_runtime(|executable| runtime_probe(executable, &probe_script, task)) {
+        match select_runtime(|executable| runtime_probe(executable, &probe_script, task, deadline)) {
             Ok(executable) => executable,
             Err(reason) => {
                 return task
@@ -634,10 +653,6 @@ fn execute_with_gate<G>(
     if let Some(status) = task.and_then(QuotaTask::stopped) {
         return terminal_result(status);
     }
-    let deadline = task
-        .map(|t| t.deadline)
-        .unwrap_or_else(|| Instant::now() + BATCH_BUDGET)
-        .min(Instant::now() + Duration::from_secs(30));
     let deadline_ms = now_ms()
         + deadline
             .saturating_duration_since(Instant::now())
