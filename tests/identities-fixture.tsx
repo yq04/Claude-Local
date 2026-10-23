@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Tauri 官方 mockIPC、真实身份/浏览器组件与虚构的内存状态。
- * [OUTPUT]: 40 个虚构身份、可控在线结果、持久批次快照/取消/恢复、残留清单与可释放 IPC，供无头浏览器验证任务恢复和身份隔离。
+ * [OUTPUT]: 40 个虚构身份、可控在线结果、被动额度 revision/read 故障注入、持久批次快照/取消/恢复、残留清单与可释放 IPC，供无头浏览器验证任务恢复和身份隔离。
  * [POS]: 独立测试入口；没有原生命令、真实目录、账号或网络，生产 rollup 不包含此入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -26,6 +26,9 @@ const browserState:BrowserState={ui_language:'zh',exit_services:[],region:null,c
 const commands:{command:string;args:any}[]=[];
 let fail='';
 let identityReads=0;
+let identityReadAttempts=0;
+let identityReadFailures=0;
+let quotaRevisionReads=0;
 const residue={scans:0,cleanMode:'success',remaining:['fixture-cache','fixture-history','fixture-account','fixture-incomplete']};
 const residueItems:Scan['items']=[
  {id:'fixture-cache',path:'/fixture/Claude/Cache',title:'虚构缓存',group:'cache',risk:'safe',impact:'可再生成',bytes:4096,files:2,exact:true,keys:[]},
@@ -35,10 +38,12 @@ const residueItems:Scan['items']=[
 ];
 type Pending={command:string;args:any;resolve:(value:unknown)=>void;reject:(error:Error)=>void;index:number};
 const deferred=new Set<string>(),pending:Pending[]=[];
+if((window as any).__deferInitialQuotaRevision)deferred.add('identities_quota_revision');
 let batchState:any=null;
 const eventListeners=new Map<number,{event:string;handler:number}>();let nextEventId=1;
 function emitFixtureEvent(event:string,payload:unknown){for(const [id,listener] of eventListeners){if(listener.event===event)(window as any).__TAURI_INTERNALS__.runCallback(listener.handler,{event,id,payload});}}
-const fixture={commands,state,residue,browser:browserState,browserBusy:false,quotaRevision:1,onlineResultsById:{} as Record<string,any>,onlineResult:{status:'updated',updated_windows:['5h','7d'],verified_at_ms:Date.now(),retry_at_ms:0},root:null as any,get identityReads(){return identityReads;},get pending(){return pending.map(row=>row.command);},language:setLocale,setFailure:(command:string)=>{fail=command;},recover:()=>{state.recovery=id(1);},
+const fixture={commands,state,residue,browser:browserState,browserBusy:false,quotaRevision:1,onlineResultsById:{} as Record<string,any>,onlineResult:{status:'updated',updated_windows:['5h','7d'],verified_at_ms:Date.now(),retry_at_ms:0},root:null as any,get identityReads(){return identityReads;},get identityReadAttempts(){return identityReadAttempts;},get identityReadFailures(){return identityReadFailures;},get quotaRevisionReads(){return quotaRevisionReads;},get pending(){return pending.map(row=>row.command);},language:setLocale,setFailure:(command:string)=>{fail=command;},recover:()=>{state.recovery=id(1);},
+ updatePassiveQuota:(used:number)=>{Object.assign(state.current,{quota_5h_used:used,quota_5h_source:'server_anchor',quota_5h_observed_at_ms:Date.now()});fixture.quotaRevision++;},
  emitEvent:emitFixtureEvent,
  get batch(){return batchState?structuredClone(batchState):null;},
  remountIdentity:()=>{
@@ -87,12 +92,13 @@ mockIPC((command,args:any)=>{
  return execute(command,args);
 });
 function execute(command:string,args:any){
+ if(command==='identities_read')identityReadAttempts++;
  if(command==='quota_setup_status')return {state:'not_configured',collector_bundled:false,has_statusline:false};
   if(command==='ui_privacy_read')return (window as any).__privacyPreference ?? null;
  if(command==='ui_privacy_write'){(window as any).__privacyPreference=args.masked;return;}
  if(command==='plugin:event|listen'){const id=nextEventId++;eventListeners.set(id,{event:args.event,handler:args.handler});return id;}
  if(command==='plugin:event|unlisten'){eventListeners.delete(args.eventId);return;}
- if(fail===command){fail='';throw Error('fixture operation failed');}
+ if(fail===command){fail='';if(command==='identities_read')identityReadFailures++;throw Error('fixture operation failed');}
  if(browserMode&&command==='browser_read')return structuredClone(browserState);
  if(browserMode&&command==='browser_default_read')return {is_default:true,http:'fixture',https:'fixture',installed:true,app:'Claude-Local Browser'};
  if(browserMode&&command==='browser_clear'){browserState.cache=[];return structuredClone(browserState);}
@@ -101,7 +107,7 @@ function execute(command:string,args:any){
  if(command==='browser_open_identity_profile')return;
  if(command==='browser_launch'){state.browser_warning=null;return {};}
  if(command==='identities_read'){identityReads++;return structuredClone(state);}
- if(command==='identities_quota_revision')return String(fixture.quotaRevision);
+ if(command==='identities_quota_revision'){quotaRevisionReads++;return String(fixture.quotaRevision);}
  if(command==='identities_quota_batch_state')return args.requestId===null?structuredClone(batchState):batchState?.request_id===args.requestId?structuredClone(batchState):null;
  if(command==='identities_cancel_quota_batch')return fixture.cancelBatch();
  if(command==='identities_refresh_all_quotas'){

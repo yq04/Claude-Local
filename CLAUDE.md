@@ -4,7 +4,7 @@ Independent Windows desktop application: Tauri/Rust native operations, React/Typ
 
 <directory>
 src/ - Main application, browser verification page, shared UI and bilingual catalogs.
-src/identities.tsx - Privacy-safe local identity search/sort, pinned current card, independent quota/observation ages, allowlisted diagnostic copy and review-only shell requests; inferred resets preserve the original evidence and cadence.
+src/identities.tsx - Pinned current card and saved-record order without search/sort controls, independent quota/observation ages, allowlisted diagnostic copy and review-only shell requests; local revision changes are acknowledged only after successful summary reads.
 src/quick-actions.tsx - On-demand independent environment reads, scoped recovery and six configuration destinations using shared page icons and effective browser targets.
 src/usage-statistics.tsx - Scoped token analytics, current-snapshot TSV copy/download and real IANA/DST intervals; responsive trend/model panels and visible-page refresh remain separate from hourly quota refresh.
 src/main.tsx / command-palette.tsx / task-handoff.tsx - Guarded Ctrl+K navigation/refresh/review and an in-memory manual handoff form with explicit preview/copy/download; no automatic identity actions or session reads.
@@ -60,3 +60,4 @@ docs/RELEASE_VERIFICATION_0.2.0.md - Exact CI/source tag, independent frontend/p
 docs/RELEASE_NOTES_0.2.1.md - Local quota synchronization restored as default, CLI-cache metadata change detection and repaired helper translations; optional online controls preserve account isolation.
 docs/QUOTA_RECOVERY_0.2.1.md - User-selected passive quota recovery, metadata/translation root causes, isolated checks and verified 0.2.1 package/local update/private delivery.
 docs/RELEASE_NOTES_0.2.2.md - Redundant identity-page descriptions removed, optional online tools moved to a secondary dialog, and native batch controls retained without changing identity/history guards.
+docs/RELEASE_NOTES_0.2.3.md - Removed unwanted identity filters, retried unacknowledged passive quota reads and preserved literal Markdown heading escapes; owner-authorized private update and packaging with separate delivery receipts.

@@ -1,11 +1,11 @@
 /**
  * [INPUT]: 原生身份命令、可恢复的原生额度批次状态/取消、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
- * [OUTPUT]: 180×286 身份工牌、默认本地额度刷新、按需打开的在线查询弹窗与严格指纹绑定的批次进度/取消/恢复。
+ * [OUTPUT]: 180×286 身份工牌、失败后重试的本地额度同步、按需打开的在线查询弹窗与严格指纹绑定的批次进度/取消/恢复。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect, useRef, useState, type ReactNode} from 'react';
-import {Button, Checkbox, Disclosure, Input, Select, Switch, useReducedMotionConfig, useSpring} from 'cromma-ui';
+import {Button, Checkbox, Disclosure, Input, Switch, useReducedMotionConfig, useSpring} from 'cromma-ui';
 import {DropdownMenu} from 'radix-ui';
 import {listen} from '@tauri-apps/api/event';
 import {formatOnlineQuotaStatus, formatSubscriptionAndResets, ForegroundQuotaScheduler, isExpectedCurrentTarget, isExpectedSavedTarget, buildBatchTargets, generateBatchRequestId, formatBatchProgress, isSuccessfulOnlineResult, aggregateBatchProgress, summarizeBatchResult, isTerminalBatchState, isMatchingBatchTarget, type OnlineQuotaResult, type OnlineQuotaStatus, type BatchQuotaResult, type QuotaBatchProgress, type BatchProgressSummary, type QuotaBatchTarget} from './identity-online-quota';
@@ -23,7 +23,7 @@ import {defaultPolicy, policyRows, type Identity, type IdentityState} from './id
 import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
 import {evaluateQuota, formatCompactEta, formatResetClock} from './identity-quota';
 import {usePageRefresh, type IdentityReviewRequest} from './app-events';
-import {filterAndSortIdentities, formatObservationAge, quotaObservationAge} from './identity-list';
+import {formatObservationAge, quotaObservationAge} from './identity-list';
 import {serializeIdentityDiagnostic} from './identity-diagnostics';
 import {connectionHistory, IdentityConnections, isValidQuotaTargetSubset} from './identity-connections';
 import './identity-productivity.css';
@@ -130,8 +130,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [quotaFeedback, setQuotaFeedback] = useState('');
   const [quotaSetup, setQuotaSetup] = useState<QuotaSetupStatus|null>(null);
   const [quotaSetupError, setQuotaSetupError] = useState(false);
-  const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<'saved'|'name'|'original'>('saved');
   const [copyDiagnosticStatus, setCopyDiagnosticStatus] = useState<'copied'|'failed'|null>(null);
   const [readReady, setReadReady] = useState(false);
   const [diagnosticVersion, setDiagnosticVersion] = useState<string|null>(null);
@@ -217,10 +215,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const active = state?.records.find(row => row.id === state.active);
   const current = state?.current;
   const saved = state?.records.filter(row => !current?.present || row.id !== state.active) ?? [];
-  const visibleSaved = filterAndSortIdentities(saved.map(row => {
-    const email = state?.summaries?.[row.id]?.email;
-    return {...row, email, visibleName: maskDisplayName(row.name, email, prefs.privacyMask)};
-  }), search, sort, prefs.privacyMask);
   const currentName = active?.name || current?.display_name || current?.email?.split('@')[0] || t('当前身份');
   const connectionQueueItems = connectionHistory.matching(quotaTargets).map(item => {
     const row = state?.records.find(record => record.id === item.target.account_id);
@@ -373,11 +367,10 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       try {
         if (!document.hidden && !busyRef.current && !batchBusyRef.current && !actionLockedRef.current) {
           const next = await invoke<string>('identities_quota_revision');
-          if (!cancelled && revision !== undefined && next !== revision) {
-            revision = next;
-            await read(false);
+          if (!cancelled && (revision === undefined || next !== revision)) {
+            // A failed or superseded read must leave the change pending for the next check.
+            if (await read(false)) revision = next;
           }
-          revision = next;
         }
       } catch {
         // A failed local metadata check does not clear any quota observation.
@@ -1095,15 +1088,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             {t('打开内置浏览器')}
           </Button>
         </div>
-        <div className="identity-search-row">
-          <Input aria-label={t('identitySearch.label')} placeholder={t('identitySearch.placeholder')} value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => {if(event.key==='Escape')setSearch('');}} />
-          <Select aria-label={t('identitySearch.sortLabel')} size="small" value={sort} onValueChange={value => setSort(value as typeof sort)} items={[
-            {value:'saved',label:t('identitySearch.saved')},
-            {value:'name',label:t('identitySearch.name')},
-            {value:'original',label:t('identitySearch.original')},
-          ]} />
-          {!prefs.privacyMask && <span className="identity-search-privacy-note">{t('identitySearch.emailIncluded')}</span>}
-        </div>
         <div className="identity-card-rail" ref={rail} tabIndex={0} role="region" aria-label={t('身份')}>
           {current?.present === false && (
             <IdentityCard className="identity-card empty selected" label={`${t('新身份')} · ${t('当前身份')}`}>
@@ -1173,7 +1157,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               </div>
             </IdentityCard>
           )}
-          {visibleSaved.map(row => {
+          {saved.map(row => {
             const summary = state?.summaries?.[row.id];
             const savedQuota = evaluateQuota(summary, nowSec);
             return (
@@ -1228,7 +1212,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               </IdentityCard>
             );
           })}
-          {saved.length > 0 && visibleSaved.length === 0 && <div className="identity-filter-empty" role="status"><span>{t('identitySearch.empty')}</span><Button variant="secondary" size="small" onClick={() => setSearch('')}>{t('identitySearch.clear')}</Button></div>}
         </div>
         <IdentityOperationProgress activity={activity.state} />
       </section>

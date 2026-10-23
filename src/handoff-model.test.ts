@@ -82,6 +82,15 @@ test('roundtrip restores unescaped headings and maps truthful placeholders to em
   }
 });
 
+test('handoff export and import preserve literal backslashes before Markdown headings', () => {
+  const initial = {...emptyHandoffFields(), next: String.raw`\## Keep the literal escape
+\\### Keep both escapes
+  \# Indented escaped heading`};
+  const parsed = parseHandoffMarkdown(buildHandoffMarkdown(initial, 'Handoff', labels, 'To be filled in'));
+  expect(parsed.ok).toBe(true);
+  if (parsed.ok) expect(parsed.fields.next).toBe(initial.next);
+});
+
 test('strict parse rejects empty content and oversized files', () => {
   expect(parseHandoffMarkdown('')).toEqual({ok: false, errorKey: 'emptyFile'});
   expect(parseHandoffMarkdown('   \n\t  ')).toEqual({ok: false, errorKey: 'emptyFile'});

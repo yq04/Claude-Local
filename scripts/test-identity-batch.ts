@@ -63,12 +63,15 @@ export async function testIdentityBatch(browser:Browser,base:string){
   assert.equal(await current.locator('h3 .identity-plan-pill').textContent(),'Pro');
   let checks=1;
 
-  await page.locator('.identity-search-row input').fill('Identity 2');
+  await closeOnline();
+  assert.equal(await page.locator('.identity-search-row').count(),0,'The identity search/sort row is removed');
+  assert.equal(await page.getByRole('combobox').count(),0,'The identity page has no replacement sorting control');
+  assert.deepEqual(await page.locator('.identity-card h3[data-identity-name] > strong').allTextContents(),['Identity 1','Identity 2','Identity 3'],'Current identity is pinned and saved identities keep native record order');
   await page.evaluate(()=>(window as any).identityFixture.defer('identities_refresh_all_quotas'));
   await openOnline(); await page.getByRole('button',{name:refreshAllLabel,exact:true}).click();
   await page.waitForFunction(()=>(window as any).identityFixture.pending.includes('identities_refresh_all_quotas'));
   const request=(await batches()).at(-1).args;
-  assert.equal(request.targets.length,3,'Search filters and hidden current backups must not change the batch');
+  assert.equal(request.targets.length,3,'All identities must be queried once, excluding the duplicate active backup');
   assert.equal(request.allowBrowserFallback,true);assert.match(request.requestId,/^[0-9a-f]{32}$/);
   assert.deepEqual(request.targets.map((row:any)=>row.account_id).sort(),['00000000000000000000000000000002','00000000000000000000000000000003','current']);
   await page.evaluate(()=>{const f=(window as any).identityFixture;f.publishBatchProgress('current');f.publishBatchProgress('current');});
@@ -78,12 +81,11 @@ export async function testIdentityBatch(browser:Browser,base:string){
   await closeOnline();
   await page.locator('.identity-batch-task-compact').waitFor();
   assert.equal(await page.getByRole('dialog').count(),0,'Closing the online dialog leaves the native batch running and keeps the page available');
-  assert.equal(await page.locator('.identity-search-row input').isEnabled(),true,'Closing the online dialog does not lock page navigation or search');
+  assert.equal(await current.locator('.identity-quota-open').isEnabled(),true,'Closing the online dialog keeps local quota details available');
   await openOnline();
   await page.evaluate(()=>(window as any).identityFixture.release('identities_refresh_all_quotas'));
   await page.getByRole('button',{name:refreshAllLabel,exact:true}).waitFor();
   await closeOnline();
-  await page.locator('.identity-search-row input').fill('');
   const saved=page.locator('.identity-card').filter({has:page.getByRole('heading',{name:'Identity 2',exact:true})});
   await saved.locator('[data-quota-window="5h"]').getByText('75%',{exact:true}).waitFor();
   checks++;

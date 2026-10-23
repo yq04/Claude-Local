@@ -1,21 +1,9 @@
 /**
- * [INPUT]: Saved identity metadata plus the alias already rendered under the active privacy preference.
- * [OUTPUT]: Searchable/sortable local list copies; source records and IDs remain untouched.
- * [POS]: Identity workbench list model; hidden account fields are never consulted for aliases.
- * [PROTOCOL]: Keep identity privacy filtering and ordering aligned with identities.tsx.
+ * [INPUT]: 额度实际观测时间戳与当前时钟（毫秒）。
+ * [OUTPUT]: 观测年龄分级（分钟/小时/天），非法或未来时间安全回退空。
+ * [POS]: 身份管理纯函数辅助层；与原生保险库/展示层解耦。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-export type IdentityListRow = { id: string; name: string; visibleName?: string; saved_at: number; email?: string | null }
-
-export function filterAndSortIdentities<T extends IdentityListRow>(rows: readonly T[], query: string, sort: 'saved' | 'name' | 'original', privacyMask: boolean): T[] {
-  const needle = query.trim().toLocaleLowerCase()
-  const alias = (row: T) => row.visibleName ?? row.name
-  const filtered = rows.filter(row => !needle || alias(row).toLocaleLowerCase().includes(needle) || (!privacyMask && !!row.email && row.email.toLocaleLowerCase().includes(needle)))
-  return filtered.map((row, index) => ({row, index})).sort((a, b) => {
-    if (sort === 'name') return alias(a.row).localeCompare(alias(b.row)) || a.index - b.index
-    if (sort === 'saved') return b.row.saved_at - a.row.saved_at || a.index - b.index
-    return a.index - b.index
-  }).map(item => item.row)
-}
 
 export function quotaObservationAge(observedAtMs: number | null | undefined, nowMs: number) {
   if (typeof observedAtMs !== 'number' || !Number.isFinite(observedAtMs) || observedAtMs <= 0) return null

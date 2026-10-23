@@ -1,14 +1,36 @@
 <!--
-[INPUT]: Verified 0.2.1 passive-quota recovery, CI/private publication, independent audit and backed-up local update receipts.
-[OUTPUT]: Current local-first quota behavior, 0.2.1 delivery references and retained prior release history.
+[INPUT]: Verified 0.2.2 delivery receipts and owner-requested existing-function source cleanup after delivery.
+[OUTPUT]: Current delivered baseline, subsequent source changes, verification boundaries and retained prior release history.
 [POS]: Repository root handoff; private installation details, probes, PIDs and receipts stay in ignored .local/.
 [PROTOCOL]: Copy this file into .local/handoff-archive/ and verify SHA256 before any rewrite. Documentation-only changes do not rebuild or move product tags.
 -->
 # Claude-Local 会话交接与下一步指南
 
-更新日期：2026-10-23。新会话先完整阅读本文与根目录 `CLAUDE.md`、`AGENTS.md`。当前已安装并私有预发布 **0.2.1**，恢复本地额度同步为默认。下文保留0.2.0及更早历史，旧默认在线查询/未发布描述不代表当前状态。
+更新日期：2026-10-23。新会话先完整阅读本文与根目录 `CLAUDE.md`、`AGENTS.md`。当前已安装并私有预发布 **0.2.2**，默认本地额度同步。交付后的源码修改与安装版本分别记录，下文旧版本历史不代表当前待办。
 
-## 当前交付：0.2.1 额度同步恢复
+## 当前任务：清理多余控件并修复现有功能
+
+用户明确要求移除身份页搜索、按名称等排序和附带提示，不增加替代控件或擅自改变其他界面。重点检查账号安全、额度同步、多账号交接和本地共享历史；仅修复有代码证据的问题，不继续扩展功能。
+
+本轮源码与前端构建已完成。用户随后明确授权“无误后完成更新、打包、上传”，现在按0.2.3准备独立候选与交付；完成前安装仍为0.2.2，旧标签和资产保留。保留用户已有的 `AGENTS.md` 与未跟踪工作，不清理工作树。
+
+实际修改：移除搜索/排序及提示整行、空筛选结果和失效样式/辅助逻辑，当前卡置顶，其余卡片沿用原生记录顺序。修复本地额度监测过早确认revision的问题：首次检测补读摘要，只有读取成功才确认版本；失败或旧响应被替代会在下次约两秒检查时重试，不要求再次写入文件。另修复手工交接Markdown导出再导入时丢失标题前原有反斜杠的问题，保持双语旧模板兼容。
+
+检查范围包括被动额度监测、账号归属与锚点合并、Store切号/恢复、会话历史和项目映射保留、手工交接解析、相关界面和测试入口。原生核心路径未发现可复现的隔离/历史缺陷，因此未改动Rust、Python、保留策略、凭据或持久格式；这不是对整个仓库的无缺陷保证。未新增功能、按钮或替代控件。额度仍依赖CLI或既有采集器实际落盘，不承诺所有账号服务端额度实时更新。
+
+验证：`--online-only` 10项真实组件/虚构IPC检查通过，含搜索/排序缺失、卡片顺序、统一查询及被动初始竞态/失败重试；`--quota-reset-only` 6项通过。交接模板、观测年龄和双语目录共19项Bun测试通过，TypeScript及Vite构建通过。另运行2项原生passive_quota_revision测试及A/B跨账号历史恢复/回放的针对性测试，均通过；未进行真实账号切换、在线查询或安装器系统验收。测试中遗留的旧刷新按钮选择器改为读取当前语言目录，避免将文案变化误报成功能失败。
+
+## 当前交付：0.2.2 身份页精简
+
+产品提交及固定标签 `v0.2.2` 为 `df77740a58dfedd9fb189b28d6f284d6563dd319`；[构建40004009992](https://github.com/yq04/Claude-Local/actions/runs/40004009992)与独立主分支检查40004009609成功。97项前端测试、216项原生测试通过（另1项忽略），共享历史原字节保持、账号代理/仓库路径隔离与被动额度同步测试均实际执行通过。
+
+本机102个文件核验通过，8个文件先备份后替换；109项资源、13项私密探针审计零发现，前端10个文件独立复现一致。主窗口、Rust额度核心与后端检查通过。更新前后Claude进程均为0，未停止Claude或浏览器，未切换真实身份或执行真实账号查询。
+
+[私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2)8项资产已独立下载并逐项验SHA256。发布脚本首次未能确认远端标签缺失而安全退出，独立确认404后继续，最终回执为published；旧标签与资产保持原样。证据在忽略的 `.local/release-0.2.2/`，包括 `published-receipt.json`。安装器SHA256为 `d3b05391fad45edc7c9587a6ffb1e6e1d98d67d30412d44fdd41c79d2d0b0689`。
+
+0.2.2移除顶部长说明与内联在线区域，在线工具经标题⋯菜单按需打开，运行中的原生批次仍可查看与取消；搜索/排序仍存在于该已发布安装包，用户本轮要求的清理是后续源码工作。详细变更见 [0.2.2更新说明](docs/RELEASE_NOTES_0.2.2.md)。
+
+## 0.2.1 额度同步恢复历史
 
 用户反馈0.2.0在线刷新难用，明确选择保留其他功能、恢复旧版本地同步，不回退整个程序。顶部“同步本地额度”统一读取本地观测；CLI `/usage` 或既有采集器写入新缓存后，可见身份页约两秒拾取。在线查询及错误队列默认折叠，关闭即停用定时在线查询；默认卡片不显示旧在线错误或空订阅占位。
 

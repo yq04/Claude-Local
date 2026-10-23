@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 现有隔离 Playwright 引擎、Vite 本机地址与 tests/identities.html 的虚构 Tauri IPC。
  * [OUTPUT]: 闲置到期推定恢复（无额外 IPC/无虚构倒计时）、周额度与缺失/本地估计独立性、弹窗推定来源说明、双语 180×286 卡片几何与新真实观测覆盖 6 组核心 GUI 检查。
- * [POS]: 身份 UI 额度重置与推定恢复的无头行为回归，独立 context + clock，不截图、不调用真实宿主或外网，try/finally 保证 context 关闭。
+ * [POS]: 身份 UI 额度重置与推定恢复的无头行为回归；按钮标签按当前目录文案解析，独立 context + clock，不截图、不调用真实宿主或外网，try/finally 保证 context 关闭。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {strict as assert} from 'node:assert';
@@ -27,7 +27,8 @@ export async function testQuotaReset(browser:Browser,base:string) {
    Object.assign(state.summaries[state.records[2].id],{quota_5h_source:'reset_inferred',quota_5h_used:0,quota_5h_reset_at:now-20,quota_5h_observed_at_ms:(now-100)*1000});
    Object.assign(state.summaries[state.records[3].id],{quota_5h_source:'local_estimate',quota_5h_used:100,quota_5h_reset_at:now+2,quota_5h_observed_at_ms:(now-100)*1000});
   },now);
-  await page.getByRole('button',{name:'刷新本地记录',exact:true}).click();
+  const localQuotaSyncLabel=()=>page.evaluate(async()=>(await import('/src/i18n.ts')).translate('identityCard.localQuotaSync'));
+  await page.getByRole('button',{name:await localQuotaSyncLabel(),exact:true}).click();
   const cards=page.locator('.identity-card');
   const current5h=cards.first().locator('[data-quota-window="5h"]');
   await current5h.getByText('0%',{exact:true}).waitFor();
@@ -63,7 +64,7 @@ export async function testQuotaReset(browser:Browser,base:string) {
   checks++;
 
   await page.evaluate(now=>Object.assign((window as any).identityFixture.state.current,{quota_5h_source:'server_anchor',quota_5h_used:23,quota_5h_reset_at:now+18000,quota_5h_observed_at_ms:(now+3)*1000}),now);
-  await page.getByRole('button',{name:'Refresh local records',exact:true}).click();
+  await page.getByRole('button',{name:await localQuotaSyncLabel(),exact:true}).click();
   await current5h.getByText('77%',{exact:true}).waitFor();
   assert.equal(await current5h.getAttribute('data-quota-inferred'),null);
   assert.equal(await current5h.locator('time').count(),1);

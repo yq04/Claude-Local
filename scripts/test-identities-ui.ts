@@ -1,7 +1,7 @@
 /**
  * [INPUT]: Node.js 标准管道、已锁定 playwright-core、固定引擎、Vite 与 tests/ 的虚构 Tauri IPC。
  * [OUTPUT]: 单行本地保存名与长名称重命名、隐私提示、工牌/离线额度、浏览器/网络与清理确认、真实阶段动画及额度重置推定恢复的双语 DOM 验收。
- * [POS]: 发布前无头行为回归；无截图、无真实账号/文件修改，不加载原生宿主，不允许外网请求。支持 --quota-reset-only 仅运行额度重置检查。
+ * [POS]: 发布前无头行为回归；无截图、无真实账号/文件修改，不加载原生宿主，不允许外网请求。支持 --quota-reset-only 与 --passive-only 聚焦验证。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {strict as assert} from 'node:assert';
@@ -18,8 +18,10 @@ import {testClaudeResidue} from './test-claude-residue.ts';
 import {testIdentityOperation} from './test-identity-operation.ts';
 import {testQuotaReset} from './test-quota-reset.ts';
 import {testIdentityOnline} from './test-identity-online.ts';
+import {testIdentityPassive} from './test-identity-passive.ts';
 const quotaResetOnly=process.argv.includes('--quota-reset-only');
 const onlineOnly=process.argv.includes('--online-only');
+const passiveOnly=process.argv.includes('--passive-only');
 const cardsOnly=process.argv.includes('--cards-only');
 async function cardAction(card:Locator,name:string){
  await card.getByRole('button',{name:/^(更多操作|More actions)$/}).click();
@@ -40,8 +42,12 @@ try{browser=await chromium.launch({executablePath:resolve('browser-runtime',engi
 catch(error){await server.close();await rm(temporary,{recursive:true,force:true});throw error;}
 let checks=0;
 try{
- if(onlineOnly){
+ if(passiveOnly){
+  checks+=await testIdentityPassive(browser,base);
+  console.log(`${checks} passive quota UI checks passed; synthetic IPC only.`);
+ }else if(onlineOnly){
   checks+=await testIdentityOnline(browser,base);
+  checks+=await testIdentityPassive(browser,base);
   console.log(`${checks} online quota/card UI checks passed; synthetic IPC only.`);
  }else if(quotaResetOnly){
   checks+=await testQuotaReset(browser,base);
@@ -188,7 +194,7 @@ try{
  await page.getByRole('dialog').getByRole('button',{name:'Archive & switch'}).click();
  await page.getByText(/fixture operation failed/).first().waitFor();assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);checks++;
  await page.evaluate(()=>{(window as any).identityFixture.recover();});
- await page.getByRole('button',{name:'Refresh local records',exact:true}).click();
+ await page.getByRole('button',{name:await page.evaluate(async()=>(await import('/src/i18n.ts')).translate('identityCard.localQuotaSync')),exact:true}).click();
  await page.getByRole('button',{name:'Restore previous identity',exact:true}).click();
  await page.getByRole('dialog').getByRole('button',{name:'Restore'}).click();
  await page.waitForFunction(()=>(window as any).identityFixture.state.recovery===null);checks++;

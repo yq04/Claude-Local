@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 有界的用户手填交接字段与当前界面语言的固定标题。
- * [OUTPUT]: 稳定 Markdown 预览、双语往返模板解析与安全下载文件名，不读取项目或会话数据。
+ * [OUTPUT]: 保留标题转义反斜杠的 Markdown 预览、双语往返模板解析与安全下载文件名，不读取项目或会话数据。
  * [POS]: 手工任务交接模板的纯格式化与严格解析边界；字段只存在于调用方内存。
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -47,7 +47,7 @@ export function isDraftNonEmpty(fields: HandoffFields): boolean {
 function safeBody(value: string, notFilled: string): string {
   const trimmed = value.slice(0, HANDOFF_FIELD_LIMIT).trim();
   if (!trimmed) return notFilled;
-  return trimmed.split(/\r?\n/).map(line => line.replace(/^(\s*)(#{1,6})(\s+)/, '$1\\$2$3')).join('\n');
+  return trimmed.split(/\r?\n/).map(line => line.replace(/^(\s*)(\\*#{1,6})(\s+)/, '$1\\$2$3')).join('\n');
 }
 
 export function buildHandoffMarkdown(fields: HandoffFields, title: string, labels: HandoffLabels, notFilled: string): string {
@@ -95,7 +95,7 @@ function unescapeBody(raw: string): string {
   }
   return trimmed
     .split(/\r?\n/)
-    .map(line => line.replace(/^(\s*)\\(#{1,6}\s+)/, '$1$2'))
+    .map(line => line.replace(/^(\s*)\\(\\*#{1,6}\s+)/, '$1$2'))
     .join('\n');
 }
 
