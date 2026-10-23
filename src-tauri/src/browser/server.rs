@@ -1,5 +1,5 @@
 // [INPUT]: 只读有界身份摘要、打包起始页、随机会话令牌、机器上下文与显式触发的一次性扩展快照。
-// [OUTPUT]: 仅 127.0.0.1 的起始页、观测接口和严格扩展 Origin 的额度回传路由；有界并发、正文与时限，资源限定在打包目录。
+// [OUTPUT]: 仅 127.0.0.1 的起始页、观测接口和严格扩展 Origin 的额度回传路由；Host/正文校验、有界并发及时限，资源限定在打包目录。
 // [POS]: Chromium 与工具箱之间的窄桥；额度路由只经单次身份绑定票据调用既有白名单账本接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{network::Report, Browser, Context};
@@ -65,6 +65,75 @@ fn answer_quota(stream: &mut TcpStream, status: &str, body: &[u8]) {
     let header = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nAccess-Control-Allow-Origin: {QUOTA_BRIDGE_ORIGIN}\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nAccess-Control-Allow-Headers: content-type\r\nVary: Origin\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\n\r\n", body.len());
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body);
+}
+
+struct RequestHeaders {
+    valid: bool,
+    content_length_count: usize,
+    content_type: Option<String>,
+    origin: Option<String>,
+    requested_method: Option<String>,
+    requested_headers: Option<String>,
+}
+
+fn parse_request_headers(header: &str, port: u16) -> RequestHeaders {
+    let mut host_count = 0;
+    let mut host_valid = false;
+    let mut content_length_count = 0;
+    let mut content_length_valid = true;
+    let mut content_type = None;
+    let mut origin = None;
+    let mut requested_method = None;
+    let mut requested_headers = None;
+    let mut has_transfer_encoding = false;
+
+    for line in header.lines().skip(1) {
+        if let Some((key, value)) = line.split_once(':') {
+            let key = key.trim().to_ascii_lowercase();
+            let value = value.trim();
+            match key.as_str() {
+                "host" => {
+                    host_count += 1;
+                    if port > 0 {
+                        let expected_ip = format!("127.0.0.1:{port}");
+                        let expected_localhost = format!("localhost:{port}");
+                        if value == expected_ip || value == expected_localhost {
+                            host_valid = true;
+                        }
+                    } else if value.starts_with("127.0.0.1") || value.starts_with("localhost") {
+                        host_valid = true;
+                    }
+                }
+                "content-length" => {
+                    content_length_count += 1;
+                    if value.parse::<usize>().is_err() {
+                        content_length_valid = false;
+                    }
+                }
+                "content-type" => content_type = Some(value.to_ascii_lowercase()),
+                "origin" => origin = Some(value.to_string()),
+                "access-control-request-method" => requested_method = Some(value.to_string()),
+                "access-control-request-headers" => {
+                    requested_headers = Some(value.to_ascii_lowercase())
+                }
+                "transfer-encoding" => has_transfer_encoding = true,
+                _ => {}
+            }
+        }
+    }
+
+    RequestHeaders {
+        valid: host_count == 1
+            && host_valid
+            && content_length_count <= 1
+            && content_length_valid
+            && !has_transfer_encoding,
+        content_length_count,
+        content_type,
+        origin,
+        requested_method,
+        requested_headers,
+    }
 }
 pub fn nonce() -> Result<String, String> {
     #[cfg(unix)]
@@ -195,57 +264,8 @@ fn handle(
     }
     let header = String::from_utf8_lossy(&data);
 
-    let mut host_count = 0;
-    let mut host_valid = false;
-    let mut content_length_count = 0;
-    let mut content_length_valid = true;
-    let mut content_type: Option<String> = None;
-    let mut origin: Option<String> = None;
-    let mut requested_method: Option<String> = None;
-    let mut requested_headers: Option<String> = None;
-    let mut has_transfer_encoding = false;
-
-    for line in header.lines().skip(1) {
-        if let Some((k, v)) = line.split_once(':') {
-            let key = k.trim().to_ascii_lowercase();
-            let val = v.trim();
-            match key.as_str() {
-                "host" => {
-                    host_count += 1;
-                    if port > 0 {
-                        let exp_ip = format!("127.0.0.1:{port}");
-                        let exp_lh = format!("localhost:{port}");
-                        if val == exp_ip || val == exp_lh {
-                            host_valid = true;
-                        }
-                    } else if val.starts_with("127.0.0.1") || val.starts_with("localhost") {
-                        host_valid = true;
-                    }
-                }
-                "content-length" => {
-                    content_length_count += 1;
-                    if val.parse::<usize>().is_err() {
-                        content_length_valid = false;
-                    }
-                }
-                "content-type" => content_type = Some(val.to_ascii_lowercase()),
-                "origin" => origin = Some(val.to_string()),
-                "access-control-request-method" => requested_method = Some(val.to_string()),
-                "access-control-request-headers" => {
-                    requested_headers = Some(val.to_ascii_lowercase())
-                }
-                "transfer-encoding" => has_transfer_encoding = true,
-                _ => {}
-            }
-        }
-    }
-
-    if host_count != 1
-        || !host_valid
-        || content_length_count > 1
-        || !content_length_valid
-        || has_transfer_encoding
-    {
+    let parsed = parse_request_headers(&header, port);
+    if !parsed.valid {
         answer(stream, "400 Bad Request", "text/plain", b"Bad request");
         return;
     }
@@ -259,7 +279,7 @@ fn handle(
         return;
     };
     let quota_route = path == "quota-sync";
-    if let Some(ref org) = origin {
+    if let Some(ref org) = parsed.origin {
         let valid_origin = if port > 0 {
             org == &format!("http://127.0.0.1:{port}") || org == &format!("http://localhost:{port}")
         } else {
@@ -275,9 +295,9 @@ fn handle(
         return;
     }
     if quota_route && method == "OPTIONS" {
-        if origin.as_deref() == Some(QUOTA_BRIDGE_ORIGIN)
-            && requested_method.as_deref() == Some("POST")
-            && requested_headers.as_deref() == Some("content-type")
+        if parsed.origin.as_deref() == Some(QUOTA_BRIDGE_ORIGIN)
+            && parsed.requested_method.as_deref() == Some("POST")
+            && parsed.requested_headers.as_deref() == Some("content-type")
         {
             answer_quota(stream, "204 No Content", b"");
         } else {
@@ -286,9 +306,9 @@ fn handle(
         return;
     }
     if quota_route && method == "POST" {
-        if origin.as_deref() != Some(QUOTA_BRIDGE_ORIGIN)
-            || content_type.as_deref() != Some("application/json")
-            || content_length_count != 1
+        if parsed.origin.as_deref() != Some(QUOTA_BRIDGE_ORIGIN)
+            || parsed.content_type.as_deref() != Some("application/json")
+            || parsed.content_length_count != 1
         {
             answer(
                 stream,
@@ -445,7 +465,8 @@ fn handle(
         return;
     }
     if method == "POST" && path == "report" {
-        let is_json = content_type
+        let is_json = parsed
+            .content_type
             .as_deref()
             .is_some_and(|c| c.starts_with("application/json"));
         if !is_json {
@@ -457,7 +478,7 @@ fn handle(
             );
             return;
         }
-        if origin.is_none() {
+        if parsed.origin.is_none() {
             answer(stream, "403 Forbidden", "text/plain", b"Missing origin");
             return;
         }
@@ -632,19 +653,37 @@ mod tests {
 
     #[test]
     fn duplicate_host_or_ambiguous_framing_is_rejected() {
-        let stream_pair = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = stream_pair.local_addr().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
         let client = std::thread::spawn(move || {
-            let mut s = TcpStream::connect(addr).unwrap();
-            s.write_all(
-                b"GET /test/context HTTP/1.1\r\nHost: localhost\r\nHost: 127.0.0.1\r\n\r\n",
-            )
-            .unwrap();
+            let mut stream = TcpStream::connect(address).unwrap();
+            stream
+                .write_all(
+                    format!(
+                        "GET /test/context HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nHost: localhost:{}\r\n\r\n",
+                        address.port(),
+                        address.port()
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            stream.shutdown(std::net::Shutdown::Write).unwrap();
             let mut buf = Vec::new();
-            let _ = s.read_to_end(&mut buf);
+            stream.read_to_end(&mut buf).unwrap();
             buf
         });
-        let (mut server_stream, _) = stream_pair.accept().unwrap();
+        let (mut server_stream, _) = listener.accept().unwrap();
+        server_stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0u8; 1];
+            server_stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        let header = String::from_utf8(request).unwrap();
+        assert!(!parse_request_headers(&header, address.port()).valid);
         answer(
             &mut server_stream,
             "400 Bad Request",

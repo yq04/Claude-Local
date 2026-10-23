@@ -1,5 +1,5 @@
-// [INPUT]: 临时样本、指纹参数、固定清理边界与本机 HTTP 限流样本。
-// [OUTPUT]: 缓存/旧站点清理保留资产，显式完整重置同时清除密码与密钥、全部子 Profile 并隔离兄弟资料；链接/进程重启阻断与真实删除计数；地区/网络回归。
+// [INPUT]: 临时样本、指纹参数、固定清理边界、托管扩展参数与合成 HTTP 样本。
+// [OUTPUT]: 缓存/旧站点清理保留资产，显式完整重置同时清除密码与密钥、全部子 Profile 并隔离兄弟资料；链接/进程重启阻断与真实删除计数；地区/网络及 Host/framing 回归。
 // [POS]: 浏览器模块行为验证；不访问用户实际资料。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -62,9 +62,32 @@ fn proxy_and_real_hardware() {
     assert!(ipv6_args
         .iter()
         .any(|x| x.contains("EXCLUDE ::1") && !x.contains("EXCLUDE [::1]")));
-    assert!(!a
+    assert!(!a.iter().any(|x| x.contains("disable-web-security")));
+    let extension_args = a
         .iter()
-        .any(|x| x.contains("load-extension") || x.contains("disable-web-security")));
+        .filter(|argument| argument.starts_with("--load-extension="))
+        .collect::<Vec<_>>();
+    #[cfg(target_os = "windows")]
+    {
+        let installed = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(Path::to_path_buf))
+            .map(|parent| parent.join("browser-runtime/quota-bridge"))
+            .filter(|path| path.join("manifest.json").is_file());
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../browser-runtime/quota-bridge");
+        let expected = installed.or_else(|| {
+            (cfg!(debug_assertions) && source.join("manifest.json").is_file()).then_some(source)
+        });
+        assert_eq!(extension_args.len(), if expected.is_some() { 1 } else { 0 });
+        if let Some(expected) = expected {
+            assert_eq!(
+                extension_args[0],
+                &format!("--load-extension={}", expected.display())
+            );
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    assert!(extension_args.is_empty());
 }
 #[test]
 fn cache_isolation_and_direct_delete() {
