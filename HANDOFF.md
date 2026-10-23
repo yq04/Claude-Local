@@ -1,18 +1,28 @@
 <!--
-[INPUT]: Verified 0.2.2 delivery receipts and owner-requested existing-function source cleanup after delivery.
-[OUTPUT]: Current delivered baseline, subsequent source changes, verification boundaries and retained prior release history.
+[INPUT]: Verified 0.2.3 source/CI, independent package audit, backed-up update and private publication receipts.
+[OUTPUT]: Delivered 0.2.3 baseline, actual functional fixes, verification boundaries and retained prior release history.
 [POS]: Repository root handoff; private installation details, probes, PIDs and receipts stay in ignored .local/.
 [PROTOCOL]: Copy this file into .local/handoff-archive/ and verify SHA256 before any rewrite. Documentation-only changes do not rebuild or move product tags.
 -->
 # Claude-Local 会话交接与下一步指南
 
-更新日期：2026-10-23。新会话先完整阅读本文与根目录 `CLAUDE.md`、`AGENTS.md`。当前已安装并私有预发布 **0.2.2**，默认本地额度同步。交付后的源码修改与安装版本分别记录，下文旧版本历史不代表当前待办。
+更新日期：2026-10-23。新会话先完整阅读本文与根目录 `CLAUDE.md`、`AGENTS.md`。当前已安装并私有预发布 **0.2.3**，默认本地额度同步，已移除身份搜索/排序。下文保留历史，不代表待办；没有新增需求时不要重复构建、安装、发布或移动标签。
 
-## 当前任务：清理多余控件并修复现有功能
+## 当前交付：0.2.3 功能修复与界面清理
+
+用户明确授权“无误后完成更新、打包、上传”。产品提交及固定标签 `v0.2.3` 为 `85bbe6288597cc81b423737a3613596f0ffc6110`；[构建40011615441](https://github.com/yq04/Claude-Local/actions/runs/40011615441)及独立主分支检查40011614830成功。95项前端测试、216项原生测试通过（另1项忽略），账号隔离、共享历史和被动额度关键用例均实际执行通过。
+
+本机102个文件核验通过，4个文件先备份后替换；109项资源、13项私密探针独立审计零发现，独立前端10个文件逐字节吻合远程产物。主窗口、版本、Rust额度核心与已安装Python后端检查通过。更新前后Claude进程均为0，未停止Claude或浏览器，未切换真实身份或执行真实账号查询。没有执行NSIS安装器；系统级安装/升级/卸载验收仍限一次性Windows环境。
+
+[私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.2.3)的8项资产已独立下载并逐项验SHA256。安装器SHA256为 `b7b0e41924380e48e236cfbae396830e2fe41c4bb705bfe056ebde885b104a24`，宿主SHA256为 `a8f838a0a65fa509f40b83217c43b77f36591df3eb63a1c3b5f722175a7ca806`。旧产品标签/资产与内部build草稿保留不变。证据在忽略的 `.local/release-0.2.3/`，当前备份位置由 `.local/last-local-update.json` 记录；私密探针、安装路径和PIDs不进入Git。
+
+本次耗时主要是完整Windows构建：日志显示优化原生编译约11分29秒，另有Runner排队、安装包组装/审计及传输。前端独立复现与本机预检已并行完成。详细变更见 [0.2.3更新说明](docs/RELEASE_NOTES_0.2.3.md)。后续文档提交不移动产品标签，也不重建二进制。
+
+## 0.2.3 修复范围与针对性验证
 
 用户明确要求移除身份页搜索、按名称等排序和附带提示，不增加替代控件或擅自改变其他界面。重点检查账号安全、额度同步、多账号交接和本地共享历史；仅修复有代码证据的问题，不继续扩展功能。
 
-本轮源码与前端构建已完成。用户随后明确授权“无误后完成更新、打包、上传”，现在按0.2.3准备独立候选与交付；完成前安装仍为0.2.2，旧标签和资产保留。保留用户已有的 `AGENTS.md` 与未跟踪工作，不清理工作树。
+本轮源码、打包、本机更新和私有上传均已完成。保留用户已有的 `AGENTS.md` 与未跟踪工作，不清理工作树。HANDOFF每次修改前均备份并核对SHA256。
 
 实际修改：移除搜索/排序及提示整行、空筛选结果和失效样式/辅助逻辑，当前卡置顶，其余卡片沿用原生记录顺序。修复本地额度监测过早确认revision的问题：首次检测补读摘要，只有读取成功才确认版本；失败或旧响应被替代会在下次约两秒检查时重试，不要求再次写入文件。另修复手工交接Markdown导出再导入时丢失标题前原有反斜杠的问题，保持双语旧模板兼容。
 
@@ -20,7 +30,7 @@
 
 验证：`--online-only` 10项真实组件/虚构IPC检查通过，含搜索/排序缺失、卡片顺序、统一查询及被动初始竞态/失败重试；`--quota-reset-only` 6项通过。交接模板、观测年龄和双语目录共19项Bun测试通过，TypeScript及Vite构建通过。另运行2项原生passive_quota_revision测试及A/B跨账号历史恢复/回放的针对性测试，均通过；未进行真实账号切换、在线查询或安装器系统验收。测试中遗留的旧刷新按钮选择器改为读取当前语言目录，避免将文案变化误报成功能失败。
 
-## 当前交付：0.2.2 身份页精简
+## 0.2.2 身份页精简历史
 
 产品提交及固定标签 `v0.2.2` 为 `df77740a58dfedd9fb189b28d6f284d6563dd319`；[构建40004009992](https://github.com/yq04/Claude-Local/actions/runs/40004009992)与独立主分支检查40004009609成功。97项前端测试、216项原生测试通过（另1项忽略），共享历史原字节保持、账号代理/仓库路径隔离与被动额度同步测试均实际执行通过。
 
