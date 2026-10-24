@@ -53,7 +53,7 @@ function Start() {
         }
         catch (e) {
             setLinked(false);
-            setError(String(e));
+            setError(e instanceof Error ? e.message : String(e));
         }
         finally {
             setBusy(false);

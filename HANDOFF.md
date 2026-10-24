@@ -35,7 +35,7 @@ Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，React/TypeSc
 
 ### 2.2 各版本的关系
 
-0.2.0实现统一在线额度编排、运行环境/代理约束、全库备份与救援、系统修改记录和手工交接载入等功能。0.2.1恢复本地同步默认值，补充CLI配置元数据监测并修复双语文案。0.2.2清除顶部说明、将在线工具收进弹窗。0.2.3移除搜索/排序，修复本地同步重试、首次读取竞态和交接转义问题。早期“尚未改造额度卡片/尚未实现在线采集/仍为0.1.8”的报告仅代表历史时点，不能当成当前待办。
+0.2.0实现统一在线额度编排、运行环境/代理约束、全库备份与救援、系统修改记录和手工交接载入等功能。0.2.1恢复本地同步默认值，补充CLI配置元数据监测并修复双语文案。0.2.2清除顶部说明、将在线工具收进弹窗。0.2.3移除搜索/排序，修复本地同步重试、首次读取竞态和交接转义问题。0.2.4完成账号安全加固（内置浏览器启动页身份工牌隐私遮罩、回环摘要CLI代理不一致提醒、系统级 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` 环境变量残留扫描告警）、`reset_inferred` 额度窗口到期状态优化（清晰状态文案、到期后本地新消耗从0%基线叠加、展开详情一键打开在线校准弹窗）、软件设置页对齐 Cockpit Tools（胶囊 Tabs、置顶备份与资料目录卡片、90%–110% 界面缩放与启动默认页）及左侧菜单栏中英双语字号/内边距/分组/图标升级。早期“尚未改造额度卡片/尚未实现在线采集/仍为0.1.8”的报告仅代表历史时点，不能当成当前待办。
 
 ### 2.3 0.2.3交付基线与证据
 
@@ -116,7 +116,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-proto
 
 ## 6. 需要历史细节时再读这些文件
 
-- [0.2.3更新说明](docs/RELEASE_NOTES_0.2.3.md)、[0.2.2更新说明](docs/RELEASE_NOTES_0.2.2.md)、[0.2.1额度恢复](docs/QUOTA_RECOVERY_0.2.1.md)：用户最终行为与修复原因。
+- [0.2.4更新说明](docs/RELEASE_NOTES_0.2.4.md)、[0.2.3更新说明](docs/RELEASE_NOTES_0.2.3.md)、[0.2.2更新说明](docs/RELEASE_NOTES_0.2.2.md)、[0.2.1额度恢复](docs/QUOTA_RECOVERY_0.2.1.md)：用户最终行为与修复原因。
 - [0.2.0更新说明](docs/RELEASE_NOTES_0.2.0.md)、[0.2.0交付核验](docs/RELEASE_VERIFICATION_0.2.0.md)：较大功能实施和分发边界。
 - [功能审查实施计划](docs/plans/2026-10-23-functional-review/04-IMPLEMENTATION-PLAN.md)、[执行记录](docs/plans/2026-10-23-functional-review/05-EXECUTION-RESULTS.md)：早期调研/实现证据，历史pending必须结合当前交付解读，不能照单重做。
 - [额度卡片调研](docs/QUOTA_CARD_RESEARCH_2026-10-22.md)、[窗口与布局记录](docs/WINDOW_LAYOUT_2026-10-22.md)：来源、字段语义、许可证及窗口历史问题。

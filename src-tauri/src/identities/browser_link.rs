@@ -21,6 +21,8 @@ pub struct BrowserIdentity {
     pub name: Option<String>,
     pub email: Option<String>,
     pub organization: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cli_proxy: Option<String>,
 }
 fn get(tx: &Transaction<'_>, key: &str) -> Result<Option<String>, String> {
     tx.query_row("SELECT value FROM state WHERE key=?1", [key], |r| r.get(0))
@@ -210,6 +212,7 @@ impl Database {
                 name: None,
                 email: None,
                 organization: None,
+                cli_proxy: None,
             });
         }
         let slot = self.browser_slot()?;
@@ -247,6 +250,7 @@ impl Database {
             name,
             email: show_local.then_some(current.email).flatten(),
             organization: show_local.then_some(current.organization).flatten(),
+            cli_proxy: show_local.then_some(current.proxy).flatten(),
         })
     }
     pub fn browser_link(&self) -> Result<BrowserLink, String> {

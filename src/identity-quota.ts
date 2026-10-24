@@ -44,6 +44,8 @@ export function evaluateQuota(item: QuotaInput | null | undefined, nowSec: numbe
     typeof observed === 'number' && Number.isFinite(observed) && observed > 0 && observed < reset * 1000;
   const inferred5h = inferred(source5h, item.quota_5h_used, item.quota_5h_reset_at, item.quota_5h_source != null ? item.quota_5h_observed_at_ms : item.quota_observed_at_ms);
   const inferred7d = inferred(source7d, item.quota_7d_used, item.quota_7d_reset_at, item.quota_7d_source != null ? item.quota_7d_observed_at_ms : item.quota_observed_at_ms);
+  const inferredReset5h = inferred5h ? (item.quota_5h_reset_at ?? null) : null;
+  const inferredReset7d = inferred7d ? (item.quota_7d_reset_at ?? null) : null;
   const known5h = inferred5h || (source5h !== 'unknown' && source5h !== 'reset_inferred' && typeof item.quota_5h_used === 'number' && Number.isFinite(item.quota_5h_used) && !expired5h);
   const known7d = inferred7d || (source7d !== 'unknown' && source7d !== 'reset_inferred' && typeof item.quota_7d_used === 'number' && Number.isFinite(item.quota_7d_used) && !expired7d);
   const used5h = known5h && !inferred5h ? Math.max(0, Math.min(100, item.quota_5h_used!)) : 0;
@@ -61,5 +63,5 @@ export function evaluateQuota(item: QuotaInput | null | undefined, nowSec: numbe
   const primaryEta = rem7d === 0 ? eta7d : eta5h && eta7d ? `${eta5h}/${eta7d}` : eta5h || eta7d;
   const badge = `5h ${known5h ? rem5h + '%' : '?'} · 7d ${known7d ? rem7d + '%' : '?'}${primaryEta ? ` (${primaryEta})` : ''}`;
   const detail = `5h: ${known5h ? rem5h + '%' : '?'}${eta5h ? ` (${eta5h} · ${clock5h})` : ''} | 7d: ${known7d ? rem7d + '%' : '?'}${eta7d ? ` (${eta7d} · ${clock7d})` : ''}`;
-  return {rem5h, rem7d, effectiveRem, level, level5h, level7d, primaryEta, badge, detail, used5h, used7d, r5, r7, expired5h, expired7d, known5h, known7d, inferred5h, inferred7d, source5h: inferred5h ? 'reset_inferred' as const : source5h, source7d: inferred7d ? 'reset_inferred' as const : source7d, recommendable: known5h && known7d && !inferred5h && !inferred7d};
+  return {rem5h, rem7d, effectiveRem, level, level5h, level7d, primaryEta, badge, detail, used5h, used7d, r5, r7, inferredReset5h, inferredReset7d, expired5h, expired7d, known5h, known7d, inferred5h, inferred7d, source5h: inferred5h ? 'reset_inferred' as const : source5h, source7d: inferred7d ? 'reset_inferred' as const : source7d, recommendable: known5h && known7d && !inferred5h && !inferred7d};
 }

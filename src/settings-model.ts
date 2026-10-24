@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 浏览器本地存储（可选）与操作系统深色/减弱动态媒体查询。
- * [OUTPUT]: 响应式界面偏好（主题明暗、强调色、减少动画、侧栏布局、表面纹理、额度显示模式、隐私打码）；只保留确有界面消费者的选项，旧版无效键在读取时丢弃。
+ * [OUTPUT]: 响应式界面偏好（主题明暗、强调色、减少动画、侧栏布局、表面纹理、额度显示模式、隐私打码、界面缩放与启动默认页）；只保留确有界面消费者的选项，旧版无效键在读取时丢弃。
  * [POS]: 纯前端视图偏好层；不保存任何账号凭据或个人路径，存储不可用时安全回退默认值。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -11,6 +11,11 @@ export type AccentTone = 'terracotta' | 'cockpit' | 'emerald' | 'violet';
 export type SidebarLayout = 'classic' | 'compact';
 export type SurfaceStyle = 'cockpit' | 'hatched';
 export type QuotaDisplayMode = 'remaining' | 'used';
+export type UiScale = 90 | 95 | 100 | 105 | 110;
+export type StartupPage = 'remember' | 'quick' | 'cleaner' | 'usage' | 'browser' | 'system' | 'vps' | 'help' | 'settings';
+
+export const UI_SCALES: readonly UiScale[] = [90, 95, 100, 105, 110];
+const STARTUP_PAGES: readonly StartupPage[] = ['remember', 'quick', 'cleaner', 'usage', 'browser', 'system', 'vps', 'help', 'settings'];
 
 export type UiPreferences = {
   theme: ThemeMode;
@@ -20,6 +25,8 @@ export type UiPreferences = {
   surfaceStyle: SurfaceStyle;
   quotaDisplay: QuotaDisplayMode;
   privacyMask: boolean;
+  uiScale: UiScale;
+  startupPage: StartupPage;
 };
 
 const STORAGE_KEY = 'claude-local.preferences.v1';
@@ -32,6 +39,8 @@ export const defaultPreferences: UiPreferences = {
   surfaceStyle: 'cockpit',
   quotaDisplay: 'remaining',
   privacyMask: true,
+  uiScale: 100,
+  startupPage: 'remember',
 };
 
 function sanitizePreferences(raw: unknown): UiPreferences {
@@ -42,6 +51,8 @@ function sanitizePreferences(raw: unknown): UiPreferences {
   const sidebarLayout: SidebarLayout = input.sidebarLayout === 'classic' || input.sidebarLayout === 'compact' ? input.sidebarLayout : defaultPreferences.sidebarLayout;
   const surfaceStyle: SurfaceStyle = input.surfaceStyle === 'cockpit' || input.surfaceStyle === 'hatched' ? input.surfaceStyle : defaultPreferences.surfaceStyle;
   const quotaDisplay: QuotaDisplayMode = input.quotaDisplay === 'remaining' || input.quotaDisplay === 'used' ? input.quotaDisplay : defaultPreferences.quotaDisplay;
+  const uiScale: UiScale = typeof input.uiScale === 'number' && (UI_SCALES as readonly number[]).includes(input.uiScale) ? (input.uiScale as UiScale) : defaultPreferences.uiScale;
+  const startupPage: StartupPage = typeof input.startupPage === 'string' && (STARTUP_PAGES as readonly string[]).includes(input.startupPage) ? (input.startupPage as StartupPage) : defaultPreferences.startupPage;
   return {
     theme,
     accent,
@@ -50,6 +61,8 @@ function sanitizePreferences(raw: unknown): UiPreferences {
     surfaceStyle,
     quotaDisplay,
     privacyMask: typeof input.privacyMask === 'boolean' ? input.privacyMask : defaultPreferences.privacyMask,
+    uiScale,
+    startupPage,
   };
 }
 
@@ -86,6 +99,8 @@ export function applyPreferencesToDom(prefs: UiPreferences = currentPreferences)
   root.setAttribute('data-sidebar', prefs.sidebarLayout);
   root.setAttribute('data-surface', prefs.surfaceStyle);
   root.setAttribute('data-reduce-motion', prefs.reduceMotion ? 'true' : 'false');
+  root.setAttribute('data-ui-scale', String(prefs.uiScale));
+  root.style.zoom = prefs.uiScale === 100 ? '' : `${prefs.uiScale}%`;
 }
 
 if (typeof document !== 'undefined') {
@@ -153,6 +168,14 @@ export function resetPreferences(): UiPreferences {
   // Resetting appearance never silently disables the native privacy preference.
   publishPreferences({...defaultPreferences, privacyMask: hasNativePrivacy() ? currentPreferences.privacyMask : defaultPreferences.privacyMask});
   return currentPreferences;
+}
+
+export function stepUiScale(direction: 'in' | 'out' | 'reset'): UiPreferences {
+  if (direction === 'reset') return updatePreferences({uiScale: 100});
+  const index = UI_SCALES.indexOf(currentPreferences.uiScale);
+  const currentIdx = index >= 0 ? index : UI_SCALES.indexOf(100);
+  const nextIdx = direction === 'in' ? Math.min(UI_SCALES.length - 1, currentIdx + 1) : Math.max(0, currentIdx - 1);
+  return updatePreferences({uiScale: UI_SCALES[nextIdx]});
 }
 
 export function usePrivacySyncError(): string | null {

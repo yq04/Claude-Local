@@ -55,7 +55,7 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
   setError(failure);activity.finish(!failure,failure||`已清理 ${cleaned} 项。`);setAction(null);
  }
 
- return <section className="claude-residue" aria-label={t('Claude 文件残留')}>
+ return <section className="claude-residue" tabIndex={-1} aria-label={t('Claude 文件残留')}>
   <div className="identity-section-head">
    <div>
     <div className="claude-residue-head-row">

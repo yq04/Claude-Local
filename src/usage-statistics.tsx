@@ -10,7 +10,7 @@ import {Button, Disclosure, Select, Tabs} from 'cromma-ui';
 import {Refresh} from 'cromma-ui/pika';
 import {useI18n} from './i18n';
 import {usePageRefresh} from './app-events';
-import {maskEmailAddress, usePreferences} from './settings-model';
+import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
 import {cacheHitRate, dailySeries, formatUsageNumber, summarizeUsageTrend, type UsagePeriod, type UsageSnapshot, type UsageTotals} from './usage-model';
 import {UsageTrend} from './usage-trend';
 import {UsageTrendTable} from './usage-table';
@@ -221,12 +221,12 @@ export function UsageStatisticsPanel() {
               </div>
               <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
                 <Select aria-label={t('usage.attributionSelectAccount')} size="small" value={pendingTargetId} onValueChange={setPendingTargetId} items={[{value: '', label: t('usage.attributionSelectPlaceholder')}, ...accounts.map(a => ({value: a.id, label: prefs.privacyMask ? maskAccountLabel(a, true) : a.name}))]} />
-                <Button variant="primary" size="small" disabled={!pendingTargetId || busy || attributionBusy} onClick={() => void handleSetAttribution(pendingTargetId)}>{t('usage.attributionConfirm')}</Button>
+                <Button variant="secondary" size="small" disabled={!pendingTargetId || busy || attributionBusy} onClick={() => void handleSetAttribution(pendingTargetId)}>{t('usage.attributionConfirm')}</Button>
               </div>
             </div>
           )}
           {attributionFeedback && (
-            <p className="usage-attribution-feedback" style={{margin: '2px 0 0', color: attributionFeedback.type === 'error' ? 'var(--error, #e5484d)' : 'var(--usage-secondary)'}}>{attributionFeedback.message}</p>
+            <p className="usage-attribution-feedback" style={{margin: '2px 0 0', color: attributionFeedback.type === 'error' ? 'var(--error-foreground, #e5484d)' : 'var(--usage-secondary)'}}>{attributionFeedback.message}</p>
           )}
         </div>
 
@@ -270,7 +270,7 @@ export function UsageStatisticsPanel() {
             <div className="usage-panel-header"><div><GroupTitle aside={String(sortedAccounts.length)}>{t('usage.accounts')}</GroupTitle></div></div>
             <div className="usage-table-wrap" role="region" aria-label={t('usage.accounts')} tabIndex={0}>
               <table className="usage-table" aria-label={t('usage.accounts')}><thead><tr><th scope="col">{t('usage.account')}</th><th scope="col">{t('usage.total')}</th><th scope="col">{t('usage.input')}</th><th scope="col">{t('usage.output')}</th><th scope="col">{t('usage.cacheRead')}</th><th scope="col">{t('usage.cacheHit')}</th></tr></thead>
-                <tbody>{sortedAccounts.map(row => <tr key={row.id} className={account === row.id ? 'usage-row-selected' : ''}><th scope="row"><button type="button" className="usage-account-name" onClick={() => setAccount(row.id)}><span>{row.name}{row.current && <em>{t('usage.current')}</em>}</span>{row.email && <small>{maskEmailAddress(row.email, prefs.privacyMask)}</small>}</button></th><td title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</td><td title={num(row.totals.input_tokens)}>{num(row.totals.input_tokens, true)}</td><td title={num(row.totals.output_tokens)}>{num(row.totals.output_tokens, true)}</td><td title={num(row.totals.cache_read_tokens)}>{num(row.totals.cache_read_tokens, true)}</td><td>{rate(row.totals)}</td></tr>)}</tbody>
+                <tbody>{sortedAccounts.map(row => <tr key={row.id} className={account === row.id ? 'usage-row-selected' : ''}><th scope="row"><button type="button" className="usage-account-name" onClick={() => setAccount(row.id)}><span>{maskDisplayName(row.name, row.email, prefs.privacyMask)}{row.current && <em>{t('usage.current')}</em>}</span>{row.email && <small>{maskEmailAddress(row.email, prefs.privacyMask)}</small>}</button></th><td title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</td><td title={num(row.totals.input_tokens)}>{num(row.totals.input_tokens, true)}</td><td title={num(row.totals.output_tokens)}>{num(row.totals.output_tokens, true)}</td><td title={num(row.totals.cache_read_tokens)}>{num(row.totals.cache_read_tokens, true)}</td><td>{rate(row.totals)}</td></tr>)}</tbody>
               </table>
               {!sortedAccounts.length && <p className="usage-model-empty">{t('usage.noAccounts')}</p>}
             </div>

@@ -61,3 +61,4 @@ docs/RELEASE_NOTES_0.2.1.md - Local quota synchronization restored as default, C
 docs/QUOTA_RECOVERY_0.2.1.md - User-selected passive quota recovery, metadata/translation root causes, isolated checks and verified 0.2.1 package/local update/private delivery.
 docs/RELEASE_NOTES_0.2.2.md - Redundant identity-page descriptions removed, optional online tools moved to a secondary dialog, and native batch controls retained without changing identity/history guards.
 docs/RELEASE_NOTES_0.2.3.md - Removed unwanted identity filters, retried unacknowledged passive quota reads and preserved literal Markdown heading escapes; owner-authorized private update and packaging with separate delivery receipts.
+docs/RELEASE_NOTES_0.2.4.md - Account-safety hardening, clearer reset_inferred quota status and local post-expiry consumption baseline, Cockpit Tools settings tabs/UI scale/startup page/data directory alignment, and left sidebar typography/grouping refinement.

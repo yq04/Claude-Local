@@ -39,10 +39,11 @@ function authBadgeLabel(status: string | null | undefined, t: (key: string) => s
   return null;
 }
 
-function QuotaWindow({label, used, remaining, resetAt, resetComplete = false, inferred = false, known, level, display, nowSec, t}: {label: string; used: number; remaining: number; resetAt: number | null; resetComplete?: boolean; inferred?: boolean; known: boolean; level: string; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string}) {
+function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, resetComplete = false, inferred = false, known, level, display, nowSec, t}: {label: string; used: number; remaining: number; resetAt: number | null; inferredResetAt?: number | null; resetComplete?: boolean; inferred?: boolean; known: boolean; level: string; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string}) {
   const value = display === 'used' ? used : remaining;
   const reset = resetAt ? formatResetClock(resetAt, label === '7d') : '';
   const countdown = formatCompactEta(resetAt, nowSec);
+  const inferredClock = inferred && inferredResetAt ? formatResetClock(inferredResetAt, label === '7d' || nowSec - inferredResetAt >= 86400) : '';
   const resetLabel = inferred ? t('identityCard.resetInferred') : reset ? `${t('identityCard.reset')} ${reset}` : resetComplete ? t('identityCard.windowExpired') : t('identityCard.resetUnavailable');
   const resetDate = resetAt == null ? null : new Date(resetAt * 1000);
   const resetDateTime = resetDate && Number.isFinite(resetDate.getTime()) ? resetDate.toISOString() : undefined;
@@ -50,14 +51,14 @@ function QuotaWindow({label, used, remaining, resetAt, resetComplete = false, in
     <div className={`identity-quota-window ${known ? `quota-${level}` : 'quota-unknown'}`} data-quota-window={label} data-quota-inferred={inferred || undefined} title={inferred ? t('quota.resetInferredHint') : undefined} aria-label={`${label} ${known ? `${t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')} ${Math.round(value)}%` : t('identityCard.quotaUnknown')}${inferred ? ` · ${resetLabel}` : ''}`}>
       <div className="identity-quota-copy">
         <strong>{label}</strong>
-        <span className="identity-quota-value">{known ? <><span>{inferred ? t('identityCard.estimated') : t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')}</span>{' '}<strong>{Math.round(value)}%</strong></> : t('identityCard.unknown')}</span>
+        <span className="identity-quota-value">{known ? <><span>{t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')}</span>{' '}<strong>{Math.round(value)}%</strong></> : t('identityCard.unknown')}</span>
       </div>
       <span className={`identity-quota-track ${inferred ? "quota-track-inferred" : ""}`} role="img" aria-label={known ? `${Math.round(value)}%` : t('identityCard.quotaUnknown')}>
         {known && <i style={{width: `${Math.max(0, Math.min(100, value))}%`}} />}
       </span>
-      <span className="identity-quota-reset" title={countdown ? `${resetLabel} · ${countdown}` : resetLabel}>
+      <span className="identity-quota-reset" title={countdown ? `${resetLabel} · ${countdown}` : inferredClock ? `${resetLabel} · ${inferredClock}` : resetLabel}>
         <span className="identity-quota-reset-label">{reset ? <><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.6" /><path d="M8 4.5V8l2.2 1.4" /></svg><time className="identity-reset-time" dateTime={resetDateTime} aria-label={resetLabel}>{reset}</time></> : resetLabel}</span>
-        {countdown && <span className="identity-quota-countdown">{countdown}</span>}
+        {(countdown || inferredClock) && <span className="identity-quota-countdown">{countdown || inferredClock}</span>}
       </span>
     </div>
   );
@@ -66,8 +67,8 @@ function QuotaWindow({label, used, remaining, resetAt, resetComplete = false, in
 function IdentityQuota({quota, display, nowSec, t, onOpenDetails}: {quota: ReturnType<typeof evaluateQuota>; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string; onOpenDetails?: () => void}) {
   return (
     <div className="identity-quota-stack identity-quota-open" data-identity-quota tabIndex={0} role="button" aria-label={t('quota.details')} onClick={onOpenDetails} onKeyDown={e => {if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenDetails?.(); }}}>
-      <QuotaWindow label="5h" used={quota?.used5h ?? 0} remaining={quota?.rem5h ?? 0} resetAt={quota?.r5 ?? null} resetComplete={quota?.expired5h} inferred={quota?.inferred5h} known={quota?.known5h ?? false} level={quota?.level5h ?? 'ok'} display={display} nowSec={nowSec} t={t} />
-      <QuotaWindow label="7d" used={quota?.used7d ?? 0} remaining={quota?.rem7d ?? 0} resetAt={quota?.r7 ?? null} resetComplete={quota?.expired7d} inferred={quota?.inferred7d} known={quota?.known7d ?? false} level={quota?.level7d ?? 'ok'} display={display} nowSec={nowSec} t={t} />
+      <QuotaWindow label="5h" used={quota?.used5h ?? 0} remaining={quota?.rem5h ?? 0} resetAt={quota?.r5 ?? null} inferredResetAt={quota?.inferredReset5h ?? null} resetComplete={quota?.expired5h} inferred={quota?.inferred5h} known={quota?.known5h ?? false} level={quota?.level5h ?? 'ok'} display={display} nowSec={nowSec} t={t} />
+      <QuotaWindow label="7d" used={quota?.used7d ?? 0} remaining={quota?.rem7d ?? 0} resetAt={quota?.r7 ?? null} inferredResetAt={quota?.inferredReset7d ?? null} resetComplete={quota?.expired7d} inferred={quota?.inferred7d} known={quota?.known7d ?? false} level={quota?.level7d ?? 'ok'} display={display} nowSec={nowSec} t={t} />
     </div>
   );
 }
@@ -86,7 +87,7 @@ function SubscriptionAndResets({meta, locale, t}: {meta: IdentitySubscriptionMet
       {display.manualResets && (
         <div className="identity-sub-resets-row">
           <strong>{display.manualResets.label}</strong>
-          <span>{t('identityCard.manualResetsCount', {v0: display.manualResets.remaining})}</span>
+          <span>{t('identityCard.manualResetsCount', {count: display.manualResets.remaining, v0: display.manualResets.remaining})}</span>
         </div>
       )}
     </div>
@@ -235,13 +236,18 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const recoveryRecord = state?.records.find(row => row.id === state.recovery);
   const targetSummary = typeof review === 'object' && review ? state?.summaries?.[review.id] : undefined;
   const targetQuota = evaluateQuota(targetSummary, nowSec);
-  const proxyChanged = typeof review === 'object' && review && (current?.proxy || null) !== (targetSummary?.proxy || null);
-  const bestSaved = saved.reduce<{row: Identity; effectiveRem: number} | null>((best, row) => {
+  const proxyChanged =
+    (typeof review === 'object' && review && (current?.proxy || null) !== (targetSummary?.proxy || null)) ||
+    (review === 'empty' && Boolean(current?.proxy));
+  const bestSaved = saved.reduce<{row: Identity; effectiveRem: number; inferred: boolean} | null>((best, row) => {
     const sum = state?.summaries?.[row.id];
     if (sum?.auth_status === 'expired') return best;
     const q = evaluateQuota(sum, nowSec);
-    if (!q?.recommendable || q.effectiveRem <= 0) return best;
-    if (!best || q.effectiveRem > best.effectiveRem) return {row, effectiveRem: q.effectiveRem};
+    if (!q || !q.known5h || !q.known7d || q.inferred7d || q.effectiveRem <= 0) return best;
+    const inferred = !q.recommendable;
+    if (!best || q.effectiveRem > best.effectiveRem || (q.effectiveRem === best.effectiveRem && best.inferred && !inferred)) {
+      return {row, effectiveRem: q.effectiveRem, inferred};
+    }
     return best;
   }, null);
   const recommendSaved = bestSaved && (!current?.present || (currentQuota && bestSaved.effectiveRem > currentQuota.effectiveRem)) ? bestSaved : null;
@@ -1302,7 +1308,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             <span>{t('quota.resetCount')}</span>
             <strong>
               {typeof detailsSummary?.manual_resets_remaining === 'number' && Number.isInteger(detailsSummary.manual_resets_remaining) && detailsSummary.manual_resets_remaining >= 0 ? (
-                t('identityCard.manualResetsCount', {v0: detailsSummary.manual_resets_remaining})
+                t('identityCard.manualResetsCount', {count: detailsSummary.manual_resets_remaining, v0: detailsSummary.manual_resets_remaining})
               ) : (
                 t('identityCard.notProvided')
               )}

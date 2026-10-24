@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 共享界面语言状态、宿主语言写入命令、Tauri 本机应用版本、settings-model 响应式视图偏好、身份备份组件与 Cromma UI 控件。
- * [OUTPUT]: 「软件设置」页面：资料目录、加密身份备份/新目标恢复、显示语言/主题/布局/隐私与只读版本信息。
+ * [OUTPUT]: 对齐 Cockpit Tools 悬浮胶囊分栏与统一行列表的「软件设置」页面：备份与资料目录卡片、加密身份备份/新目标恢复（数据管理）、显示语言/主题/强调色/减少动画/界面缩放/侧栏布局/启动默认页/表面风格/额度口径/隐私打码与只读版本信息。
  * [POS]: 独立设置面板；视图偏好与身份备份均由用户手动触发，不联网、不检查或安装更新、不替换当前身份库。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -11,8 +11,18 @@ import {getVersion} from '@tauri-apps/api/app';
 import {invoke} from '@tauri-apps/api/core';
 import appLogo from '../assets/claude-local-mark.svg';
 import {useI18n, setLocale, type Locale} from './i18n';
-import {resetPreferences, updatePreferences, usePreferences, usePrivacySyncError, type AccentTone} from './settings-model';
+import {
+  resetPreferences,
+  UI_SCALES,
+  updatePreferences,
+  usePreferences,
+  usePrivacySyncError,
+  type AccentTone,
+  type StartupPage,
+  type UiScale,
+} from './settings-model';
 import {BackupPanel} from './backup-panel';
+import type {Page} from './navigation';
 
 type SettingsTab = 'general' | 'appearance' | 'data' | 'about';
 
@@ -21,6 +31,17 @@ const accents: readonly [AccentTone, string, string][] = [
   ['cockpit', '座舱蓝', '#2563eb'],
   ['emerald', '翡翠绿', '#059669'],
   ['violet', '星云紫', '#7c3aed'],
+];
+
+const startupOptions: readonly [StartupPage, string][] = [
+  ['remember', 'settings.startupRemember'],
+  ['cleaner', '身份管理'],
+  ['quick', '快速配置'],
+  ['browser', '浏览环境'],
+  ['system', '电脑环境'],
+  ['vps', '网络环境'],
+  ['usage', 'usage.title'],
+  ['help', '使用说明'],
 ];
 
 function SettingsRow({title, detail, children}: {title: string; detail: string; children: ReactNode}) {
@@ -44,12 +65,14 @@ function GroupHeading({children}: {children: ReactNode}) {
   );
 }
 
-export function SettingsPanel({onNavigate}: {onNavigate?: (page: 'cleaner' | 'browser' | 'vps' | 'help') => void}) {
+export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void}) {
   const {t, locale} = useI18n();
   const prefs = usePreferences();
   const privacyError = usePrivacySyncError();
   const [tab, setTab] = useState<SettingsTab>('general');
   const [version, setVersion] = useState('');
+  const [dataDir, setDataDir] = useState('%APPDATA%\\ai.local.claude-local');
+  const [copiedPath, setCopiedPath] = useState(false);
   const [langBusy, setLangBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -79,29 +102,180 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: 'cleaner' | 'br
     }
   }
 
-  const showData = tab === 'general' || tab === 'data';
-  const showAppearance = tab === 'general' || tab === 'appearance';
+  async function openDataDir() {
+    setError('');
+    try {
+      await invoke('identities_backup_open_location');
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function copyDataDir() {
+    setError('');
+    try {
+      await invoke('copy_result', {text: dataDir});
+      setCopiedPath(true);
+      window.setTimeout(() => setCopiedPath(false), 1800);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  const showDirectoryCard = tab === 'general' || tab === 'data';
+  const showBackupForm = tab === 'data';
+  const showGeneralUnified = tab === 'general';
+  const showAppearanceSplit = tab === 'appearance';
   const showAbout = tab === 'general' || tab === 'about';
+
+  const appearanceRows = (
+    <>
+      <SettingsRow title={t('显示语言')} detail={t('选择界面的显示语言，切换后立即生效，不改变电脑系统区域设置')}>
+        <Select
+          aria-label={t('显示语言')}
+          size="small"
+          value={locale}
+          disabled={langBusy}
+          onValueChange={v => {
+            if (v === 'zh' || v === 'en') void changeLanguage(v);
+          }}
+          items={[
+            {value: 'zh', label: t('简体中文')},
+            {value: 'en', label: 'English'},
+          ]}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('应用主题')} detail={t('切换浅色羊皮纸、深色曜石模式或跟随系统外观')}>
+        <SegmentedControl
+          aria-label={t('应用主题')}
+          size="small"
+          value={prefs.theme}
+          onValueChange={theme => updatePreferences({theme})}
+          items={[
+            {value: 'system', label: t('跟随系统')},
+            {value: 'light', label: t('月之亮面')},
+            {value: 'dark', label: t('月之暗面')},
+          ]}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('主题强调色')} detail={t('自定义导航高亮、按钮焦点与状态徽章的主色调')}>
+        <SegmentedControl
+          aria-label={t('主题强调色')}
+          size="small"
+          value={prefs.accent}
+          onValueChange={accent => updatePreferences({accent})}
+          items={accents.map(([tone, label, hex]) => ({
+            value: tone,
+            label: (
+              <>
+                <i className="accent-dot" style={{backgroundColor: hex}} aria-hidden="true" />
+                {t(label)}
+              </>
+            ),
+          }))}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('减少动画')} detail={t('降低页面淡入、工牌悬浮倾斜、弹层过渡与弹簧滚动，仅保留必要加载反馈')}>
+        <Switch aria-label={t('减少动画')} checked={prefs.reduceMotion} onCheckedChange={reduceMotion => updatePreferences({reduceMotion})} />
+      </SettingsRow>
+      <SettingsRow title={t('settings.uiScale')} detail={t('settings.uiScaleDetail')}>
+        <Select
+          aria-label={t('settings.uiScale')}
+          size="small"
+          value={String(prefs.uiScale)}
+          onValueChange={v => updatePreferences({uiScale: Number(v) as UiScale})}
+          items={UI_SCALES.map(scale => ({
+            value: String(scale),
+            label: `${scale}%`,
+          }))}
+        />
+      </SettingsRow>
+    </>
+  );
+
+  const layoutRows = (
+    <>
+      <SettingsRow title={t('侧边栏布局')} detail={t('切换完整文字导航栏或紧凑图标侧栏，也可点击左上角折叠按钮随时切换')}>
+        <SegmentedControl
+          aria-label={t('侧边栏布局')}
+          size="small"
+          value={prefs.sidebarLayout}
+          onValueChange={sidebarLayout => updatePreferences({sidebarLayout})}
+          items={[
+            {value: 'classic', label: t('经典布局')},
+            {value: 'compact', label: t('紧凑图标')},
+          ]}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('settings.startupPage')} detail={t('settings.startupPageDetail')}>
+        <Select
+          aria-label={t('settings.startupPage')}
+          size="small"
+          value={prefs.startupPage}
+          onValueChange={v => updatePreferences({startupPage: v as StartupPage})}
+          items={startupOptions.map(([val, labelKey]) => ({
+            value: val,
+            label: t(labelKey),
+          }))}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('工作区表面风格')} detail={t('切换现代座舱纯净卡片风格或经典斜纹点阵装饰风格')}>
+        <SegmentedControl
+          aria-label={t('工作区表面风格')}
+          size="small"
+          value={prefs.surfaceStyle}
+          onValueChange={surfaceStyle => updatePreferences({surfaceStyle})}
+          items={[
+            {value: 'cockpit', label: t('座舱卡片')},
+            {value: 'hatched', label: t('经典斜纹')},
+          ]}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('额度显示')} detail={t('切换身份工牌与概览栏中 5h / 7d 额度的主显示口径')}>
+        <SegmentedControl
+          aria-label={t('额度显示')}
+          size="small"
+          value={prefs.quotaDisplay}
+          onValueChange={quotaDisplay => updatePreferences({quotaDisplay})}
+          items={[
+            {value: 'remaining', label: t('剩余')},
+            {value: 'used', label: t('已用')},
+          ]}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('账号邮箱隐私打码')} detail={t('隐藏邮箱中间字符（如 stu***@example.com），方便录制演示或截图分享')}>
+        <Switch aria-label={t('账号邮箱隐私打码')} checked={prefs.privacyMask} onCheckedChange={privacyMask => updatePreferences({privacyMask})} />
+      </SettingsRow>
+      <SettingsRow title={t('settings.dataDirRow')} detail={t('settings.dataDirRowDetail')}>
+        <Button variant="secondary" size="small" leftIcon={<FolderDefault size={14} />} onClick={() => void openDataDir()}>
+          {t('settings.openFolderShort')}
+        </Button>
+        <Button variant="secondary" size="small" onClick={() => void copyDataDir()}>
+          {t(copiedPath ? 'settings.copiedPath' : 'settings.copyPathShort')}
+        </Button>
+      </SettingsRow>
+    </>
+  );
 
   return (
     <section className="system-page settings-page">
       <header className="cleanup-title settings-header">
         <h1>{t('软件设置')}</h1>
+        <Tabs
+          aria-label={t('设置分类')}
+          className="settings-tabs"
+          itemClassName="settings-tab-item"
+          value={tab}
+          onValueChange={value => setTab(value as SettingsTab)}
+          tabs={[
+            {value: 'general', label: t('通用')},
+            {value: 'appearance', label: t('外观与布局')},
+            {value: 'data', label: t('数据管理')},
+            {value: 'about', label: t('关于')},
+          ]}
+        />
       </header>
       {privacyError && <p className="system-feedback error" role="alert">{t(privacyError)}</p>}
-
-      <Tabs
-        aria-label={t('设置分类')}
-        className="settings-tabs"
-        value={tab}
-        onValueChange={value => setTab(value as SettingsTab)}
-        tabs={[
-          {value: 'general', label: t('通用')},
-          {value: 'appearance', label: t('外观与布局')},
-          {value: 'data', label: t('数据管理')},
-          {value: 'about', label: t('关于')},
-        ]}
-      />
 
       {error && (
         <p role="alert" className="system-feedback error">
@@ -110,10 +284,9 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: 'cleaner' | 'br
       )}
 
       <div className="settings-sections">
-        {showData && (
-          <>
+        {showDirectoryCard && (
           <section className="settings-group">
-            <GroupHeading>{t('独立资料与保险库目录')}</GroupHeading>
+            <GroupHeading>{t(tab === 'general' ? 'settings.backupAndVaultDir' : '独立资料与保险库目录')}</GroupHeading>
             <div className="settings-card settings-directory-card">
               <div className="settings-directory-info">
                 <div className="settings-directory-title">
@@ -125,125 +298,53 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: 'cleaner' | 'br
                     <p>{t('identitySafety.dataBoundary')}</p>
                   </div>
                 </div>
-                <code className="settings-path-code">%APPDATA%\ai.local.claude-local</code>
+                <code className="settings-path-code">{dataDir}</code>
                 <div className="settings-meta-pills">
                   <span className="settings-meta-pill ok">{t('BAGAID01 认证加密')}</span>
                   <span className="settings-meta-pill">{t('SQLite v3 索引')}</span>
                   <span className="settings-meta-pill">{t('identitySafety.historyPreserved')}</span>
                 </div>
               </div>
-              {onNavigate && (
-                <div className="settings-directory-actions">
+              <div className="settings-directory-actions">
+                <Button variant="secondary" size="small" leftIcon={<FolderDefault size={14} />} onClick={() => void openDataDir()}>
+                  {t('settings.openDataDir')}
+                </Button>
+                {tab === 'general' && (
+                  <Button variant="secondary" size="small" onClick={() => setTab('data')}>
+                    {t('settings.manageBackup')}
+                  </Button>
+                )}
+                {onNavigate && (
                   <Button variant="secondary" size="small" onClick={() => onNavigate('cleaner')}>
                     {t('前往身份保险库')}
                   </Button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </section>
-          <BackupPanel locale={locale} />
-          </>
         )}
 
-        {showAppearance && (
+        {showBackupForm && <BackupPanel locale={locale} />}
+
+        {showGeneralUnified && (
+          <section className="settings-group">
+            <GroupHeading>{t('settings.generalSection')}</GroupHeading>
+            <div className="settings-card">
+              {appearanceRows}
+              {layoutRows}
+            </div>
+          </section>
+        )}
+
+        {showAppearanceSplit && (
           <>
             <section className="settings-group">
               <GroupHeading>{t('外观与主题')}</GroupHeading>
-              <div className="settings-card">
-                <SettingsRow title={t('显示语言')} detail={t('选择界面的显示语言，切换后立即生效，不改变电脑系统区域设置')}>
-                  <Select
-                    aria-label={t('显示语言')}
-                    size="small"
-                    value={locale}
-                    disabled={langBusy}
-                    onValueChange={v => {
-                      if (v === 'zh' || v === 'en') void changeLanguage(v);
-                    }}
-                    items={[
-                      {value: 'zh', label: t('简体中文')},
-                      {value: 'en', label: 'English'},
-                    ]}
-                  />
-                </SettingsRow>
-                <SettingsRow title={t('应用主题')} detail={t('切换浅色羊皮纸、深色曜石模式或跟随系统外观')}>
-                  <SegmentedControl
-                    aria-label={t('应用主题')}
-                    size="small"
-                    value={prefs.theme}
-                    onValueChange={theme => updatePreferences({theme})}
-                    items={[
-                      {value: 'system', label: t('跟随系统')},
-                      {value: 'light', label: t('月之亮面')},
-                      {value: 'dark', label: t('月之暗面')},
-                    ]}
-                  />
-                </SettingsRow>
-                <SettingsRow title={t('主题强调色')} detail={t('自定义导航高亮、按钮焦点与状态徽章的主色调')}>
-                  <SegmentedControl
-                    aria-label={t('主题强调色')}
-                    size="small"
-                    value={prefs.accent}
-                    onValueChange={accent => updatePreferences({accent})}
-                    items={accents.map(([tone, label, hex]) => ({
-                      value: tone,
-                      label: (
-                        <>
-                          <i className="accent-dot" style={{backgroundColor: hex}} aria-hidden="true" />
-                          {t(label)}
-                        </>
-                      ),
-                    }))}
-                  />
-                </SettingsRow>
-                <SettingsRow title={t('减少动画')} detail={t('降低页面淡入、工牌悬浮倾斜、弹层过渡与弹簧滚动，仅保留必要加载反馈')}>
-                  <Switch aria-label={t('减少动画')} checked={prefs.reduceMotion} onCheckedChange={reduceMotion => updatePreferences({reduceMotion})} />
-                </SettingsRow>
-              </div>
+              <div className="settings-card">{appearanceRows}</div>
             </section>
-
             <section className="settings-group">
               <GroupHeading>{t('侧栏与工作区布局')}</GroupHeading>
-              <div className="settings-card">
-                <SettingsRow title={t('侧边栏布局')} detail={t('切换完整文字导航栏或紧凑图标侧栏，也可点击左上角折叠按钮随时切换')}>
-                  <SegmentedControl
-                    aria-label={t('侧边栏布局')}
-                    size="small"
-                    value={prefs.sidebarLayout}
-                    onValueChange={sidebarLayout => updatePreferences({sidebarLayout})}
-                    items={[
-                      {value: 'classic', label: t('经典布局')},
-                      {value: 'compact', label: t('紧凑图标')},
-                    ]}
-                  />
-                </SettingsRow>
-                <SettingsRow title={t('工作区表面风格')} detail={t('切换现代座舱纯净卡片风格或经典斜纹点阵装饰风格')}>
-                  <SegmentedControl
-                    aria-label={t('工作区表面风格')}
-                    size="small"
-                    value={prefs.surfaceStyle}
-                    onValueChange={surfaceStyle => updatePreferences({surfaceStyle})}
-                    items={[
-                      {value: 'cockpit', label: t('座舱卡片')},
-                      {value: 'hatched', label: t('经典斜纹')},
-                    ]}
-                  />
-                </SettingsRow>
-                <SettingsRow title={t('额度显示')} detail={t('切换身份工牌与概览栏中 5h / 7d 额度的主显示口径')}>
-                  <SegmentedControl
-                    aria-label={t('额度显示')}
-                    size="small"
-                    value={prefs.quotaDisplay}
-                    onValueChange={quotaDisplay => updatePreferences({quotaDisplay})}
-                    items={[
-                      {value: 'remaining', label: t('剩余')},
-                      {value: 'used', label: t('已用')},
-                    ]}
-                  />
-                </SettingsRow>
-                <SettingsRow title={t('账号邮箱隐私打码')} detail={t('隐藏邮箱中间字符（如 stu***@example.com），方便录制演示或截图分享')}>
-                  <Switch aria-label={t('账号邮箱隐私打码')} checked={prefs.privacyMask} onCheckedChange={privacyMask => updatePreferences({privacyMask})} />
-                </SettingsRow>
-              </div>
+              <div className="settings-card">{layoutRows}</div>
             </section>
           </>
         )}

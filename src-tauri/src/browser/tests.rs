@@ -660,6 +660,7 @@ fn refreshed_context_recomputes_target_from_effective_machine_country() {
             name: None,
             email: None,
             organization: None,
+            cli_proxy: None,
         },
         ui_language: "zh".into(),
         exit_services: &network::SERVICES,

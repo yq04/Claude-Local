@@ -6,6 +6,7 @@ import {
   maskDisplayName,
   maskEmailAddress,
   resetPreferences,
+  stepUiScale,
   updatePreferences,
 } from './settings-model';
 
@@ -20,6 +21,8 @@ test('settings model updates, sanitizes and resets preferences safely', () => {
     sidebarLayout: 'compact',
     quotaDisplay: 'used',
     privacyMask: true,
+    uiScale: 110,
+    startupPage: 'usage',
   });
   expect(updated.theme).toBe('dark');
   expect(updated.accent).toBe('cockpit');
@@ -27,6 +30,11 @@ test('settings model updates, sanitizes and resets preferences safely', () => {
   expect(updated.sidebarLayout).toBe('compact');
   expect(updated.quotaDisplay).toBe('used');
   expect(updated.privacyMask).toBe(true);
+  expect(updated.uiScale).toBe(110);
+  expect(updated.startupPage).toBe('usage');
+  expect(stepUiScale('reset').uiScale).toBe(100);
+  expect(stepUiScale('in').uiScale).toBe(105);
+  expect(stepUiScale('out').uiScale).toBe(100);
 
   // 旧版无界面消费者的偏好键（版本检查、通道、终端）读取后被丢弃，不再回写。
   const legacy = updatePreferences({startupCheckUpdate: true, releaseChannel: 'local', defaultTerminal: 'wt'} as never);

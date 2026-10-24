@@ -148,6 +148,9 @@ pub async fn claude_residue_scan(
             let (mut scan, checked) = collect_progress(&home()?, &reporter);
             scan.processes = processes()?;
             scan.running = !scan.processes.is_empty();
+            if ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"].iter().any(|key| std::env::var_os(key).is_some()) {
+                scan.warnings.push("检测到系统环境变量已设置 Claude 认证密钥（ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN），可能覆盖本地身份凭据。".into());
+            }
             if std::env::var_os("CLAUDE_CONFIG_DIR").is_some() {
                 scan.warnings
                     .push("仅检查默认 Claude 目录；自定义配置目录不在本次范围内。".into());

@@ -10,7 +10,15 @@ export function validPage(value:unknown):value is Page{
   return typeof value==='string'&&['quick','cleaner','usage','browser','system','vps','help','settings'].includes(value);
 }
 export function readPage():Page{
-  try{const value=localStorage.getItem(key);return validPage(value)?value:'cleaner';}catch{return 'cleaner';}
+  try{
+    const rawPrefs=localStorage.getItem('claude-local.preferences.v1');
+    if(rawPrefs){
+      const parsed=JSON.parse(rawPrefs);
+      if(parsed&&typeof parsed==='object'&&validPage(parsed.startupPage))return parsed.startupPage;
+    }
+    const value=localStorage.getItem(key);
+    return validPage(value)?value:'cleaner';
+  }catch{return 'cleaner';}
 }
 export function rememberPage(page:Page):void{
   try{if(validPage(page))localStorage.setItem(key,page);}catch{/* Navigation works without storage. */}

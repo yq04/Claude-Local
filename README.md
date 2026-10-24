@@ -8,7 +8,7 @@
 
 面向 Windows x64 的 Claude 本地管理工具，集中管理身份备份、账号切换、用量分析和可选的隔离浏览器。使用 Tauri、Rust、React、TypeScript 与 Python，独立维护产品和版本。
 
-当前交付版本：**0.2.3**，已移除身份搜索/排序，修复本地额度同步重试与交接文件转义，并完成私有预发布。支持 Windows 10 / 11 x64；安装包包含 Claude-Local 与 Claude-Local Browser 两个入口。[本版更新](docs/RELEASE_NOTES_0.2.3.md) · [交付核验](HANDOFF.md) · [额度同步说明](docs/QUOTA_RECOVERY_0.2.1.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md)
+当前交付版本：**0.2.4**，已完成账号隔离安全加固、到期窗口额度显示优化、Cockpit Tools 风格软件设置对齐与左侧导航菜单升级。支持 Windows 10 / 11 x64；安装包包含 Claude-Local 与 Claude-Local Browser 两个入口。[本版更新](docs/RELEASE_NOTES_0.2.4.md) · [交付核验](HANDOFF.md) · [额度同步说明](docs/QUOTA_RECOVERY_0.2.1.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md)
 
 ## 主要功能
 

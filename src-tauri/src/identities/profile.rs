@@ -521,6 +521,8 @@ struct ExtractedQuota {
     reset_7d: Option<u64>,
     local_5h_evidence: bool,
     local_7d_evidence: bool,
+    local_5h_observed_at_ms: Option<u64>,
+    local_7d_observed_at_ms: Option<u64>,
 }
 fn extract_quota(
     claude_json: &Value,
@@ -705,28 +707,42 @@ fn extract_quota(
         active_end.map(|_| ((block_cost / usd_per_pct_5h).round() as i64).clamp(0, 100) as u8)
     };
 
-    let local_5h_evidence = projects_dir.is_some()
-        && active_since > 0
-        && slices.iter().any(|(ts, cost)| {
-            *cost > 0.0
-                && *ts >= active_since.max(now_sec.saturating_sub(5 * 3600))
-                && *ts <= now_sec
-        });
-    let local_7d_evidence = projects_dir.is_some()
-        && active_since > 0
-        && slices.iter().any(|(ts, cost)| {
-            *cost > 0.0
-                && *ts >= active_since.max(now_sec.saturating_sub(7 * 86400))
-                && *ts <= now_sec
-        });
+    let local_5h_observed_at_ms = if projects_dir.is_some() && active_since > 0 {
+        slices
+            .iter()
+            .filter(|(ts, cost)| {
+                *cost > 0.0
+                    && *ts >= active_since.max(now_sec.saturating_sub(5 * 3600))
+                    && *ts <= now_sec
+            })
+            .map(|(ts, _)| ts.saturating_mul(1000))
+            .max()
+    } else {
+        None
+    };
+    let local_7d_observed_at_ms = if projects_dir.is_some() && active_since > 0 {
+        slices
+            .iter()
+            .filter(|(ts, cost)| {
+                *cost > 0.0
+                    && *ts >= active_since.max(now_sec.saturating_sub(7 * 86400))
+                    && *ts <= now_sec
+            })
+            .map(|(ts, _)| ts.saturating_mul(1000))
+            .max()
+    } else {
+        None
+    };
 
     ExtractedQuota {
         used_5h,
         reset_5h: eff_reset_5h,
         used_7d,
         reset_7d: eff_reset_7d,
-        local_5h_evidence,
-        local_7d_evidence,
+        local_5h_evidence: local_5h_observed_at_ms.is_some(),
+        local_7d_evidence: local_7d_observed_at_ms.is_some(),
+        local_5h_observed_at_ms,
+        local_7d_observed_at_ms,
     }
 }
 fn quota_identity(cj: &Value) -> Option<String> {
@@ -864,8 +880,14 @@ fn set_quota_evidence(cj: &Value, result: &ExtractedQuota, now_sec: u64, current
         result.local_7d_evidence,
         now_sec,
     );
-    current.quota_5h_observed_at_ms = quota_window_observed_at(cj, "five_hour");
-    current.quota_7d_observed_at_ms = quota_window_observed_at(cj, "seven_day");
+    current.quota_5h_observed_at_ms = max_observation(
+        quota_window_observed_at(cj, "five_hour"),
+        result.local_5h_observed_at_ms,
+    );
+    current.quota_7d_observed_at_ms = max_observation(
+        quota_window_observed_at(cj, "seven_day"),
+        result.local_7d_observed_at_ms,
+    );
     if !result.used_5h.is_some_and(|_| result.reset_5h.is_some_and(|r| r > now_sec)) {
         if let Some((reset, observed)) = cached_reset_inference(cj, "five_hour", now_sec) {
             current.quota_5h_used = Some(0);
@@ -910,8 +932,14 @@ fn set_summary_quota_evidence(
         result.local_7d_evidence,
         now_sec,
     );
-    summary.quota_5h_observed_at_ms = quota_window_observed_at(cj, "five_hour");
-    summary.quota_7d_observed_at_ms = quota_window_observed_at(cj, "seven_day");
+    summary.quota_5h_observed_at_ms = max_observation(
+        quota_window_observed_at(cj, "five_hour"),
+        result.local_5h_observed_at_ms,
+    );
+    summary.quota_7d_observed_at_ms = max_observation(
+        quota_window_observed_at(cj, "seven_day"),
+        result.local_7d_observed_at_ms,
+    );
     if !result.used_5h.is_some_and(|_| result.reset_5h.is_some_and(|r| r > now_sec)) {
         if let Some((reset, observed)) = cached_reset_inference(cj, "five_hour", now_sec) {
             summary.quota_5h_used = Some(0);

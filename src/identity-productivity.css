@@ -94,6 +94,7 @@
 }
 
 /* 名称旁 Pro/Max 药丸标签 */
+.identity-card .identity-plan-pill,
 .identity-plan-pill {
   flex: 0 0 auto;
   font-size: 9px;
@@ -106,6 +107,7 @@
   color: #065f46;
   border: 1px solid rgba(16, 185, 129, 0.3);
 }
+:root.dark .identity-card .identity-plan-pill,
 :root.dark .identity-plan-pill,
 .current .identity-plan-pill {
   background: rgba(52, 211, 153, 0.2);
@@ -113,12 +115,12 @@
   border-color: rgba(52, 211, 153, 0.4);
 }
 
-/* 预计额度进度条弱化 */
+/* 预计额度进度条柔和显示 */
 .identity-quota-track.quota-track-inferred {
-  opacity: 0.55;
+  opacity: 0.85;
 }
 .identity-quota-track.quota-track-inferred > i {
-  filter: saturate(0.65);
+  filter: saturate(0.88);
 }
 
 /* 订阅与重置展示区 */

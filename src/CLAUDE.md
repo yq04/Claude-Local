@@ -3,7 +3,7 @@
 额度入口默认只读取本地身份摘要与 CLI 被动观测；identities_quota_revision 约2秒检查账本和配置文件元数据，首次检查及变化时刷新摘要，摘要读取成功后才确认版本，失败或旧响应被替代则下次重试。元数据检查不读取正文。在线额度查询、前台定时查询和绑定浏览器资料补充放在标题⋯菜单打开的弹窗；手动批次按冻结指纹验证所有账号、最多两路并发，运行中可恢复/取消，失败状态不覆盖本地额度。
 共享操作控件：普通 Button 统一使用中性 secondary 皮肤、28px 高与10px水平内距，按文字占宽；图标按钮、导航和180×286工牌内专用几何保留，危险确认显式红色。账号筛选框随已选文本占宽，弹出选项保持可读宽度；不修改 vendor 原语或业务行为。
 界面只管理输入、状态和执行记录；本机权限交给原生层；网络页提供发行者批准的固定推广链接和配置提示词复制，用户点击后才检测固定 Claude 服务连通性，没有收件人链接编辑、Skill 安装或自动外部导航。两入口复用 YAML 中英文文案，原始诊断保留到呈现时翻译；系统语言与界面语言独立。
-browser.tsx: 统一全宽卡片风格的浏览器环境控制台（启动内置浏览器与 CLI 授权联动、目标地区环境一致性核验与一键对齐、按身份自动隔离的日常释放缓存与排障全清理）及默认折叠的指纹与代理高级设置抽屉；去除机械序号徽章；站点永久删除使用 Alert 警告并默认取消；复用 Cromma UI 和活动日志。缓存明细与高级设置统一使用 Cromma Disclosure，未保存修改时高级设置保持展开。
+browser.tsx: 统一全宽卡片风格的浏览器环境控制台（启动内置浏览器与 CLI 授权联动、绑定身份隐私遮罩与状态/CLI代理不一致提醒及一键同步、目标地区环境一致性核验与一键对齐、按身份自动隔离的日常释放缓存与排障全清理）及默认折叠的指纹与代理高级设置抽屉；去除机械序号徽章；站点永久删除使用 Alert 警告并默认取消；复用 Cromma UI 和活动日志。缓存明细与高级设置统一使用 Cromma Disclosure，未保存修改时高级设置保持展开。
 browser-model.ts: 有界浏览器身份摘要与同步状态；工具箱与起始页共享配置、目标地区、机器、出口服务目录、观测接收时间与默认浏览器契约；effectiveBrowserTarget 统一解析跟随电脑的有效时区/语言及 en→en-US，不接入原生权限；三平台设备/CPU/版本核验由共用函数保持一致，Windows 必须 Win32。
 browser-start.tsx: 检测区上方紧凑黑色身份工牌、绑定状态与不匹配/未知/断连；真实观测与回报编排，主应用同款斜纹/点阵卡片，全宽紧凑 2/3/4 列与小状态区，黄底波纹/红底原因/绿底大对勾；重测清空旧结果，断连/未知/上报失败不通过；不接入 Tauri 权限。
 browser-verification.ts: 纯核验模型，逐项实际/目标值与失败清单，沿用宿主配置时区/语言/平台规则；只有完整回传且所有实测匹配才通过。
@@ -28,7 +28,7 @@ identity-list.ts / identity-list.test.ts: 仅保留逐窗观测年龄格式化�
 identity-diagnostics.ts / identity-diagnostics.test.ts: literal白名单诊断JSON，仅限有界版本、时间、来源枚举与配置/资源flag；运行时始终未验证，不包含账号名/邮箱/id/代理/路径或原始命令。
 identity-productivity.css: 观测年龄、⋯无障碍下拉菜单、在线额度弹窗与紧凑活动批次状态、预计进度条弱化、Pro/Max药丸、前台自动刷新开关与集中连接修复队列的局部紧凑布局，维持180×286工牌；已清除搜索/排序行及其空结果样式。
 identity-online-quota.ts / identity-online-quota.test.ts: 在线额度状态解析、批量目标构建与指纹集变动检测（buildBatchTargets/generateBatchRequestId/formatBatchProgress）、严格目标指纹核验（isExpectedCurrentTarget/isExpectedSavedTarget）、冷却倒计时格式化、带独立观测时钟和有限有效期/过期状态的订阅与重置格式化，及前台聚焦180s串行调度器（单线运行、后台暂停、generation防污染），保证离线/在线数据来源真实性与纯模型测试验证。
-identity-quota.ts / identity-quota.test.ts: 逐窗优先读取 5h/7d 来源，兼容旧整体来源；可信服务端重置时间已过时显示 reset_inferred 本地预计恢复，保留原观测且不推算下一重置；缺少可信依据仍未知。预计值不参与自动推荐。身份页仅更新本地显示时钟，不增加每小时/手动之外的原生读取；详情逐窗展示来源/观测时间，卡片维持180×286。
+identity-quota.ts / identity-quota.test.ts: 逐窗优先读取 5h/7d 来源，兼容旧整体来源；可信服务端重置时间已过时显示 reset_inferred 本地预计恢复及已重置时长，保留原观测且不推算下一重置；缺少可信依据仍未知。evaluateQuota.recommendable 保持严格非预计契约，切到最优号支持 5h 已静置恢复且 7d 窗口有效的备用账号（同分优先实测账号）。身份页仅更新本地显示时钟，不增加每小时/手动之外的原生读取；详情逐窗展示来源/观测时间，卡片维持180×286。
 claude-cli-panel.tsx: 身份页内的品牌 CLI 维护卡片，展示本地版本/路径与用户手动检查的最新版本，未安装时展示官方 Windows 安装命令复制与「重新检查」入口；读取失败显示不可读与手动重试，不误报未安装，读取错误和操作错误分别保留；运行中禁用更新，首次挂载只读，不自动结束进程。
 usage-attribution.ts / usage-attribution.test.ts: 用量归属纯模型；提供脱敏账号标签（复用 settings-model 的 maskDisplayName/maskEmailAddress，防止本地邮箱别名泄露）、未归属用量范围预览、DST 23h/25h 判定与 IANA 时区格式化。
 app-events.ts: 共享本地刷新与排障导航事件（APP_REFRESH_EVENT, FAULT_NAVIGATE_EVENT），保持各页解耦。
@@ -45,9 +45,9 @@ i18n.test.ts: 双语键/插槽一致性、界面文案覆盖、原生错误与�
 local-edition.tsx: 侧栏只读本机版本号徽章，保留无障碍分组语义，不发起网络请求或更新检查，不参与任务锁。
 language-switch.tsx: 侧栏底部 CN / EN 分段单选（Cromma SegmentedControl，radio 语义）；宿主原子持久化成功后更新界面，失败保留原偏好并显示错误。
 dialog.tsx: Radix Dialog/AlertDialog 受控模态，警告阻止遮罩误关闭且默认聚焦取消；无 Trigger 时的原焦点恢复与读屏标题/描述，ModalShell 关闭按钮支持当前语言、底部操作自动换行。
-settings.tsx: 独立「软件设置」页；Cromma Tabs 分栏（通用 / 外观与布局 / 数据管理 / 关于）、独立应用资料根卡片、显示语言、明暗主题（跟随系统 / 月之亮面 / 月之暗面）、4 色主题强调色、减少动画、侧栏布局（经典 / 紧凑图标）、工作区表面风格（座舱卡片 / 经典斜纹）、额度显示口径（剩余 / 已用）、账号邮箱隐私打码与只读版本信息；分段用 SegmentedControl、开关用 Switch。本地版不联网检查更新，不提供无实际作用的更新通道、启动检查或默认终端选项。
+settings.tsx: 独立「软件设置」页；对齐 Cockpit Tools 顶栏左标题 + 居中悬浮胶囊 Tabs（通用 / 外观与布局 / 数据管理 / 关于）、置顶「备份与资料目录」卡片与统一列表卡片（显示语言、明暗主题、4 色主题强调色、减少动画、界面缩放 Ctrl+/-/0、侧栏布局、启动默认页、工作区表面风格、额度显示口径、账号邮箱隐私打码、数据目录快捷打开/复制）及只读版本信息；加密身份备份表单归入「数据管理」分栏。本地版不联网检查更新，不提供无实际作用的更新通道、启动检查或默认终端选项。
 backup-panel.tsx / backup-panel.css: 软件设置的数据管理页内提供加密身份备份、只读预检、明确选择的救援证据副本、口令与完整性检查，以及创建新隔离恢复副本；固定显示备份范围和诊断标记，不接受覆盖已有文件，原身份库不会被恢复流程替换。
-settings-model.ts / settings-model.test.ts: 纯前端响应式视图偏好存储与消毒层（只保留有界面消费者的选项，旧版无效键读取即丢弃），同步根元素 .dark 类与 data-theme-mode / data-accent / data-sidebar / data-surface / data-reduce-motion 属性；不保存凭据或个人路径。
+settings-model.ts / settings-model.test.ts: 纯前端响应式视图偏好存储与消毒层（只保留有界面消费者的选项，旧版无效键读取即丢弃），同步根元素 .dark 类与 data-theme-mode / data-accent / data-sidebar / data-surface / data-reduce-motion / data-ui-scale 属性及页面缩放；不保存凭据或个人路径。
 usage-statistics.tsx: CPAMP 分析层次适配的本地用量工作台；集中时间/账号筛选与重置、四张统一指标卡、趋势均值/峰值、图表/数据切换、模型响应/占比与账号明细。可见页面读取完成后等待30秒刷新，隐藏暂停、返回重读、卸载清理，同筛选错误保留旧数据；不更改 Python 配额采集或轮询 OAuth。时段与图表/数据切换使用 Cromma Tabs，统计口径说明使用 Disclosure，重置筛选使用 Button。
 usage-trend.tsx / usage-statistics.css: 紧凑总Token SVG与响应式趋势/模型双栏；按真实小时区间呈现23/25小时和偏移标签，旧无区间快照兼容24槽，未来留空；键盘/指针精确值、筛选保护旧悬停索引，保持全页无横溢。
 usage-table.tsx: 本地时段明细视图；仅已发生时段，时间/总Token/响应数排序、每页10行、精确值与可聚焦局部横滚；切换视图、排序和翻页不发起IPC，刷新保留有效页码。

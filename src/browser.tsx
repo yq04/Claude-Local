@@ -14,11 +14,13 @@ import { CleanupActivity, useCleanupActivity } from './cleaner-activity';
 import type { BrowserConfig, BrowserState, DefaultBrowser } from './browser-model';
 import { formatBytes } from './cleaner-model';
 import { usePageRefresh } from './app-events';
+import { maskDisplayName, maskEmailAddress, usePreferences } from './settings-model';
 
 export function BrowserPanel({ onBusy }: {
     onBusy?: (busy: boolean) => void;
 }) {
     const { t, locale } = useI18n();
+    const prefs = usePreferences();
     const [state, setState] = useState<BrowserState | null>(null), [draft, setDraft] = useState<BrowserConfig | null>(null), [busy, setBusy] = useState(''), [error, setError] = useState(''), [confirm, setConfirm] = useState<'reset' | 'align' | null>(null);
     const gate = useRef(false), live = useRef(true);
     const [accepted, setAccepted] = useState(false), [advancedOpen, setAdvancedOpen] = useState(false);
@@ -157,7 +159,18 @@ export function BrowserPanel({ onBusy }: {
                         </p>
                         {state?.identity?.name && (
                             <p className="identity-policy-hint">
-                                {t("browserSafety.boundIdentity", { name: state.identity.name }) || `绑定本地身份：${state.identity.name}`}{state.identity.email ? ` (${state.identity.email})` : ''}
+                                {t("browserSafety.boundIdentity", { name: maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask) }) || `绑定本地身份：${maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask)}`}{state.identity.email ? ` (${maskEmailAddress(state.identity.email, prefs.privacyMask)})` : ''}
+                            </p>
+                        )}
+                        {state?.identity?.status && !['linked', 'draft'].includes(state.identity.status) && (
+                            <p className="identity-policy-hint">
+                                {t(`browserSafety.status_${state.identity.status}`)}
+                            </p>
+                        )}
+                        {state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim() && (
+                            <p className="identity-policy-hint">
+                                {t("browserSafety.cliProxyMismatch", { cliProxy: state.identity.cli_proxy, browserProxy: (draft?.proxy || '').trim() || t("browserSafety.proxyManaged") })}{' '}
+                                <Button variant="secondary" size="small" disabled={disabled} onClick={() => { edit('proxy', state?.identity?.cli_proxy || ''); setAdvancedOpen(true); }}>{t("browserSafety.syncCliProxy")}</Button>
                             </p>
                         )}
                     </div>

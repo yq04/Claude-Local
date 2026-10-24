@@ -25,7 +25,7 @@ import {CommandPalette} from './command-palette';
 import {TaskHandoff} from './task-handoff';
 import {APP_REFRESH_EVENT, type IdentityReviewRequest} from './app-events';
 import {commandPaletteShortcutAction} from './command-model';
-import {initializePrivacyPreference, updatePreferences, usePreferences} from './settings-model';
+import {initializePrivacyPreference, stepUiScale, updatePreferences, usePreferences} from './settings-model';
 import appLogo from '../assets/claude-local-mark.svg';
 import './index.css';
 import './style.css';
@@ -44,7 +44,7 @@ const titles: Record<Page, string> = {
 };
 
 function App() {
-  const {t} = useI18n();
+  const {t, locale} = useI18n();
   const prefs = usePreferences();
   const [page, setPage] = useState<Page>(readPage);
   const [advancedBusy, setAdvancedBusy] = useState(false);
@@ -66,6 +66,23 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.isComposing && !locked) {
+        if (event.key === '=' || event.key === '+') {
+          event.preventDefault();
+          stepUiScale('in');
+          return;
+        }
+        if (event.key === '-' || event.key === '_') {
+          event.preventDefault();
+          stepUiScale('out');
+          return;
+        }
+        if (event.key === '0') {
+          event.preventDefault();
+          stepUiScale('reset');
+          return;
+        }
+      }
       const target = event.target;
       const action = commandPaletteShortcutAction({
         key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, isComposing: event.isComposing,
@@ -105,10 +122,10 @@ function App() {
         }}
       />
       <div className={`app-shell${isCompact ? ' sidebar-compact' : ''}`}>
-        <aside className="app-sidebar">
+        <aside className="app-sidebar" data-locale={locale}>
           <div className="app-brand">
             <div className="app-brand-mark">
-              <img src={appLogo} width={34} height={34} alt="" draggable={false} className="rounded-xl" />
+              <img src={appLogo} width={36} height={36} alt="" draggable={false} className="rounded-xl" />
             </div>
             <div className="app-brand-copy">
               <strong>{t('localEdition.brand')}</strong>
@@ -121,7 +138,11 @@ function App() {
               title={t(isCompact ? '展开侧边栏' : '收起侧边栏')}
               onClick={() => updatePreferences({sidebarLayout: isCompact ? 'classic' : 'compact'})}
             >
-              <span aria-hidden="true">{isCompact ? '»' : '«'}</span>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="1.75" y="2.25" width="12.5" height="11.5" rx="2.5" />
+                <path d="M5.75 2.25v11.5" />
+                {isCompact ? <path d="m8.75 6 2 2-2 2" /> : <path d="m10.25 6-2 2 2 2" />}
+              </svg>
             </button>
           </div>
           <nav aria-label={t('主要页面')}>
@@ -129,14 +150,14 @@ function App() {
               const Icon = icons[p];
               return (
                 <Fragment key={p}>
-                  {(p === 'browser' || p === 'cleaner' || p === 'help') && <hr className="nav-divider" />}
+                  {p === 'help' && <hr className="nav-divider" />}
                   <NavButton
                     className={`workspace-nav${p === 'help' ? ' nav-utility-first' : ''}${p === 'settings' ? ' nav-settings-item' : ''}`}
                     active={page === p}
                     aria-current={page === p ? 'page' : undefined}
                     disabled={locked}
                     title={t(titles[p])}
-                    icon={<Icon size={18} aria-hidden="true" />}
+                    icon={<Icon size={19} aria-hidden="true" />}
                     onClick={() => {
                       setPage(p);
                     }}

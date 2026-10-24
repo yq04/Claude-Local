@@ -6,16 +6,17 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
-  height: 28px;
-  padding: 0 7px;
+  height: 31px;
+  padding: 0 9px;
   border: 1px solid var(--landing-line);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--background);
   color: var(--muted-foreground);
   font: inherit;
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
 }

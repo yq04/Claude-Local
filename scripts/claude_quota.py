@@ -1571,8 +1571,8 @@ def handle_statusline() -> None:
         p_name = saved_name_by_email.get(k_lower) or le.get("display_name") or k_email.split("@")[0]
         p_u5, p_r5, p_s5, _ = entry_window_state(le, "5h", "five_hour")
         p_u7, p_r7, p_s7, _ = entry_window_state(le, "7d", "seven_day")
-        if (p_s5 == "unknown" or p_s7 == "unknown" or p_u5 is None or p_u7 is None
-                or p_r5 is None or p_r7 is None or p_r5 <= now_sec or p_r7 <= now_sec):
+        if (p_s5 == "unknown" or p_s7 in ("unknown", "reset_inferred") or p_u5 is None or p_u7 is None
+                or p_r5 is None or p_r7 is None or (p_s5 != "reset_inferred" and p_r5 <= now_sec) or p_r7 <= now_sec):
             continue
         p_u5_i, p_u7_i = int(p_u5), int(p_u7)
         p_r5_i, p_r7_i = int(p_r5), int(p_r7)
@@ -1625,7 +1625,7 @@ def select_best_relay_candidate(valid_accounts: list[dict], now_sec: int, hyster
         for a in valid_accounts
         if a.get("role") == "saved"
         and a.get("auth_status") != "expired"
-        and all(a.get(f"quota_{suffix}_source") != "reset_inferred" for suffix, _ in QUOTA_WINDOWS)
+        and a.get("quota_7d_source") not in ("unknown", "reset_inferred") and a.get("quota_5h_source") != "unknown"
         and int(a.get("effective_rem") or 0) > 0
     ]
 

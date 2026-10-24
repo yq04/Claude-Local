@@ -101,7 +101,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
     activity.log(
       'system',
       'running',
-      kind === 'timezone' ? `正在应用 ${zone}，请完成系统管理员授权。` : kind === 'language' ? `正在保存首选语言：${languages[language]}。` : '正在关闭定位；需要时请完成系统设置授权。',
+      kind === 'timezone' ? `正在应用 ${zone}，请完成系统管理员授权。` : kind === 'language' ? `正在保存首选语言：${t(languages[language])}。` : '正在关闭定位；需要时请完成系统设置授权。',
     );
     try {
       const result = await invoke<SystemResult>(

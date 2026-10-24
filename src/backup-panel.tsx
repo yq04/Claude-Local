@@ -107,7 +107,8 @@ export function BackupPanel({locale}: {locale: Locale}) {
   async function refresh() {
     setError('');
     try {
-      const found = await invoke<Location>('identities_backup_location');
+      const raw = await invoke<Location | string>('identities_backup_location');
+      const found: Location = typeof raw === 'string' ? {app_data_dir: raw, vault_available: false} : raw;
       setLocation(found);
       if (found.vault_available) setPreview(await invoke<Preview>('identities_backup_preview'));
       else setPreview(null);
