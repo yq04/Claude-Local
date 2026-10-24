@@ -1,14 +1,14 @@
 <!--
-[INPUT]: Verified 0.2.3 delivery receipts, current repository state and the owner's final session-handoff request.
+[INPUT]: Verified 0.2.4 delivery receipts, current repository state and the owner's full-authority update/package/upload request.
 [OUTPUT]: Context-free task/status/next-step guide with exact delivery evidence and operational pitfalls.
 [POS]: Repository root handoff; machine paths, PIDs, credentials and private probes stay in ignored .local/.
 [PROTOCOL]: Archive this file and verify SHA256 before rewriting. Documentation-only commits never rebuild or move product tags.
 -->
 # Claude-Local 会话交接
 
-更新日期：2026-10-23。本文件面向完全没有本会话上下文的新会话。先读本文、根目录 `AGENTS.md`、`CLAUDE.md`，修改具体模块前再读相应目录的 `CLAUDE.md` 和源码头部。
+更新日期：2026-10-24。本文件面向完全没有本会话上下文的新会话。先读本文、根目录 `AGENTS.md`、`CLAUDE.md`，修改具体模块前再读相应目录的 `CLAUDE.md` 和源码头部。
 
-**当前事实：0.2.3 已完成源码提交、远程构建、本机备份更新和私有预发布。没有发布阻塞，也没有需要继续运行的构建、上传或子代理任务。用户最后只要求整理交接，不要自动再次构建、安装或发布。**
+**当前事实：0.2.4 已完成源码提交、远程构建、本机备份更新和私有预发布。没有发布阻塞，也没有需要继续运行的构建、上传或子代理任务。**
 
 ## 1. 我们在做什么任务
 
@@ -37,28 +37,27 @@ Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，React/TypeSc
 
 0.2.0实现统一在线额度编排、运行环境/代理约束、全库备份与救援、系统修改记录和手工交接载入等功能。0.2.1恢复本地同步默认值，补充CLI配置元数据监测并修复双语文案。0.2.2清除顶部说明、将在线工具收进弹窗。0.2.3移除搜索/排序，修复本地同步重试、首次读取竞态和交接转义问题。0.2.4完成账号安全加固（内置浏览器启动页身份工牌隐私遮罩、回环摘要CLI代理不一致提醒、系统级 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` 环境变量残留扫描告警）、`reset_inferred` 额度窗口到期状态优化（清晰状态文案、到期后本地新消耗从0%基线叠加、展开详情一键打开在线校准弹窗）、软件设置页对齐 Cockpit Tools（胶囊 Tabs、置顶备份与资料目录卡片、90%–110% 界面缩放与启动默认页）及左侧菜单栏中英双语字号/内边距/分组/图标升级。早期“尚未改造额度卡片/尚未实现在线采集/仍为0.1.8”的报告仅代表历史时点，不能当成当前待办。
 
-### 2.3 0.2.3交付基线与证据
+### 2.3 0.2.4交付基线与证据
 
-- 产品源码提交和远端固定标签 `v0.2.3`：`85bbe6288597cc81b423737a3613596f0ffc6110`。
-- [远程构建40011615441](https://github.com/yq04/Claude-Local/actions/runs/40011615441)与独立主分支检查40011614830均成功。正式构建启用 `custom-protocol`。
-- [私有预发布v0.2.3](https://github.com/yq04/Claude-Local/releases/tag/v0.2.3)已发布，8项资产逐项重新下载并验SHA256，仓库保持私有。内部 `build-0.2.3-40011615441` 仅作传输，仍是草稿；旧版本和资产未覆盖。
-- 安装器 `Claude-Local_0.2.3_x64-setup.exe` SHA256：`b7b0e41924380e48e236cfbae396830e2fe41c4bb705bfe056ebde885b104a24`。
-- 宿主SHA256：`a8f838a0a65fa509f40b83217c43b77f36591df3eb63a1c3b5f722175a7ca806`。
-- 独立前端10个文件与远程产物逐字节一致；独立资源审计109项、私密探针13项，零发现。本机102个安装文件核验通过，4个文件先备份后替换。
-- 更新后版本、唯一主窗口、Rust额度核心和已安装Python后端检查通过。更新前后 `claude.exe` 均为0，未停止Claude或浏览器，不能宣称某个早期进程贯穿整个构建期存活。
-- 产品交付后文档提交为 `e729b06cad66568511c681fa506d17023cab788b`。本次交接整理可继续前移HEAD；判断二进制看固定产品标签/回执，不要求HEAD等于产品提交。
+- 产品源码提交和远端固定标签 `v0.2.4`：`c3a85d277db3bc9a5087aa5e20e0e77f2b658576`。
+- [远程构建40066540125](https://github.com/yq04/Claude-Local/actions/runs/40066540125)与独立主分支检查[40066539572](https://github.com/yq04/Claude-Local/actions/runs/40066539572)均成功。正式构建启用 `custom-protocol`。
+- [私有预发布v0.2.4](https://github.com/yq04/Claude-Local/releases/tag/v0.2.4)已发布，8项资产逐项重新下载并验SHA256，仓库保持私有。内部 `build-0.2.4-40066540125` 仅作传输，仍是草稿；旧版本和资产未覆盖。
+- 安装器 `Claude-Local_0.2.4_x64-setup.exe` SHA256：`9ce854bcc1c0911ec80f555bff929700696a3e43338690b3eb681e229ce26d1a`。
+- 宿主SHA256：`9d47c61d4d4179a0b6e1ea5f3a8847d6a94b1965d0403aab9cffcbc82f363250`。
+- 独立前端10个文件与远程产物逐字节一致；独立资源审计109项、私密探针13项，零发现。本机102个安装文件核验通过，10个文件先备份后替换。
+- 更新后版本、唯一主窗口、Rust额度核心和已安装Python后端检查通过。更新前后未停止Claude或浏览器进程。
 
-私有回执集中在忽略目录 `.local/release-0.2.3/`：`final-source-receipt.json`、`ci-receipt.json`、`frontend-reproduction-receipt.json`、`prepared-selection.json`及对应`prepare-receipt.json`、`build-receipt.json`、`published-receipt.json`、`session-close-receipt.json`。实际安装路径和回滚备份从 `.local/last-local-update.json` 读取，不硬编码进文档或Git。原HANDOFF已完整备份并验证SHA256，备份回执为 `.local/release-0.2.3/handoff-close-backup.json`。
+私有回执集中在忽略目录 `.local/release-0.2.4/`：`final-source-receipt.json`、`ci-receipt.json`、`frontend-reproduction-receipt.json`、`prepared-selection.json`及对应`prepare-receipt.json`、`build-receipt.json`、`published-receipt.json`、`session-close-receipt.json`。实际安装路径和回滚备份从 `.local/last-local-update.json` 读取，不硬编码进文档或Git。原HANDOFF已完整备份并验证SHA256，备份回执为 `.local/release-0.2.4/handoff-backup-receipt.json`。
 
 ### 2.4 已执行的验证
 
-本轮针对性检查：`--online-only` 10项真实组件/虚构IPC检查通过，含控件移除、卡片顺序、统一批次、首次revision竞态和一次失败后的重试；`--quota-reset-only` 6项通过；交接模板/观测年龄/双语目录19项Bun测试及TypeScript/Vite构建通过。修正了测试中遗留的旧刷新按钮名称，改用当前语言目录解析选择器。
+本轮针对性检查：`--layout-only` 96项窗口与侧栏布局断言通过（覆盖 `760×640`、`1040×720`、`1440×900` 中英双语及经典/紧凑侧栏）；`--online-only`、`--quota-reset-only`、`--cards-only`、`--passive-only` 真实组件/虚构IPC检查通过；95项Bun测试（8748断言）、63项本地/在线Python额度测试及TypeScript/Vite生产构建通过。
 
-同一产品提交的CI执行95项前端测试、216项原生测试通过，另1项忽略。日志确认以下关键用例实际通过：`passive_quota_revision_usage_cache_reaches_native_read_without_cross_account_merge`、`cross_account_session_resume_preserves_original_history_bytes`、`per_identity_proxy_and_repo_paths_and_oauth_lock_are_isolated_across_switches`。这些是合成账号证据，不代表真实账号登录、在线接口或NSIS系统升级已经验收。
+同一产品提交的CI执行95项前端测试、216项原生测试通过，另1项忽略。这些是合成账号证据，不代表真实账号登录、在线接口或NSIS系统升级已经验收。
 
 ## 3. 当前卡在哪、遗留什么、设计偏差
 
-**没有交付阻塞。用户授权的0.2.3更新、打包、上传已完成；本次只收尾文档。** 没有需要继续等待的后台脚本或子代理，也不需要再次确认发布。
+**没有交付阻塞。用户授权的0.2.4更新、打包、上传已完成。** 没有需要继续等待的后台脚本或子代理，也不需要再次确认发布。
 
 保留以下实际边界，不要为了“清零待办”冒险操作：
 
@@ -74,7 +73,7 @@ Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，React/TypeSc
 
 ## 4. 下一步计划与代码入口
 
-1. 新会话先只读查看 `git status`、最近提交、版本清单、最终回执和用户最新反馈。远端tag可用 `git ls-remote --tags origin refs/tags/v0.2.3` 核对；本地未fetch到标签不表示未发布，更不要据此创建或覆盖标签。
+1. 新会话先只读查看 `git status`、最近提交、版本清单、最终回执和用户最新反馈。远端tag可用 `git ls-remote --tags origin refs/tags/v0.2.4` 核对；本地未fetch到标签不表示未发布，更不要据此创建或覆盖标签。
 2. 当前无新增需求，停止在已交付状态。若用户继续反馈，优先修复额度同步、账号交接和共享历史的具体问题，不重做美化，不恢复搜索/排序，不加解释条或新按钮。保留“账号安全优先、统一查询”的决定。
 3. 若额度未更新，先区分CLI根本没有落盘、revision没有变化、摘要读取失败、账号指纹拒绝和仅有旧观测；用虚构IPC/临时目录复现。默认本地通路不依赖在线授权成功，不能为提高新鲜度越过账号绑定。
 4. 按改动比例运行相关现有检查，通过即止。文档修改无需重跑产品全套测试或重新打包；新产品修复需要交付时使用新版本，不移动旧标签，不覆盖旧资产。
@@ -92,7 +91,7 @@ bun run build
 cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol passive_quota_revision
 ```
 
-交付工具位于忽略目录 `.local/release-0.2.3/`，按下载→独立前端比对→审计准备→备份更新→收集回执→私有发布使用，仅供未来新版本参考；旧输出均为已完成证据，不要再次执行覆盖。正式release编译走远程Runner，避免占用本机资源。
+交付工具位于忽略目录 `.local/release-0.2.4/`，按下载→独立前端比对→审计准备→备份更新→收集回执→私有发布使用，仅供未来新版本参考；旧输出均为已完成证据，不要再次执行覆盖。正式release编译走远程Runner，避免占用本机资源。
 
 ## 5. 踩过的坑：绝对不要再踩
 
