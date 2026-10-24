@@ -1516,7 +1516,7 @@ fn parse(bytes: &[u8]) -> Result<Current, serde_json::Error> {
 pub fn read(home: &Path) -> Current {
     read_with_ledger(home, None)
 }
-pub(super) fn read_live(home: &Path, vault_dir: &Path) -> Current {
+pub(crate) fn read_live(home: &Path, vault_dir: &Path) -> Current {
     read_with_ledger(home, vault_dir.parent())
 }
 fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {

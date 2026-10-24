@@ -1294,7 +1294,7 @@ fn metadata_entry(root: &Value, identity: &str, now_ms: u64) -> Option<WebMetada
     Some(data)
 }
 
-pub(super) fn apply_metadata(vault: &Path, identity: Option<&str>, output: &mut WebMetadata) {
+pub(crate) fn apply_metadata(vault: &Path, identity: Option<&str>, output: &mut WebMetadata) {
     // Cached summary fields are not proof of their identity. Always reconstruct
     // this view from the exact fingerprint-qualified metadata entry.
     *output = WebMetadata::default();

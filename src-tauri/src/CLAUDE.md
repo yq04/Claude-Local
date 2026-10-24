@@ -14,6 +14,8 @@ window_state.rs / window_state_model.rs: 仅主窗口正常逻辑尺寸/最大�
 quota_core.rs: GUI/Python writer 共用的逐窗状态、观测百分比有限性/边界验证、可信服务端窗口到期后的 reset_inferred 推定、观测顺序与同窗单调合并；保留过去边界和原观测，不伪造新 reset/观测。schema 1 的 --quota-core stdin/stdout 有界协议（最多 1MiB / 256 窗口），不接路径、不读文件或联网，非法输入只报固定错误。
 local_runtime.rs: 启动参数明确门控配套浏览器，普通启动不启动引擎；含纯输入策略回归。
 ui_language.rs: 受 zh/en 白名单限制的界面偏好，原子持久化后发布内存状态；本地版托盘菜单，独立于电脑与浏览器语言。
+ui_appearance.rs: 界面外观偏好（主题、6 色强调色、字体栈、五层光学毛玻璃无级参数与 8 款壁纸画布）及自定义壁纸 Data URI 的原生白名单校验、Win32 私有 ACL 原子落盘（ui-appearance.json / ui-wallpaper.json）与主窗口原生标题栏明暗主题同步（set_theme）。
+monitor_window.rs: 独立可开关无边框置顶「实时额度悬浮监控窗」（monitor）生命周期控制与零网络本地实时遥测引擎；基于 mtime/size 缓存增量解析 ~/.claude/projects JSONL 的 5h Token 消耗、10m 实时速率、缓存命中率、200k 上下文水位及 5h 燃烧速率/触顶预警。
 browser/: 指纹浏览器、资料与缓存边界、真实浏览器回报及目标地区环境核验；见其 CLAUDE.md。
 windows.rs: Win32 剪贴板、当前用户 TokenUser/TokenOwner/管理员组文件所有权与权限保留回退、Win32 与注册表读取时区/首选语言/定位偏好/系统代理（跳过空白环境变量并区分 SOCKS4/5）、缓存系统版本与用户触发设置；控制台工具隐藏窗口，外部链接；拒绝凭据管理器自动读取和 SSH 操作。
 windows_tests.rs: 临时文件所有者/长路径、虚构输入的空白代理回退与 SOCKS 协议回归；本机不修改系统设置，时区还原测试仅允许一次性 CI。

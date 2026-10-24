@@ -41,7 +41,7 @@
   --font-mono: 'Cascadia Mono', Consolas, 'SFMono-Regular', Menlo, 'PingFang SC', 'Microsoft YaHei UI', monospace;
 }
 
-/* ----- 四套主题强调色（赤陶橙 / 座舱蓝 / 翡翠绿 / 星云紫） ----- */
+/* ----- 六套主题强调色（赤陶橙 / 座舱蓝 / 翡翠绿 / 星云紫 / 暮光玫 / 琥珀金） ----- */
 :root[data-accent="cockpit"] {
   --local-accent: #2563eb;
   --local-accent-bright: #3b82f6;
@@ -59,6 +59,18 @@
   --local-accent-bright: #8b5cf6;
   --local-accent-ink: #5b21b6;
   --local-accent-soft: #f1ebfe;
+}
+:root[data-accent="rose"] {
+  --local-accent: #e11d48;
+  --local-accent-bright: #f43f5e;
+  --local-accent-ink: #9f1239;
+  --local-accent-soft: #ffe4e6;
+}
+:root[data-accent="amber"] {
+  --local-accent: #d97706;
+  --local-accent-bright: #f59e0b;
+  --local-accent-ink: #92400e;
+  --local-accent-soft: #fef3c7;
 }
 
 /* ----- 深色模式（月之暗面）完整令牌适配 ----- */
@@ -100,6 +112,48 @@
   --local-accent-bright: #c4b5fd;
   --local-accent-ink: #ddd6fe;
   --local-accent-soft: rgba(139, 92, 246, 0.18);
+}
+:root.dark[data-accent="rose"] {
+  --local-accent: #fb7185;
+  --local-accent-bright: #fda4af;
+  --local-accent-ink: #ffe4e6;
+  --local-accent-soft: rgba(244, 63, 94, 0.18);
+}
+:root.dark[data-accent="amber"] {
+  --local-accent: #fbbf24;
+  --local-accent-bright: #fcd34d;
+  --local-accent-ink: #fef3c7;
+  --local-accent-soft: rgba(245, 158, 11, 0.18);
+}
+
+/* ----- 开源字体栈预设（直接映射具体字体族列表，保持 --font-sans 与 computed fontFamily 一致） ----- */
+:root[data-font="modern"] {
+  --font-sans: 'Inter', 'HarmonyOS Sans SC', 'MiSans', 'Segoe UI Variable Display', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', sans-serif;
+}
+:root[data-font="humanist"] {
+  --font-sans: 'LXGW WenKai', 'LXGW WenKai Screen', 'OppoSans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', sans-serif;
+}
+:root[data-font="serif"] {
+  --font-sans: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', Georgia, 'Times New Roman', 'Microsoft YaHei UI', serif;
+}
+:root[data-mono-font="jetbrains"] {
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Mono', Consolas, 'Microsoft YaHei UI', monospace;
+}
+:root[data-mono-font="consolas"] {
+  --font-mono: Consolas, 'Liberation Mono', 'Courier New', 'Microsoft YaHei UI', monospace;
+}
+
+/* ----- 双语微排版与 View Transitions 原生平滑切换 ----- */
+:root[data-locale="en"] body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+:root[data-locale="zh"] body {
+  font-feature-settings: "kern" 1;
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 210ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* ----- 软件内「减少动画」开关及系统减弱动态全局生效（同时把 Cromma 的 --motion-* 三档归零） ----- */
@@ -163,9 +217,163 @@ code, input { user-select: text; }
   gap: 8px;
   background-color: var(--shell-bg);
   background-image: none;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: background-color 220ms ease, background-image 220ms ease;
 }
 :root[data-surface="hatched"] .app-shell {
   background-image: var(--landing-hatch);
+}
+
+/* ----- 背景氛围与艺术壁纸画布（Aurora / Sunset / Ocean / Nebula / Dune / Fuji / Custom） ----- */
+:root[data-backdrop="aurora"] .app-shell {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(37, 99, 235, 0.16) 0%, transparent 46%),
+    radial-gradient(circle at 86% 22%, rgba(16, 185, 129, 0.15) 0%, transparent 48%),
+    radial-gradient(circle at 54% 88%, rgba(124, 58, 237, 0.11) 0%, transparent 52%);
+}
+:root.dark[data-backdrop="aurora"] .app-shell {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(59, 130, 246, 0.24) 0%, transparent 48%),
+    radial-gradient(circle at 86% 22%, rgba(16, 185, 129, 0.2) 0%, transparent 50%),
+    radial-gradient(circle at 54% 88%, rgba(139, 92, 246, 0.18) 0%, transparent 54%);
+}
+:root[data-backdrop="sunset"] .app-shell {
+  background-image:
+    radial-gradient(circle at 14% 16%, rgba(201, 100, 66, 0.18) 0%, transparent 48%),
+    radial-gradient(circle at 84% 24%, rgba(245, 158, 11, 0.15) 0%, transparent 46%),
+    radial-gradient(circle at 50% 88%, rgba(225, 29, 72, 0.1) 0%, transparent 52%);
+}
+:root.dark[data-backdrop="sunset"] .app-shell {
+  background-image:
+    radial-gradient(circle at 14% 16%, rgba(224, 123, 88, 0.25) 0%, transparent 50%),
+    radial-gradient(circle at 84% 24%, rgba(251, 191, 36, 0.18) 0%, transparent 48%),
+    radial-gradient(circle at 50% 88%, rgba(244, 63, 94, 0.16) 0%, transparent 54%);
+}
+:root[data-backdrop="ocean"] .app-shell {
+  background-image:
+    radial-gradient(circle at 16% 20%, rgba(14, 165, 233, 0.16) 0%, transparent 48%),
+    radial-gradient(circle at 85% 28%, rgba(37, 99, 235, 0.14) 0%, transparent 50%),
+    radial-gradient(circle at 46% 86%, rgba(20, 184, 166, 0.12) 0%, transparent 52%);
+}
+:root.dark[data-backdrop="ocean"] .app-shell {
+  background-image:
+    radial-gradient(circle at 16% 20%, rgba(56, 189, 248, 0.22) 0%, transparent 50%),
+    radial-gradient(circle at 85% 28%, rgba(59, 130, 246, 0.22) 0%, transparent 52%),
+    radial-gradient(circle at 46% 86%, rgba(45, 212, 191, 0.16) 0%, transparent 54%);
+}
+:root[data-backdrop="nebula"] .app-shell {
+  background-image:
+    radial-gradient(circle at 15% 18%, rgba(124, 58, 237, 0.17) 0%, transparent 48%),
+    radial-gradient(circle at 85% 22%, rgba(225, 29, 72, 0.14) 0%, transparent 48%),
+    radial-gradient(circle at 52% 86%, rgba(59, 130, 246, 0.12) 0%, transparent 52%);
+}
+:root.dark[data-backdrop="nebula"] .app-shell {
+  background-image:
+    radial-gradient(circle at 15% 18%, rgba(139, 92, 246, 0.26) 0%, transparent 50%),
+    radial-gradient(circle at 85% 22%, rgba(244, 63, 94, 0.2) 0%, transparent 50%),
+    radial-gradient(circle at 52% 86%, rgba(96, 165, 250, 0.18) 0%, transparent 54%);
+}
+:root[data-backdrop="dune"] .app-shell {
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #0b0d13 var(--wallpaper-dim, 15%), transparent) 0%,
+      color-mix(in srgb, #0b0d13 var(--wallpaper-dim, 15%), transparent) 100%
+    ),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='sky' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23f9ebe0'/%3E%3Cstop offset='55%25' stop-color='%23f3d5b5'/%3E%3Cstop offset='100%25' stop-color='%23e5b287'/%3E%3C/linearGradient%3E%3ClinearGradient id='d1' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0%25' stop-color='%23dd9b68' stop-opacity='0.65'/%3E%3Cstop offset='100%25' stop-color='%23c96442' stop-opacity='0.52'/%3E%3C/linearGradient%3E%3ClinearGradient id='d2' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23b85635' stop-opacity='0.55'/%3E%3Cstop offset='100%25' stop-color='%238c3d20' stop-opacity='0.68'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1600' height='900' fill='url(%23sky)'/%3E%3Ccircle cx='1220' cy='230' r='135' fill='%23fbbf24' fill-opacity='0.38'/%3E%3Cpath d='M0 560 Q420 430 880 540 T1600 490 L1600 900 L0 900 Z' fill='url(%23d1)'/%3E%3Cpath d='M0 670 Q520 540 1060 660 T1600 610 L1600 900 L0 900 Z' fill='url(%23d2)'/%3E%3C/svg%3E");
+}
+:root.dark[data-backdrop="dune"] .app-shell {
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #050608 var(--wallpaper-dim, 15%), transparent) 0%,
+      color-mix(in srgb, #050608 var(--wallpaper-dim, 15%), transparent) 100%
+    ),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='sky' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%2313111c'/%3E%3Cstop offset='55%25' stop-color='%23231924'/%3E%3Cstop offset='100%25' stop-color='%233b2322'/%3E%3C/linearGradient%3E%3ClinearGradient id='d1' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0%25' stop-color='%237c3a26' stop-opacity='0.52'/%3E%3Cstop offset='100%25' stop-color='%23b45309' stop-opacity='0.38'/%3E%3C/linearGradient%3E%3ClinearGradient id='d2' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23431c18' stop-opacity='0.78'/%3E%3Cstop offset='100%25' stop-color='%231f1214' stop-opacity='0.9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1600' height='900' fill='url(%23sky)'/%3E%3Ccircle cx='1220' cy='230' r='135' fill='%23f59e0b' fill-opacity='0.24'/%3E%3Cpath d='M0 560 Q420 430 880 540 T1600 490 L1600 900 L0 900 Z' fill='url(%23d1)'/%3E%3Cpath d='M0 670 Q520 540 1060 660 T1600 610 L1600 900 L0 900 Z' fill='url(%23d2)'/%3E%3C/svg%3E");
+}
+:root[data-backdrop="fuji"] .app-shell {
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #0b0d13 var(--wallpaper-dim, 15%), transparent) 0%,
+      color-mix(in srgb, #0b0d13 var(--wallpaper-dim, 15%), transparent) 100%
+    ),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='sky' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0%25' stop-color='%23dce8f7'/%3E%3Cstop offset='60%25' stop-color='%23e8eef5'/%3E%3Cstop offset='100%25' stop-color='%23d4e4ec'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1600' height='900' fill='url(%23sky)'/%3E%3Ccircle cx='420' cy='220' r='110' fill='%23f43f5e' fill-opacity='0.22'/%3E%3Cpath d='M180 720 L680 310 L820 310 L1320 720 Z' fill='%2364748b' fill-opacity='0.32'/%3E%3Cpath d='M0 640 Q380 520 820 610 T1600 560 L1600 900 L0 900 Z' fill='%233b82f6' fill-opacity='0.22'/%3E%3Cpath d='M0 730 Q540 640 1100 720 T1600 680 L1600 900 L0 900 Z' fill='%230f766e' fill-opacity='0.28'/%3E%3C/svg%3E");
+}
+:root.dark[data-backdrop="fuji"] .app-shell {
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #050608 var(--wallpaper-dim, 15%), transparent) 0%,
+      color-mix(in srgb, #050608 var(--wallpaper-dim, 15%), transparent) 100%
+    ),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='sky' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0%25' stop-color='%230b1120'/%3E%3Cstop offset='60%25' stop-color='%23111c33'/%3E%3Cstop offset='100%25' stop-color='%2316283c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1600' height='900' fill='url(%23sky)'/%3E%3Ccircle cx='420' cy='220' r='110' fill='%23fb7185' fill-opacity='0.2'/%3E%3Cpath d='M180 720 L680 310 L820 310 L1320 720 Z' fill='%23334155' fill-opacity='0.52'/%3E%3Cpath d='M0 640 Q380 520 820 610 T1600 560 L1600 900 L0 900 Z' fill='%231e3a8a' fill-opacity='0.44'/%3E%3Cpath d='M0 730 Q540 640 1100 720 T1600 680 L1600 900 L0 900 Z' fill='%230f172a' fill-opacity='0.78'/%3E%3C/svg%3E");
+}
+:root[data-backdrop="custom"] .app-shell {
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #0b0d13 var(--wallpaper-dim, 15%), transparent) 0%,
+      color-mix(in srgb, #0b0d13 calc(var(--wallpaper-dim, 15%) + 8%), transparent) 100%
+    ),
+    var(--custom-wallpaper-image, radial-gradient(circle at 18% 20%, rgba(201, 100, 66, 0.24) 0%, transparent 52%), radial-gradient(circle at 82% 26%, rgba(37, 99, 235, 0.2) 0%, transparent 50%));
+}
+
+/* ----- 五层光学毛玻璃表面引擎（5-Layer Optical Glassmorphism：高饱和模糊 + 强调色微染色 + 135° 镜面高光折射边缘 + 2.5% 亚克力微噪点 + 多页穿透） ----- */
+:root[data-surface="glass"] {
+  --glass-noise-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  --glass-base-light: color-mix(in srgb, #ffffff var(--glass-opacity, 72%), transparent);
+  --panel: color-mix(in srgb, var(--local-accent) 5%, var(--glass-base-light));
+  --card-elevated: color-mix(in srgb, #fffefb calc(min(95%, var(--glass-opacity, 72%) + 12%)), transparent);
+  --background: color-mix(in srgb, #f8f7f3 calc(max(36%, var(--glass-opacity, 72%) - 20%)), transparent);
+  --landing-line: rgba(255, 255, 255, 0.52);
+  --card-shadow:
+    0 10px 28px -10px rgba(20, 20, 19, 0.11),
+    0 2px 6px rgba(20, 20, 19, 0.05),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.74),
+    inset 1px 0 0 0 rgba(255, 255, 255, 0.34),
+    inset 0 -1px 0 0 rgba(20, 20, 19, 0.05);
+}
+:root.dark[data-surface="glass"] {
+  --glass-base-dark: color-mix(in srgb, #181a22 var(--glass-opacity, 72%), transparent);
+  --panel: color-mix(in srgb, var(--local-accent) 7%, var(--glass-base-dark));
+  --card-elevated: color-mix(in srgb, #222530 calc(min(94%, var(--glass-opacity, 72%) + 10%)), transparent);
+  --background: color-mix(in srgb, #111318 calc(max(38%, var(--glass-opacity, 72%) - 22%)), transparent);
+  --landing-line: rgba(255, 255, 255, 0.15);
+  --card-shadow:
+    0 14px 34px -10px rgba(0, 0, 0, 0.56),
+    0 3px 8px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.18),
+    inset 1px 0 0 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.38);
+}
+:root[data-surface="glass"] .app-sidebar,
+:root[data-surface="glass"] .workspace {
+  background-image: var(--glass-noise-image);
+}
+:root[data-surface="glass"] :is(
+  .app-sidebar,
+  .workspace,
+  .settings-card,
+  .settings-spec-card,
+  .settings-tabs,
+  .identity-library,
+  .identity-policy,
+  .claude-residue,
+  .identity-cli,
+  .quick-overview,
+  .system-setting-card,
+  .network-action-card,
+  .domain-diagnostics,
+  .browser-card,
+  .help-scope,
+  .help-topics,
+  .help-notes
+) {
+  backdrop-filter: blur(var(--glass-blur, 22px)) saturate(185%) contrast(103%);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 22px)) saturate(185%) contrast(103%);
 }
 
 /* ----- 侧边栏（对齐 Cockpit Tools & CC Switch，支持一键折叠） ----- */
@@ -1860,8 +2068,10 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .identity-quota-reset-label { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .identity-card .identity-reset-time { font: inherit; font-variant-numeric: tabular-nums; }
 .identity-quota-countdown { flex-shrink: 0; font: inherit; }
-.identity-quota-track { display: block; height: 6px; overflow: hidden; border-radius: 999px; background: var(--identity-line); }
-.identity-quota-track > i { display: block; height: 100%; border-radius: inherit; background: #10a66a; }
+.identity-quota-track { position: relative; display: block; height: 6px; overflow: hidden; border-radius: 999px; background: var(--identity-line); }
+.identity-quota-track > i { display: block; height: 100%; border-radius: inherit; background: #10a66a; transition: width 180ms ease, background-color 180ms ease; }
+:root[data-reduce-motion="true"] .identity-quota-track > i { transition: none; }
+@media (prefers-reduced-motion: reduce) { .identity-quota-track > i { transition: none; } }
 .quota-warn .identity-quota-track > i { background: #d97706; }
 .quota-empty .identity-quota-track > i { background: #dc2626; }
 .current .identity-quota-window.quota-ok .identity-quota-track > i { background: #34d399; }
@@ -2384,6 +2594,274 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .settings-spec-card p {
   font: 11px/1.45 var(--font-mono);
   color: var(--muted-foreground);
+}
+
+/* ----- 环境变量覆盖顶层告警、CLI 路径复制与历史归属卡片统一类 ----- */
+.claude-residue-env-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(245, 158, 11, 0.42);
+  background: rgba(245, 158, 11, 0.11);
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+:root.dark .claude-residue-env-alert {
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(251, 191, 36, 0.38);
+}
+.claude-residue-env-badge {
+  display: grid;
+  place-items: center;
+  flex: 0 0 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 1px;
+}
+.claude-residue-env-alert strong {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.claude-residue-env-alert p {
+  margin: 0;
+  font-size: 11.5px;
+}
+.cli-path-row {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+}
+.cli-path-copy {
+  padding: 1px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--landing-line);
+  background: var(--background);
+  color: var(--muted-foreground);
+  font: 500 10.5px/1.4 var(--font-sans);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.cli-path-copy:hover {
+  color: var(--foreground);
+  border-color: var(--local-accent);
+}
+.usage-attribution-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px;
+}
+.usage-attribution-head,
+.usage-attribution-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.usage-attribution-body {
+  font-size: 12px;
+}
+.usage-attribution-copy {
+  display: grid;
+  gap: 2px;
+}
+.usage-attribution-desc,
+.usage-attribution-scope,
+.usage-attribution-preview {
+  font-size: 11px;
+  color: var(--usage-secondary);
+}
+.usage-attribution-scope {
+  margin-left: 10px;
+}
+.usage-attribution-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.usage-attribution-feedback {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--usage-secondary);
+}
+.usage-attribution-feedback.error {
+  color: var(--error-foreground, #e5484d);
+}
+
+/* ----- 点击物理回弹反馈（Tactile Press Feedback）、设置分栏入场动效与主题/字体预览控件 ----- */
+:where(.system-page, .identity-page, .quick-page, .network-page, .usage-page, .help-page, [role="dialog"], [role="alertdialog"]) button.isolate:not(:disabled),
+.sidebar-collapse-btn:not(:disabled),
+.command-palette-trigger:not(:disabled),
+.cli-path-copy:not(:disabled),
+.theme-preset-btn:not(:disabled) {
+  transition: transform 110ms cubic-bezier(0.22, 1, 0.36, 1), background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+:where(.system-page, .identity-page, .quick-page, .network-page, .usage-page, .help-page, [role="dialog"], [role="alertdialog"]) button.isolate:active:not(:disabled),
+.sidebar-collapse-btn:active:not(:disabled),
+.command-palette-trigger:active:not(:disabled),
+.cli-path-copy:active:not(:disabled),
+.theme-preset-btn:active:not(:disabled),
+.workspace-nav:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.workspace-nav {
+  position: relative;
+  transition: transform 110ms cubic-bezier(0.22, 1, 0.36, 1), background-color 150ms ease, color 150ms ease;
+}
+.workspace-nav[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--local-accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--local-accent) 55%, transparent);
+}
+@keyframes settings-tab-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.settings-tab-panel {
+  animation: settings-tab-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.theme-preset-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.theme-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--landing-line);
+  background: var(--background);
+  color: var(--foreground);
+  font: 500 12px/1 var(--font-sans);
+  white-space: nowrap;
+}
+.theme-preset-btn:hover {
+  border-color: color-mix(in srgb, var(--local-accent) 45%, var(--landing-line));
+  background: var(--muted);
+}
+.theme-preset-btn.active {
+  border-color: var(--local-accent);
+  background: var(--local-accent-soft);
+  color: var(--local-accent-ink);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--local-accent) 28%, transparent);
+}
+.settings-font-preview {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--landing-line);
+  background: var(--background);
+}
+.settings-font-preview-sans {
+  font: 500 12.5px/1.4 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+.settings-font-preview-mono {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--muted);
+  color: var(--local-accent-ink);
+  font: 500 11.5px/1.35 var(--font-mono);
+}
+
+/* ----- 自定义壁纸工坊与五层光学毛玻璃无级调节滑块 ----- */
+.sr-only-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.custom-wallpaper-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wallpaper-preview-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 9px 3px 4px;
+  border-radius: 999px;
+  border: 1px solid var(--landing-line);
+  background: var(--background);
+}
+.wallpaper-thumb-preview {
+  width: 28px;
+  height: 20px;
+  border-radius: 999px;
+  background-size: cover;
+  background-position: center;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  flex-shrink: 0;
+}
+.wallpaper-resolution-label {
+  font: 600 10.5px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.settings-slider-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.settings-range-slider {
+  width: 156px;
+  height: 6px;
+  accent-color: var(--local-accent);
+  cursor: pointer;
+}
+.settings-slider-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  padding: 2.5px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--landing-line);
+  background: var(--background);
+  color: var(--local-accent-ink);
+  font: 600 11px/1.3 var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 960px) {

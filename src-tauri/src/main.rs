@@ -15,6 +15,7 @@ mod linux;
 #[cfg(test)]
 mod local_edition_tests;
 mod local_runtime;
+mod monitor_window;
 mod native;
 mod network_links;
 mod progress;
@@ -22,6 +23,7 @@ mod quota_core;
 mod regions;
 mod system;
 mod system_changes;
+mod ui_appearance;
 mod ui_language;
 mod ui_privacy;
 mod quota_setup;
@@ -104,6 +106,8 @@ fn main() {
             startup_trace("host setup");
             app.manage(ui_language::UiLanguage::load(app.handle()));
             app.manage(ui_privacy::UiPrivacy::load(app.handle()));
+            app.manage(ui_appearance::UiAppearanceState::load(app.handle()));
+            app.manage(monitor_window::ManagedMonitorState::default());
             app.manage(cleaner::Cleaner::default());
             app.manage(browser::Browser::default());
             window_state::setup(app.handle());
@@ -137,6 +141,7 @@ fn main() {
         })
         .on_window_event(|window, event| {
             window_state::on_window_event(window, event);
+            monitor_window::on_window_event(window, event);
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
@@ -147,6 +152,17 @@ fn main() {
             ui_language::ui_language_write,
             ui_privacy::ui_privacy_read,
             ui_privacy::ui_privacy_write,
+            ui_appearance::ui_appearance_read,
+            ui_appearance::ui_appearance_write,
+            ui_appearance::ui_wallpaper_read,
+            ui_appearance::ui_wallpaper_write,
+            ui_appearance::ui_wallpaper_clear,
+            monitor_window::monitor_window_state,
+            monitor_window::monitor_window_set_open,
+            monitor_window::monitor_window_set_always_on_top,
+            monitor_window::monitor_window_set_compact,
+            monitor_window::monitor_window_start_drag,
+            monitor_window::monitor_live_telemetry,
             quota_setup::quota_setup_status,
             runtime_platform,
             open_permissions,

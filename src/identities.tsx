@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生身份命令、可恢复的原生额度批次状态/取消、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
- * [OUTPUT]: 180×286 身份工牌、失败后重试的本地额度同步、按需打开的在线查询弹窗与严格指纹绑定的批次进度/取消/恢复。
+ * [OUTPUT]: 180×286 身份工牌（含 7d 步调锚点）、失败后重试与显式反馈的本地额度同步、按需打开的在线查询弹窗、额度详情语义化重置状态与严格指纹绑定的批次进度/取消/恢复。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -21,12 +21,14 @@ import {ClaudeCliPanel} from './claude-cli-panel';
 import {ClaudeResiduePanel} from './claude-residue-panel';
 import {defaultPolicy, policyRows, type Identity, type IdentityState} from './identity-model';
 import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
-import {evaluateQuota, formatCompactEta, formatResetClock} from './identity-quota';
+import {evaluateQuota, formatCompactEta, formatElapsedSinceReset, formatResetClock, type WeeklyPace} from './identity-quota';
 import {usePageRefresh, type IdentityReviewRequest} from './app-events';
 import {formatObservationAge, quotaObservationAge} from './identity-list';
 import {serializeIdentityDiagnostic} from './identity-diagnostics';
 import {connectionHistory, IdentityConnections, isValidQuotaTargetSubset} from './identity-connections';
+import {MONITOR_BUS_CHANNEL, postMonitorBusMessage, type MonitorBusMessage, type MonitorWindowState} from './floating-monitor-model';
 import './identity-productivity.css';
+import './floating-monitor.css';
 
 type Target = Identity | 'empty' | 'recovery';
 type QuotaSetupStatus={state:'not_configured'|'custom_statusline'|'invalid_settings_path'|'invalid_settings_json'|'invalid_statusline';collector_bundled:boolean;has_statusline:boolean};
@@ -39,14 +41,32 @@ function authBadgeLabel(status: string | null | undefined, t: (key: string) => s
   return null;
 }
 
-function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, resetComplete = false, inferred = false, known, level, display, nowSec, t}: {label: string; used: number; remaining: number; resetAt: number | null; inferredResetAt?: number | null; resetComplete?: boolean; inferred?: boolean; known: boolean; level: string; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string}) {
+function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, resetComplete = false, inferred = false, known, level, display, nowSec, pace = null, inDialog = false, t}: {label: string; used: number; remaining: number; resetAt: number | null; inferredResetAt?: number | null; resetComplete?: boolean; inferred?: boolean; known: boolean; level: string; display: 'remaining' | 'used'; nowSec: number; pace?: WeeklyPace | null; inDialog?: boolean; t: (key: string, slots?: Record<string, string | number>) => string}) {
   const value = display === 'used' ? used : remaining;
   const reset = resetAt ? formatResetClock(resetAt, label === '7d') : '';
   const countdown = formatCompactEta(resetAt, nowSec);
   const inferredClock = inferred && inferredResetAt ? formatResetClock(inferredResetAt, label === '7d' || nowSec - inferredResetAt >= 86400) : '';
-  const resetLabel = inferred ? t('identityCard.resetInferred') : reset ? `${t('identityCard.reset')} ${reset}` : resetComplete ? t('identityCard.windowExpired') : t('identityCard.resetUnavailable');
+  const inferredElapsed = inferred && inferredResetAt ? formatElapsedSinceReset(inferredResetAt, nowSec) : '';
+  const inferredStatusLabel = inferred
+    ? t(display === 'used' ? 'identityCard.resetInferredUsed' : 'identityCard.resetInferredRemaining')
+    : '';
+  const inferredTimeSummary = inferred && inferredClock
+    ? (inferredElapsed ? t('identityCard.resetInferredElapsed', {clock: inferredClock, elapsed: inferredElapsed}) : inferredClock)
+    : '';
+  const resetLabel = inferred
+    ? (inDialog ? inferredStatusLabel : t('identityCard.resetInferred'))
+    : reset ? `${t('identityCard.reset')} ${reset}` : resetComplete ? t('identityCard.windowExpired') : t('identityCard.resetUnavailable');
+  const rightMeta = countdown || (inDialog ? inferredTimeSummary : inferredClock);
+  const resetTooltip = countdown
+    ? `${resetLabel} · ${countdown}`
+    : inferred && inferredTimeSummary
+      ? `${inferredStatusLabel} · ${inferredTimeSummary}`
+      : inferredClock
+        ? `${resetLabel} · ${inferredClock}`
+        : resetLabel;
   const resetDate = resetAt == null ? null : new Date(resetAt * 1000);
   const resetDateTime = resetDate && Number.isFinite(resetDate.getTime()) ? resetDate.toISOString() : undefined;
+  const paceExpected = pace ? (display === 'used' ? pace.expectedUsedPct : pace.expectedRemPct) : null;
   return (
     <div className={`identity-quota-window ${known ? `quota-${level}` : 'quota-unknown'}`} data-quota-window={label} data-quota-inferred={inferred || undefined} title={inferred ? t('quota.resetInferredHint') : undefined} aria-label={`${label} ${known ? `${t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')} ${Math.round(value)}%` : t('identityCard.quotaUnknown')}${inferred ? ` · ${resetLabel}` : ''}`}>
       <div className="identity-quota-copy">
@@ -55,20 +75,28 @@ function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, r
       </div>
       <span className={`identity-quota-track ${inferred ? "quota-track-inferred" : ""}`} role="img" aria-label={known ? `${Math.round(value)}%` : t('identityCard.quotaUnknown')}>
         {known && <i style={{width: `${Math.max(0, Math.min(100, value))}%`}} />}
+        {known && !inferred && pace && !pace.suppressed && paceExpected !== null && (
+          <b
+            className={`identity-quota-pace-tick${pace.ahead ? ' ahead' : ''}`}
+            style={{left: `${Math.max(2, Math.min(98, paceExpected))}%`}}
+            title={t('quota.paceTickLabel', {expected: paceExpected})}
+            aria-hidden="true"
+          />
+        )}
       </span>
-      <span className="identity-quota-reset" title={countdown ? `${resetLabel} · ${countdown}` : inferredClock ? `${resetLabel} · ${inferredClock}` : resetLabel}>
+      <span className="identity-quota-reset" title={resetTooltip}>
         <span className="identity-quota-reset-label">{reset ? <><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.6" /><path d="M8 4.5V8l2.2 1.4" /></svg><time className="identity-reset-time" dateTime={resetDateTime} aria-label={resetLabel}>{reset}</time></> : resetLabel}</span>
-        {(countdown || inferredClock) && <span className="identity-quota-countdown">{countdown || inferredClock}</span>}
+        {rightMeta && <span className="identity-quota-countdown">{rightMeta}</span>}
       </span>
     </div>
   );
 }
 
-function IdentityQuota({quota, display, nowSec, t, onOpenDetails}: {quota: ReturnType<typeof evaluateQuota>; display: 'remaining' | 'used'; nowSec: number; t: (key: string) => string; onOpenDetails?: () => void}) {
+function IdentityQuota({quota, display, nowSec, inDialog = false, t, onOpenDetails}: {quota: ReturnType<typeof evaluateQuota>; display: 'remaining' | 'used'; nowSec: number; inDialog?: boolean; t: (key: string, slots?: Record<string, string | number>) => string; onOpenDetails?: () => void}) {
   return (
     <div className="identity-quota-stack identity-quota-open" data-identity-quota tabIndex={0} role="button" aria-label={t('quota.details')} onClick={onOpenDetails} onKeyDown={e => {if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenDetails?.(); }}}>
-      <QuotaWindow label="5h" used={quota?.used5h ?? 0} remaining={quota?.rem5h ?? 0} resetAt={quota?.r5 ?? null} inferredResetAt={quota?.inferredReset5h ?? null} resetComplete={quota?.expired5h} inferred={quota?.inferred5h} known={quota?.known5h ?? false} level={quota?.level5h ?? 'ok'} display={display} nowSec={nowSec} t={t} />
-      <QuotaWindow label="7d" used={quota?.used7d ?? 0} remaining={quota?.rem7d ?? 0} resetAt={quota?.r7 ?? null} inferredResetAt={quota?.inferredReset7d ?? null} resetComplete={quota?.expired7d} inferred={quota?.inferred7d} known={quota?.known7d ?? false} level={quota?.level7d ?? 'ok'} display={display} nowSec={nowSec} t={t} />
+      <QuotaWindow label="5h" used={quota?.used5h ?? 0} remaining={quota?.rem5h ?? 0} resetAt={quota?.r5 ?? null} inferredResetAt={quota?.inferredReset5h ?? null} resetComplete={quota?.expired5h} inferred={quota?.inferred5h} known={quota?.known5h ?? false} level={quota?.level5h ?? 'ok'} display={display} nowSec={nowSec} inDialog={inDialog} t={t} />
+      <QuotaWindow label="7d" used={quota?.used7d ?? 0} remaining={quota?.rem7d ?? 0} resetAt={quota?.r7 ?? null} inferredResetAt={quota?.inferredReset7d ?? null} resetComplete={quota?.expired7d} inferred={quota?.inferred7d} known={quota?.known7d ?? false} level={quota?.level7d ?? 'ok'} display={display} nowSec={nowSec} pace={quota?.pace7d ?? null} inDialog={inDialog} t={t} />
     </div>
   );
 }
@@ -136,6 +164,8 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [diagnosticVersion, setDiagnosticVersion] = useState<string|null>(null);
   const [foregroundAutoRefresh, setForegroundAutoRefresh] = useState(false);
   const [onlinePanelOpen, setOnlinePanelOpen] = useState(false);
+  const [syncedFeedback, setSyncedFeedback] = useState(false);
+  const syncedTimerRef = useRef<number | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   const batchBusyRef = useRef(false);
   batchBusyRef.current = batchBusy;
@@ -183,6 +213,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (syncedTimerRef.current !== null) window.clearTimeout(syncedTimerRef.current);
     };
   }, []);
   const tRef = useRef(t);
@@ -228,6 +259,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const removed = policyRows.filter(([key]) => !policy[key]).map(([, label]) => t(label));
   const isDefaultPolicy = policyRows.every(([key]) => policy[key] === defaultPolicy[key]);
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  const [monitorOpen, setMonitorOpen] = useState(false);
   const currentQuota = evaluateQuota(current, nowSec);
   const detailsAreCurrent = quotaDetails?.id === 'current' || (!!quotaDetails && quotaDetails.id === state?.active);
   const detailsSummary = detailsAreCurrent ? current : quotaDetails ? state?.summaries[quotaDetails.id] : undefined;
@@ -255,6 +287,35 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
   useEffect(() => {
     void read();
+    if (
+      typeof window !== 'undefined' &&
+      Boolean(
+        (window as Window & {__TAURI_INTERNALS__?: {metadata?: unknown}}).__TAURI_INTERNALS__?.metadata,
+      )
+    ) {
+      void invoke<MonitorWindowState>('monitor_window_state')
+        .then(s => {
+          if (mountedRef.current && s && typeof s.open === 'boolean') setMonitorOpen(s.open);
+        })
+        .catch(() => {});
+    }
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        channel = new BroadcastChannel(MONITOR_BUS_CHANNEL);
+        channel.onmessage = (event: MessageEvent<MonitorBusMessage>) => {
+          const msg = event.data;
+          if (msg && typeof msg === 'object' && msg.type === 'window-state' && msg.state) {
+            setMonitorOpen(Boolean(msg.state.open));
+          }
+        };
+      } catch {
+        channel = null;
+      }
+    }
+    return () => {
+      if (channel) channel.close();
+    };
   }, []);
   usePageRefresh(() => { if (!locked && !loading) void read(false); });
 
@@ -722,6 +783,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       }
       setState(next);
       setReadReady(true);
+      postMonitorBusMessage({type: 'telemetry-updated'});
       if (invalidateResidue) setResidueRevision(value => value + 1);
       setError('');
       if (review === 'empty') {
@@ -737,6 +799,32 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     } finally {
       if (mountedRef.current && seq >= readSeqRef.current) {
         setLoading(false);
+      }
+    }
+  }
+  async function manualSyncLocalQuota() {
+    const ok = await read(false);
+    if (ok && mountedRef.current) {
+      setSyncedFeedback(true);
+      if (syncedTimerRef.current !== null) window.clearTimeout(syncedTimerRef.current);
+      syncedTimerRef.current = window.setTimeout(() => {
+        if (mountedRef.current) setSyncedFeedback(false);
+      }, 1400);
+    }
+  }
+  async function toggleMonitorWindow() {
+    const next = !monitorOpen;
+    setMonitorOpen(next);
+    try {
+      const state = await invoke<MonitorWindowState>('monitor_window_set_open', {open: next});
+      if (mountedRef.current && state && typeof state.open === 'boolean') {
+        setMonitorOpen(state.open);
+        postMonitorBusMessage({type: 'window-state', state});
+      }
+    } catch (e) {
+      if (mountedRef.current) {
+        setMonitorOpen(!next);
+        setError(t(String(e)));
       }
     }
   }
@@ -958,6 +1046,21 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       <header className="cleanup-title">
         <h1>{t('身份管理')}</h1>
         <div className="identity-header-actions">
+          {syncedFeedback && (
+            <span className="identity-sync-feedback" role="status">
+              ✓ {t('identityCard.localQuotaSynced')}
+            </span>
+          )}
+          <Button
+            variant="secondary"
+            size="small"
+            className="monitor-toggle-btn"
+            title={t('monitor.toggleHint')}
+            onClick={() => void toggleMonitorWindow()}
+          >
+            <span className={`monitor-toggle-dot${monitorOpen ? ' is-open' : ''}`} aria-hidden="true" />
+            {t(monitorOpen ? 'monitor.toggleButtonOpen' : 'monitor.toggleButton')}
+          </Button>
           <Button
             variant="secondary"
             size="small"
@@ -965,7 +1068,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             loading={loading}
             leftIcon={<Refresh aria-hidden size={16} className={loading ? 'spin' : ''} />}
             title={t('identityCard.localQuotaSync')}
-            onClick={() => void read(false)}
+            onClick={() => void manualSyncLocalQuota()}
           >
             {t('identityCard.localQuotaSync')}
           </Button>
@@ -1258,7 +1361,10 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         title={t('quota.details')}
         description={t('quota.localOnly')}
         footer={<>
-          <Button variant="secondary" disabled={busy || loading} onClick={() => void read(false)}>{t('quota.refreshLocal')}</Button>
+          <Button variant="secondary" disabled={busy || loading} onClick={() => void manualSyncLocalQuota()}>{t('quota.refreshLocal')}</Button>
+          {(detailsQuota?.inferred5h || detailsQuota?.inferred7d) && (
+            <Button variant="secondary" disabled={busy || loading || batchBusy} onClick={() => { setQuotaDetails(null); setOnlinePanelOpen(true); }}>{t('quota.calibrateOnline')}</Button>
+          )}
           {detailsAreCurrent && (
             <Button variant="secondary" disabled={busy || loading || !state?.browser.enabled} onClick={() => void syncSubscription()}>{t('quota.syncSubscription')}</Button>
           )}
@@ -1268,7 +1374,20 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         <div className="identity-quota-details">
           <h3>{maskDisplayName(quotaDetails?.name, detailsSummary?.email, prefs.privacyMask)}</h3>
           {detailsSummary?.email && <p>{maskEmailAddress(detailsSummary.email, prefs.privacyMask)}</p>}
-          <IdentityQuota quota={detailsQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} />
+          <IdentityQuota quota={detailsQuota} display={prefs.quotaDisplay} nowSec={nowSec} inDialog t={t} />
+          {detailsQuota?.pace7d && (
+            <div className="identity-confirm-target">
+              <span>{t('quota.weeklyPace')}</span>
+              <strong>
+                {detailsQuota.pace7d.suppressed
+                  ? t('quota.paceSuppressed')
+                  : t(detailsQuota.pace7d.ahead ? 'quota.paceAhead' : 'quota.paceBalanced', {
+                      delta: `${detailsQuota.pace7d.deltaUsedPct >= 0 ? '+' : ''}${detailsQuota.pace7d.deltaUsedPct}`,
+                      expected: prefs.quotaDisplay === 'used' ? detailsQuota.pace7d.expectedUsedPct : detailsQuota.pace7d.expectedRemPct,
+                    })}
+              </strong>
+            </div>
+          )}
           {(['5h', '7d'] as const).map(window => {
             const source = detailsQuota?.[window === '5h' ? 'source5h' : 'source7d'];
             const observed = detailsSummary?.[`quota_${window}_source`] != null

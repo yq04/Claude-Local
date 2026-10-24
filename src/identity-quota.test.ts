@@ -3,7 +3,7 @@
 // [POS]: Pure quota-model tests; no native IPC, accounts or ledger writes.
 // [PROTOCOL]: Keep src/CLAUDE.md aligned with quota presentation changes.
 import {expect, test} from 'bun:test';
-import {evaluateQuota} from './identity-quota';
+import {evaluateQuota, evaluateWeeklyPace, formatElapsedSinceReset} from './identity-quota';
 
 test('expired or missing windows stay unknown instead of manufacturing available quota', () => {
   const now = 2_000_000_000;
@@ -93,4 +93,27 @@ test('expired local estimates and invalid server evidence cannot imply recovered
   expect(evaluateQuota({...input, quota_5h_source:'server_anchor', quota_5h_observed_at_ms:now*1000}, now)!.known5h).toBe(false);
   expect(evaluateQuota({...input, quota_5h_source:'unknown'}, now)!.known5h).toBe(false);
   expect(evaluateQuota({...input, quota_5h_source:'reset_inferred', quota_5h_used:100}, now)!.known5h).toBe(false);
+});
+
+test('weekly pace calculation suppresses first-24h false alarms and flags ahead-of-pace burn', () => {
+  const now = 2_000_000_000;
+  // Day 1 (12h elapsed out of 7d -> 6.5d remaining): suppressed must be true even if 30% used
+  const day1 = evaluateWeeklyPace(30, now + 6.5 * 86400, now)!;
+  expect(day1.suppressed).toBe(true);
+  expect(day1.ahead).toBe(false);
+
+  // Halfway through 7d (3.5d remaining -> 50% elapsed): 70% used (+20%) flags ahead
+  const ahead = evaluateWeeklyPace(70, now + 3.5 * 86400, now)!;
+  expect(ahead.suppressed).toBe(false);
+  expect(ahead.expectedUsedPct).toBe(50);
+  expect(ahead.expectedRemPct).toBe(50);
+  expect(ahead.deltaUsedPct).toBe(20);
+  expect(ahead.ahead).toBe(true);
+
+  // Halfway through 7d: 45% used (-5%) stays balanced
+  const balanced = evaluateWeeklyPace(45, now + 3.5 * 86400, now)!;
+  expect(balanced.ahead).toBe(false);
+
+  expect(formatElapsedSinceReset(now - 8100, now)).toBe('2h 15m');
+  expect(formatElapsedSinceReset(now + 60, now)).toBe('');
 });

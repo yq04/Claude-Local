@@ -2,7 +2,8 @@
   "identifier": "main",
   "description": "单窗口事件与界面控制",
   "windows": [
-    "main"
+    "main",
+    "monitor"
   ],
   "permissions": [
     "core:default",

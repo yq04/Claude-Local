@@ -1,11 +1,16 @@
 // [INPUT]: Win32 Toolhelp/进程句柄、当前用户 SID、精确 CLI 入口与独立浏览器资料路径。
-// [OUTPUT]: Claude 进程识别、创建时间/所有权复核后的结束，以及按完整资料参数正常关闭浏览器。
-// [POS]: Windows 进程边界；参数仅用于原生判定，不返回 UI；不对其他用户或名称相似的程序执行终止。
+// [OUTPUT]: Claude 进程零侵入识别（优先 PROCESS_QUERY_LIMITED_INFORMATION + (pid, created) 缓存）、创建时间/所有权复核后的结束，以及按完整资料参数正常关闭浏览器。
+// [POS]: Windows 进程边界；原生二进制免 PROCESS_VM_READ/ReadProcessMemory；参数仅用于 node/bun/chrome 判定，不返回 UI。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{current_sid, input, process_sid, response};
 use crate::cleaner::ClaudeProcess;
 use serde_json::json;
-use std::{ffi::c_char, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    ffi::c_char,
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 use windows_sys::Win32::{
     Foundation::{CloseHandle, LocalFree, FILETIME, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM},
     System::{
@@ -36,10 +41,7 @@ impl Drop for Handle {
     }
 }
 impl Handle {
-    fn open(pid: u32, terminate: bool) -> Option<Self> {
-        let flags = PROCESS_QUERY_LIMITED_INFORMATION
-            | PROCESS_VM_READ
-            | if terminate { PROCESS_TERMINATE } else { 0 };
+    fn open_with_flags(pid: u32, flags: u32) -> Option<Self> {
         let handle = unsafe { OpenProcess(flags, 0, pid) };
         if handle.is_null() {
             return None;
@@ -49,6 +51,17 @@ impl Handle {
             return None;
         }
         Some(handle)
+    }
+    /// Open with `PROCESS_QUERY_LIMITED_INFORMATION` only (zero `PROCESS_VM_READ`).
+    /// Prevents cross-process PEB/memory reads on native `claude.exe` / `versions\X.Y.Z.exe`.
+    fn open_limited(pid: u32) -> Option<Self> {
+        Self::open_with_flags(pid, PROCESS_QUERY_LIMITED_INFORMATION)
+    }
+    fn open(pid: u32, terminate: bool) -> Option<Self> {
+        let flags = PROCESS_QUERY_LIMITED_INFORMATION
+            | PROCESS_VM_READ
+            | if terminate { PROCESS_TERMINATE } else { 0 };
+        Self::open_with_flags(pid, flags)
     }
     fn image(&self) -> Option<String> {
         let mut buffer = vec![0u16; 32768];
@@ -212,6 +225,9 @@ fn official_cli(args: &[String]) -> bool {
             && normalized(arg).ends_with("\\node_modules\\@anthropic-ai\\claude-code\\cli.js")
     })
 }
+fn needs_vm_arguments(exe_name: &str) -> bool {
+    matches!(exe_name, "node.exe" | "bun.exe")
+}
 fn claude_kind(image: &str, args: &[String]) -> Option<&'static str> {
     let path = normalized(image);
     let name = path.rsplit('\\').next()?;
@@ -288,6 +304,47 @@ fn version_name(name: &str) -> bool {
             .iter()
             .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
 }
+static CLAUDE_PROC_CACHE: OnceLock<Mutex<HashMap<(u32, u64), Option<(&'static str, String)>>>> =
+    OnceLock::new();
+
+fn claude_proc_cache() -> &'static Mutex<HashMap<(u32, u64), Option<(&'static str, String)>>> {
+    CLAUDE_PROC_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn claude_candidate_pids() -> Result<Vec<(u32, String)>, String> {
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err("无法检查 Windows 进程。".into());
+    }
+    let snapshot = Handle(snapshot);
+    let mut entry = unsafe { std::mem::zeroed::<PROCESSENTRY32W>() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut result = vec![];
+    let mut has = unsafe { Process32FirstW(snapshot.0, &mut entry) };
+    while has != 0 {
+        let name = String::from_utf16_lossy(&entry.szExeFile)
+            .trim_end_matches('\0')
+            .to_lowercase();
+        if ([
+            "claude.exe",
+            "claude-code-helper.exe",
+            "cowork-svc.exe",
+            "claude-ssh-askpass.exe",
+            "claude-ssh-proxy.exe",
+            "node.exe",
+            "bun.exe",
+        ]
+        .contains(&name.as_str())
+            || version_name(&name))
+            && entry.th32ProcessID > 1
+        {
+            result.push((entry.th32ProcessID, name));
+        }
+        has = unsafe { Process32NextW(snapshot.0, &mut entry) };
+    }
+    Ok(result)
+}
+
 fn processes(terminate: bool) -> Result<Vec<(u32, Handle)>, String> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
@@ -324,29 +381,66 @@ fn processes(terminate: bool) -> Result<Vec<(u32, Handle)>, String> {
     }
     Ok(result)
 }
+
 pub fn claude_processes() -> Result<Vec<ClaudeProcess>, String> {
+    let candidates = claude_candidate_pids()?;
     let mut found = vec![];
-    for (pid, handle) in processes(false)? {
-        let Some(image) = handle.image() else {
+    let mut active_keys = HashSet::with_capacity(candidates.len());
+    for (pid, exe_name) in candidates {
+        // Always open with PROCESS_QUERY_LIMITED_INFORMATION first (zero PROCESS_VM_READ).
+        let Some(limited) = Handle::open_limited(pid) else {
             continue;
         };
-        let args = arguments(&handle).unwrap_or_default();
-        let kind = if handle.packaged_claude() {
-            Some("Claude Desktop")
-        } else {
-            claude_kind(&image, &args)
+        let Some(created) = limited.created() else {
+            continue;
         };
-        if let (Some(kind), Some(created)) = (kind, handle.created()) {
+        let key = (pid, created);
+        active_keys.insert(key);
+        if let Ok(cache) = claude_proc_cache().lock() {
+            if let Some(cached) = cache.get(&key) {
+                if let Some((kind, image)) = cached {
+                    found.push(ClaudeProcess {
+                        pid: pid as i32,
+                        name: (*kind).into(),
+                        executable: image.clone(),
+                        created,
+                    });
+                }
+                continue;
+            }
+        }
+        let Some(image) = limited.image() else {
+            continue;
+        };
+        let kind = if limited.packaged_claude() {
+            Some("Claude Desktop")
+        } else if needs_vm_arguments(&exe_name) {
+            let args = Handle::open(pid, false)
+                .and_then(|vm_handle| arguments(&vm_handle))
+                .unwrap_or_default();
+            claude_kind(&image, &args)
+        } else {
+            claude_kind(&image, &[])
+        };
+        let resolved = kind.map(|k| (k, image));
+        if let Ok(mut cache) = claude_proc_cache().lock() {
+            cache.insert(key, resolved.clone());
+        }
+        if let Some((kind, executable)) = resolved {
             found.push(ClaudeProcess {
                 pid: pid as i32,
                 name: kind.into(),
-                executable: image,
+                executable,
                 created,
             });
         }
     }
+    if let Ok(mut cache) = claude_proc_cache().lock() {
+        cache.retain(|key, _| active_keys.contains(key));
+    }
     Ok(found)
 }
+
 pub fn kill_process(target: &ClaudeProcess) -> Result<(), String> {
     let Some(handle) = Handle::open(target.pid as u32, true) else {
         return Ok(());
@@ -356,9 +450,17 @@ pub fn kill_process(target: &ClaudeProcess) -> Result<(), String> {
     {
         return Ok(());
     }
-    if !handle.packaged_claude()
-        && claude_kind(&target.executable, &arguments(&handle).unwrap_or_default()).is_none()
-    {
+    let exe_name = normalized(&target.executable)
+        .rsplit('\\')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    let args = if needs_vm_arguments(&exe_name) {
+        arguments(&handle).unwrap_or_default()
+    } else {
+        vec![]
+    };
+    if !handle.packaged_claude() && claude_kind(&target.executable, &args).is_none() {
         return Ok(());
     }
     if unsafe { TerminateProcess(handle.0, 1) } == 0 {
@@ -481,7 +583,16 @@ mod tests {
             ),
             Some("Claude Desktop")
         );
+        assert!(!needs_vm_arguments("claude.exe"));
+        assert!(!needs_vm_arguments("2.1.304.exe"));
+        assert!(needs_vm_arguments("node.exe"));
+        assert!(needs_vm_arguments("bun.exe"));
         assert!(current_sid().is_some());
+        let limited = Handle::open_limited(std::process::id());
+        assert!(limited.is_some());
+        let limited = limited.unwrap();
+        assert!(limited.created().is_some());
+        assert!(limited.image().is_some());
         assert!(Handle::open(std::process::id(), false).is_some());
     }
 }

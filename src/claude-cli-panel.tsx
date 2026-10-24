@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生 CLI 本地状态、用户手动最新版本检查与更新命令和真实任务日志。
- * [OUTPUT]: 紧凑品牌维护卡片、可恢复的本地状态读取、当前/最新版本、未安装时官方安装指引与命令复制、检查更新与一键更新；读取失败不误报未安装，运行中明确阻断更新。
+ * [OUTPUT]: 紧凑品牌维护卡片、可恢复的本地状态读取、二进制路径一键复制、当前/最新版本、未安装时官方安装指引与命令复制、检查更新与一键更新；读取失败不误报未安装，运行中明确阻断更新。
  * [POS]: 身份页 CLI 程序维护区域；首次挂载只读本地状态，不联网、不结束会话、不修改身份或配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -25,13 +25,18 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
     [update, setUpdate] = useState<UpdateStatus | null>(null),
     [error, setError] = useState(''),
     [readError, setReadError] = useState(''),
-    [copyStatus, setCopyStatus] = useState<'copied' | 'failed' | null>(null);
+    [copyStatus, setCopyStatus] = useState<'copied' | 'failed' | null>(null),
+    [copiedPath, setCopiedPath] = useState(false);
   const copyTimer = useRef<number | undefined>(undefined);
+  const pathCopyTimer = useRef<number | undefined>(undefined);
   const activity = useCleanupActivity();
 
   useEffect(() => {
     void read();
-    return () => window.clearTimeout(copyTimer.current);
+    return () => {
+      window.clearTimeout(copyTimer.current);
+      window.clearTimeout(pathCopyTimer.current);
+    };
   }, []);
   useEffect(() => {
     onBusy(!!action);
@@ -65,6 +70,24 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
       }
     }
     copyTimer.current = window.setTimeout(() => setCopyStatus(null), 2000);
+  }
+
+  async function copyPath() {
+    if (!status?.path) return;
+    window.clearTimeout(pathCopyTimer.current);
+    try {
+      await invoke('copy_result', {text: status.path});
+      setCopiedPath(true);
+    } catch {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+        await navigator.clipboard.writeText(status.path);
+        setCopiedPath(true);
+      } catch {
+        setCopiedPath(false);
+      }
+    }
+    pathCopyTimer.current = window.setTimeout(() => setCopiedPath(false), 1800);
   }
 
   async function run(selected: Action) {
@@ -108,7 +131,14 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
                 {loading ? t('cli.checking') : readError ? t('cli.statusUnavailable') : status?.method ? status.version || t('已安装') : t('未安装')}
               </span>
             </div>
-            {status?.path && <code className="cli-path-code">{status.path}</code>}
+            {status?.path && (
+              <div className="cli-path-row">
+                <code className="cli-path-code">{status.path}</code>
+                <button type="button" className="cli-path-copy" onClick={() => void copyPath()}>
+                  {t(copiedPath ? 'cli.copiedPath' : 'cli.copyPath')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
         <div className="cleanup-title-actions">

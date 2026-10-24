@@ -25,7 +25,9 @@ import {CommandPalette} from './command-palette';
 import {TaskHandoff} from './task-handoff';
 import {APP_REFRESH_EVENT, type IdentityReviewRequest} from './app-events';
 import {commandPaletteShortcutAction} from './command-model';
-import {initializePrivacyPreference, stepUiScale, updatePreferences, usePreferences} from './settings-model';
+import {initializeAppearancePreferences, initializePrivacyPreference, stepUiScale, updatePreferences, usePreferences} from './settings-model';
+import {initializeCustomWallpaper, syncCustomWallpaperToDom} from './wallpaper-store';
+import {FloatingMonitorApp} from './floating-monitor';
 import appLogo from '../assets/claude-local-mark.svg';
 import './index.css';
 import './style.css';
@@ -43,10 +45,23 @@ const titles: Record<Page, string> = {
   settings: '软件设置',
 };
 
+const PAGE_ORDER: readonly Page[] = ['quick', 'browser', 'system', 'vps', 'cleaner', 'usage', 'help', 'settings'];
+
 function App() {
   const {t, locale} = useI18n();
   const prefs = usePreferences();
-  const [page, setPage] = useState<Page>(readPage);
+  const [page, setPageState] = useState<Page>(readPage);
+  const [navDir, setNavDir] = useState<1 | -1>(1);
+  const setPage = (next: Page) => {
+    setPageState(prev => {
+      if (prev !== next) {
+        const prevIdx = PAGE_ORDER.indexOf(prev);
+        const nextIdx = PAGE_ORDER.indexOf(next);
+        setNavDir(nextIdx >= prevIdx ? 1 : -1);
+      }
+      return next;
+    });
+  };
   const [advancedBusy, setAdvancedBusy] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [handoffOpen, setHandoffOpen] = useState(false);
@@ -61,6 +76,9 @@ function App() {
   }, [page]);
 
   useEffect(() => {
+    syncCustomWallpaperToDom();
+    void initializeAppearancePreferences();
+    void initializeCustomWallpaper();
     void initializePrivacyPreference();
   }, []);
 
@@ -178,7 +196,7 @@ function App() {
           </div>
         </aside>
         <Panel frame className="workspace">
-          <motion.div key={page} className="cleaner-slot" initial={{opacity: 0, y: 6}} animate={{opacity: 1, y: 0}} transition={MOTION.base}>
+          <motion.div key={page} className="cleaner-slot" initial={{opacity: 0, y: navDir * 7}} animate={{opacity: 1, y: 0}} transition={MOTION.base}>
             {page === 'quick' && <QuickSetupPanel onNavigate={setPage} />}
             {page === 'cleaner' && <IdentityPanel onBusy={setAdvancedBusy} identityReviewRequest={identityReviewRequest} onIdentityReviewConsumed={requestId => setIdentityReviewRequest(current => current?.requestId === requestId ? null : current)} />}
             {page === 'browser' && <BrowserPanel onBusy={setAdvancedBusy} />}
@@ -210,10 +228,13 @@ function App() {
 
 function Root() {
   const {reduceMotion} = usePreferences();
+  const isMonitorWindow =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('window') === 'monitor';
   return (
     <MotionRoot reducedMotion={reduceMotion ? 'always' : 'user'}>
       <TooltipProvider delayDuration={600} skipDelayDuration={300}>
-        <App />
+        {isMonitorWindow ? <FloatingMonitorApp /> : <App />}
       </TooltipProvider>
     </MotionRoot>
   );

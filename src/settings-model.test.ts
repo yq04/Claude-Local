@@ -1,11 +1,13 @@
 import {expect, test} from 'bun:test';
 import {
+  applyThemePreset,
   defaultPreferences,
   getPreferences,
   initializePrivacyPreference,
   maskDisplayName,
   maskEmailAddress,
   resetPreferences,
+  startSmoothTransition,
   stepUiScale,
   updatePreferences,
 } from './settings-model';
@@ -16,18 +18,26 @@ test('settings model updates, sanitizes and resets preferences safely', () => {
 
   const updated = updatePreferences({
     theme: 'dark',
-    accent: 'cockpit',
+    accent: 'rose',
     reduceMotion: true,
     sidebarLayout: 'compact',
+    surfaceStyle: 'glass',
+    backdrop: 'aurora',
+    fontFamily: 'modern',
+    monoFont: 'jetbrains',
     quotaDisplay: 'used',
     privacyMask: true,
     uiScale: 110,
     startupPage: 'usage',
   });
   expect(updated.theme).toBe('dark');
-  expect(updated.accent).toBe('cockpit');
+  expect(updated.accent).toBe('rose');
   expect(updated.reduceMotion).toBe(true);
   expect(updated.sidebarLayout).toBe('compact');
+  expect(updated.surfaceStyle).toBe('glass');
+  expect(updated.backdrop).toBe('aurora');
+  expect(updated.fontFamily).toBe('modern');
+  expect(updated.monoFont).toBe('jetbrains');
   expect(updated.quotaDisplay).toBe('used');
   expect(updated.privacyMask).toBe(true);
   expect(updated.uiScale).toBe(110);
@@ -35,6 +45,31 @@ test('settings model updates, sanitizes and resets preferences safely', () => {
   expect(stepUiScale('reset').uiScale).toBe(100);
   expect(stepUiScale('in').uiScale).toBe(105);
   expect(stepUiScale('out').uiScale).toBe(100);
+
+  startSmoothTransition(() => {
+    applyThemePreset('nebulaDark');
+  });
+  expect(getPreferences().theme).toBe('dark');
+  expect(getPreferences().accent).toBe('violet');
+  expect(getPreferences().surfaceStyle).toBe('glass');
+  expect(getPreferences().backdrop).toBe('nebula');
+
+  applyThemePreset('duneGlass');
+  expect(getPreferences().accent).toBe('amber');
+  expect(getPreferences().surfaceStyle).toBe('glass');
+  expect(getPreferences().backdrop).toBe('dune');
+
+  // Optical glass & custom wallpaper tuning clamps out-of-range values
+  const clamped = updatePreferences({
+    backdrop: 'custom',
+    glassBlur: 99,
+    glassOpacity: 10,
+    wallpaperDim: -12,
+  });
+  expect(clamped.backdrop).toBe('custom');
+  expect(clamped.glassBlur).toBe(40);
+  expect(clamped.glassOpacity).toBe(45);
+  expect(clamped.wallpaperDim).toBe(0);
 
   // 旧版无界面消费者的偏好键（版本检查、通道、终端）读取后被丢弃，不再回写。
   const legacy = updatePreferences({startupCheckUpdate: true, releaseChannel: 'local', defaultTerminal: 'wt'} as never);

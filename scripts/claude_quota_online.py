@@ -40,8 +40,35 @@ except ImportError:
 
 ENDPOINT = "https://api.anthropic.com/api/oauth/usage"
 PROFILE_ENDPOINT = "https://api.anthropic.com/api/oauth/profile"
+TRACE_ENDPOINT = "https://www.cloudflare.com/cdn-cgi/trace"
 BETA = "oauth-2025-04-20"
-USER_AGENT = "claude-local/1.0 (Windows; OAuth usage collector)"
+ANTHROPIC_VERSION = "2023-06-01"
+DEFAULT_CLI_VERSION = "2.1.304"
+DEFAULT_ALLOWED_EXIT_COUNTRIES = ("US",)
+_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\.exe)?$", re.IGNORECASE)
+
+
+def _cli_user_agent(claude_home: Path | None = None) -> str:
+    """Align User-Agent with the locally installed official Claude Code CLI binary."""
+    base = claude_home if isinstance(claude_home, Path) else Path.home()
+    versions_dir = base / ".local" / "share" / "claude" / "versions"
+    best_tuple: tuple[int, int, int] | None = None
+    best_str = DEFAULT_CLI_VERSION
+    try:
+        if versions_dir.is_dir():
+            for entry in versions_dir.iterdir():
+                match = _VERSION_RE.fullmatch(entry.name)
+                if match:
+                    ver_tuple = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                    if best_tuple is None or ver_tuple > best_tuple:
+                        best_tuple = ver_tuple
+                        best_str = f"{ver_tuple[0]}.{ver_tuple[1]}.{ver_tuple[2]}"
+    except OSError:
+        pass
+    return f"claude-cli/{best_str} (external, cli)"
+
+
+USER_AGENT = _cli_user_agent()
 TIMEOUT_SECONDS = 9
 MAX_RESPONSE_BYTES = 128 * 1024
 MAX_LOCAL_JSON_BYTES = 2 * 1024 * 1024
@@ -350,14 +377,51 @@ class _FrozenProxy(urllib.request.ProxyHandler):
         return None
 
 
+def _parse_trace_country(raw: bytes | str) -> str | None:
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+    for line in text.splitlines():
+        if line.startswith("loc="):
+            code = line[4:].strip().upper()
+            if re.fullmatch(r"[A-Z]{2}", code):
+                return code
+    return None
+
+
+def _verify_exit_country(route, allowed_countries=DEFAULT_ALLOWED_EXIT_COUNTRIES) -> tuple[bool, str | None]:
+    """Verify the frozen route's exit country via Cloudflare trace before sending OAuth tokens."""
+    if route is None:
+        raise RouteUnavailable()
+    request = urllib.request.Request(TRACE_ENDPOINT, headers={
+        "User-Agent": USER_AGENT,
+        "Accept": "text/plain",
+    }, method="GET")
+    proxies = dict(route[1])
+    handler = _FrozenProxy(proxies, account_route=route[0] == "account_proxy")
+    opener = urllib.request.build_opener(handler, _NoRedirect())
+    try:
+        with opener.open(request, timeout=4) as response:
+            if response.status != 200:
+                return False, None
+            raw = response.read(4096)
+    except (TimeoutError, OSError, urllib.error.URLError, RouteUnavailable):
+        return False, None
+    country = _parse_trace_country(raw)
+    if not country:
+        return False, None
+    allowed = {c.strip().upper() for c in allowed_countries if isinstance(c, str) and c.strip()}
+    return (country in allowed), country
+
+
 def _fetch(token: str, endpoint: str = ENDPOINT, route=None):
     if endpoint not in (ENDPOINT, PROFILE_ENDPOINT):
         return "unavailable", None, None
     request = urllib.request.Request(endpoint, headers={
         "Authorization": f"Bearer {token}",
         "anthropic-beta": BETA,
+        "anthropic-version": ANTHROPIC_VERSION,
         "User-Agent": USER_AGENT,
         "Accept": "application/json",
+        "x-app": "cli",
     }, method="GET")
     # Explicit ProxyHandler suppresses environment re-resolution between profile
     # and usage. Account routes also suppress host NO_PROXY bypass rules.
@@ -819,6 +883,20 @@ def run(app_data: Path, claude_home: Path, account_id: str,
         except (OSError, TimeoutError):
             return _result("unavailable")
         return _result("auth_required")
+    route_fields = cj.get("_online_route", {}) if isinstance(cj.get("_online_route"), dict) else {}
+    if os.environ.get("CLAUDE_LOCAL_VERIFY_EXIT") == "1" or route_fields.get("CLAUDE_LOCAL_VERIFY_EXIT") == "1":
+        allowed_raw = route_fields.get("CLAUDE_LOCAL_ALLOWED_COUNTRIES") or os.environ.get("CLAUDE_LOCAL_ALLOWED_COUNTRIES")
+        allowed = tuple(c.strip() for c in allowed_raw.split(",") if c.strip()) if isinstance(allowed_raw, str) and allowed_raw.strip() else DEFAULT_ALLOWED_EXIT_COUNTRIES
+        exit_ok, exit_country = _verify_exit_country(route, allowed)
+        if not exit_ok:
+            try:
+                finished = _finish_state(app_data, identity, lease, int(time.time() * 1000), "route_unavailable")
+            except (OSError, TimeoutError):
+                return _result("unavailable")
+            retry_at = finished[0] if finished else None
+            return _result("route_unavailable", retry_at_ms=retry_at,
+                           reason="non_us_exit" if exit_country else "exit_check_failed",
+                           stage="exit_check", country=exit_country, route_mode=route[0])
     profile_code, profile_raw, profile_headers = _fetch(token, PROFILE_ENDPOINT, route)
     profile_now = int(time.time() * 1000)
     status, retry = _classify_http_result(profile_code, profile_headers, profile_now)

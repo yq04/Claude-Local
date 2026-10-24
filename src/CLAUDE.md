@@ -22,18 +22,18 @@ productivity-shell.css: 经典侧栏底部自适应两行网格避免命令按�
 navigation.ts / navigation.test.ts: 本机页面偏好白名单（含 settings 设置页和 usage Token 统计页）、存储失败回退身份页；不存账号或路径。
 help.tsx: 双语只读本地产品说明，含置顶的「新用户与添加新号」三步法及身份/浏览器/离线额度/网络诊断/电脑设置分节说明（统一采用与软件设置一致的强调色竖条标头，去除机械数字序号），Cromma Disclosure 折叠应用使用、账号边界与申诉；不读取用户资料或调用原生命令；手工交接由共享有界模板显式打开。
 identity-connections.tsx / identity-connections.test.ts: 中央身份连接与路由修复队列；严格校验当前完整账号/指纹清单的冻结子集，只为明确的授权失败提供按账号打开已有绑定浏览器资料，只提交待处理子集到既有统一额度命令；进程内保留结果以跨页面卸载呈现成功与原失败，不保存凭据或落盘账号结果，合成测试覆盖双成功/授权/路由队列、冷却重试、重新挂载和过期指纹拒绝。
-identities.tsx: 紧凑身份工作台与180×286工牌；顶部默认按钮只执行本地身份摘要同步，定时元数据检查接收CLI被动额度的本地变化；无订阅/重置资料时紧凑卡片省略该行，详情仍保留未知。在线额度批次、前台定时查询开关、在线结果/错误和集中修复队列位于标题⋯菜单打开的弹窗；默认身份页无在线说明和结果错误。关闭弹窗会停用前台定时查询，不取消原生批次；批次重新挂载后以紧凑进度/打开/取消入口恢复，不强制打开弹窗。手动在线批次按冻结指纹读取全部当前/保存账号，最多两路并发；结果不清除本地观测，目标身份变化使旧结果失效；成功服务端锚点按原有严格账号绑定合并。保持额度窗口来源区分、预计恢复说明、180×286卡片、身份安全和保留策略现有行为。
+identities.tsx: 紧凑身份工作台与180×286工牌；顶部默认按钮只执行本地身份摘要同步并给出显式短暂已同步徽章反馈，定时元数据检查接收CLI被动额度的本地变化；无订阅/重置资料时紧凑卡片省略该行，详情仍保留未知。在线额度批次、前台定时查询开关、在线结果/错误和集中修复队列位于标题⋯菜单打开的弹窗；默认身份页无在线说明和结果错误。额度详情弹窗在 reset_inferred 状态下显示剩余/已用双语语义文案、原锚点与已过时长（formatElapsedSinceReset）、7d 消耗步调与一键「在线校准额度」入口。关闭弹窗会停用前台定时查询，不取消原生批次；批次重新挂载后以紧凑进度/打开/取消入口恢复，不强制打开弹窗。手动在线批次按冻结指纹读取全部当前/保存账号，最多两路并发；结果不清除本地观测，目标身份变化使旧结果失效；成功服务端锚点按原有严格账号绑定合并。保持额度窗口来源区分、预计恢复说明、180×286卡片、身份安全和保留策略现有行为。
 identity-model.ts: 浏览器绑定脱敏状态与 SQLite 受限目录、当前/暂存显示字段（含离线/在线 5h/7d 额度百分比、逐窗来源/实际观测时间、quota_identity 64hex脱敏指纹、重置时间戳、订阅日期、重置余额、manual_resets_valid_until 与各自独立的观测时间戳）和保留策略契约；订阅日期与重置资料缺失保持未知，不复用 OAuth 凭据有效期。
 identity-list.ts / identity-list.test.ts: 仅保留逐窗观测年龄格式化，搜索/排序辅助已移除；身份页固定当前卡，其余卡片按原生记录顺序显示。
 identity-diagnostics.ts / identity-diagnostics.test.ts: literal白名单诊断JSON，仅限有界版本、时间、来源枚举与配置/资源flag；运行时始终未验证，不包含账号名/邮箱/id/代理/路径或原始命令。
 identity-productivity.css: 观测年龄、⋯无障碍下拉菜单、在线额度弹窗与紧凑活动批次状态、预计进度条弱化、Pro/Max药丸、前台自动刷新开关与集中连接修复队列的局部紧凑布局，维持180×286工牌；已清除搜索/排序行及其空结果样式。
 identity-online-quota.ts / identity-online-quota.test.ts: 在线额度状态解析、批量目标构建与指纹集变动检测（buildBatchTargets/generateBatchRequestId/formatBatchProgress）、严格目标指纹核验（isExpectedCurrentTarget/isExpectedSavedTarget）、冷却倒计时格式化、带独立观测时钟和有限有效期/过期状态的订阅与重置格式化，及前台聚焦180s串行调度器（单线运行、后台暂停、generation防污染），保证离线/在线数据来源真实性与纯模型测试验证。
-identity-quota.ts / identity-quota.test.ts: 逐窗优先读取 5h/7d 来源，兼容旧整体来源；可信服务端重置时间已过时显示 reset_inferred 本地预计恢复及已重置时长，保留原观测且不推算下一重置；缺少可信依据仍未知。evaluateQuota.recommendable 保持严格非预计契约，切到最优号支持 5h 已静置恢复且 7d 窗口有效的备用账号（同分优先实测账号）。身份页仅更新本地显示时钟，不增加每小时/手动之外的原生读取；详情逐窗展示来源/观测时间，卡片维持180×286。
-claude-cli-panel.tsx: 身份页内的品牌 CLI 维护卡片，展示本地版本/路径与用户手动检查的最新版本，未安装时展示官方 Windows 安装命令复制与「重新检查」入口；读取失败显示不可读与手动重试，不误报未安装，读取错误和操作错误分别保留；运行中禁用更新，首次挂载只读，不自动结束进程。
+identity-quota.ts / identity-quota.test.ts: 逐窗优先读取 5h/7d 来源，兼容旧整体来源；可信服务端重置时间已过时显示 reset_inferred 本地预计恢复及已重置时长（formatElapsedSinceReset），保留原观测且不推算下一重置；缺少可信依据仍未知。evaluateWeeklyPace 按 7d 锚点计算已耗时占比与实际消耗偏差（重置后前24小时静默，超前>=15%预警）。evaluateQuota.recommendable 保持严格非预计契约，切到最优号支持 5h 已静置恢复且 7d 窗口有效的备用账号（同分优先实测账号）。身份页仅更新本地显示时钟，不增加每小时/手动之外的原生读取；详情逐窗展示来源/观测时间，卡片维持180×286。
+claude-cli-panel.tsx: 身份页内的品牌 CLI 维护卡片，展示本地版本/路径（支持路径一键复制）与用户手动检查的最新版本，未安装时展示官方 Windows 安装命令复制与「重新检查」入口；读取失败显示不可读与手动重试，不误报未安装，读取错误和操作错误分别保留；运行中禁用更新，首次挂载只读，不自动结束进程。
 usage-attribution.ts / usage-attribution.test.ts: 用量归属纯模型；提供脱敏账号标签（复用 settings-model 的 maskDisplayName/maskEmailAddress，防止本地邮箱别名泄露）、未归属用量范围预览、DST 23h/25h 判定与 IANA 时区格式化。
 app-events.ts: 共享本地刷新与排障导航事件（APP_REFRESH_EVENT, FAULT_NAVIGATE_EVENT），保持各页解耦。
 quick-actions.tsx / quick-setup.css: 按需挂载的快速配置页，展示六环境卡片与新增「系统与缓存排障」导流卡片（定位身份页残留工具，不自动扫描清理）；具体分区错误/原生原因、手动重试入口；不直接清理、轮换指纹、启动浏览器或修改系统。
-claude-residue-panel.tsx: 身份页内带「切号已自动清理」状态徽章的固定 Claude 文件按需扫描、动态风险分级提示条与场景预设快捷按钮（仅选安全缓存 vs 选入异常登录项）、路径/字段名/大小/影响预览；仅完整缓存默认勾选，登录/历史/备份独立选择，不完整项禁选。直接清理使用默认取消的 Alert 与勾选确认，成功/失败均复查且清空选择；不访问钥匙串、通用配置或浏览器资料。扫描提示折叠复用 Cromma Disclosure。
+claude-residue-panel.tsx: 身份页内带「切号已自动清理」状态徽章的固定 Claude 文件按需扫描、环境变量覆盖凭据顶层告警横幅（ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN）、动态风险分级提示条与场景预设快捷按钮（仅选安全缓存 vs 选入异常登录项）、路径/字段名/大小/影响预览；仅完整缓存默认勾选，登录/历史/备份独立选择，不完整项禁选。直接清理使用默认取消的 Alert 与勾选确认，成功/失败均复查且清空选择；不访问钥匙串、通用配置或浏览器资料。扫描提示折叠复用 Cromma Disclosure。
 cleaner-activity.tsx: 单次调用隔离的 ActivityController 与身份卡片正下方 IdentityOperationProgress；身份/空身份/残留清理共用真实事件阶段、局部 n/N 与脉冲，不预填步骤或按时间推算百分比，未知总量只显示运行。失败/回滚/完成带警告分开呈现，保留实际耗时和原始日志用于即时切换语言；其他页面沿用 CleanupActivity。
 cleaner-model.ts: 文件残留快照类型与选择规则、POSIX/Windows 路径父子去重、子项排除、重扫编号映射与规模格式化，供预览和执行共享。
 cleaner-model.test.ts: 预设、跨平台父子选择隔离与重扫不扩大选择的回归，不调用清理命令。
@@ -45,15 +45,17 @@ i18n.test.ts: 双语键/插槽一致性、界面文案覆盖、原生错误与�
 local-edition.tsx: 侧栏只读本机版本号徽章，保留无障碍分组语义，不发起网络请求或更新检查，不参与任务锁。
 language-switch.tsx: 侧栏底部 CN / EN 分段单选（Cromma SegmentedControl，radio 语义）；宿主原子持久化成功后更新界面，失败保留原偏好并显示错误。
 dialog.tsx: Radix Dialog/AlertDialog 受控模态，警告阻止遮罩误关闭且默认聚焦取消；无 Trigger 时的原焦点恢复与读屏标题/描述，ModalShell 关闭按钮支持当前语言、底部操作自动换行。
-settings.tsx: 独立「软件设置」页；对齐 Cockpit Tools 顶栏左标题 + 居中悬浮胶囊 Tabs（通用 / 外观与布局 / 数据管理 / 关于）、置顶「备份与资料目录」卡片与统一列表卡片（显示语言、明暗主题、4 色主题强调色、减少动画、界面缩放 Ctrl+/-/0、侧栏布局、启动默认页、工作区表面风格、额度显示口径、账号邮箱隐私打码、数据目录快捷打开/复制）及只读版本信息；加密身份备份表单归入「数据管理」分栏。本地版不联网检查更新，不提供无实际作用的更新通道、启动检查或默认终端选项。
+settings.tsx: 独立「软件设置」页；对齐 Cockpit Tools 顶栏左标题 + 居中悬浮胶囊 Tabs（通用 / 外观与布局 / 数据管理 / 关于）且四分页正交解耦：通用（备份与资料目录摘要卡 + 语言/默认页/额度口径/隐私打码/数据目录快捷操作）、外观与布局（一键主题预设、应用主题、6 色主题强调色、表面玻璃化风格、5 款背景氛围壁纸、减少动画、字体与排版库实时预览 + 侧栏与工作区布局）、数据管理（独立资料与保险库目录 + 加密身份备份表单 + 界面偏好重置）与关于（只读版本信息与三张架构规格卡片）。本地版不联网检查更新，不提供无实际作用的更新通道、启动检查或默认终端选项。
 backup-panel.tsx / backup-panel.css: 软件设置的数据管理页内提供加密身份备份、只读预检、明确选择的救援证据副本、口令与完整性检查，以及创建新隔离恢复副本；固定显示备份范围和诊断标记，不接受覆盖已有文件，原身份库不会被恢复流程替换。
-settings-model.ts / settings-model.test.ts: 纯前端响应式视图偏好存储与消毒层（只保留有界面消费者的选项，旧版无效键读取即丢弃），同步根元素 .dark 类与 data-theme-mode / data-accent / data-sidebar / data-surface / data-reduce-motion / data-ui-scale 属性及页面缩放；不保存凭据或个人路径。
+settings-model.ts / settings-model.test.ts: 纯前端响应式视图偏好存储与消毒层（只保留有界面消费者的选项，旧版无效键读取即丢弃），同步根元素 .dark 类与 data-theme-mode / data-accent / data-sidebar / data-surface / data-backdrop / data-font / data-mono-font / data-reduce-motion / data-ui-scale 属性及 --glass-blur / --glass-opacity / --wallpaper-dim 光学毛玻璃 CSS 变量、页面缩放、一键主题预设（applyThemePreset）与 View Transitions 平滑切换辅助（startSmoothTransition）；不保存凭据或个人路径。
+wallpaper-store.ts / wallpaper-store.test.ts: 纯前端自定义本地壁纸引擎；在内存中通过 Canvas 将本地图片降采样压缩为高清 WebP/JPEG Data URI，利用感知色距提取壁纸主色调映射至 6 套 AccentTone（rgbToSuggestedAccent / sampleRgbaBufferForAccent），同步根元素 --custom-wallpaper-image 变量且绝不记录任何本地文件路径与文件名。
+floating-monitor.tsx / floating-monitor-model.ts / floating-monitor-model.test.ts / floating-monitor.css: 独立可开关无边框置顶「实时额度悬浮监控窗」（?window=monitor）与纯模型计算；100% 本地只读遥测（3s 活跃 / 12s 待机自适应节奏，零后台 OAuth 请求），展示当前账号 5h/7d 双槽进度、7d 消耗步调刻度、实时 Token 速率（tok/m）、燃烧速率与触顶预警（formatExhaustionEta）、缓存命中率及 200k 上下文水位，并通过 BroadcastChannel 与主窗口实时同步外观、玻璃参数与隐私打码状态。
 usage-statistics.tsx: CPAMP 分析层次适配的本地用量工作台；集中时间/账号筛选与重置、四张统一指标卡、趋势均值/峰值、图表/数据切换、模型响应/占比与账号明细。可见页面读取完成后等待30秒刷新，隐藏暂停、返回重读、卸载清理，同筛选错误保留旧数据；不更改 Python 配额采集或轮询 OAuth。时段与图表/数据切换使用 Cromma Tabs，统计口径说明使用 Disclosure，重置筛选使用 Button。
 usage-trend.tsx / usage-statistics.css: 紧凑总Token SVG与响应式趋势/模型双栏；按真实小时区间呈现23/25小时和偏移标签，旧无区间快照兼容24槽，未来留空；键盘/指针精确值、筛选保护旧悬停索引，保持全页无横溢。
 usage-table.tsx: 本地时段明细视图；仅已发生时段，时间/总Token/响应数排序、每页10行、精确值与可聚焦局部横滚；切换视图、排序和翻页不发起IPC，刷新保留有效页码。
 usage-model.ts / usage-model.test.ts: 脱敏 Token 聚合契约、K/M/B 与精确值、缓存命中率；小时/自然日与完整历史补零、剔除未来的均值/峰值及合成测试；不读取身份配置或会话文件。
 usage-export.ts / usage-export.test.ts: 当前可见汇总及已发生区间的TSV纯格式化、隐私范围别名与公式注入/单元格转义防护，不导出隐藏桶/独立推理/未来槽或任何原始记录；复制/下载不额外发起统计查询。
-style.css: 双主题、四色强调色、192px经典与72px紧凑自适应侧栏及统一54px页头/20px页边距；身份库窄于600px时添加账号引导按容器换行，步骤不藏入横向滚动。保留180×286工牌与当前顶部绿光，名称/邮箱/双额度/订阅固定行高，额度中性底色、进度条和百分比承载状态色，正文/日期/倒计时同族12px且数字等宽。电脑页并排圆角卡片、紧凑定位行与按容器宽度换行；统一28px普通按钮、网络页按文字占宽的复制按钮与轻量反馈、软件设置卡片、CC Switch分段选择器、窗口适配及Cromma模态。分段、页签、开关与折叠区皮肤归 Cromma UI，本文件只保留其布局类；「减少动画」同时把 Cromma --motion-* 归零。
+style.css: 双主题、六色强调色、亚克力毛玻璃表面与五款弥散壁纸、四套正文字体与三套等宽字体栈、View Transitions 平滑过渡、物理按压微反馈（:active scale(0.97)）、192px经典与72px紧凑自适应侧栏及统一54px页头/20px页边距；身份库窄于600px时添加账号引导按容器换行，步骤不藏入横向滚动。保留180×286工牌与当前顶部绿光，名称/邮箱/双额度/订阅固定行高，额度中性底色、进度条和百分比承载状态色，正文/日期/倒计时同族12px且数字等宽。电脑页并排圆角卡片、紧凑定位行与按容器宽度换行；统一28px普通按钮、网络页按文字占宽的复制按钮与轻量反馈、软件设置卡片、CC Switch分段选择器、窗口适配及Cromma模态。分段、页签、开关与折叠区皮肤归 Cromma UI，本文件只保留其布局类；「减少动画」同时把 Cromma --motion-* 归零。
 quick-actions.tsx / quick-setup.css: 按需挂载的快速配置页，身份、浏览器、电脑和 CLI 各自完成即展示；具体分区错误/原生原因、手动重试及六个配置入口，不依赖先访问身份/浏览页。共用有效浏览器目标、页面图标、Button 加载/尺寸、设置卡片与主题错误色；按内容宽度自适应，不直接清理、轮换指纹、启动浏览器或修改系统。
 vps.tsx: 固定分发网络配置页；iKuuu/Kookeey只显示服务标题与说明，不把URL/邀请码放入可见文本或提示属性。两家按钮固定「复制链接」，Agent入口固定「复制提示词」；勾图标/独立状态反馈成功，原生与浏览器复制均失败时提示重试。固定链接随构建内置且忽略旧覆盖，无编辑/自动导航。精简双语提示词只含链路目标、现状备份、按版本配置、回环直连与验证/回滚方法；不预置完整脚本或参数。四域名诊断仍单独手动触发。
 Linux 呈现边界：设备平台由原生快照提供；未知定位不显示关闭；系统授权提示不固定 macOS；本地版不挂载自动更新器，侧栏显示本机版本。

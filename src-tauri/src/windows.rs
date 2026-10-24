@@ -137,6 +137,7 @@ pub unsafe fn rf_credentials_list() -> *mut c_char {
         "Windows 凭据管理器不自动读取；文件登录记录可在清理预览中选择。".into(),
     ))
 }
+#[allow(dead_code)]
 pub unsafe fn rf_credentials_remove(_: *const c_char) -> *mut c_char {
     response(Err("Windows 凭据管理器不支持自动删除。".into()))
 }

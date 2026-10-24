@@ -1,0 +1,175 @@
+// [INPUT]: Native monitor_live_telemetry payload, active account quota windows, and local JSONL velocity metrics.
+// [OUTPUT]: Pure formatting, burn-rate ETA evaluation, adaptive local polling cadence, and cross-window BroadcastChannel helpers.
+// [POS]: Pure model layer for the toggleable Floating Monitor HUD and main-window live telemetry strip; zero network I/O.
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
+import type { Locale } from './i18n'
+import type { QuotaSource } from './identity-model'
+
+export interface MonitorWindowState {
+  open: boolean
+  alwaysOnTop: boolean
+  compact: boolean
+}
+
+export interface LiveUsageMetrics {
+  tokens5hTotal: number
+  tokensPerMin: number
+  requests5h: number
+  cacheHitPct?: number
+  contextUsedPct?: number
+  latestModel?: string
+  latestTurnAtSec?: number
+  burnRatePctHr?: number
+  exhaustionEtaMins?: number
+  jsonlRevision: string
+}
+
+export interface MonitorCurrentAccount {
+  present: boolean
+  display_name?: string
+  email?: string
+  organization?: string
+  unavailable: boolean
+  plan?: string
+  auth_status?: string
+  proxy?: string
+  quota_identity?: string
+  quota_observed_at_ms?: number
+  quota_source?: QuotaSource
+  quota_5h_source?: QuotaSource
+  quota_7d_source?: QuotaSource
+  quota_5h_observed_at_ms?: number
+  quota_7d_observed_at_ms?: number
+  quota_5h_used?: number
+  quota_5h_reset_at?: number
+  quota_7d_used?: number
+  quota_7d_reset_at?: number
+}
+
+export interface MonitorLiveTelemetry {
+  observedAtMs: number
+  running: boolean
+  sessionCount: number
+  clientLabel?: string
+  activeId: string
+  activeName?: string
+  current: MonitorCurrentAccount
+  metrics: LiveUsageMetrics
+  routeProtected: boolean
+  window: MonitorWindowState
+}
+
+export type MonitorActivityMode = 'active' | 'idle'
+
+export type MonitorBarTone = 'ok' | 'warn' | 'danger' | 'unknown'
+
+export interface MonitorWindowBar {
+  used: number | null
+  remaining: number | null
+  fillWidthPct: number
+  tone: MonitorBarTone
+}
+
+export const MONITOR_BUS_CHANNEL = 'claude-local:monitor-bus'
+
+export type MonitorBusMessage =
+  | { type: 'telemetry-updated'; revision?: string }
+  | { type: 'appearance-updated' }
+  | { type: 'privacy-updated'; hideAccount: boolean }
+  | { type: 'language-updated'; language: Locale }
+  | { type: 'window-state'; state: MonitorWindowState }
+
+export function deriveMonitorActivityMode(
+  running: boolean,
+  latestTurnAtSec: number | undefined,
+  nowSec: number,
+): MonitorActivityMode {
+  if (running) return 'active'
+  if (
+    typeof latestTurnAtSec === 'number' &&
+    Number.isFinite(latestTurnAtSec) &&
+    nowSec >= latestTurnAtSec &&
+    nowSec - latestTurnAtSec <= 180
+  ) {
+    return 'active'
+  }
+  return 'idle'
+}
+
+export function recommendedMonitorPollIntervalMs(mode: MonitorActivityMode): number {
+  return mode === 'active' ? 3_000 : 12_000
+}
+
+export function formatCompactCount(value: number | undefined | null): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return '0'
+  }
+  const rounded = Math.round(value)
+  if (rounded < 1_000) {
+    return String(rounded)
+  }
+  if (rounded < 1_000_000) {
+    const k = rounded / 1_000
+    return `${k >= 100 ? Math.round(k) : Number(k.toFixed(1))}k`
+  }
+  const m = rounded / 1_000_000
+  return `${m >= 100 ? Math.round(m) : Number(m.toFixed(1))}M`
+}
+
+export function formatVelocityLabel(tokensPerMin: number | undefined | null): string {
+  return `${formatCompactCount(tokensPerMin)} tok/m`
+}
+
+export function formatExhaustionEta(
+  etaMins: number | undefined | null,
+  language: Locale = 'zh',
+): string | null {
+  if (typeof etaMins !== 'number' || !Number.isFinite(etaMins) || etaMins <= 0) {
+    return null
+  }
+  const totalMins = Math.max(1, Math.round(etaMins))
+  if (totalMins < 60) {
+    return language === 'en' ? `~${totalMins}m to limit` : `约 ${totalMins}m 触顶`
+  }
+  const hours = Math.floor(totalMins / 60)
+  const mins = totalMins % 60
+  if (mins === 0) {
+    return language === 'en' ? `~${hours}h to limit` : `约 ${hours}h 触顶`
+  }
+  return language === 'en'
+    ? `~${hours}h ${mins}m to limit`
+    : `约 ${hours}h ${mins}m 触顶`
+}
+
+export function computeMonitorWindowBar(usedPct: number | undefined | null): MonitorWindowBar {
+  if (typeof usedPct !== 'number' || !Number.isFinite(usedPct)) {
+    return {
+      used: null,
+      remaining: null,
+      fillWidthPct: 0,
+      tone: 'unknown',
+    }
+  }
+  const used = Math.max(0, Math.min(100, Math.round(usedPct)))
+  const remaining = 100 - used
+  const tone: MonitorBarTone =
+    used >= 90 ? 'danger' : used >= 75 ? 'warn' : 'ok'
+  return {
+    used,
+    remaining,
+    fillWidthPct: remaining === 0 ? 0 : Math.max(4, remaining),
+    tone,
+  }
+}
+
+export function postMonitorBusMessage(message: MonitorBusMessage): void {
+  if (typeof BroadcastChannel === 'undefined') return
+  try {
+    const channel = new BroadcastChannel(MONITOR_BUS_CHANNEL)
+    channel.postMessage(message)
+    channel.close()
+  } catch {
+    // Ignore environments without BroadcastChannel support
+  }
+}

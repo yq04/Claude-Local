@@ -181,11 +181,11 @@ export function UsageStatisticsPanel() {
         </div>
         </div>
 
-        <div className="settings-card usage-attribution-card" style={{display: 'grid', gap: '8px', padding: '12px 16px'}}>
-          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px'}}>
-            <div style={{display: 'grid', gap: '2px'}}>
+        <div className="settings-card usage-attribution-card">
+          <div className="usage-attribution-head">
+            <div className="usage-attribution-copy">
               <strong>{t('usage.attributionTitle')}</strong>
-              <span style={{fontSize: '11px', color: 'var(--usage-secondary)'}}>{t('usage.attributionDesc')}</span>
+              <span className="usage-attribution-desc">{t('usage.attributionDesc')}</span>
             </div>
             {snapshot?.attribution?.fallback_account_id ? (
               <Button variant="ghost" size="small" disabled={busy || attributionBusy} onClick={() => void handleClearAttribution()}>{t('usage.attributionClear')}</Button>
@@ -193,40 +193,40 @@ export function UsageStatisticsPanel() {
           </div>
 
           {snapshot?.attribution?.fallback_account_id ? (
-            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', fontSize: '12px'}}>
+            <div className="usage-attribution-body">
               <div>
                 <span>{t('usage.attributionCurrentAccount')}: </span>
                 <strong>{prefs.privacyMask ? maskAccountLabel({id: snapshot.attribution.fallback_account_id, name: snapshot.attribution.fallback_account_name || snapshot.attribution.fallback_account_id}, true) : (snapshot.attribution.fallback_account_name || snapshot.attribution.fallback_account_id)}</strong>
-                <span style={{marginLeft: '10px', fontSize: '11px', color: 'var(--usage-secondary)'}}>
+                <span className="usage-attribution-scope">
                   {t('usage.attributionCoveredScope', {requests: num(snapshot.attribution.unassigned_requests, true), tokens: num(snapshot.attribution.unassigned_tokens, true)})}
                 </span>
               </div>
-              <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+              <div className="usage-attribution-actions">
                 <Select aria-label={t('usage.attributionChange')} size="small" value="" onValueChange={(id) => { if (id && id !== snapshot.attribution?.fallback_account_id) void handleSetAttribution(id); }} items={[{value: '', label: t('usage.attributionChange')}, ...accounts.filter(a => a.id !== snapshot.attribution?.fallback_account_id).map(a => ({value: a.id, label: prefs.privacyMask ? maskAccountLabel(a, true) : a.name}))]} />
               </div>
             </div>
           ) : (
-            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', fontSize: '12px'}}>
-              <div style={{display: 'grid', gap: '2px'}}>
+            <div className="usage-attribution-body">
+              <div className="usage-attribution-copy">
                 <span>
                   {snapshot?.attribution?.unassigned_requests
                     ? t('usage.attributionUnassignedAvailable', {requests: num(snapshot.attribution.unassigned_requests, true), tokens: num(snapshot.attribution.unassigned_tokens, true)})
                     : t('usage.attributionNoUnassigned')}
                 </span>
                 {previewScope && (
-                  <small style={{color: 'var(--usage-secondary)'}}>
+                  <small className="usage-attribution-preview">
                     {t('usage.attributionPreviewPrompt', {account: previewScope.targetName, requests: num(previewScope.requests, true), tokens: num(previewScope.tokens, true)})}
                   </small>
                 )}
               </div>
-              <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+              <div className="usage-attribution-actions">
                 <Select aria-label={t('usage.attributionSelectAccount')} size="small" value={pendingTargetId} onValueChange={setPendingTargetId} items={[{value: '', label: t('usage.attributionSelectPlaceholder')}, ...accounts.map(a => ({value: a.id, label: prefs.privacyMask ? maskAccountLabel(a, true) : a.name}))]} />
                 <Button variant="secondary" size="small" disabled={!pendingTargetId || busy || attributionBusy} onClick={() => void handleSetAttribution(pendingTargetId)}>{t('usage.attributionConfirm')}</Button>
               </div>
             </div>
           )}
           {attributionFeedback && (
-            <p className="usage-attribution-feedback" style={{margin: '2px 0 0', color: attributionFeedback.type === 'error' ? 'var(--error-foreground, #e5484d)' : 'var(--usage-secondary)'}}>{attributionFeedback.message}</p>
+            <p className={`usage-attribution-feedback ${attributionFeedback.type === 'error' ? 'error' : ''}`}>{attributionFeedback.message}</p>
           )}
         </div>
 

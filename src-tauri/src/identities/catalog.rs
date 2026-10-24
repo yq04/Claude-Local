@@ -59,7 +59,7 @@ fn file_key(path: &Path, key: &[u8]) -> Result<Option<String>, String> {
 pub(super) fn live_key(home: &Path, key: &[u8]) -> Result<Option<String>, String> {
     file_key(&home.join(".claude.json"), key)
 }
-pub(super) fn current_id(
+pub(crate) fn current_id(
     vault: &Path,
     home: &Path,
     db: &Database,

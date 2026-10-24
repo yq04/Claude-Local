@@ -40,6 +40,7 @@ export function setLocale(next:unknown){
   if(next!=='zh'&&next!=='en')return;
   if(typeof document!=='undefined'){
     document.documentElement.lang=next==='zh'?'zh-CN':'en';
+    document.documentElement.setAttribute('data-locale',next);
     document.title=translate(document.body.classList.contains('browser-surface')?'Claude-Local Browser · 环境核验':'localEdition.brand',{},next);
   }
   if(locale===next)return;

@@ -7,7 +7,7 @@ pub mod backup;
 pub(crate) mod browser_link;
 #[cfg(test)]
 mod browser_link_tests;
-mod catalog;
+pub(crate) mod catalog;
 mod codec;
 mod compression;
 mod credentials;
@@ -18,7 +18,7 @@ pub(crate) mod online;
 #[cfg(test)]
 mod optimization_tests;
 pub(crate) mod private;
-mod profile;
+pub(crate) mod profile;
 mod store;
 #[cfg(test)]
 mod tests;

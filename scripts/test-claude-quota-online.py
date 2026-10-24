@@ -689,6 +689,57 @@ class OnlineQuotaTests(unittest.TestCase):
             self.assertEqual(rejected["status"], "account_mismatch")
             self.assertEqual(ledger_path.read_bytes(), before)
 
+    def test_cli_user_agent_and_headers_match_official_claude_code_fingerprint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / "claude-home"
+            versions = home / ".local" / "share" / "claude" / "versions"
+            versions.mkdir(parents=True)
+            (versions / "2.1.104.exe").write_bytes(b"")
+            (versions / "2.1.304.exe").write_bytes(b"")
+            self.assertEqual(online._cli_user_agent(home), "claude-cli/2.1.304 (external, cli)")
+            self.assertRegex(online.USER_AGENT, r"^claude-cli/\d+\.\d+\.\d+ \(external, cli\)$")
+
+            captured_headers = {}
+
+            class DummyResponse:
+                status = 200
+                headers = {}
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    return False
+                def read(self, _limit):
+                    return b"{}"
+
+            class DummyOpener:
+                def open(self, request, timeout=None):
+                    captured_headers.update({k.lower(): v for k, v in request.header_items()})
+                    return DummyResponse()
+
+            with patch.object(online.urllib.request, "build_opener", return_value=DummyOpener()):
+                status, raw, _ = online._fetch("synthetic-token", online.ENDPOINT, ("host_system", ()))
+            self.assertEqual(status, 200)
+            self.assertEqual(raw, b"{}")
+            self.assertEqual(captured_headers.get("anthropic-version"), "2023-06-01")
+            self.assertEqual(captured_headers.get("anthropic-beta"), "oauth-2025-04-20")
+            self.assertEqual(captured_headers.get("x-app"), "cli")
+            self.assertEqual(captured_headers.get("user-agent"), online.USER_AGENT)
+
+    def test_exit_country_preflight_blocks_non_us_exit_before_oauth_requests(self):
+        self.assertEqual(online._parse_trace_country(b"fl=12f\nloc=US\ntls=TLSv1.3\n"), "US")
+        self.assertEqual(online._parse_trace_country("loc=hk\n"), "HK")
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            with patch.dict(online.os.environ, {"CLAUDE_LOCAL_VERIFY_EXIT": "1"}), \
+                 patch.object(online, "_verify_exit_country", return_value=(False, "HK")), \
+                 patch.object(online, "_fetch") as fetch:
+                result = online.run(app, home, "current", self.expected(account))
+            self.assertEqual(result["status"], "route_unavailable")
+            self.assertEqual(result["reason"], "non_us_exit")
+            self.assertEqual(result["country"], "HK")
+            self.assertEqual(result["stage"], "exit_check")
+            fetch.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

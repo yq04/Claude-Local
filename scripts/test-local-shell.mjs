@@ -101,6 +101,7 @@ try{
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'08-network-zh.png'),fullPage:true});
  await page.getByRole('button',{name:'软件设置',exact:true}).click();
+ await page.getByRole('tab',{name:'外观与布局',exact:true}).click();
  await page.getByRole('radio',{name:'月之暗面',exact:true}).click();
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'06-settings-dark-zh.png'),fullPage:true});
@@ -116,7 +117,7 @@ try{
  await page.getByRole('button',{name:'任务交接模板',exact:true}).click();
  await page.getByLabel('目标',{exact:true}).fill('Synthetic project goal');
  await page.getByLabel('下一步',{exact:true}).fill('Run the focused checks');
- await page.evaluate(()=>{window.localPreviewCopyFail=true;});
+ await page.evaluate(()=>{window.localPreviewCopyFail=true;Object.defineProperty(navigator,'clipboard',{configurable:true,value:undefined});});
  await page.getByRole('button',{name:'复制交接内容',exact:true}).click();
  await page.getByText('复制失败，请重试',{exact:true}).waitFor();
  await page.evaluate(()=>{window.localPreviewCopyFail=false;});

@@ -1,0 +1,418 @@
+/* [INPUT]: Global design tokens (--foreground, --muted-foreground, --panel, --card-elevated, --background, --border, --local-accent, --glass-blur, --glass-opacity, --wallpaper-dim, --custom-wallpaper-image) from style.css. */
+/* [OUTPUT]: Frameless Always-on-Top Floating Monitor HUD layout, 5-layer optical glass surface, wallpaper refraction, and live telemetry bars. */
+/* [POS]: Dedicated stylesheet for src/floating-monitor.tsx and the main-window header toggle button. */
+/* [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md */
+
+:root {
+  --hud-ok: #16a34a;
+  --hud-ok-soft: rgba(22, 163, 74, 0.14);
+  --hud-ok-border: rgba(22, 163, 74, 0.32);
+  --hud-warn: #d97706;
+  --hud-warn-soft: rgba(217, 119, 6, 0.15);
+  --hud-warn-border: rgba(217, 119, 6, 0.34);
+  --hud-danger: #dc2626;
+}
+
+:root.dark {
+  --hud-ok: #34d399;
+  --hud-ok-soft: rgba(52, 211, 153, 0.16);
+  --hud-ok-border: rgba(52, 211, 153, 0.36);
+  --hud-warn: #fbbf24;
+  --hud-warn-soft: rgba(251, 191, 36, 0.16);
+  --hud-warn-border: rgba(251, 191, 36, 0.36);
+  --hud-danger: #f87171;
+}
+
+.monitor-hud-shell {
+  position: relative;
+  isolation: isolate;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  gap: 7px;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  background-color: var(--shell-bg);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border: 1px solid var(--panel-outline);
+  box-shadow: var(--card-shadow);
+}
+
+/* Inherit active ambient / artistic / custom wallpaper inside the floating HUD */
+:root[data-backdrop="aurora"] .monitor-hud-shell {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(37, 99, 235, 0.18) 0%, transparent 50%),
+    radial-gradient(circle at 86% 22%, rgba(16, 185, 129, 0.16) 0%, transparent 52%),
+    radial-gradient(circle at 54% 88%, rgba(124, 58, 237, 0.12) 0%, transparent 56%);
+}
+:root.dark[data-backdrop="aurora"] .monitor-hud-shell {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(59, 130, 246, 0.26) 0%, transparent 52%),
+    radial-gradient(circle at 86% 22%, rgba(16, 185, 129, 0.22) 0%, transparent 54%),
+    radial-gradient(circle at 54% 88%, rgba(139, 92, 246, 0.2) 0%, transparent 56%);
+}
+:root[data-backdrop="sunset"] .monitor-hud-shell {
+  background-image:
+    radial-gradient(circle at 14% 16%, rgba(201, 100, 66, 0.2) 0%, transparent 50%),
+    radial-gradient(circle at 84% 24%, rgba(245, 158, 11, 0.16) 0%, transparent 48%),
+    radial-gradient(circle at 50% 88%, rgba(225, 29, 72, 0.12) 0%, transparent 54%);
+}
+:root.dark[data-backdrop="sunset"] .monitor-hud-shell {
+  background-image:
+    radial-gradient(circle at 14% 16%, rgba(224, 123, 88, 0.26) 0%, transparent 52%),
+    radial-gradient(circle at 84% 24%, rgba(251, 191, 36, 0.2) 0%, transparent 50%),
+    radial-gradient(circle at 50% 88%, rgba(244, 63, 94, 0.18) 0%, transparent 56%);
+}
+:root[data-backdrop="ocean"] .monitor-hud-shell {
+  background-image:
+    radial-gradient(circle at 16% 20%, rgba(14, 165, 233, 0.18) 0%, transparent 50%),
+    radial-gradient(circle at 85% 28%, rgba(37, 99, 235, 0.16) 0%, transparent 52%),
+    radial-gradient(circle at 46% 86%, rgba(20, 184, 166, 0.14) 0%, transparent 54%);
+}
+:root.dark[data-backdrop="ocean"] .monitor-hud-shell {
+  background-image:
+    radial-gradient(circle at 16% 20%, rgba(56, 189, 248, 0.24) 0%, transparent 52%),
+    radial-gradient(circle at 85% 28%, rgba(59, 130, 246, 0.24) 0%, transparent 54%),
+    radial-gradient(circle at 46% 86%, rgba(45, 212, 191, 0.18) 0%, transparent 56%);
+}
+:root[data-backdrop="nebula"] .monitor-hud-shell {
+  background-image:
+    radial-gradient(circle at 15% 18%, rgba(124, 58, 237, 0.19) 0%, transparent 50%),
+    radial-gradient(circle at 85% 22%, rgba(225, 29, 72, 0.16) 0%, transparent 50%),
+    radial-gradient(circle at 52% 86%, rgba(59, 130, 246, 0.14) 0%, transparent 54%);
+}
+:root.dark[data-backdrop="nebula"] .monitor-hud-shell {
+  background-image:
+    radial-gradient(circle at 15% 18%, rgba(139, 92, 246, 0.28) 0%, transparent 52%),
+    radial-gradient(circle at 85% 22%, rgba(244, 63, 94, 0.22) 0%, transparent 52%),
+    radial-gradient(circle at 52% 86%, rgba(96, 165, 250, 0.2) 0%, transparent 56%);
+}
+:root[data-backdrop="custom"] .monitor-hud-shell {
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #0b0d13 var(--wallpaper-dim, 15%), transparent) 0%,
+      color-mix(in srgb, #0b0d13 calc(var(--wallpaper-dim, 15%) + 8%), transparent) 100%
+    ),
+    var(--custom-wallpaper-image, radial-gradient(circle at 18% 20%, rgba(201, 100, 66, 0.24) 0%, transparent 52%));
+}
+
+.monitor-hud-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: color-mix(in srgb, var(--panel) var(--glass-opacity, 72%), transparent);
+  backdrop-filter: blur(var(--glass-blur, 22px)) saturate(185%) contrast(104%);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 22px)) saturate(185%) contrast(104%);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.32);
+  pointer-events: none;
+}
+
+.monitor-hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+  cursor: move;
+}
+
+.monitor-hud-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.monitor-hud-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--muted-foreground);
+  opacity: 0.65;
+  transition: background-color 220ms ease, box-shadow 220ms ease, opacity 220ms ease;
+}
+
+.monitor-hud-dot.is-active {
+  opacity: 1;
+  background: var(--hud-ok);
+  box-shadow: 0 0 0 3px var(--hud-ok-soft);
+}
+
+.monitor-hud-status-text {
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-hud-shield {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--hud-ok);
+  background: var(--hud-ok-soft);
+  border: 1px solid var(--hud-ok-border);
+  flex-shrink: 0;
+}
+
+.monitor-hud-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.monitor-hud-icon-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.monitor-hud-icon-btn:hover {
+  background: var(--accent);
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+.monitor-hud-icon-btn.is-pinned {
+  color: var(--local-accent);
+  background: var(--local-accent-soft);
+  border-color: color-mix(in srgb, var(--local-accent) 36%, transparent);
+}
+
+.monitor-hud-account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.monitor-hud-account-name {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.monitor-hud-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.monitor-hud-badge {
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--local-accent-soft);
+  color: var(--local-accent);
+  border: 1px solid color-mix(in srgb, var(--local-accent) 30%, transparent);
+}
+
+.monitor-hud-badge.is-muted {
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border-color: var(--border);
+}
+
+.monitor-hud-windows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  justify-content: center;
+}
+
+.monitor-hud-window-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card-elevated) 84%, transparent);
+  border: 1px solid var(--border);
+}
+
+.monitor-hud-window-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.monitor-hud-window-left {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.monitor-hud-window-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.monitor-hud-window-pct {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.monitor-hud-window-reset {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-hud-window-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+
+.monitor-hud-eta-warn {
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 650;
+  color: var(--hud-warn);
+  background: var(--hud-warn-soft);
+  border: 1px solid var(--hud-warn-border);
+}
+
+.monitor-hud-track {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+  overflow: visible;
+}
+
+.monitor-hud-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--hud-ok);
+  transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1), background-color 220ms ease;
+}
+
+.monitor-hud-fill.tone-warn {
+  background: var(--hud-warn);
+}
+
+.monitor-hud-fill.tone-danger {
+  background: var(--hud-danger);
+}
+
+.monitor-hud-fill.tone-unknown {
+  background: var(--muted-foreground);
+}
+
+.monitor-hud-pace-tick {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--foreground);
+  opacity: 0.78;
+  transform: translateX(-1px);
+  pointer-events: none;
+}
+
+.monitor-hud-footer {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  padding-top: 1px;
+}
+
+.monitor-hud-metric-pill {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--card-elevated) 75%, transparent);
+  border: 1px solid var(--border);
+}
+
+.monitor-hud-metric-label {
+  font-size: 9.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-hud-metric-value {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+}
+
+/* Main window toggle button indicator */
+.monitor-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.monitor-toggle-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+  opacity: 0.55;
+  transition: background-color 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
+}
+
+.monitor-toggle-dot.is-open {
+  opacity: 1;
+  background: var(--hud-ok);
+  box-shadow: 0 0 0 3px var(--hud-ok-soft);
+}

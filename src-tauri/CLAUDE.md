@@ -18,6 +18,6 @@ tauri.conf.json: 本地独立产品名 Claude-Local、先隐藏以供尺寸恢�
 tauri.macos.conf.json / tauri.linux.conf.json / tauri.windows.conf.json: 分平台资源与打包配置；macOS 保持双应用归档，Linux 使用 PNG 和 /usr/libexec/Claude-Local Browser 隔离引擎，防止 linuxdeploy 递归改写厂商 ELF；默认 Tauri 构建 deb/AppImage，RPM 配置的依赖由原生 rpmbuild 消费；Windows 使用当前用户 NSIS、内嵌浏览器引擎、独立 Claude-Local-Browser 启动项，无自动更新；build.rs 只在 macOS 编译 Objective-C。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
-Release metadata: 0.2.4 is synchronized across package.json, tauri.conf.json, Cargo.toml and Cargo.lock. Main-window entries in the base/Windows/Linux configs begin hidden and the native size restore explicitly shows the window.
+Release metadata: 0.3.0 is synchronized across package.json, tauri.conf.json, Cargo.toml and Cargo.lock. Main-window entries in the base/Windows/Linux configs begin hidden and the native size restore explicitly shows the window.
 
 Timezone analytics: chrono0.4.45与chrono-tz0.10.4使用内嵌IANA数据，查询时区由前端明确传入；不修改系统时区、不联网查时区。NOTICE保留本版实际静态查找依赖的许可与版权。

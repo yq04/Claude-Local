@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 文件残留白名单扫描/快照清理命令、身份页任务锁与刷新信号、共享确认窗与卡片下统一进度通道。
- * [OUTPUT]: 当前 Claude 文件的路径/规模/影响预览，默认只选完整缓存，统一中性操作按钮与红色危险确认，确认后直接清理并复查。
+ * [OUTPUT]: 当前 Claude 文件的路径/规模/影响预览，环境变量覆盖凭据顶层告警横幅，默认只选完整缓存，统一中性操作按钮与红色危险确认，确认后直接清理并复查。
  * [POS]: 身份管理的文件维护区域；不访问钥匙串，路径和字段名之外的文件正文不进入界面。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -22,6 +22,7 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
  const selected=effectiveItems(items,ids),all=effectiveItems(available,available.map(item=>item.id));
  const safeOnlySelected=selected.length>0&&selected.every(item=>item.risk==='safe');
  const hasHighRiskSelected=selected.some(item=>item.risk!=='safe');
+ const envOverrideWarnings=(scan?.warnings??[]).filter(warning=>/ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN/.test(warning));
  const bytes=(rows:typeof items)=>rows.reduce((sum,item)=>sum+item.bytes,0);
  const locked=blocked||!!action;
  useEffect(()=>{onBusy(!!action||review);return()=>onBusy(false);},[action,review,onBusy]);
@@ -70,6 +71,7 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
   </div>
   {error&&<p role="alert" className="cleanup-feedback error">{t(error)}</p>}
   {scan&&<>
+   {envOverrideWarnings.length>0&&<div className="claude-residue-env-alert" role="status"><span className="claude-residue-env-badge" aria-hidden="true">!</span><div><strong>{t('residue.envOverrideTitle')}</strong>{envOverrideWarnings.map((warning,i)=><p key={i}>{t(warning)}</p>)}</div></div>}
    {scan.warnings.length>0&&<Disclosure className="claude-residue-warnings" triggerClassName="claude-residue-warnings-trigger" summary={t('{v0} 条扫描提示',{v0:scan.warnings.length})}><ul>{scan.warnings.map((warning,i)=><li key={i}>{t(warning)}</li>)}</ul></Disclosure>}
    {items.length===0?<div className="claude-residue-empty" role="status">{t(scan.warnings.length?'部分路径未能检查，请查看扫描提示。':'未发现白名单内的可清理文件。')}</div>:<>
     <div className={`claude-residue-smart-bar ${safeOnlySelected?'safe':hasHighRiskSelected?'warn':'idle'}`}>
