@@ -23,10 +23,36 @@ function RealPath($path) {
     }
     return $true
 }
-function Run($program, $arguments) {
+function InvokeExternal($program, $arguments) {
     $global:LASTEXITCODE=0
-    & $program @arguments 2>$null | Out-Null
+    $prev=$ErrorActionPreference
+    $ErrorActionPreference='Continue'
+    try {
+        return (& $program @arguments 2>$null)
+    } finally {
+        $ErrorActionPreference=$prev
+    }
+}
+function Run($program, $arguments) {
+    InvokeExternal $program $arguments | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail 'Claude Code 安装命令执行失败。' }
+}
+function CleanNativeLeftovers {
+    $binDir=Split-Path $native -Parent
+    if (RealPath $binDir) {
+        Get-ChildItem -LiteralPath $binDir -Filter 'claude.exe.old.*' -File -ErrorAction SilentlyContinue | ForEach-Object {
+            if (RealPath $_.FullName) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    if ((RealPath $native) -and (RealPath $versions)) {
+        $activeItem=Get-Item -LiteralPath $native -Force
+        $activeHash=(Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash
+        Get-ChildItem -LiteralPath $versions -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+\.\d+\.\d+(\.exe)?$' -and (RealPath $_.FullName) } | ForEach-Object {
+            if ($_.Length -ne $activeItem.Length -or (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash -ne $activeHash) {
+                Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }
 function NativeInstaller {
     try {
@@ -51,15 +77,15 @@ function Status {
         $nativeFiles=@(Get-ChildItem -LiteralPath $versions -File | Where-Object { $_.Name -match '^\d+\.\d+\.\d+(\.exe)?$' -and (RealPath $_.FullName) })
     }
     if ((RealPath $native) -and $nativeFiles.Count -gt 0) {
+        $nativeLen=(Get-Item -LiteralPath $native -Force).Length
         $hash=(Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash
-        $matching=@($nativeFiles | Where-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash -eq $hash })
+        $matching=@($nativeFiles | Where-Object { $_.Length -eq $nativeLen -and (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash -eq $hash })
         if ($matching.Count -gt 0) { $methods.Add('native');$managed.Add($native) }
     }
     $npm=(Get-Command npm.cmd -CommandType Application -ErrorAction SilentlyContinue).Source
     $npmRoot=''
     if ($npm) {
-        $global:LASTEXITCODE=0
-        $npmRoot=((& $npm root -g 2>$null) -join '').Trim()
+        $npmRoot=((InvokeExternal $npm @('root','-g')) -join '').Trim()
         if ($LASTEXITCODE -ne 0) { $npmRoot='' }
         $directory=if($npmRoot){Join-Path $npmRoot $package}else{''}
         if ($directory -and (RealPath $directory) -and (Test-Path -LiteralPath (Join-Path $directory 'package.json'))) {
@@ -109,8 +135,12 @@ function Status {
     }
     $version=''
     if ($known) {
-        $env:DISABLE_AUTOUPDATER='1';$global:LASTEXITCODE=0
-        $version=((& $cli --version 2>$null) -join '').Trim()
+        $env:DISABLE_AUTOUPDATER='1'
+        try {
+            $version=((InvokeExternal $cli @('--version')) -join '').Trim()
+        } finally {
+            Remove-Item Env:DISABLE_AUTOUPDATER -ErrorAction SilentlyContinue
+        }
         if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+.*Claude') { Fail 'Claude Code 版本核验失败。' }
     }
     return @{methods=$methods;managed=$managed;nativeFiles=$nativeFiles;npm=$npm;bun=$bun;winget=$winget;cli=$cli;known=$known;version=$version}
@@ -153,11 +183,10 @@ try {
         if ($state.methods.Count -ne 1) { Fail 'cli.error.multipleInstalls' }
         Step 'cli.progress.updating'
         $method=$state.methods[0]
-        $global:LASTEXITCODE=0
-        if ($method -eq 'native') { & $state.cli update 2>$null | Out-Null }
-        elseif ($method -eq 'npm') { & $state.npm install -g "$package@latest" --registry=https://registry.npmjs.org 2>$null | Out-Null }
-        elseif ($method -eq 'bun') { & $state.bun install -g "$package@latest" --registry=https://registry.npmjs.org 2>$null | Out-Null }
-        elseif ($method -eq 'winget') { & $state.winget upgrade --id Anthropic.ClaudeCode --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity 2>$null | Out-Null }
+        if ($method -eq 'native') { InvokeExternal $state.cli @('update') | Out-Null }
+        elseif ($method -eq 'npm') { InvokeExternal $state.npm @('install','-g',"$package@latest",'--registry=https://registry.npmjs.org') | Out-Null }
+        elseif ($method -eq 'bun') { InvokeExternal $state.bun @('install','-g',"$package@latest",'--registry=https://registry.npmjs.org') | Out-Null }
+        elseif ($method -eq 'winget') { InvokeExternal $state.winget @('upgrade','--id','Anthropic.ClaudeCode','--exact','--source','winget','--silent','--accept-package-agreements','--accept-source-agreements','--disable-interactivity') | Out-Null }
         else { Fail 'cli.error.unsupported' }
         # WinGet APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE is a normal no-update result.
         if ($method -eq 'winget' -and $LASTEXITCODE -eq [int]0x8A15002B) {
@@ -166,6 +195,7 @@ try {
         Step 'cli.progress.verifying'
         $state=Status
         if (-not $state.known -or -not $state.version) { Fail 'cli.error.verifyFailed' }
+        if ($method -eq 'native') { CleanNativeLeftovers }
     } elseif ($action -ne 'read') {
         if ($state.cli -and -not $state.known) { Fail '检测到自定义 Claude 启动器，未删除或重装。' }
         $method=if($state.methods.Count){$state.methods[0]}else{'native'}

@@ -86,13 +86,15 @@ const fixture={commands,state,residue,browser:browserState,browserBusy:false,quo
 };
 Object.assign(window,{identityFixture:fixture});
 mockIPC((command,args:any)=>{
- if(!['identities_read','identities_quota_revision','claude_cli_read'].includes(command))commands.push({command,args});
+ if(!['identities_read','identities_quota_revision','claude_cli_read','monitor_window_state'].includes(command))commands.push({command,args});
  if(command==='identities_refresh_all_quotas')batchState={request_id:args.requestId,results:[],completed:0,total:args.targets.length,state:'running',targets:structuredClone(args.targets),started_at_ms:Date.now(),deadline_at_ms:Date.now()+120000};
  if(deferred.delete(command))return new Promise((resolve,reject)=>pending.push({command,args,resolve,reject,index:0}));
  return execute(command,args);
 });
 function execute(command:string,args:any){
  if(command==='identities_read')identityReadAttempts++;
+ if(command==='monitor_window_state')return {open:false,always_on_top:true,compact:false};
+ if(command==='monitor_window_set_open')return {open:Boolean(args?.open),always_on_top:true,compact:false};
  if(command==='quota_setup_status')return {state:'not_configured',collector_bundled:false,has_statusline:false};
   if(command==='ui_privacy_read')return (window as any).__privacyPreference ?? null;
  if(command==='ui_privacy_write'){(window as any).__privacyPreference=args.masked;return;}

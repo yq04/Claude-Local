@@ -61,7 +61,6 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
    <div>
     <div className="claude-residue-head-row">
      <h2>{t('Claude 文件残留')}</h2>
-     <span className="identity-policy-mode ok">{t('identitySafety.cacheBadge')}</span>
     </div>
     <span className="identity-caption" role="status">
      {action==='scan'?t('正在检查文件…'):action==='clean'?t('正在处理…'):scan?t('{v0} 项 · {v1}',{v0:all.length,v1:formatBytes(bytes(all))}):t('identitySafety.cacheHint')}
@@ -93,7 +92,7 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
      <div className="claude-residue-file"><div className="claude-residue-file-title"><strong>{t(item.title)}</strong><span className={`claude-residue-risk ${item.risk}`}>{t(item.exact?riskLabels[item.risk]||item.risk:'统计不完整')}</span></div><code>{item.path}</code>{item.keys.length>0&&<span className="claude-residue-fields">{t('仅移除字段')} <code>{item.keys.join(', ')}</code></span>}<span className="claude-residue-impact">{t(item.impact)}</span></div>
      <div className="claude-residue-size">{item.exact?<><strong>{formatBytes(item.bytes)}</strong><span>{t('{v0} 个文件',{v0:item.files})}</span></>:<span>—</span>}</div>
     </li>)}</ul>
-    <div className="claude-residue-footer"><span>{t('个人设置、Skills、暂存身份和浏览器资料保留；不访问钥匙串。')}</span><Button variant="secondary" size="small" disabled={locked||!selected.length} onClick={()=>{setAccepted(false);setReview(true);}}>{t('清理所选')}</Button></div>
+    <div className="claude-residue-footer"><Button variant="secondary" size="small" disabled={locked||!selected.length} onClick={()=>{setAccepted(false);setReview(true);}}>{t('清理所选')}</Button></div>
    </>}
   </>}
   <AppDialog alert className="identity-delete-alert" open={review} onOpenChange={open=>{if(!action)setReview(open);}} title={t('清理所选文件')} description={t('将结束 Claude 进程，直接删除所选文件或列出的配置字段，不创建备份。')} footer={<><Button variant="secondary" data-dialog-cancel onClick={()=>setReview(false)}>{t('取消')}</Button><Button variant="secondary" className="identity-delete-button" disabled={!accepted||!!action||!selected.length} onClick={()=>void clean()}>{t('确认清理')}</Button></>}>

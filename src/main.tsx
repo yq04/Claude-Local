@@ -230,7 +230,9 @@ function Root() {
   const {reduceMotion} = usePreferences();
   const isMonitorWindow =
     typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('window') === 'monitor';
+    (new URLSearchParams(window.location.search).get('window') === 'monitor' ||
+      (window as Window & {__TAURI_INTERNALS__?: {metadata?: {currentWindow?: {label?: string}}}})
+        .__TAURI_INTERNALS__?.metadata?.currentWindow?.label === 'monitor');
   return (
     <MotionRoot reducedMotion={reduceMotion ? 'always' : 'user'}>
       <TooltipProvider delayDuration={600} skipDelayDuration={300}>

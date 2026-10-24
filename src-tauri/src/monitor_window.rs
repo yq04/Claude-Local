@@ -12,7 +12,7 @@ use std::{
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl, WebviewWindowBuilder};
 
 const MONITOR_LABEL: &str = "monitor";
 const EXPANDED_WIDTH: f64 = 340.0;
@@ -422,9 +422,7 @@ fn current_window_state(app: &tauri::AppHandle) -> MonitorWindowState {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
         })
         .unwrap_or_default();
-    if let Some(win) = app.get_webview_window(MONITOR_LABEL) {
-        state.open = win.is_visible().unwrap_or(state.open);
-    } else {
+    if app.get_webview_window(MONITOR_LABEL).is_none() {
         state.open = false;
     }
     state
@@ -434,7 +432,7 @@ fn update_window_state(
     app: &tauri::AppHandle,
     mutate: impl FnOnce(&mut MonitorWindowState),
 ) -> MonitorWindowState {
-    if let Some(managed) = app.try_state::<ManagedMonitorState>() {
+    let next = if let Some(managed) = app.try_state::<ManagedMonitorState>() {
         let mut guard = managed
             .0
             .lock()
@@ -445,7 +443,9 @@ fn update_window_state(
         let mut fallback = MonitorWindowState::default();
         mutate(&mut fallback);
         fallback
-    }
+    };
+    let _ = app.emit("monitor-window-state", next);
+    next
 }
 
 pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
@@ -462,25 +462,31 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     }
 }
 
-fn position_top_right(window: &tauri::WebviewWindow, width: f64) {
-    if let Ok(Some(monitor)) = window.primary_monitor() {
+fn position_top_right(app: &tauri::AppHandle, window: &tauri::WebviewWindow, width: f64) {
+    let monitor = app
+        .get_webview_window("main")
+        .and_then(|w| w.current_monitor().ok().flatten())
+        .or_else(|| window.primary_monitor().ok().flatten());
+    if let Some(monitor) = monitor {
         let scale = monitor.scale_factor();
         let area = monitor.work_area();
         let margin_px = (20.0 * scale).round() as i32;
         let width_px = (width * scale).round() as i32;
-        let x = area.position.x + (area.size.width as i32) - width_px - margin_px;
-        let y = area.position.y + margin_px;
-        let _ = window.set_position(Position::Physical(PhysicalPosition { x: x.max(16), y: y.max(16) }));
+        let min_x = area.position.x + 16;
+        let min_y = area.position.y + 16;
+        let x = (area.position.x + (area.size.width as i32) - width_px - margin_px).max(min_x);
+        let y = (area.position.y + margin_px).max(min_y);
+        let _ = window.set_position(Position::Physical(PhysicalPosition { x, y }));
     }
 }
 
 #[tauri::command]
-pub fn monitor_window_state(app: tauri::AppHandle) -> MonitorWindowState {
+pub async fn monitor_window_state(app: tauri::AppHandle) -> MonitorWindowState {
     current_window_state(&app)
 }
 
 #[tauri::command]
-pub fn monitor_window_set_open(
+pub async fn monitor_window_set_open(
     app: tauri::AppHandle,
     open: bool,
 ) -> Result<MonitorWindowState, String> {
@@ -492,9 +498,9 @@ pub fn monitor_window_set_open(
             (EXPANDED_WIDTH, EXPANDED_HEIGHT)
         };
         if let Some(existing) = app.get_webview_window(MONITOR_LABEL) {
-            let _ = existing.set_always_on_top(current.always_on_top);
             let _ = existing.unminimize();
             let _ = existing.show();
+            let _ = existing.set_always_on_top(current.always_on_top);
             let _ = existing.set_focus();
         } else {
             let win = WebviewWindowBuilder::new(
@@ -512,8 +518,9 @@ pub fn monitor_window_set_open(
             .visible(false)
             .build()
             .map_err(|_| "无法创建实时额度悬浮监控窗。".to_string())?;
-            position_top_right(&win, target_w);
+            position_top_right(&app, &win, target_w);
             let _ = win.show();
+            let _ = win.set_always_on_top(current.always_on_top);
             let _ = win.set_focus();
         }
         Ok(update_window_state(&app, |s| s.open = true))
@@ -526,7 +533,7 @@ pub fn monitor_window_set_open(
 }
 
 #[tauri::command]
-pub fn monitor_window_set_always_on_top(
+pub async fn monitor_window_set_always_on_top(
     app: tauri::AppHandle,
     always_on_top: bool,
 ) -> Result<MonitorWindowState, String> {
@@ -540,7 +547,7 @@ pub fn monitor_window_set_always_on_top(
 }
 
 #[tauri::command]
-pub fn monitor_window_set_compact(
+pub async fn monitor_window_set_compact(
     app: tauri::AppHandle,
     compact: bool,
 ) -> Result<MonitorWindowState, String> {
@@ -556,7 +563,7 @@ pub fn monitor_window_set_compact(
 }
 
 #[tauri::command]
-pub fn monitor_window_start_drag(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn monitor_window_start_drag(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window(MONITOR_LABEL) {
         let _ = win.start_dragging();
     }
@@ -603,7 +610,7 @@ pub async fn monitor_live_telemetry(app: tauri::AppHandle) -> Result<MonitorLive
             &mut current.web,
         );
 
-        let projects_dir = root_path.join(".claude/projects");
+        let projects_dir = root_path.join(".claude").join("projects");
         let metrics = scan_live_token_metrics(
             &projects_dir,
             now_sec,

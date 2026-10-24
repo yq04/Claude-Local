@@ -4,8 +4,8 @@
 共享操作控件：普通 Button 统一使用中性 secondary 皮肤、28px 高与10px水平内距，按文字占宽；图标按钮、导航和180×286工牌内专用几何保留，危险确认显式红色。账号筛选框随已选文本占宽，弹出选项保持可读宽度；不修改 vendor 原语或业务行为。
 界面只管理输入、状态和执行记录；本机权限交给原生层；网络页提供发行者批准的固定推广链接和配置提示词复制，用户点击后才检测固定 Claude 服务连通性，没有收件人链接编辑、Skill 安装或自动外部导航。两入口复用 YAML 中英文文案，原始诊断保留到呈现时翻译；系统语言与界面语言独立。
 browser.tsx: 统一全宽卡片风格的浏览器环境控制台（启动内置浏览器与 CLI 授权联动、绑定身份隐私遮罩与状态/CLI代理不一致提醒及一键同步、目标地区环境一致性核验与一键对齐、按身份自动隔离的日常释放缓存与排障全清理）及默认折叠的指纹与代理高级设置抽屉；去除机械序号徽章；站点永久删除使用 Alert 警告并默认取消；复用 Cromma UI 和活动日志。缓存明细与高级设置统一使用 Cromma Disclosure，未保存修改时高级设置保持展开。
-browser-model.ts: 有界浏览器身份摘要与同步状态；工具箱与起始页共享配置、目标地区、机器、出口服务目录、观测接收时间与默认浏览器契约；effectiveBrowserTarget 统一解析跟随电脑的有效时区/语言及 en→en-US，不接入原生权限；三平台设备/CPU/版本核验由共用函数保持一致，Windows 必须 Win32。
-browser-start.tsx: 检测区上方紧凑黑色身份工牌、绑定状态与不匹配/未知/断连；真实观测与回报编排，主应用同款斜纹/点阵卡片，全宽紧凑 2/3/4 列与小状态区，黄底波纹/红底原因/绿底大对勾；重测清空旧结果，断连/未知/上报失败不通过；不接入 Tauri 权限。
+browser-model.ts: 有界浏览器身份摘要与同步状态；工具箱与起始页共享配置、目标地区、机器、出口服务目录、ASN/ISP/机房分类（classifyExitIsp）、第三方深度核验站点目录（DEEP_VERIFY_SITES）、观测接收时间与默认浏览器契约；effectiveBrowserTarget 统一解析跟随电脑的有效时区/语言及 en→en-US，不接入原生权限；三平台设备/CPU/版本核验由共用函数保持一致，Windows 必须 Win32。
+browser-start.tsx: 检测区上方紧凑黑色身份工牌、绑定状态与不匹配/未知/断连；真实观测与回报编排（含 WebRTC 泄漏、WebGL 硬件渲染与 webdriver 反自动化探针）、ISP/ASN 属性展示及第三方防封深度联机体检中心（Ping0.cc / CheckCC.org / BrowserScan / IPHey）；重测清空旧结果，断连/未知/上报失败不通过；不接入 Tauri 权限。
 browser-verification.ts: 纯核验模型，逐项实际/目标值与失败清单，沿用宿主配置时区/语言/平台规则；只有完整回传且所有实测匹配才通过。
 browser-verification.test.ts: 跨平台虚构上下文验证三态、失败原因、连接/定位未知和目标时区改变，不访问网络。
 browser-network.ts: 按宿主服务目录经浏览器当前路由检测出口，限流/故障切换服务，校验结果并保留失败原因。
@@ -50,7 +50,7 @@ backup-panel.tsx / backup-panel.css: 软件设置的数据管理页内提供加�
 settings-model.ts / settings-model.test.ts: 纯前端响应式视图偏好存储与消毒层（只保留有界面消费者的选项，旧版无效键读取即丢弃），同步根元素 .dark 类与 data-theme-mode / data-accent / data-sidebar / data-surface / data-backdrop / data-font / data-mono-font / data-reduce-motion / data-ui-scale 属性及 --glass-blur / --glass-opacity / --wallpaper-dim 光学毛玻璃 CSS 变量、页面缩放、一键主题预设（applyThemePreset）与 View Transitions 平滑切换辅助（startSmoothTransition）；不保存凭据或个人路径。
 wallpaper-store.ts / wallpaper-store.test.ts: 纯前端自定义本地壁纸引擎；在内存中通过 Canvas 将本地图片降采样压缩为高清 WebP/JPEG Data URI，利用感知色距提取壁纸主色调映射至 6 套 AccentTone（rgbToSuggestedAccent / sampleRgbaBufferForAccent），同步根元素 --custom-wallpaper-image 变量且绝不记录任何本地文件路径与文件名。
 floating-monitor.tsx / floating-monitor-model.ts / floating-monitor-model.test.ts / floating-monitor.css: 独立可开关无边框置顶「实时额度悬浮监控窗」（?window=monitor）与纯模型计算；100% 本地只读遥测（3s 活跃 / 12s 待机自适应节奏，零后台 OAuth 请求），展示当前账号 5h/7d 双槽进度、7d 消耗步调刻度、实时 Token 速率（tok/m）、燃烧速率与触顶预警（formatExhaustionEta）、缓存命中率及 200k 上下文水位，并通过 BroadcastChannel 与主窗口实时同步外观、玻璃参数与隐私打码状态。
-usage-statistics.tsx: CPAMP 分析层次适配的本地用量工作台；集中时间/账号筛选与重置、四张统一指标卡、趋势均值/峰值、图表/数据切换、模型响应/占比与账号明细。可见页面读取完成后等待30秒刷新，隐藏暂停、返回重读、卸载清理，同筛选错误保留旧数据；不更改 Python 配额采集或轮询 OAuth。时段与图表/数据切换使用 Cromma Tabs，统计口径说明使用 Disclosure，重置筛选使用 Button。
+usage-statistics.tsx: CPAMP 分析层次适配的本地用量工作台；集中时间（今天/昨天/近7天/近30天/全部）/账号筛选与重置、默认自动归属未绑定历史用量、四张统一指标卡、趋势均值/峰值、图表/数据切换、模型响应/占比与账号明细。可见页面读取完成后等待30秒刷新，隐藏暂停、返回重读、卸载清理，同筛选错误保留旧数据；不更改 Python 配额采集或轮询 OAuth。时段与图表/数据切换使用 Cromma Tabs，统计口径说明使用 Disclosure，重置筛选使用 Button。
 usage-trend.tsx / usage-statistics.css: 紧凑总Token SVG与响应式趋势/模型双栏；按真实小时区间呈现23/25小时和偏移标签，旧无区间快照兼容24槽，未来留空；键盘/指针精确值、筛选保护旧悬停索引，保持全页无横溢。
 usage-table.tsx: 本地时段明细视图；仅已发生时段，时间/总Token/响应数排序、每页10行、精确值与可聚焦局部横滚；切换视图、排序和翻页不发起IPC，刷新保留有效页码。
 usage-model.ts / usage-model.test.ts: 脱敏 Token 聚合契约、K/M/B 与精确值、缓存命中率；小时/自然日与完整历史补零、剔除未来的均值/峰值及合成测试；不读取身份配置或会话文件。

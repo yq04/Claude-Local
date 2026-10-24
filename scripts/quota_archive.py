@@ -172,9 +172,12 @@ def _scan(compressed, wanted, deadline):
             process.stdin.close()
 
     def stderr():
-        while data := process.stderr.read(4096):
-            if len(diagnostics) < 8192:
-                diagnostics.extend(data)
+        while line := process.stderr.readline(4096):
+            text = line.decode("utf-8", errors="replace").rstrip("\r\n")
+            if re.fullmatch(r".*: Can't translate [ug]name '\(null\)' to UTF-8", text):
+                continue
+            if len(diagnostics) + len(line) <= 8192:
+                diagnostics.extend(line)
             else:
                 process.kill()
                 errors.append(ValueError("archive diagnostics exceed limit"))

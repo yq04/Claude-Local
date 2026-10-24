@@ -20,6 +20,7 @@ use tauri::Manager;
 
 const MAX_DEPTH: usize = 6;
 const MAX_LINE_BYTES: usize = 2 * 1024 * 1024;
+static USAGE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Clone, Default, Serialize)]
 pub struct UsageTotals {
@@ -766,13 +767,22 @@ fn offset_start(period: &str, now_sec: u64, offset: i32) -> Result<Option<u64>, 
     let day = local_now.div_euclid(86400);
     let days = match period {
         "today" => 0,
+        "yesterday" => 1,
         "week" => 6,
         "month" => 29,
-        _ => return Err("period must be all/today/week/month".into()),
+        _ => return Err("period must be all/today/yesterday/week/month".into()),
     };
     Ok(Some(
         ((day - days) * 86400 - offset as i64 * 60).max(0) as u64
     ))
+}
+
+fn offset_end(period: &str, now_sec: u64, offset: i32) -> Option<u64> {
+    if period == "yesterday" {
+        offset_start("today", now_sec, offset).ok().flatten()
+    } else {
+        None
+    }
 }
 
 const INVALID_TIMEZONE: &str = "usage timezone is invalid";
@@ -809,9 +819,10 @@ fn named_start(period: &str, clock: u64, timezone: Tz) -> Result<Option<u64>, St
     let days = match period {
         "all" => return Ok(None),
         "today" => 0,
+        "yesterday" => 1,
         "week" => 6,
         "month" => 29,
-        _ => return Err("period must be all/today/week/month".into()),
+        _ => return Err("period must be all/today/yesterday/week/month".into()),
     };
     let date = local_datetime(timezone, clock)?
         .date_naive()
@@ -820,8 +831,19 @@ fn named_start(period: &str, clock: u64, timezone: Tz) -> Result<Option<u64>, St
     local_midnight(timezone, date).map(Some)
 }
 
-fn named_hour_slots(timezone: Tz, clock: u64) -> Result<Vec<UsageDaily>, String> {
-    let date = local_datetime(timezone, clock)?.date_naive();
+fn named_end(period: &str, clock: u64, timezone: Tz) -> Result<Option<u64>, String> {
+    if period == "yesterday" {
+        named_start("today", clock, timezone)
+    } else {
+        Ok(None)
+    }
+}
+
+fn named_hour_slots(timezone: Tz, clock: u64, yesterday: bool) -> Result<Vec<UsageDaily>, String> {
+    let mut date = local_datetime(timezone, clock)?.date_naive();
+    if yesterday {
+        date = date.pred_opt().ok_or(INVALID_TIME_RANGE)?;
+    }
     let start = local_midnight(timezone, date)?;
     let end = local_midnight(timezone, date.succ_opt().ok_or(INVALID_TIME_RANGE)?)?;
     let mut boundaries = vec![start, end];
@@ -917,6 +939,7 @@ pub(super) fn bucket_span(
     let day = local.div_euclid(86400);
     match period {
         "today" => (day * 24, local.div_euclid(3600)),
+        "yesterday" => ((day - 1) * 24, day * 24 - 1),
         "week" => (day - 6, day),
         "month" => (day - 29, day),
         _ => (earliest.unwrap_or(day), day),
@@ -941,6 +964,7 @@ fn add_row(
 }
 
 pub(crate) fn collect_before_switch(vault: &Path, home: &Path, _account_key: Option<&str>) {
+    let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let projects = home.join(".claude").join("projects");
     let Ok(meta) = fs::symlink_metadata(&projects) else {
         return;
@@ -987,6 +1011,7 @@ pub(crate) fn collect_before_switch(vault: &Path, home: &Path, _account_key: Opt
 }
 
 pub(crate) fn commit_switch_boundary(vault: &Path, home: &Path, account_key: Option<&str>) {
+    let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Ok(conn) = open_ledger(&vault.join("usage.sqlite")) else {
         return;
     };
@@ -1028,6 +1053,47 @@ pub(crate) fn commit_switch_boundary(vault: &Path, home: &Path, account_key: Opt
     }
 }
 
+fn ensure_default_fallback_account(vault: &Path) {
+    let Ok(config) = read_attribution_config(vault) else {
+        return;
+    };
+    if config.fallback_account_id.is_some() {
+        return;
+    }
+    let Ok(db) = identity_db_readonly(vault) else {
+        return;
+    };
+    let active: Option<String> = db
+        .query_row("SELECT value FROM state WHERE key='active'", [], |r| {
+            r.get(0)
+        })
+        .optional()
+        .ok()
+        .flatten();
+    let default_id: Option<String> = active
+        .filter(|id| {
+            db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM identities WHERE id=?1 AND empty=0 AND account_key IS NOT NULL AND account_key != '')",
+                [id],
+                |r| r.get::<_, bool>(0),
+            )
+            .unwrap_or(false)
+        })
+        .or_else(|| {
+            db.query_row(
+                "SELECT id FROM identities WHERE empty=0 AND account_key IS NOT NULL AND account_key != '' ORDER BY saved_at DESC, id LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+        });
+    if let Some(id) = default_id {
+        let _ = set_fallback_account_id(vault, &id);
+    }
+}
+
 #[tauri::command]
 pub async fn usage_statistics_read(
     app: tauri::AppHandle,
@@ -1041,8 +1107,11 @@ pub async fn usage_statistics_read(
     if !(-840..=840).contains(&offset_minutes) {
         return Err("offset_minutes must be within ±840".into());
     }
-    if !matches!(period.as_str(), "all" | "today" | "week" | "month") {
-        return Err("period must be all/today/week/month".into());
+    if !matches!(
+        period.as_str(),
+        "all" | "today" | "yesterday" | "week" | "month"
+    ) {
+        return Err("period must be all/today/yesterday/week/month".into());
     }
     if let Some(id) = account_id.as_deref() {
         if id != "unattributed" && !super::valid_id(id) {
@@ -1050,28 +1119,24 @@ pub async fn usage_statistics_read(
         }
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let cleaner = app.state::<crate::cleaner::Cleaner>();
-        cleaner.enter()?;
-        let result = (|| {
-            let vault = app
-                .path()
-                .app_data_dir()
-                .map_err(|_| "usage ledger unavailable")?
-                .join("identity-vault");
-            let home = crate::cleaner::identity::root()?;
-            read_at_with_timezone_now(
-                &vault,
-                &home,
-                &period,
-                account_id.as_deref(),
-                offset_minutes,
-                fallback_account_name.as_deref(),
-                timezone.as_deref(),
-                now(),
-            )
-        })();
-        cleaner.leave();
-        result
+        let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let vault = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "usage ledger unavailable")?
+            .join("identity-vault");
+        let home = crate::cleaner::identity::root()?;
+        ensure_default_fallback_account(&vault);
+        read_at_with_timezone_now(
+            &vault,
+            &home,
+            &period,
+            account_id.as_deref(),
+            offset_minutes,
+            fallback_account_name.as_deref(),
+            timezone.as_deref(),
+            now(),
+        )
     })
     .await
     .map_err(|_| "usage statistics worker interrupted".to_string())?
@@ -1083,18 +1148,13 @@ pub async fn usage_attribution_read(
     app: tauri::AppHandle,
 ) -> Result<UsageAttributionConfig, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let cleaner = app.state::<crate::cleaner::Cleaner>();
-        cleaner.enter()?;
-        let result = (|| {
-            let vault = app
-                .path()
-                .app_data_dir()
-                .map_err(|_| "usage ledger unavailable")?
-                .join("identity-vault");
-            read_attribution_config(&vault)
-        })();
-        cleaner.leave();
-        result
+        let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let vault = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "usage ledger unavailable")?
+            .join("identity-vault");
+        read_attribution_config(&vault)
     })
     .await
     .map_err(|_| "usage attribution worker interrupted".to_string())?
@@ -1110,18 +1170,13 @@ pub async fn usage_attribution_set(
         return Err("account_id is invalid".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let cleaner = app.state::<crate::cleaner::Cleaner>();
-        cleaner.enter()?;
-        let result = (|| {
-            let vault = app
-                .path()
-                .app_data_dir()
-                .map_err(|_| "usage ledger unavailable")?
-                .join("identity-vault");
-            set_fallback_account_id(&vault, &account_id)
-        })();
-        cleaner.leave();
-        result
+        let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let vault = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "usage ledger unavailable")?
+            .join("identity-vault");
+        set_fallback_account_id(&vault, &account_id)
     })
     .await
     .map_err(|_| "usage attribution worker interrupted".to_string())?
@@ -1133,18 +1188,13 @@ pub async fn usage_attribution_clear(
     app: tauri::AppHandle,
 ) -> Result<UsageAttributionConfig, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let cleaner = app.state::<crate::cleaner::Cleaner>();
-        cleaner.enter()?;
-        let result = (|| {
-            let vault = app
-                .path()
-                .app_data_dir()
-                .map_err(|_| "usage ledger unavailable")?
-                .join("identity-vault");
-            clear_fallback_account_id(&vault)
-        })();
-        cleaner.leave();
-        result
+        let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let vault = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "usage ledger unavailable")?
+            .join("identity-vault");
+        clear_fallback_account_id(&vault)
     })
     .await
     .map_err(|_| "usage attribution worker interrupted".to_string())?
@@ -1326,9 +1376,14 @@ pub(super) fn read_at_with_timezone_now(
         Some(timezone) => named_start(period, snapshot_now, timezone)?,
         None => offset_start(period, snapshot_now, offset)?,
     };
-    let mut hourly_slots = if period == "today" {
+    let end = match timezone {
+        Some(timezone) => named_end(period, snapshot_now, timezone)?,
+        None => offset_end(period, snapshot_now, offset),
+    };
+    let hourly = period == "today" || period == "yesterday";
+    let mut hourly_slots = if hourly {
         timezone
-            .map(|timezone| named_hour_slots(timezone, snapshot_now))
+            .map(|timezone| named_hour_slots(timezone, snapshot_now, period == "yesterday"))
             .transpose()?
     } else {
         None
@@ -1341,8 +1396,8 @@ pub(super) fn read_at_with_timezone_now(
     let mut events = HashMap::new();
     let mut cache = Vec::new();
     let mut known = HashMap::new();
-    if let Ok(meta) = fs::symlink_metadata(home.join(".claude/projects")) {
-        let projects = home.join(".claude/projects");
+    let projects = home.join(".claude").join("projects");
+    if let Ok(meta) = fs::symlink_metadata(&projects) {
         if meta.is_dir() && private::safe(&projects).is_ok() {
             if let Ok(mut q) = conn.prepare("SELECT file_key,size,mtime,offset,guard FROM files") {
                 if let Ok(rows) = q.query_map([], |r| {
@@ -1502,10 +1557,15 @@ pub(super) fn read_at_with_timezone_now(
             }
         });
     let weak_from = start.unwrap_or(0).min(i64::MAX as u64) as i64;
+    let weak_to = end
+        .map(|e| e.saturating_sub(1))
+        .unwrap_or(snapshot_now)
+        .min(snapshot_now)
+        .min(i64::MAX as u64) as i64;
     let has_weak: bool = conn
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM events WHERE weak=1 AND ts>=?1 AND ts<=?2)",
-            params![weak_from, snapshot_now as i64],
+            params![weak_from, weak_to],
             |r| r.get(0),
         )
         .unwrap_or(false);
@@ -1516,7 +1576,7 @@ pub(super) fn read_at_with_timezone_now(
     {
         let mut q=conn.prepare("SELECT COALESCE(account_key,''),ts,model,input,output,creation,cache_read,reasoning FROM events WHERE ts>=?1 AND ts<=?2 ORDER BY ts").map_err(|_|"usage ledger unavailable")?;
         let mapped = q
-            .query_map(params![weak_from, snapshot_now as i64], |r| {
+            .query_map(params![weak_from, weak_to], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, i64>(1)?.max(0) as u64,
@@ -1537,11 +1597,13 @@ pub(super) fn read_at_with_timezone_now(
     }
     let mut totals = UsageTotals::default();
     let mut unknown = UsageTotals::default();
-    let hourly = period == "today";
     let mut buckets: BTreeMap<i64, UsageTotals> = BTreeMap::new();
     let mut models: BTreeMap<String, UsageTotals> = BTreeMap::new();
     for (owner, ts, model, i, o, c, r, reason) in rows {
-        if start.is_some_and(|s| ts < s) || ts > snapshot_now {
+        if start.is_some_and(|s| ts < s)
+            || end.is_some_and(|e| ts >= e)
+            || ts > snapshot_now
+        {
             continue;
         }
         let id = key_to_id

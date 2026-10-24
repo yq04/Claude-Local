@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 跨平台虚构宿主上下文和网页观测。
- * [OUTPUT]: 红/黄/绿状态、失败原因、断连/未知值与目标时区变化回归。
+ * [OUTPUT]: 红/黄/绿状态、失败原因、断连/未知值、目标时区变化与深度防封指标（IDC 机房识别、语言列表中文残留、WebRTC、webdriver、硬件 WebGL）回归。
  * [POS]: 真实页面与纯核验模型的契约测试，不调用原生权限或外部服务。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -61,4 +61,32 @@ test('检测结果超过 10 分钟自动判定过时，要求手动重新检测'
  const result = verifyBrowser(context, report, true, '', false, stale);
  expect(result.phase).toBe('failed');
  expect(result.problems.some(p => p.includes('10 分钟'))).toBe(true);
+});
+
+test('深度防封核验拦截高危 IDC 机房出口、次选中文残留、WebRTC 泄漏、webdriver 暴露与软件渲染', () => {
+ const cleanDeep: Report = {
+  ...report,
+  languages: ['en-US', 'en'],
+  exit: {...report.exit!, isp: 'Comcast Cable', asn: 'AS7922', hosting: false},
+  webrtc_ok: true,
+  webdriver: false,
+  graphics_ok: true,
+  webgl_renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4080 Direct3D11)',
+ };
+ expect(verifyBrowser(context, cleanDeep, true, '', false).phase).toBe('passed');
+
+ const idcReport: Report = {...cleanDeep, exit: {...cleanDeep.exit!, isp: 'Choopa, LLC / Vultr', asn: 'AS20473'}};
+ expect(verifyBrowser(context, idcReport, true, '', false).failures.find(row => row.label === '出口 IP 属性')?.ok).toBe(false);
+
+ const zhLeakReport: Report = {...cleanDeep, languages: ['en-US', 'zh-CN']};
+ expect(verifyBrowser(context, zhLeakReport, true, '', false).failures.find(row => row.label === '语言列表纯净度')?.ok).toBe(false);
+
+ const webrtcLeakReport: Report = {...cleanDeep, webrtc_ok: false, webrtc_detail: '检出公网候选 IP 198.51.100.8'};
+ expect(verifyBrowser(context, webrtcLeakReport, true, '', false).failures.find(row => row.label === 'WebRTC 泄漏防护')?.ok).toBe(false);
+
+ const webdriverReport: Report = {...cleanDeep, webdriver: true};
+ expect(verifyBrowser(context, webdriverReport, true, '', false).failures.find(row => row.label === '反自动化特征')?.ok).toBe(false);
+
+ const swiftshaderReport: Report = {...cleanDeep, graphics_ok: false, webgl_renderer: 'Google SwiftShader'};
+ expect(verifyBrowser(context, swiftshaderReport, true, '', false).failures.find(row => row.label === '硬件图形渲染')?.ok).toBe(false);
 });

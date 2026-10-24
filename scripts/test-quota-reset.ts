@@ -39,7 +39,7 @@ export async function testQuotaReset(browser:Browser,base:string) {
   await current5h.getByText('100%',{exact:true}).waitFor();
   assert.equal(await current5h.getAttribute('data-quota-inferred'),'true');
   assert.equal(await current5h.locator('time').count(),0);
-  assert.match(await current5h.innerText(),/预计已恢复/);
+  await current5h.locator('.identity-quota-reset-label').getByText('5h',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>(window as any).identityFixture.identityReads),reads);
   checks++;
 
@@ -59,7 +59,7 @@ export async function testQuotaReset(browser:Browser,base:string) {
 
   await dialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();
   await page.evaluate(()=>(window as any).identityFixture.language('en'));
-  await current5h.getByText('Recovery estimated',{exact:true}).waitFor();
+  await current5h.locator('.identity-quota-reset-label').getByText('5h',{exact:true}).waitFor();
   const enSize=await cards.first().boundingBox();assert(enSize);assert.equal(enSize.height,286);
   checks++;
 

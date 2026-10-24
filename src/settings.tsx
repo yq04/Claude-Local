@@ -560,11 +560,6 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
                   </div>
                 </div>
                 <code className="settings-path-code">{dataDir}</code>
-                <div className="settings-meta-pills">
-                  <span className="settings-meta-pill ok">{t('BAGAID01 认证加密')}</span>
-                  <span className="settings-meta-pill">{t('SQLite v3 索引')}</span>
-                  <span className="settings-meta-pill">{t('identitySafety.historyPreserved')}</span>
-                </div>
               </div>
               <div className="settings-directory-actions">
                 <Button variant="secondary" size="small" leftIcon={<FolderDefault size={14} />} onClick={() => void openDataDir()}>

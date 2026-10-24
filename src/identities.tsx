@@ -53,10 +53,11 @@ function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, r
   const inferredTimeSummary = inferred && inferredClock
     ? (inferredElapsed ? t('identityCard.resetInferredElapsed', {clock: inferredClock, elapsed: inferredElapsed}) : inferredClock)
     : '';
+  const resetPrefix = t('identityCard.reset').trim();
   const resetLabel = inferred
-    ? (inDialog ? inferredStatusLabel : t('identityCard.resetInferred'))
-    : reset ? `${t('identityCard.reset')} ${reset}` : resetComplete ? t('identityCard.windowExpired') : t('identityCard.resetUnavailable');
-  const rightMeta = countdown || (inDialog ? inferredTimeSummary : inferredClock);
+    ? label
+    : reset ? (resetPrefix ? `${resetPrefix} ${reset}` : reset) : resetComplete ? t('identityCard.windowExpired') : t('identityCard.resetUnavailable');
+  const rightMeta = countdown || (inDialog ? inferredTimeSummary : '');
   const resetTooltip = countdown
     ? `${resetLabel} · ${countdown}`
     : inferred && inferredTimeSummary
@@ -67,6 +68,7 @@ function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, r
   const resetDate = resetAt == null ? null : new Date(resetAt * 1000);
   const resetDateTime = resetDate && Number.isFinite(resetDate.getTime()) ? resetDate.toISOString() : undefined;
   const paceExpected = pace ? (display === 'used' ? pace.expectedUsedPct : pace.expectedRemPct) : null;
+  const clockIcon = <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.6" /><path d="M8 4.5V8l2.2 1.4" /></svg>;
   return (
     <div className={`identity-quota-window ${known ? `quota-${level}` : 'quota-unknown'}`} data-quota-window={label} data-quota-inferred={inferred || undefined} title={inferred ? t('quota.resetInferredHint') : undefined} aria-label={`${label} ${known ? `${t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')} ${Math.round(value)}%` : t('identityCard.quotaUnknown')}${inferred ? ` · ${resetLabel}` : ''}`}>
       <div className="identity-quota-copy">
@@ -85,7 +87,7 @@ function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, r
         )}
       </span>
       <span className="identity-quota-reset" title={resetTooltip}>
-        <span className="identity-quota-reset-label">{reset ? <><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.6" /><path d="M8 4.5V8l2.2 1.4" /></svg><time className="identity-reset-time" dateTime={resetDateTime} aria-label={resetLabel}>{reset}</time></> : resetLabel}</span>
+        <span className="identity-quota-reset-label">{reset ? <>{clockIcon}<time className="identity-reset-time" dateTime={resetDateTime} aria-label={resetLabel}>{reset}</time></> : inferred ? <>{clockIcon}<span>{label}</span></> : resetLabel}</span>
         {rightMeta && <span className="identity-quota-countdown">{rightMeta}</span>}
       </span>
     </div>
@@ -287,6 +289,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
   useEffect(() => {
     void read();
+    let unlistenMonitor: (() => void) | undefined;
     if (
       typeof window !== 'undefined' &&
       Boolean(
@@ -296,6 +299,16 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       void invoke<MonitorWindowState>('monitor_window_state')
         .then(s => {
           if (mountedRef.current && s && typeof s.open === 'boolean') setMonitorOpen(s.open);
+        })
+        .catch(() => {});
+      void listen<MonitorWindowState>('monitor-window-state', event => {
+        if (mountedRef.current && event.payload && typeof event.payload.open === 'boolean') {
+          setMonitorOpen(event.payload.open);
+        }
+      })
+        .then(fn => {
+          if (!mountedRef.current) fn();
+          else unlistenMonitor = fn;
         })
         .catch(() => {});
     }
@@ -314,6 +327,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       }
     }
     return () => {
+      if (unlistenMonitor) unlistenMonitor();
       if (channel) channel.close();
     };
   }, []);
@@ -1037,7 +1051,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           </div>
         ))}
       </div>
-      <p className="identity-quota-note">{t('identitySafety.policyScopes')}</p>
     </div>
   );
 
@@ -1327,12 +1340,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       <Disclosure
         className="identity-policy"
         triggerClassName="identity-policy-trigger"
-        summary={
-          <>
-            <strong>{t('保留在工作区')}</strong>
-            <span className="identity-policy-hint">{t('identitySafety.policyHint')}</span>
-          </>
-        }
+        summary={<strong>{t('保留在工作区')}</strong>}
         aside={<span className={`identity-policy-mode ${isDefaultPolicy ? 'ok' : ''}`}>{isDefaultPolicy ? t('智能默认') : `${kept.length} / ${policyRows.length}`}</span>}
       >
         {options}
@@ -1394,12 +1402,16 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               ? detailsSummary[`quota_${window}_observed_at_ms`]
               : detailsSummary?.quota_observed_at_ms;
             const age = formatObservationAge(quotaObservationAge(observed, nowSec * 1000));
-            return <div key={window}>
-              <div className="identity-confirm-target"><span>{window} · {t('quota.source')}</span><strong>{t(source === 'server_anchor' ? 'quota.serverSnapshot' : source === 'local_estimate' ? 'quota.estimated' : source === 'reset_inferred' ? 'quota.resetInferredSource' : 'quota.unverified')}</strong></div>
-              <div className="identity-confirm-target"><span>{window} · {t('quota.observedAt')}</span><strong>{observed ? <>{new Date(observed).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')}{age && <small className="identity-observation-age"> · {t('identitySearch.age.' + age.unit, {v0:age.value})}</small>}</> : t('identityCard.notProvided')}</strong></div>
-            </div>;
+            return (
+              <div className="identity-confirm-target" key={window}>
+                <span>{window} · {t('quota.source')}</span>
+                <strong>
+                  <span>{t(source === 'server_anchor' ? 'quota.serverSnapshot' : source === 'local_estimate' ? 'quota.estimated' : source === 'reset_inferred' ? 'quota.resetInferredSource' : 'quota.unverified')}</span>
+                  {age && <small className="identity-observation-age"> · {t('identitySearch.age.' + age.unit, {v0: age.value})}</small>}
+                </strong>
+              </div>
+            );
           })}
-          <p className="identity-quota-note">{t('quota.independentWindows')}</p>
           {(detailsQuota?.inferred5h || detailsQuota?.inferred7d) && <p className="identity-quota-note">{t('quota.resetInferredHint')}</p>}
           <div className="identity-confirm-target">
             <span>{t('quota.resetSchedule')}</span>
@@ -1411,18 +1423,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               )}
             </strong>
           </div>
-          {detailsSummary?.billing_date && (detailsSummary.billing_date_kind === 'next_renewal' || detailsSummary.billing_date_kind === 'access_until') && (
-            <div className="identity-confirm-target">
-              <span>{t('quota.billingObservedAt')}</span>
-              <strong>
-                {detailsSummary.billing_observed_at_ms || detailsSummary.metadata_observed_at_ms ? (
-                  new Date(detailsSummary.billing_observed_at_ms ?? detailsSummary.metadata_observed_at_ms!).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')
-                ) : (
-                  t('identityCard.notProvided')
-                )}
-              </strong>
-            </div>
-          )}
           <div className="identity-confirm-target">
             <span>{t('quota.resetCount')}</span>
             <strong>
@@ -1433,37 +1433,29 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               )}
             </strong>
           </div>
-          {typeof detailsSummary?.manual_resets_remaining === 'number' && Number.isInteger(detailsSummary.manual_resets_remaining) && detailsSummary.manual_resets_remaining >= 0 && (
-            <div className="identity-confirm-target">
-              <span>{t('quota.manualResetsObservedAt')}</span>
-              <strong>
-                {detailsSummary.manual_resets_observed_at_ms || detailsSummary.metadata_observed_at_ms ? (
-                  new Date(detailsSummary.manual_resets_observed_at_ms ?? detailsSummary.metadata_observed_at_ms!).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')
-                ) : (
-                  t('identityCard.notProvided')
-                )}
-              </strong>
+          <Disclosure summary={t('quotaSetup.guideTitle')}>
+            <div className="identity-confirm">
+              {detailsSavedRecord && (
+                <>
+                  <div className="identity-confirm-target">
+                    <span>{t('quota.backupArchive')}</span>
+                    <strong>{formatBytes(detailsSavedRecord.bytes)}</strong>
+                  </div>
+                  <div className="identity-confirm-target">
+                    <span>{t('quota.savedAt')}</span>
+                    <strong>{new Date(detailsSavedRecord.saved_at).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')}</strong>
+                  </div>
+                </>
+              )}
+              <div className="identity-confirm-target">
+                <span>{t('quotaSetup.status')}</span>
+                <strong>{t(quotaSetupError ? 'quotaSetup.unavailable' : !quotaSetup ? 'quotaSetup.checking' : 'quotaSetup.' + quotaSetup.state)}</strong>
+              </div>
+              <p className="identity-quota-note">{t('quotaSetup.guide')}</p>
+              <Button variant="secondary" size="small" onClick={() => void copyQuotaDiagnostic()}>{t('identityDiagnostic.copy')}</Button>
+              {copyDiagnosticStatus && <p role={copyDiagnosticStatus === 'failed' ? 'alert' : 'status'}>{t(copyDiagnosticStatus === 'copied' ? 'identityDiagnostic.copied' : 'identityDiagnostic.failed')}</p>}
             </div>
-          )}
-          {detailsSavedRecord && (
-            <>
-              <div className="identity-confirm-target">
-                <span>{t('quota.backupArchive')}</span>
-                <strong>{formatBytes(detailsSavedRecord.bytes)}</strong>
-              </div>
-              <div className="identity-confirm-target">
-                <span>{t('quota.savedAt')}</span>
-                <strong>{new Date(detailsSavedRecord.saved_at).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')}</strong>
-              </div>
-            </>
-          )}
-          <p className="identity-quota-note">{t('quota.resetHint')}</p>
-          <div className="identity-confirm-target"><span>{t('quotaSetup.status')}</span><strong>{t(quotaSetupError ? 'quotaSetup.unavailable' : !quotaSetup ? 'quotaSetup.checking' : 'quotaSetup.' + quotaSetup.state)}</strong></div>
-          <p className="identity-quota-note">{t(quotaSetup?.collector_bundled ? 'quotaSetup.runtimeUnverified' : 'quotaSetup.notBundled')}</p>
-          <Disclosure summary={t('quotaSetup.guideTitle')}><p className="identity-quota-note">{t('quotaSetup.guide')}</p></Disclosure>
-          <Button variant="secondary" onClick={() => void copyQuotaDiagnostic()}>{t('identityDiagnostic.copy')}</Button>
-          {copyDiagnosticStatus && <p role={copyDiagnosticStatus === 'failed' ? 'alert' : 'status'}>{t(copyDiagnosticStatus === 'copied' ? 'identityDiagnostic.copied' : 'identityDiagnostic.failed')}</p>}
-          {!detailsAreCurrent && <p className="identity-quota-note">{t('quota.currentOnly')}</p>}
+          </Disclosure>
           {quotaFeedback && <p role="status">{t(quotaFeedback)}</p>}
         </div>
       </AppDialog>
@@ -1605,7 +1597,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           )}
           {proxyChanged && <p className="identity-proxy-notice">{t('代理环境提醒：目标身份与当前身份的独立代理配置不同，请确认出口 IP 与目标账号一致。')}</p>}
           {state?.browser.enabled && <p>{t('将关闭并重开关联浏览器，请先保存网页任务。')}</p>}
-          <p>{t('只管理本地状态；失效的登录可能需要重新认证。')}</p>
         </div>
       </AppDialog>
       <AppDialog

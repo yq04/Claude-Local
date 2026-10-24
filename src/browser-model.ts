@@ -1,17 +1,67 @@
 /**
  * [INPUT]: 原生浏览器配置、机器快照和起始页实际观测。
- * [OUTPUT]: 不含令牌的绑定身份摘要、按跟随电脑规则解析的有效时区/语言、两个前端入口共享的观测数据契约与三平台真实设备核验；区分目标设置与已测状态，标识当前独立资料是否随身份联动。
+ * [OUTPUT]: 不含令牌的绑定身份摘要、按跟随电脑规则解析的有效时区/语言、两个前端入口共享的观测数据契约、ISP/机房纯净度分类、第三方深度核验站点目录与三平台真实设备核验；区分目标设置与已测状态，标识当前独立资料是否随身份联动。
  * [POS]: 浏览器页面与宿主的边界，不持有凭据或执行清理。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 export type BrowserConfig={seed:number;proxy:string;follow_machine:boolean;language:string;timezone:string;native_graphics:boolean};
 export type Machine={platform:string;version:string;cores:number;timezone:string;languages:string[];locale:string;locale_country?:string;location_enabled:boolean|null;timezones:string[]};
-export type Exit={ip:string;country:string;city:string;timezone:string;isp:string};
-export type Report={language:string;languages:string[];timezone:string;platform:string;cores:number;user_agent:string;platform_version:string;browser_version:string;geolocation:string;exit:Exit|null;error:string};
+export type Exit={ip:string;country:string;city:string;timezone:string;isp:string;asn?:string;hosting?:boolean};
+export type Report={language:string;languages:string[];timezone:string;platform:string;cores:number;user_agent:string;platform_version:string;browser_version:string;geolocation:string;exit:Exit|null;error:string;webrtc_ok?:boolean;webrtc_detail?:string;webdriver?:boolean;graphics_ok?:boolean;webgl_renderer?:string};
 export type BrowserIdentity={linked:boolean;status:'linked'|'draft'|'empty'|'unlinked'|'mismatch'|'unknown';name:string|null;email:string|null;organization:string|null;cli_proxy?:string|null};
 export type BrowserContext={identity?:BrowserIdentity;ui_language:'zh'|'en';exit_services:string[];region:{id:string;label:string;country:string;language:string;locale:string;timezone:string}|null;config:BrowserConfig;machine:Machine;engine_version:string};
 export type BrowserState=BrowserContext&{engine_ready:boolean;running:boolean;profile:string;identity_linked?:boolean;cache:{path:string;bytes:number;login:boolean}[];cache_error:string;report:Report|null;report_received_at:number|null;machine_exit:Exit|null;checks:{title:string;status:'ok'|'mismatch'|'pending';detail:string}[]};
 export type DefaultBrowser={is_default:boolean;http:string;https:string;installed:boolean;app:string};
+
+const HOSTING_ISP_RE = /\b(amazon|aws|google\s*cloud|gcp|microsoft|azure|digitalocean|linode|akamai|vultr|choopa|constant\s*company|hetzner|ovh|m247|contabo|leaseweb|datacamp|cdn77|cloudflare|fastly|oracle\s*cloud|alibaba|aliyun|tencent|zenlayer|sharktech|multacom|psychz|quadranet|colocrossing|nocix|wholesale\s*internet|scaleway|upcloud|kamatera|bandwagon|it7\s*networks|hostwinds|racknerd|buyvm|frantech|dmit|cloudie|v\.ps|xtom|kurun|cera|ceranetworks|datacenter|data\s*center|hosting|vps|cloud\s*server)\b/i;
+
+export function classifyExitIsp(exit?: Pick<Exit, 'isp' | 'asn' | 'hosting'> | null): 'isp' | 'hosting' | 'unknown' {
+    if (!exit) return 'unknown';
+    if (exit.hosting === true) return 'hosting';
+    const combined = `${exit.isp || ''} ${exit.asn || ''}`.trim();
+    if (!combined) return exit.hosting === false ? 'isp' : 'unknown';
+    if (HOSTING_ISP_RE.test(combined)) return 'hosting';
+    return 'isp';
+}
+
+export type DeepVerifySite = {
+    id: 'ping0' | 'checkcc' | 'browserscan' | 'iphey';
+    name: string;
+    url: string;
+    focusKey: string;
+    passRuleKey: string;
+};
+
+export const DEEP_VERIFY_SITES: readonly DeepVerifySite[] = [
+    {
+        id: 'ping0',
+        name: 'Ping0.cc',
+        url: 'https://ping0.cc/',
+        focusKey: 'browserVerify.ping0Focus',
+        passRuleKey: 'browserVerify.ping0Pass',
+    },
+    {
+        id: 'checkcc',
+        name: 'CheckCC.org',
+        url: 'https://checkcc.org/',
+        focusKey: 'browserVerify.checkccFocus',
+        passRuleKey: 'browserVerify.checkccPass',
+    },
+    {
+        id: 'browserscan',
+        name: 'BrowserScan',
+        url: 'https://www.browserscan.net/',
+        focusKey: 'browserVerify.browserscanFocus',
+        passRuleKey: 'browserVerify.browserscanPass',
+    },
+    {
+        id: 'iphey',
+        name: 'IPHey',
+        url: 'https://iphey.com/',
+        focusKey: 'browserVerify.ipheyFocus',
+        passRuleKey: 'browserVerify.ipheyPass',
+    },
+];
 
 export function effectiveBrowserTarget({config, machine}: Pick<BrowserContext, 'config' | 'machine'>) {
     if (!config.follow_machine) return {timezone: config.timezone, language: config.language};

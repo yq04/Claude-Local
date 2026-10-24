@@ -300,13 +300,20 @@ pub async fn claude_cli_manage(
     }
     let state = app.state::<Cleaner>();
     state.enter()?;
+    let app_for_task = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let log = Arc::new(Reporter::channel(Some(on_progress)));
         let result = (|| {
             if crate::cleaner::cli_running()? {
                 return Err("cli.error.running".into());
             }
-            execute(command(&action)?, log.clone(), 600)
+            let mut cmd = command(&action)?;
+            let proxy = crate::browser::configured_or_system_proxy(&app_for_task);
+            if !proxy.trim().is_empty() {
+                cmd.env("HTTPS_PROXY", proxy.trim())
+                    .env("HTTP_PROXY", proxy.trim());
+            }
+            execute(cmd, log.clone(), 600)
         })();
         if let Err(error) = &result {
             log.fail(error);

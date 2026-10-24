@@ -17,9 +17,9 @@ import {
   usePreferences,
 } from './settings-model';
 import {
+  evaluateQuota,
   evaluateWeeklyPace,
   formatCompactEta,
-  formatResetClock,
 } from './identity-quota';
 import {
   computeMonitorWindowBar,
@@ -192,8 +192,13 @@ export function FloatingMonitorApp() {
       : maskDisplayName(rawTitle, current.email, hideAccount)
     : t('monitor.noActiveAccount');
 
-  const bar5h = computeMonitorWindowBar(current?.quota_5h_used);
-  const bar7d = computeMonitorWindowBar(current?.quota_7d_used);
+  const evaluated = evaluateQuota(current, nowSec);
+  const bar5h = computeMonitorWindowBar(
+    evaluated?.known5h ? evaluated.used5h : current?.quota_5h_used,
+  );
+  const bar7d = computeMonitorWindowBar(
+    evaluated?.known7d ? evaluated.used7d : current?.quota_7d_used,
+  );
 
   const pctLabel5h =
     bar5h.used === null
@@ -210,26 +215,22 @@ export function FloatingMonitorApp() {
         : `${t('identityCard.remaining')} ${bar7d.remaining}%`;
 
   const reset5hCountdown =
-    current?.quota_5h_reset_at && current.quota_5h_reset_at > nowSec
-      ? formatCompactEta(current.quota_5h_reset_at, nowSec)
-      : current?.quota_5h_source === 'reset_inferred'
-        ? t('identityCard.resetInferred')
-        : current?.quota_5h_reset_at
-          ? formatResetClock(current.quota_5h_reset_at, false)
-          : '';
+    evaluated?.r5 && evaluated.r5 > nowSec
+      ? formatCompactEta(evaluated.r5, nowSec)
+      : evaluated?.inferred5h || current?.quota_5h_source === 'reset_inferred'
+        ? '5h'
+        : '';
 
   const reset7dCountdown =
-    current?.quota_7d_reset_at && current.quota_7d_reset_at > nowSec
-      ? formatCompactEta(current.quota_7d_reset_at, nowSec)
-      : current?.quota_7d_source === 'reset_inferred'
-        ? t('identityCard.resetInferred')
-        : current?.quota_7d_reset_at
-          ? formatResetClock(current.quota_7d_reset_at, true)
-          : '';
+    evaluated?.r7 && evaluated.r7 > nowSec
+      ? formatCompactEta(evaluated.r7, nowSec)
+      : evaluated?.inferred7d || current?.quota_7d_source === 'reset_inferred'
+        ? '7d'
+        : '';
 
   const weeklyPace =
-    bar7d.used !== null && current?.quota_7d_reset_at
-      ? evaluateWeeklyPace(bar7d.used, current.quota_7d_reset_at, nowSec)
+    bar7d.used !== null && evaluated?.r7
+      ? evaluateWeeklyPace(bar7d.used, evaluated.r7, nowSec)
       : null;
 
   const exhaustionWarn = formatExhaustionEta(metrics?.exhaustionEtaMins, locale);
@@ -252,14 +253,6 @@ export function FloatingMonitorApp() {
               ? `${t('monitor.statusActive')}${telemetry?.clientLabel ? ` · ${telemetry.clientLabel}` : ''}`
               : t('monitor.statusIdle')}
           </span>
-          {telemetry?.routeProtected !== false && (
-            <span
-              className="monitor-hud-shield"
-              title={t('monitor.routeProtectedHint')}
-            >
-              🛡️ {t('monitor.routeProtected')}
-            </span>
-          )}
         </div>
         <div className="monitor-hud-controls">
           <button
@@ -305,12 +298,11 @@ export function FloatingMonitorApp() {
         <span className="monitor-hud-account-name" title={maskedTitle}>
           {maskedTitle}
         </span>
-        <div className="monitor-hud-badges">
-          {current?.plan && <span className="monitor-hud-badge">{current.plan}</span>}
-          <span className="monitor-hud-badge is-muted">
-            {t('monitor.localZeroPollingBadge')}
-          </span>
-        </div>
+        {current?.plan && (
+          <div className="monitor-hud-badges">
+            <span className="monitor-hud-badge">{current.plan}</span>
+          </div>
+        )}
       </div>
 
       <div className="monitor-hud-windows">

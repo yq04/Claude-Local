@@ -11,7 +11,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AppDialog } from './dialog';
 import { CleanupActivity, useCleanupActivity } from './cleaner-activity';
-import type { BrowserConfig, BrowserState, DefaultBrowser } from './browser-model';
+import { DEEP_VERIFY_SITES, type BrowserConfig, type BrowserState, type DefaultBrowser } from './browser-model';
 import { formatBytes } from './cleaner-model';
 import { usePageRefresh } from './app-events';
 import { maskDisplayName, maskEmailAddress, usePreferences } from './settings-model';
@@ -24,6 +24,14 @@ export function BrowserPanel({ onBusy }: {
     const [state, setState] = useState<BrowserState | null>(null), [draft, setDraft] = useState<BrowserConfig | null>(null), [busy, setBusy] = useState(''), [error, setError] = useState(''), [confirm, setConfirm] = useState<'reset' | 'align' | null>(null);
     const gate = useRef(false), live = useRef(true);
     const [accepted, setAccepted] = useState(false), [advancedOpen, setAdvancedOpen] = useState(false);
+    const [copiedVerifySite, setCopiedVerifySite] = useState('');
+    async function copyVerifySite(id: string, url: string) {
+        try {
+            await navigator.clipboard.writeText(url);
+            setCopiedVerifySite(id);
+            window.setTimeout(() => setCopiedVerifySite(prev => (prev === id ? '' : prev)), 1800);
+        } catch { /* ignore */ }
+    }
     const activity = useCleanupActivity();
     const [clock, setClock] = useState(Date.now);
     useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30000); return () => window.clearInterval(timer); }, []);
@@ -234,12 +242,27 @@ export function BrowserPanel({ onBusy }: {
                     ))}
                 </div>
                 {state?.report?.error && <p className="system-feedback error">{t("浏览器出口检测：")}{t(state.report.error)}</p>}
+                <div className="browser-deep-sites">
+                    <span className="browser-deep-sites-label">{t("browserVerify.hubTitle")}</span>
+                    <div className="browser-deep-sites-list">
+                        {DEEP_VERIFY_SITES.map(site => (
+                            <Button
+                                key={site.id}
+                                variant="ghost"
+                                size="small"
+                                title={`${site.name} · ${t(site.passRuleKey)}`}
+                                onClick={() => void copyVerifySite(site.id, site.url)}
+                            >
+                                {copiedVerifySite === site.id ? `✓ ${site.name}` : `${site.name} · ${t("browserVerify.copyUrl")}`}
+                            </Button>
+                        ))}
+                    </div>
+                </div>
             </div>
 
             <div className="network-action-card">
                 <div className="network-action-head">
                     <h2>{t("浏览器数据")}</h2>
-                    <span className="identity-policy-mode ok">{t("browserSafety.isolatedProfile")}</span>
                 </div>
                 <div className="browser-data-scenarios">
                     <div className="browser-scenario-card">
@@ -256,7 +279,6 @@ export function BrowserPanel({ onBusy }: {
                         <div className="browser-scenario-copy">
                             <div className="browser-scenario-head">
                                 <strong>{t("深度重置当前浏览器")}</strong>
-                                <span className="identity-policy-mode">{t("仅排障使用")}</span>
                             </div>
                             <p>{t("仅在当前身份网页出现异常风控时使用；将清空当前身份的 Cookie、登录状态与扩展，不影响其他身份。")}</p>
                         </div>
@@ -270,7 +292,7 @@ export function BrowserPanel({ onBusy }: {
             </div>
 
             <Disclosure className="identity-policy browser-advanced-panel" triggerClassName="identity-policy-trigger" open={advancedOpen || !!changed} onOpenChange={setAdvancedOpen}
-                summary={<><strong>{t("browserSafety.settingsTitle")}</strong><span className="identity-policy-hint">{t("browserSafety.settingsHint")}</span></>}
+                summary={<strong>{t("browserSafety.settingsTitle")}</strong>}
                 aside={<span className="identity-policy-mode ok">{draft?.proxy ? draft.proxy : t("browserSafety.proxyManaged")}</span>}>
                 <div className="browser-advanced-body">
                     <div className="browser-advanced-grid">

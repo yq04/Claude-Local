@@ -338,6 +338,24 @@ fn estimate_turn_cost_usd(model: &str, usage: &Value) -> f64 {
     }
     cost
 }
+#[derive(Clone)]
+struct CachedProjectSlices {
+    len: u64,
+    mtime_nanos: u128,
+    turns: Vec<((String, String), u64, f64)>,
+    cs_slices: Vec<(u64, f64)>,
+    saw_assistant_usage: bool,
+}
+
+static PROJECT_SLICE_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, CachedProjectSlices>>,
+> = std::sync::OnceLock::new();
+
+fn project_slice_cache(
+) -> &'static std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, CachedProjectSlices>> {
+    PROJECT_SLICE_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 fn parse_jsonl_file_into(
     path: &Path,
     min_epoch_sec: u64,
@@ -347,12 +365,37 @@ fn parse_jsonl_file_into(
     let Ok(meta) = fs::symlink_metadata(path) else {
         return;
     };
-    if !meta.is_file() || meta.len() == 0 || meta.len() > 32 * 1024 * 1024 {
+    let len = meta.len();
+    if !meta.is_file() || len == 0 || len > 32 * 1024 * 1024 {
         return;
     }
+    let mut mtime_nanos = 0u128;
     if let Ok(mtime) = meta.modified() {
         if let Ok(dur) = mtime.duration_since(std::time::UNIX_EPOCH) {
             if dur.as_secs().saturating_add(60) < min_epoch_sec {
+                return;
+            }
+            mtime_nanos = dur.as_nanos();
+        }
+    }
+    if mtime_nanos > 0 {
+        if let Ok(guard) = project_slice_cache().lock() {
+            if let Some(hit) = guard
+                .get(path)
+                .filter(|c| c.len == len && c.mtime_nanos == mtime_nanos)
+            {
+                for (key, ts, cost) in &hit.turns {
+                    if *ts >= min_epoch_sec {
+                        global_turns.insert(key.clone(), (*ts, *cost));
+                    }
+                }
+                if !hit.saw_assistant_usage {
+                    for (ts, delta) in &hit.cs_slices {
+                        if *ts >= min_epoch_sec {
+                            fallback_slices.push((*ts, *delta));
+                        }
+                    }
+                }
                 return;
             }
         }
@@ -360,6 +403,7 @@ fn parse_jsonl_file_into(
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
+    let mut file_turns: Vec<((String, String), u64, f64)> = Vec::new();
     let mut file_cs_slices = Vec::new();
     let mut saw_assistant_usage = false;
     let mut current_ts: Option<u64> = None;
@@ -386,22 +430,23 @@ fn parse_jsonl_file_into(
                             let cost = estimate_turn_cost_usd(model, usage);
                             if cost > 0.0 {
                                 saw_assistant_usage = true;
+                                let msg_id = msg
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string();
+                                let req_id = obj
+                                    .get("requestId")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string();
+                                let key = if msg_id.is_empty() && req_id.is_empty() {
+                                    (format!("{path_tag}#{ts}"), line_idx.to_string())
+                                } else {
+                                    (msg_id, req_id)
+                                };
+                                file_turns.push((key.clone(), ts, cost));
                                 if ts >= min_epoch_sec {
-                                    let msg_id = msg
-                                        .get("id")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or("")
-                                        .to_string();
-                                    let req_id = obj
-                                        .get("requestId")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or("")
-                                        .to_string();
-                                    let key = if msg_id.is_empty() && req_id.is_empty() {
-                                        (format!("{path_tag}#{ts}"), line_idx.to_string())
-                                    } else {
-                                        (msg_id, req_id)
-                                    };
                                     global_turns.insert(key, (ts, cost));
                                 }
                             }
@@ -426,7 +471,7 @@ fn parse_jsonl_file_into(
                     if total_cost > prev_cumulative_cost {
                         let delta = total_cost - prev_cumulative_cost;
                         prev_cumulative_cost = total_cost;
-                        if ts >= min_epoch_sec && delta > 0.0 {
+                        if delta > 0.0 {
                             file_cs_slices.push((ts, delta));
                         }
                     }
@@ -436,7 +481,28 @@ fn parse_jsonl_file_into(
         }
     }
     if !saw_assistant_usage {
-        fallback_slices.extend(file_cs_slices);
+        for (ts, delta) in &file_cs_slices {
+            if *ts >= min_epoch_sec {
+                fallback_slices.push((*ts, *delta));
+            }
+        }
+    }
+    if mtime_nanos > 0 {
+        if let Ok(mut guard) = project_slice_cache().lock() {
+            if guard.len() > 512 {
+                guard.clear();
+            }
+            guard.insert(
+                path.to_path_buf(),
+                CachedProjectSlices {
+                    len,
+                    mtime_nanos,
+                    turns: file_turns,
+                    cs_slices: file_cs_slices,
+                    saw_assistant_usage,
+                },
+            );
+        }
     }
 }
 fn collect_project_slices_rec(
@@ -808,12 +874,18 @@ fn legacy_live_anchor_matches(cj: &Value, entry: &Value) -> bool {
 fn ledger_account<'a>(ledger: &'a Value, email: &str, identity: Option<&str>) -> Option<&'a Value> {
     let accounts = ledger.get("accounts")?;
     let primary = accounts.get(email);
-    if primary.is_some_and(|entry| ledger_identity(entry, email).as_deref() == identity) {
+    let qualified = identity.and_then(|id| accounts.get(format!("{email}#{id}")));
+    let primary_matches = primary.is_some_and(|entry| ledger_identity(entry, email).as_deref() == identity);
+    let qualified_matches = qualified.is_some_and(|entry| ledger_identity(entry, email).as_deref() == identity);
+    if primary_matches && qualified_matches {
+        let p_ms = primary.and_then(|e| e.get("quota_observed_at_ms")).and_then(Value::as_u64).unwrap_or(0);
+        let q_ms = qualified.and_then(|e| e.get("quota_observed_at_ms")).and_then(Value::as_u64).unwrap_or(0);
+        return if q_ms > p_ms { qualified } else { primary };
+    }
+    if primary_matches {
         return primary;
     }
-    identity
-        .and_then(|id| accounts.get(format!("{email}#{id}")))
-        .or(primary)
+    qualified.or(primary)
 }
 fn quota_window_observed_at(cj: &Value, window: &str) -> Option<u64> {
     let cache = cj.get("cachedUsageUtilization")?;
@@ -1292,7 +1364,24 @@ pub(super) fn apply_ledger_to_summary(
     let Some(entry) = ledger_account(&root, &key, summary.quota_identity.as_deref()) else {
         return;
     };
-    if summary.quota_identity.is_none() || summary.quota_identity != ledger_identity(entry, &key) {
+    let legacy_org_match = entry.get("quota_identity").is_none()
+        && entry.get("organization_uuid").is_none()
+        && entry
+            .pointer("/server_anchor/accountUuid")
+            .or_else(|| entry.get("account_uuid"))
+            .and_then(Value::as_str)
+            .is_some_and(|u| !u.trim().is_empty())
+        && summary.organization.as_deref().is_some_and(|org| {
+            !org.trim().is_empty()
+                && entry
+                    .get("organization")
+                    .or_else(|| entry.get("organization_name"))
+                    .and_then(Value::as_str)
+                    == Some(org)
+        });
+    if summary.quota_identity.is_none()
+        || (summary.quota_identity != ledger_identity(entry, &key) && !legacy_org_match)
+    {
         return;
     }
     if summary.quota_5h_source.is_none() && summary.quota_5h_used.is_some() {

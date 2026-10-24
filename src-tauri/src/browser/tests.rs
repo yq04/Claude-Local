@@ -393,7 +393,9 @@ fn country_checks_follow_region_instead_of_assuming_america() {
             city: "Tokyo".into(),
             timezone: "Asia/Tokyo".into(),
             isp: "fixture".into(),
+            ..Default::default()
         }),
+        ..Default::default()
     };
     let checks = network::checks(&machine, &config, Some(&report), None, "148");
     assert_eq!(checks[0].status, "ok");
@@ -479,6 +481,7 @@ fn linux_platform_and_unknown_location_cannot_be_misreported_as_mac_or_disabled(
         geolocation: "denied".into(),
         error: String::new(),
         exit: None,
+        ..Default::default()
     };
     let checks = network::checks(&m, &Config::default(), Some(&report), None, "148");
     assert_eq!(
@@ -539,7 +542,9 @@ fn distinct_iana_timezones_remain_conflicts_on_every_platform() {
             city: String::new(),
             timezone: "Europe/Berlin".into(),
             isp: String::new(),
+            ..Default::default()
         }),
+        ..Default::default()
     };
     let checks = network::checks(&machine, &Config::default(), Some(&report), None, "148");
     assert_eq!(
@@ -578,6 +583,7 @@ fn windows_report_requires_real_platform_cpu_and_version() {
         geolocation: "denied".into(),
         error: String::new(),
         exit: None,
+        ..Default::default()
     };
     let result = |r: &network::Report| {
         network::checks(&m, &Config::default(), Some(r), None, "148")
@@ -621,7 +627,9 @@ fn follow_machine_taiwan_preserves_language_script_and_checks_actual_country() {
             city: "Taipei".into(),
             timezone: machine.timezone.clone(),
             isp: "fixture".into(),
+            ..Default::default()
         }),
+        ..Default::default()
     };
     let checks = network::checks(&machine, &config, Some(&report), None, "148");
     assert_eq!(checks[0].status, "ok");
@@ -680,4 +688,40 @@ fn refreshed_context_recomputes_target_from_effective_machine_country() {
     taiwan.locale_country = "CN".into();
     context.update_machine(taiwan);
     assert!(context.region.is_none());
+}
+
+#[test]
+fn deep_probes_close_graphics_and_webrtc_checks() {
+    let m = machine();
+    let c = Config::default();
+    let host = network::Exit {
+        ip: "203.0.113.9".into(),
+        country: "US".into(),
+        city: "New York".into(),
+        timezone: "America/New_York".into(),
+        isp: "Comcast Cable".into(),
+        asn: Some("AS7922".into()),
+        hosting: Some(false),
+    };
+    let report = network::Report {
+        language: "en-US".into(),
+        languages: vec!["en-US".into()],
+        timezone: "America/New_York".into(),
+        platform: "MacIntel".into(),
+        cores: m.cores,
+        user_agent: "fixture".into(),
+        platform_version: m.version.clone(),
+        browser_version: "148".into(),
+        geolocation: "denied".into(),
+        error: String::new(),
+        exit: Some(host.clone()),
+        webrtc_ok: Some(true),
+        webrtc_detail: Some("未检出公网/局域网 IP 泄漏".into()),
+        webdriver: Some(false),
+        graphics_ok: Some(true),
+        webgl_renderer: Some("ANGLE (Apple, Apple M3 Pro, OpenGL 4.1)".into()),
+    };
+    let checks = network::checks(&m, &c, Some(&report), Some(&host), "148");
+    assert_eq!(checks.len(), 9);
+    assert!(checks.iter().all(|item| item.status == "ok"));
 }

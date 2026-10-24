@@ -4,7 +4,7 @@
  * [POS]: Pure usage presentation helpers; no identity files, credentials or network access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
-export type UsagePeriod = 'all' | 'today' | 'week' | 'month';
+export type UsagePeriod = 'all' | 'today' | 'yesterday' | 'week' | 'month';
 export type UsageTotals = {
   input_tokens: number;
   output_tokens: number;
@@ -71,16 +71,17 @@ export function summarizeUsageTrend(days: UsageDay[]): {average: number | null; 
 export function dailySeries(rows: UsageDay[], period: UsagePeriod, now = new Date(), generatedAt?: number): UsageDay[] {
   const chronological = [...rows].sort((a, b) => a.start_at != null && b.start_at != null ? a.start_at - b.start_at : a.day.localeCompare(b.day));
   const byDay = new Map(chronological.map(row => [row.day, row]));
-  if (period === 'today') {
+  if (period === 'today' || period === 'yesterday') {
     const actualHourly = chronological.filter(row => row.start_at != null && row.end_at != null);
     if (actualHourly.length) {
       const clock = generatedAt ?? now.getTime() / 1000;
-      return actualHourly.map(row => ({...row, future: row.start_at! > clock}));
+      return actualHourly.map(row => ({...row, future: period === 'today' && row.start_at! > clock}));
     }
-    const day = localDayKey(now);
+    const targetDate = period === 'yesterday' ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12) : now;
+    const day = localDayKey(targetDate);
     return Array.from({length: 24}, (_, hour) => {
       const key = `${day}T${String(hour).padStart(2, '0')}:00`;
-      return {...(byDay.get(key) ?? {day: key, totals: emptyUsage()}), future: hour > now.getHours()};
+      return {...(byDay.get(key) ?? {day: key, totals: emptyUsage()}), future: period === 'today' && hour > now.getHours()};
     });
   }
   const today = localDayKey(now);

@@ -60,21 +60,20 @@ Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，React/TypeSc
 
 - `0.2.0`–`0.2.3`：实现统一在线额度编排、运行环境/代理约束、全库加密备份与救援、系统修改记录、手工交接载入导出、恢复本地同步默认值并移除身份页冗余搜索/排序。
 - `0.2.4`：完成账号安全加固、`reset_inferred` 到期窗口额度显示与本地新消耗基线优化、Cockpit Tools 设置页胶囊 Tabs 对齐及左侧导航菜单升级。
-- `0.3.0`（当前版本）：完成自定义本地壁纸与 5 层光学级毛玻璃视觉系统（含 Rust 原生持久化）、活跃账号实时 Token/额度悬浮监控窗（HUD）、四维防封号安全加固（零 `PROCESS_VM_READ`、CLI 协议头指纹、Cloudflare 出口国家预检）及生产力交互全面升级，并按用户要求清空过往历史 Release，仅发布单个 `Claude-Local_0.3.0_x64-setup.exe` 安装包。
+- `0.3.0`（当前版本）：完成自定义本地壁纸与 5 层光学级毛玻璃视觉系统（含 Rust 原生持久化）、活跃账号实时 Token/额度悬浮监控窗（HUD，异步无死锁窗口创建与 `340×278` 精简置顶布局）、四维防封号安全加固与内置浏览器深度联机防封体检中心（ISP/IDC 机房识别、WebRTC/WebGL/webdriver 实测闭环、`ping0.cc` / `checkcc.org` / `browserscan.net` / `iphey.com` 一键核验）、CPAMC 风格 `5h` 静态重置显示（到期恢复后直接显示静态 `5h`，直至新会话开启倒计时）、用量分析「昨天」时段与独立锁防卡死、以及全软件标签文案精简化，仅发布单个 `Claude-Local_0.3.0_x64-setup.exe` 安装包。
 
 ### 2.3 `0.3.0` 交付基线与证据
 
-- 产品源码提交和远端固定标签 `v0.3.0`：`4779be9cbf7d7a0924d28f5ae827bceb98aca480`。
-- [GitHub 正式发布 v0.3.0 (Latest)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.0) 已发布；过往 21 个历史 Release 与草稿标签均已清理完毕，当前 Release 仅包含唯一安装包资产 `Claude-Local_0.3.0_x64-setup.exe`（`140,444,345` 字节 / `133.94 MiB`）。
-- 安装器 `Claude-Local_0.3.0_x64-setup.exe` SHA256：`2447d00a052efa820f429078aedbe1b79f09440fe9dbf873ab1b7ab5f6a98e29`（与 GitHub 服务端原生资产摘要 `sha256:2447d00a052efa820f429078aedbe1b79f09440fe9dbf873ab1b7ab5f6a98e29` 逐字节一致）。
-- 宿主 `claude-local.exe` SHA256：`3cc7d435a0028f9e2523e83526f38090dededb1e39044a846344de1fcc465149`。
-- 独立资源审计 109 项、私密探针 13 项，零发现（`findings: 0`）。本机 102 个安装文件核验通过，13 个变更文件先备份后替换。
+- [GitHub 正式发布 v0.3.0 (Latest)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.0) 已发布；过往 21 个历史 Release 与草稿标签均已清理完毕，当前 Release 仅包含唯一安装包资产 `Claude-Local_0.3.0_x64-setup.exe`。
+- 安装器 `Claude-Local_0.3.0_x64-setup.exe` SHA256：`c6f65f1374652be44e751ab8467ca13ab8b6cf6b843e4aed642bab239a5ba796`。
+- 宿主 `claude-local.exe` SHA256：`456b67e2eda3f243c36148d76df3558b8bbe644894171d3c65cdf850cfdff4bf`。
+- 独立资源审计 109 项、私密探针 13 项，零发现（`findings: 0`）。本机 102 个安装文件核验通过，9 个变更文件先备份后替换。
 - 更新后版本（`0.3.0`）、唯一主窗口句柄、Rust 额度核心（`--quota-core`）检查通过。更新前后未停止任何 `claude.exe` 或浏览器进程（`missingClaudeCount: 0`）。
-- 私有回执与构建产物保存在忽略目录 `.local/`：`.local/last-local-update.json`、`.local/artifacts/20261024T101411Z-4584d22dd95d4d4589f53afd1dcf1b6b/`、`.local/release-0.3.0/`。实际安装路径和回滚备份从 `.local/last-local-update.json` 读取，不硬编码进文档或 Git。
+- 私有回执与构建产物保存在忽略目录 `.local/`：`.local/last-local-update.json`、`.local/artifacts/20261024T194134Z-ae15430dbf7e4f698cd255dd51cf6ac4/`。实际安装路径和回滚备份从 `.local/last-local-update.json` 读取，不硬编码进文档或 Git。
 
 ### 2.4 已执行的验证
 
-- **前端、壁纸引擎与跨窗口同步单元测试**：`bun test` **21 个测试文件、106 项测试（9,370 断言）全部通过**；`bun run build`（`tsc --noEmit && vite build`）与 `python scripts/browser_ui.py dist` 零错误通过。
+- **前端、壁纸引擎、深度防封核验与跨窗口同步单元测试**：`bun test` **21 个测试文件、108 项测试（9,429 断言）全部通过**；`bun run build`（`tsc --noEmit && vite build`）与 `python scripts/browser_ui.py dist` 零错误通过。
 - **窗口与侧栏多分辨率几何巡检**：`node scripts/test-usage-statistics.mjs --layout-only`（调用 `scripts/window-layout-checks.mjs`，覆盖 `760×640`、`1040×720`、`1440×900` 下的中英双语及 `classic`/`compact` 侧栏模式，**96 项布局断言全部通过**）与 `--quick-only`（16/16）全部通过。
 - **身份与额度 UI 专项回归**：`node --experimental-strip-types scripts/test-identities-ui.ts` 的 `--online-only`（10/10）、`--quota-reset-only`（6/6）、`--cards-only`（26/26）、`--passive-only`（1/1）全部通过；`node scripts/test-local-shell.mjs` 通过（`errors: []`）。
 - **Python 与 Rust 原生测试**：`test-claude-quota-online.py`（31/31，含 CLI 指纹与 Cloudflare 出口国家门禁）、`test-claude-quota-local.py`（34/34）、`test-audit-windows-package.py`（9/9）、`test-runtime-resources.py`（2/2）、`test-quota-archive.py`（6/6）、`test-quota-runtime.py`（3/3）及 Rust `monitor_window`（3/3）、`ui_appearance`（4/4）、`local_edition_tests`、`exact_arguments`、`passive_quota_revision` 全部通过（0 warnings）。

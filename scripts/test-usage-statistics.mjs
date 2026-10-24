@@ -64,16 +64,17 @@ const cliStatus = () => window.usageFixture.cliMissing
   ? {method:'',path:'',version:'',running:false}
   : ({method:'native',path:'C:/fixture/claude.exe',version:cliVersion,running:window.usageFixture.cliRunning});
 function dailyRows(value,period){
-  const count=period==='today'?new Date().getHours()+1:period==='week'?7:period==='month'?30:81;
+  const isHourly = period==='today'||period==='yesterday';
+  const count=period==='today'?new Date().getHours()+1:period==='yesterday'?24:period==='week'?7:period==='month'?30:81;
   const weights=Array.from({length:count},(_,index)=>4+index%7);
   const weightTotal=weights.reduce((a,b)=>a+b,0);let cumulative=0;
   return weights.map((weight,index)=>{
     const before=cumulative;cumulative+=weight;const row={...empty};
     for(const key of ['input_tokens','output_tokens','cache_creation_tokens','cache_read_tokens','requests'])row[key]=Math.floor(value[key]*cumulative/weightTotal)-Math.floor(value[key]*before/weightTotal);
     row.total_tokens=row.input_tokens+row.output_tokens+row.cache_creation_tokens+row.cache_read_tokens;
-    const day=new Date();if(period!=='today')day.setDate(day.getDate()-weights.length+index+1);
+    const day=new Date();if(period==='yesterday')day.setDate(day.getDate()-1);else if(period!=='today')day.setDate(day.getDate()-weights.length+index+1);
     const key=day.getFullYear()+'-'+String(day.getMonth()+1).padStart(2,'0')+'-'+String(day.getDate()).padStart(2,'0');
-    return {day:key+(period==='today'?'T'+String(index).padStart(2,'0')+':00':''),totals:row};
+    return {day:key+(isHourly?'T'+String(index).padStart(2,'0')+':00':''),totals:row};
   });
 }
 function modelRows(value){
@@ -110,7 +111,7 @@ mockIPC(async (command,args)=>{
     if(window.usageFixture.fail)throw Error('Synthetic usage read failure');
     const selected = args.accountId==='unattributed'?unknown:args.accountId===id(1)?alpha:args.accountId===id(2)?beta:all;
     const value = window.usageFixture.empty?empty:selected;
-    return {generated_at:Math.floor(Date.now()/1000),tracking_since:now-86400,granularity:args.period==='today'?'hour':'day',totals:value,unattributed:window.usageFixture.empty?empty:unknown,accounts:accounts.map(a=>({...a,totals:window.usageFixture.empty?empty:a.totals})),daily:window.usageFixture.empty?[]:dailyRows(value,args.period),models:window.usageFixture.empty?[]:modelRows(value),warnings:window.usageFixture.warnings};
+    return {generated_at:Math.floor(Date.now()/1000),tracking_since:now-86400,granularity:(args.period==='today'||args.period==='yesterday')?'hour':'day',totals:value,unattributed:window.usageFixture.empty?empty:unknown,accounts:accounts.map(a=>({...a,totals:window.usageFixture.empty?empty:a.totals})),daily:window.usageFixture.empty?[]:dailyRows(value,args.period),models:window.usageFixture.empty?[]:modelRows(value),warnings:window.usageFixture.warnings};
   }
   if(command==='ui_privacy_read')return false;
   if(command==='ui_privacy_write')return;
@@ -263,13 +264,14 @@ try {
   await page.getByText('claude-test-model', {exact: true}).waitFor();
   assert.equal(await page.locator('.usage-trend').getAttribute('data-usage-bucket-count'),'81','All time must include history older than 30 days');
   assert.equal((await page.evaluate(()=>window.usageFixture.commands)).some(item=>item.command==='browser_read'),false,'Inactive quick setup must not read browser state');
-  assert.equal(await page.locator('.usage-filter-note, .usage-live-note, .usage-history-note').count(), 0);
+  assert.equal(await page.locator('.usage-filter-note, .usage-live-note, .usage-history-note, .usage-attribution-card').count(), 0);
+  assert.equal(await page.getByRole('tab', {name: '昨天', exact: true}).count(), 1);
   const accountSelect = page.locator('.usage-account-filter').getByRole('combobox');
   assert.equal(await accountSelect.innerText(), '全部');
   await accountSelect.click();
   assert.equal(await page.getByRole('option').count(), 4, 'Only All and saved accounts belong in the selector');
   assert.equal(await page.getByRole('option', {name: '未归属历史', exact: true}).count(), 0);
-  await page.keyboard.press('Escape');
+  await page.getByRole('option', {name: '全部', exact: true}).click();
   const alignment = await page.locator('.usage-page').evaluate(node => ({title: node.querySelector('h1').getBoundingClientRect().left, card: node.querySelector('.usage-summary').getBoundingClientRect().left}));
   assert.ok(Math.abs(alignment.title - alignment.card) <= 1, 'Usage cards must share the page-title margin');
   assert.equal(await page.locator('.usage-details').getByText('已报告推理', {exact:true}).count(), 0);
@@ -398,7 +400,7 @@ try {
   beforePoll=await page.evaluate(()=>window.usageFixture.requests.length);
   await page.clock.fastForward(90_000);
   assert.equal(await page.evaluate(()=>window.usageFixture.requests.length),beforePoll,'Leaving Usage must cancel polling');
-  assert.equal(await page.locator('[data-quick-destination]').count(),6);
+  assert.equal(await page.locator('[data-quick-destination]').count(),7);
   const quickAlignment=await page.locator('.quick-page').evaluate(node=>({title:node.querySelector('h1').getBoundingClientRect().left,card:node.querySelector('.quick-overview').getBoundingClientRect().left}));
   assert.ok(Math.abs(quickAlignment.title-quickAlignment.card)<=1,'Quick setup cards must share the title margin');
   assert.match(await page.locator('[data-quick-state="identity"]').innerText(),/已保存 3 个身份/);
@@ -418,7 +420,7 @@ try {
   assert.ok(readCommands.every(item=>['identities_read','browser_read','system_read','claude_cli_read'].includes(item.command)));
   await page.screenshot({path:join(output,'quick-setup-zh-light.png'),fullPage:true});
   for(const [destination,title] of [['vps','网络环境'],['cleaner','身份管理'],['browser','浏览环境'],['system','电脑环境'],['usage','用量分析'],['settings','软件设置']]){
-    await page.locator('[data-quick-destination="'+destination+'"]').getByRole('button').click();
+    await page.locator('[data-quick-destination="'+destination+'"]').first().getByRole('button').click();
     await page.getByRole('heading',{name:title,exact:true}).waitFor();
     assert.equal(await page.getByRole('dialog').count(),0,'Navigation must not open a destructive confirmation');
     assert.equal(await page.evaluate(()=>localStorage.getItem('claude-local.page.v1')),destination);
@@ -479,9 +481,9 @@ try {
   assert.match(await identityCards.first().locator('[data-quota-window="7d"]').innerText(),/剩余 82%/);
   assert.equal(await identityCards.first().locator('.identity-organization').count(),0);
   assert.equal(await identityCards.first().locator('.identity-email').count(),1);
-  assert.equal(await identityCards.nth(1).locator('[data-subscription-expiry]').getAttribute('data-subscription-expiry'),'unknown');
+  assert.equal(await identityCards.nth(1).locator('.identity-sub-resets-block').count(),0);
   assert.equal(await identityCards.nth(2).locator('[data-quota-window="5h"] i').count(),0);
-  assert.match(await identityCards.nth(2).innerText(),/Max 20x/);
+  assert.match(await identityCards.nth(2).innerText(),/Max 20x/i);
   for(const [windowName,datePattern] of [['5h',/^\d{2}:\d{2}$/],['7d',/^\d{2}-\d{2} \d{2}:\d{2}$/]]){
     const reset=identityCards.first().locator('[data-quota-window="'+windowName+'"] .identity-quota-reset');
     assert.match(await reset.locator('time.identity-reset-time').innerText(),datePattern,'Reset date/time must be readable text without a repeated reset prefix');

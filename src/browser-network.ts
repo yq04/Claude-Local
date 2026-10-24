@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 宿主提供的 HTTPS 出口服务目录与浏览器 fetch；请求始终走当前浏览器路由。
- * [OUTPUT]: probeBrowserExit、parseExit，校验真实出口并在服务限流/故障时切换备用服务。
+ * [OUTPUT]: probeBrowserExit、parseExit，校验真实出口、ASN/ISP/机房标识并在服务限流/故障时切换备用服务。
  * [POS]: 起始页外部请求的唯一边界；不借宿主代测浏览器出口，不在代理失败时切换直连。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -13,8 +13,15 @@ export function parseExit(value:unknown):Exit {
   const data=value as Record<string,unknown>|null;
   if(!data||data.success===false||data.error===true||typeof data.ip!=='string'||!validIp(data.ip)||typeof data.country_code!=='string'||!/^[A-Z]{2}$/.test(data.country_code))throw new Error('出口检测返回无效数据');
   const field=(value:unknown):string=>{if(value==null)return '';if(typeof value!=='string'||value.length>=300)throw new Error('出口字段无效');return value;};
-  const zone=data.timezone as {id?:unknown}|undefined, connection=data.connection as {isp?:unknown}|undefined;
-  const exit={ip:data.ip,country:data.country_code,city:field(data.city),timezone:field(typeof data.timezone==='string'?data.timezone:zone?.id),isp:field(data.org??connection?.isp)};
+  const zone=data.timezone as {id?:unknown}|undefined;
+  const connection=data.connection as {isp?:unknown;asn?:unknown;org?:unknown}|undefined;
+  const security=data.security as {hosting?:unknown;vpn?:unknown;proxy?:unknown}|undefined;
+  const rawAsn=data.asn??connection?.asn;
+  const asnStr=typeof rawAsn==='number'&&Number.isFinite(rawAsn)?`AS${rawAsn}`:typeof rawAsn==='string'&&rawAsn.trim().length>0&&rawAsn.length<60?(rawAsn.trim().toUpperCase().startsWith('AS')?rawAsn.trim():`AS${rawAsn.trim()}`):'';
+  const hosting=typeof data.hosting==='boolean'?data.hosting:typeof security?.hosting==='boolean'?security.hosting:undefined;
+  const exit:Exit={ip:data.ip,country:data.country_code,city:field(data.city),timezone:field(typeof data.timezone==='string'?data.timezone:zone?.id),isp:field(data.org??connection?.isp??connection?.org)};
+  if(asnStr)exit.asn=asnStr;
+  if(hosting!==undefined)exit.hosting=hosting;
   return exit;
 }
 export async function probeBrowserExit(services:readonly string[],request:(address:string,options?:RequestInit)=>Promise<Response>=fetch):Promise<Exit> {

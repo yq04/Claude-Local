@@ -15,9 +15,9 @@ import {cacheHitRate, dailySeries, formatUsageNumber, summarizeUsageTrend, type 
 import {UsageTrend} from './usage-trend';
 import {UsageTrendTable} from './usage-table';
 import {buildUsageTsv} from './usage-export';
-import {formatTimezoneContext, getDstDayType, maskAccountLabel, previewAttributionScope} from './usage-attribution';
+import {formatTimezoneContext, getDstDayType, maskAccountLabel} from './usage-attribution';
 
-const periods: readonly [UsagePeriod, string][] = [['today', 'usage.today'], ['week', 'usage.week'], ['month', 'usage.month'], ['all', 'usage.allTime']];
+const periods: readonly [UsagePeriod, string][] = [['today', 'usage.today'], ['yesterday', 'usage.yesterday'], ['week', 'usage.week'], ['month', 'usage.month'], ['all', 'usage.allTime']];
 const warningKeys: Record<string, string> = {
   partial_scan: 'usage.warning.partial', invalid_records: 'usage.warning.invalid',
   weak_ids: 'usage.warning.weak',
@@ -43,9 +43,6 @@ export function UsageStatisticsPanel() {
   const [result, setResult] = useState<{key: string; value: UsageSnapshot} | null>(null);
   const [status, setStatus] = useState<{key: string; busy: boolean; error: string}>({key: '', busy: true, error: ''});
   const [exportStatus, setExportStatus] = useState('');
-  const [pendingTargetId, setPendingTargetId] = useState('');
-  const [attributionBusy, setAttributionBusy] = useState(false);
-  const [attributionFeedback, setAttributionFeedback] = useState<{type: 'success' | 'error'; message: string} | null>(null);
   const timezone = (() => { try { const value = Intl.DateTimeFormat().resolvedOptions().timeZone; new Intl.DateTimeFormat('en', {timeZone: value}); return value; } catch { return ''; } })();
   const queryKey = `${period}:${account}:${timezone || `offset:${-new Date().getTimezoneOffset()}`}`;
   const snapshot = result?.key === queryKey ? result.value : null;
@@ -95,45 +92,13 @@ export function UsageStatisticsPanel() {
   const trend = summarizeUsageTrend(snapshot ? days : []);
   const dateLabel = (day: string) => new Date(`${day.slice(0, 10)}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {year: 'numeric', month: 'short', day: 'numeric'});
   const range = snapshot ? days.length > 1 && days[0].day.slice(0, 10) !== days.at(-1)!.day.slice(0, 10) ? `${dateLabel(days[0].day)} – ${dateLabel(days.at(-1)!.day)}` : dateLabel(days[0].day) : '—';
-  const peakLabel = trend.peak ? period === 'today' ? trend.peak.day.slice(11) : new Date(`${trend.peak.day}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric'}) : '';
+  const isHourly = period === 'today' || period === 'yesterday';
+  const peakLabel = trend.peak ? isHourly ? trend.peak.day.slice(11) : new Date(`${trend.peak.day}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric'}) : '';
   const selectedAccount = account === 'all' ? t('usage.allAccounts') : prefs.privacyMask ? t('usage.account') : snapshot?.accounts.find(item => item.id === account)?.name ?? t('usage.allAccounts');
   const offsetMinutes = -new Date().getTimezoneOffset();
   const offsetZone = `UTC${offsetMinutes >= 0 ? '+' : '-'}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0')}:${String(Math.abs(offsetMinutes) % 60).padStart(2, '0')}`;
-  const handleSetAttribution = async (targetId: string) => {
-    if (!targetId || attributionBusy) return;
-    setAttributionBusy(true);
-    setAttributionFeedback(null);
-    try {
-      await invoke('usage_attribution_set', {accountId: targetId});
-      setAttributionFeedback({type: 'success', message: t('usage.attributionApplied')});
-      setPendingTargetId('');
-      setRevision(value => value + 1);
-    } catch (err) {
-      setAttributionFeedback({type: 'error', message: t('usage.attributionFailed') + ': ' + String(err)});
-    } finally {
-      setAttributionBusy(false);
-    }
-  };
-
-  const handleClearAttribution = async () => {
-    if (attributionBusy) return;
-    setAttributionBusy(true);
-    setAttributionFeedback(null);
-    try {
-      await invoke('usage_attribution_clear');
-      setAttributionFeedback({type: 'success', message: t('usage.attributionCleared')});
-      setPendingTargetId('');
-      setRevision(value => value + 1);
-    } catch (err) {
-      setAttributionFeedback({type: 'error', message: t('usage.attributionFailed') + ': ' + String(err)});
-    } finally {
-      setAttributionBusy(false);
-    }
-  };
-
   const timezoneContext = formatTimezoneContext(snapshot?.timezone || timezone);
-  const dstType = period === 'today' ? getDstDayType(days) : null;
-  const previewScope = previewAttributionScope(snapshot?.attribution, pendingTargetId, accounts);
+  const dstType = isHourly ? getDstDayType(days) : null;
 
   const makeExport = () => snapshot ? buildUsageTsv({snapshot, period, periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'), accountLabel: selectedAccount, accountIsAll: account === 'all', timezone: snapshot.timezone || timezone || offsetZone, privacy: prefs.privacyMask, days, generatedLabel: new Date(snapshot.generated_at * 1000).toISOString(), coverageLabel: snapshot.tracking_since == null ? t('usage.exportCoverageUnknown') : `${new Date(snapshot.tracking_since * 1000).toISOString()} – ${new Date(snapshot.generated_at * 1000).toISOString()}`, productLabel: 'Claude-Local', labels: {metadata: t('usage.exportTitle'), summary: t('usage.exportSummary'), daily: t('usage.exportBuckets'), time: t('usage.exportTime'), total: t('usage.total'), input: t('usage.input'), output: t('usage.output'), cacheWrite: t('usage.cacheWrite'), cacheRead: t('usage.cacheRead'), requests: t('usage.requests'), account: t('usage.account'), period: t('usage.periodFilter'), timezone: t('usage.exportTimezone'), generated: t('usage.exportGenerated'), coverage: t('usage.exportCoverage')}}) : '';
   const exportTsv = async (download: boolean) => {
@@ -181,65 +146,16 @@ export function UsageStatisticsPanel() {
         </div>
         </div>
 
-        <div className="settings-card usage-attribution-card">
-          <div className="usage-attribution-head">
-            <div className="usage-attribution-copy">
-              <strong>{t('usage.attributionTitle')}</strong>
-              <span className="usage-attribution-desc">{t('usage.attributionDesc')}</span>
-            </div>
-            {snapshot?.attribution?.fallback_account_id ? (
-              <Button variant="ghost" size="small" disabled={busy || attributionBusy} onClick={() => void handleClearAttribution()}>{t('usage.attributionClear')}</Button>
-            ) : null}
-          </div>
-
-          {snapshot?.attribution?.fallback_account_id ? (
-            <div className="usage-attribution-body">
-              <div>
-                <span>{t('usage.attributionCurrentAccount')}: </span>
-                <strong>{prefs.privacyMask ? maskAccountLabel({id: snapshot.attribution.fallback_account_id, name: snapshot.attribution.fallback_account_name || snapshot.attribution.fallback_account_id}, true) : (snapshot.attribution.fallback_account_name || snapshot.attribution.fallback_account_id)}</strong>
-                <span className="usage-attribution-scope">
-                  {t('usage.attributionCoveredScope', {requests: num(snapshot.attribution.unassigned_requests, true), tokens: num(snapshot.attribution.unassigned_tokens, true)})}
-                </span>
-              </div>
-              <div className="usage-attribution-actions">
-                <Select aria-label={t('usage.attributionChange')} size="small" value="" onValueChange={(id) => { if (id && id !== snapshot.attribution?.fallback_account_id) void handleSetAttribution(id); }} items={[{value: '', label: t('usage.attributionChange')}, ...accounts.filter(a => a.id !== snapshot.attribution?.fallback_account_id).map(a => ({value: a.id, label: prefs.privacyMask ? maskAccountLabel(a, true) : a.name}))]} />
-              </div>
-            </div>
-          ) : (
-            <div className="usage-attribution-body">
-              <div className="usage-attribution-copy">
-                <span>
-                  {snapshot?.attribution?.unassigned_requests
-                    ? t('usage.attributionUnassignedAvailable', {requests: num(snapshot.attribution.unassigned_requests, true), tokens: num(snapshot.attribution.unassigned_tokens, true)})
-                    : t('usage.attributionNoUnassigned')}
-                </span>
-                {previewScope && (
-                  <small className="usage-attribution-preview">
-                    {t('usage.attributionPreviewPrompt', {account: previewScope.targetName, requests: num(previewScope.requests, true), tokens: num(previewScope.tokens, true)})}
-                  </small>
-                )}
-              </div>
-              <div className="usage-attribution-actions">
-                <Select aria-label={t('usage.attributionSelectAccount')} size="small" value={pendingTargetId} onValueChange={setPendingTargetId} items={[{value: '', label: t('usage.attributionSelectPlaceholder')}, ...accounts.map(a => ({value: a.id, label: prefs.privacyMask ? maskAccountLabel(a, true) : a.name}))]} />
-                <Button variant="secondary" size="small" disabled={!pendingTargetId || busy || attributionBusy} onClick={() => void handleSetAttribution(pendingTargetId)}>{t('usage.attributionConfirm')}</Button>
-              </div>
-            </div>
-          )}
-          {attributionFeedback && (
-            <p className={`usage-attribution-feedback ${attributionFeedback.type === 'error' ? 'error' : ''}`}>{attributionFeedback.message}</p>
-          )}
-        </div>
-
         {error && <p role="alert" className="system-feedback error usage-error">{t('usage.readFailed')} {t(error)}</p>}
         {snapshot?.warnings.some(code => code !== 'attribution_gap') ? <div className="usage-notice" role="status"><span>{[...new Set(snapshot.warnings.filter(code => code !== 'attribution_gap').map(code => t(warningKeys[code] ?? 'usage.warning.partial')))].join(' · ')}</span></div> : null}
 
         <div className="usage-summary" aria-busy={busy}>
           {([
-            ['usage.total', totals?.total_tokens, 'usage.totalHint', 'total'],
-            ['usage.input', totals?.input_tokens, 'usage.inputHint', 'input'],
-            ['usage.output', totals?.output_tokens, 'usage.outputHint', 'output'],
-          ] as const).map(([label, value, hint, kind]) => <div key={label} data-usage-metric={kind} className="settings-card usage-metric"><div className="usage-metric-heading"><MetricGlyph kind={kind} /><span>{t(label)}</span></div><strong title={num(value)}>{num(value, true)}</strong><small>{t(hint)}</small></div>)}
-          <div data-usage-metric="cache" className="settings-card usage-metric"><div className="usage-metric-heading"><MetricGlyph kind="cache" /><span>{t('usage.cacheHit')}</span></div><strong>{totals ? rate(totals) : '—'}</strong><small>{t('usage.cacheHitHint')}</small></div>
+            ['usage.total', totals?.total_tokens, 'total'],
+            ['usage.input', totals?.input_tokens, 'input'],
+            ['usage.output', totals?.output_tokens, 'output'],
+          ] as const).map(([label, value, kind]) => <div key={label} data-usage-metric={kind} className="settings-card usage-metric"><div className="usage-metric-heading"><MetricGlyph kind={kind} /><span>{t(label)}</span></div><strong title={num(value)}>{num(value, true)}</strong></div>)}
+          <div data-usage-metric="cache" className="settings-card usage-metric"><div className="usage-metric-heading"><MetricGlyph kind="cache" /><span>{t('usage.cacheHit')}</span></div><strong>{totals ? rate(totals) : '—'}</strong></div>
         </div>
 
         <div className="settings-card usage-details">
@@ -253,13 +169,13 @@ export function UsageStatisticsPanel() {
         {snapshot && <>
           <div className="usage-analysis-grid" data-trend-view={trendView}>
           <section className="settings-card usage-chart-card">
-            <div className="usage-panel-header"><div><GroupTitle>{t('usage.daily')}</GroupTitle><p>{period === 'today' ? t('usage.hourly') : period === 'all' ? t('usage.fullHistory') : t('usage.localDays')}</p></div><Tabs aria-label={t('usage.trendView')} size="small" value={trendView} onValueChange={value => setTrendView(value as 'chart' | 'data')} tabs={[{value: 'chart', label: t('usage.chartView')}, {value: 'data', label: t('usage.dataView')}]} /></div>
-            <div className="usage-chart-summary" title={t('usage.averageHint')}><div><span>{t(period === 'today' ? 'usage.averageHour' : 'usage.averageDay')}</span><strong title={num(trend.average)}>{num(trend.average, true)}<small>Token</small></strong></div><div><span>{t(period === 'today' ? 'usage.peakHour' : 'usage.peakDay')}</span><strong title={num(trend.peak?.totals.total_tokens)}>{num(trend.peak?.totals.total_tokens, true)}<small>{peakLabel}</small></strong></div></div>
-            {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={period === 'today'} timezone={snapshot.timezone} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={period === 'today'} timezone={snapshot.timezone} />}
+            <div className="usage-panel-header"><div><GroupTitle>{t('usage.daily')}</GroupTitle></div><Tabs aria-label={t('usage.trendView')} size="small" value={trendView} onValueChange={value => setTrendView(value as 'chart' | 'data')} tabs={[{value: 'chart', label: t('usage.chartView')}, {value: 'data', label: t('usage.dataView')}]} /></div>
+            <div className="usage-chart-summary" title={t('usage.averageHint')}><div><span>{t(isHourly ? 'usage.averageHour' : 'usage.averageDay')}</span><strong title={num(trend.average)}>{num(trend.average, true)}<small>Token</small></strong></div><div><span>{t(isHourly ? 'usage.peakHour' : 'usage.peakDay')}</span><strong title={num(trend.peak?.totals.total_tokens)}>{num(trend.peak?.totals.total_tokens, true)}<small>{peakLabel}</small></strong></div></div>
+            {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={isHourly} timezone={snapshot.timezone} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={isHourly} timezone={snapshot.timezone} />}
             <div className="usage-chart-caption"><span><i aria-hidden="true" />{t('usage.total')}</span><span>{t(trendView === 'chart' ? 'usage.trendHint' : 'usage.tableHint')}</span></div>
           </section>
           <section className="settings-card usage-model-card">
-            <div className="usage-panel-header"><div><GroupTitle aside={String(models.length)}>{t('usage.models')}</GroupTitle><p>{t('usage.topModels')}</p></div></div>
+            <div className="usage-panel-header"><div><GroupTitle aside={String(models.length)}>{t('usage.models')}</GroupTitle></div></div>
             <div className="usage-models">
               {models.length ? models.slice(0, 6).map(row => <div className="usage-model-row" key={row.model}><div><strong title={row.model === 'unknown' ? t('usage.unknownModel') : row.model}>{row.model === 'unknown' ? t('usage.unknownModel') : row.model}</strong><span title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</span></div><div className="usage-model-track"><span style={{width: `${totals?.total_tokens ? Math.min(100, row.totals.total_tokens / totals.total_tokens * 100) : 0}%`}} /></div><div className="usage-model-caption"><small>{t('usage.responseCount', {n: num(row.totals.requests, true)})}</small><small>{t('usage.modelShare', {share: percent(totals?.total_tokens ? row.totals.total_tokens / totals.total_tokens : 0)})}</small></div></div>) : <p className="usage-model-empty">{t('usage.noModelData')}</p>}
             </div>

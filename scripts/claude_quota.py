@@ -94,20 +94,33 @@ def same_quota_account(info: dict, entry: dict) -> bool:
     info_uuid = info.get("account_uuid") or (info.get("server_anchor") or {}).get("accountUuid")
     if info_uuid and uuid != info_uuid:
         return False
-    org = info.get("organization_uuid") or info.get("organization")
-    entry_org = entry.get("organization_uuid") or entry.get("organization")
-    return not org or org == entry_org
+    info_org_uuid = info.get("organization_uuid")
+    entry_org_uuid = entry.get("organization_uuid")
+    if info_org_uuid and entry_org_uuid:
+        return info_org_uuid == entry_org_uuid
+    org = info.get("organization") or info.get("organization_name")
+    entry_org = entry.get("organization") or entry.get("organization_name")
+    if org and entry_org:
+        return org == entry_org
+    if (info_org_uuid or org) and (entry_org_uuid or entry_org):
+        return bool(info_uuid and uuid == info_uuid)
+    return not (info_org_uuid or org)
 
 
 def ledger_account(accounts: dict, email: str, info: dict) -> dict:
     primary = accounts.get(email.lower()) or {}
-    if same_quota_account(info, primary):
-        return primary
     identity = info.get("quota_identity")
-    if identity:
-        candidate = accounts.get(email.lower() + "#" + identity) or {}
-        if candidate and same_quota_account(info, candidate):
-            return candidate
+    candidate = (accounts.get(email.lower() + "#" + identity) or {}) if identity else {}
+    primary_match = bool(primary and same_quota_account(info, primary))
+    candidate_match = bool(candidate and same_quota_account(info, candidate))
+    if primary_match and candidate_match:
+        p_ms = int(primary.get("quota_observed_at_ms") or 0)
+        c_ms = int(candidate.get("quota_observed_at_ms") or 0)
+        return candidate if c_ms > p_ms else primary
+    if primary_match:
+        return primary
+    if candidate_match:
+        return candidate
     return primary
 
 
@@ -951,7 +964,7 @@ def format_account(
         q[f"rem_{suffix}"] = max(0, 100 - used) if used is not None else None
         q[reset_key] = reset
         if source == "reset_inferred":
-            q[f"note_{suffix}"] = "预计已恢复"
+            q[f"note_{suffix}"] = suffix
         window_results[suffix] = state
     quota_source = aggregate_quota_source(window_results["5h"][2], window_results["7d"][2])
     if all(window_results[s][0] is not None for s in ("5h", "7d")):
@@ -1023,7 +1036,7 @@ def apply_ledger_fallback_to_account(info: dict, ledger_accounts: dict, saved_at
         if used is None:
             info[f"note_{suffix}"] = "额度未知"
         elif source == "reset_inferred":
-            info[f"note_{suffix}"] = "预计已恢复"
+            info[f"note_{suffix}"] = suffix
         else:
             reset_dt = datetime.fromtimestamp(reset, tz=timezone.utc)
             diff = (reset_dt - now_utc).total_seconds()
@@ -1135,6 +1148,13 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 continue
             key += "#" + item["quota_identity"]
             prev_entry = accs.get(key) or {}
+        elif item.get("quota_identity"):
+            dup_key = key + "#" + item["quota_identity"]
+            dup_entry = accs.get(dup_key)
+            if isinstance(dup_entry, dict) and same_quota_account(item, dup_entry):
+                accs.pop(dup_key, None)
+                if int(dup_entry.get("quota_observed_at_ms") or 0) > int(prev_entry.get("quota_observed_at_ms") or 0):
+                    prev_entry = dup_entry
         prev_anchor = clean_anchor_percentages(prev_entry.get("server_anchor"))
         incoming_anchor = clean_anchor_percentages(item.get("server_anchor"))
         incoming_ms = anchor_fetched_at_ms(incoming_anchor)

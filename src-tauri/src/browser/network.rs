@@ -1,6 +1,6 @@
-// [INPUT]: 显式代理地址、ipwho.is/ipapi.co HTTPS 出口信息与真实浏览器上报。
-// [OUTPUT]: 独立目标国家与配置语言核验、共用检测服务目录、出口解析与按同一路由切换服务的检测；无上报或失败保持未核验。
-// [POS]: 环境核验边界；只把出口观测当证据，配置值不能冒充实际结果。
+// [INPUT]: 显式代理地址、ipwho.is/ipapi.co HTTPS 出口信息与真实浏览器上报（含 WebRTC/WebGL/webdriver 深度防封探针）。
+// [OUTPUT]: 独立目标国家与配置语言核验、共用检测服务目录、出口解析（含 ASN/ISP/机房标识）与 9 项完整闭环检测；无上报或失败保持未核验。
+// [POS]: 环境核验边界；只把出口与浏览器实测观测当证据，配置值不能冒充实际结果。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,6 +13,10 @@ pub struct Exit {
     pub city: String,
     pub timezone: String,
     pub isp: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asn: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosting: Option<bool>,
 }
 pub fn parse(data: &Value) -> Result<Exit, String> {
     if data["success"].as_bool() == Some(false) || data["error"].as_bool() == Some(true) {
@@ -25,6 +29,24 @@ pub fn parse(data: &Value) -> Result<Exit, String> {
         .as_str()
         .filter(|x| x.len() == 2 && x.bytes().all(|c| c.is_ascii_uppercase()))
         .ok_or("出口国家无效。")?;
+    let raw_asn = data
+        .get("asn")
+        .or_else(|| data.get("connection").and_then(|c| c.get("asn")));
+    let asn = match raw_asn {
+        Some(Value::Number(n)) => Some(format!("AS{n}")),
+        Some(Value::String(s)) if !s.trim().is_empty() && s.len() < 60 => {
+            let trimmed = s.trim();
+            if trimmed.to_ascii_uppercase().starts_with("AS") {
+                Some(trimmed.to_string())
+            } else {
+                Some(format!("AS{trimmed}"))
+            }
+        }
+        _ => None,
+    };
+    let hosting = data["hosting"]
+        .as_bool()
+        .or_else(|| data["security"]["hosting"].as_bool());
     Ok(Exit {
         ip: ip.into(),
         country: country.into(),
@@ -37,8 +59,11 @@ pub fn parse(data: &Value) -> Result<Exit, String> {
         isp: data["org"]
             .as_str()
             .or_else(|| data["connection"]["isp"].as_str())
+            .or_else(|| data["connection"]["org"].as_str())
             .unwrap_or("")
             .into(),
+        asn,
+        hosting,
     })
 }
 pub async fn probe(proxy: &str) -> Result<Exit, String> {
@@ -96,7 +121,7 @@ pub(super) async fn probe_urls(proxy: &str, services: &[&str]) -> Result<Exit, S
         errors.join("；")
     ))
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Report {
     pub language: String,
@@ -110,6 +135,16 @@ pub struct Report {
     pub geolocation: String,
     pub exit: Option<Exit>,
     pub error: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webrtc_ok: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webrtc_detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webdriver: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphics_ok: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webgl_renderer: Option<String>,
 }
 impl Report {
     pub fn valid(&self) -> bool {
@@ -126,6 +161,16 @@ impl Report {
             && self.cores > 0
             && self.cores <= 1024
             && self
+                .webrtc_detail
+                .as_ref()
+                .map(|x| x.len() < 300)
+                .unwrap_or(true)
+            && self
+                .webgl_renderer
+                .as_ref()
+                .map(|x| x.len() < 300)
+                .unwrap_or(true)
+            && self
                 .exit
                 .as_ref()
                 .map(|x| {
@@ -133,6 +178,7 @@ impl Report {
                         && [&x.country, &x.city, &x.timezone, &x.isp]
                             .iter()
                             .all(|x| x.len() < 300)
+                        && x.asn.as_ref().map(|a| a.len() < 80).unwrap_or(true)
                 })
                 .unwrap_or(true)
     }
@@ -274,8 +320,20 @@ pub fn checks(
         ),
         check(
             "真实图形与字体",
-            None,
-            if config.native_graphics {
+            report.and_then(|r| r.graphics_ok.map(|g| g && r.webdriver != Some(true))),
+            if let Some(renderer) = report
+                .and_then(|r| r.webgl_renderer.as_deref())
+                .filter(|s| !s.is_empty())
+            {
+                format!(
+                    "硬件渲染：{renderer}；webdriver：{}",
+                    if report.and_then(|r| r.webdriver) == Some(true) {
+                        "暴露"
+                    } else {
+                        "已隐藏"
+                    }
+                )
+            } else if config.native_graphics {
                 "已配置使用真实字体、GPU、音频、Canvas 与布局；读数尚未独立核验。".into()
             } else {
                 "Canvas 与布局矩形使用稳定种子；不作为机器完全一致。".into()
@@ -283,8 +341,15 @@ pub fn checks(
         ),
         check(
             "DNS / WebRTC 泄漏",
-            None,
-            "已设置代理 DNS、限制未代理 UDP、关闭 QUIC；尚未完成独立泄漏测试。".into(),
+            report.and_then(|r| r.webrtc_ok),
+            if let Some(detail) = report
+                .and_then(|r| r.webrtc_detail.as_deref())
+                .filter(|s| !s.is_empty())
+            {
+                format!("代理 DNS 与 QUIC 隔离已启用；实测：{detail}")
+            } else {
+                "已设置代理 DNS、限制未代理 UDP、关闭 QUIC；尚未完成独立泄漏测试。".into()
+            },
         ),
     ]
 }

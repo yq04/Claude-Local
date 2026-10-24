@@ -573,6 +573,8 @@ fn trend_bucket_spans_are_hourly_today_and_seven_or_thirty_local_days() {
     let now = 1_767_225_600; // 2026-01-01 00:00 UTC
     let (first, last) = usage::bucket_span("today", now + 13 * 3600 + 17 * 60, 0, None);
     assert_eq!(last - first + 1, 14);
+    let (first, last) = usage::bucket_span("yesterday", now + 13 * 3600 + 17 * 60, 0, None);
+    assert_eq!(last - first + 1, 24);
     let (first, last) = usage::bucket_span("week", now, 0, None);
     assert_eq!(last - first + 1, 7);
     let (first, last) = usage::bucket_span("month", now, 0, None);

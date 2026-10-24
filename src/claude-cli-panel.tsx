@@ -9,6 +9,7 @@ import {Button} from 'cromma-ui';
 import {invoke} from '@tauri-apps/api/core';
 import appLogo from '../assets/claude-local-mark.svg';
 import {useI18n} from './i18n';
+import {usePageRefresh} from './app-events';
 import {CleanupActivity, useCleanupActivity} from './cleaner-activity';
 
 type Status = {method: string; path: string; version: string; running: boolean};
@@ -42,6 +43,7 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
     onBusy(!!action);
     return () => onBusy(false);
   }, [action, onBusy]);
+  usePageRefresh(() => { if (!blocked && !loading && !action) void read(); });
 
   async function read() {
     setLoading(true);
@@ -167,7 +169,7 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
           {copyStatus === 'failed' && <p role="alert" className="cleanup-feedback error">{t('cli.copyFailed')}</p>}
         </div>
       ) : (
-        <p className="cleanup-feedback">{t(status?.running ? 'cli.running' : 'cli.scope')}</p>
+        status?.running ? <p className="cleanup-feedback">{t('cli.running')}</p> : null
       )}
       {update && <p className="cleanup-feedback" role="status">{t('cli.versions', {current: update.current.version, latest: update.latest_version})} · {t(update.update_available ? 'cli.available' : 'cli.current')}</p>}
       {error && (

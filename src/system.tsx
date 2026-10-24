@@ -237,7 +237,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
           {t(error)}
         </p>
       )}
-      <p className="system-page-intro">{t('computer.subtitle')}</p>
+
       <div className="system-sections system-settings-list">
         <article className="system-setting-card" data-system-setting="timezone" aria-labelledby="system-timezone-title">
           <div className="system-setting-header">
@@ -306,7 +306,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
           </div>
         </article>
       </div>
-      <p className="system-page-note">{t(isMacOS ? '需要管理员授权。' : '需要时请完成系统授权。')}</p>
+
       <CleanupActivity activity={activity.state} />
       <AppDialog open={historyOpen} onOpenChange={setHistoryOpen} title={t('查看/恢复本次环境修改')} description={t('恢复前会比较当前值；发生冲突的字段不会覆盖。')} width={640} footer={<><Button variant="secondary" data-dialog-cancel onClick={() => setHistoryOpen(false)}>{t('关闭')}</Button>{restorePlan && <Button variant="secondary" disabled={!restoreFields.length || busy !== null} loading={busy === 'restore'} onClick={() => void restoreSelected()}>{t('恢复所选字段')}</Button>}</>}>
         {!restorePlan ? <div className="system-change-history">{history.length ? history.map(record => <article key={record.id} className="system-change-entry"><div><strong>{t(record.operation === 'timezone' ? '设备时区' : record.operation === 'language' ? '系统语言' : record.operation === 'region' ? '语言与区域' : record.operation === 'align' ? '环境对齐' : '地理位置')}</strong><small>{record.changedAt}</small></div><p>{record.message}</p><div className="system-change-values">{Object.entries(record.before).map(([field, value]) => <span key={field}>{t(field === 'timezone' ? '设备时区' : field === 'language' ? '系统语言' : field === 'locale' ? '区域格式' : '地理位置')}：{String(value)} → {String(record.after[field] ?? t('未核验'))}</span>)}</div><Button size="small" variant="secondary" disabled={!record.restorable.length} onClick={() => void prepareRestore(record.id)}>{t('查看/恢复')}</Button></article>) : <p>{t('尚无本次环境修改记录。')}</p>}</div> : <div className="system-change-restore"><p>{restorePlan.record.message}</p>{restorePlan.fields.length ? restorePlan.fields.map(field => <label key={field.field} className="system-change-field"><input type="checkbox" checked={restoreFields.includes(field.field)} disabled={field.conflict || (restorePlan.fields.some(item => item.conflict && (item.field === 'language' || item.field === 'locale')) && (field.field === 'language' || field.field === 'locale'))} onChange={event => setRestoreFields(current => event.target.checked ? [...current, field.field] : current.filter(value => value !== field.field))}/><span><strong>{t(field.field === 'timezone' ? '设备时区' : field.field === 'language' ? '系统语言' : '区域格式')}</strong><span>{t('恢复值')}：{String(field.before)}</span><span>{t('应用修改后')}：{String(field.appWritten)}</span><span>{t('当前值')}：{String(field.current)}</span>{field.conflict && <em>{t('当前值已变化，存在冲突；请手动处理。')}</em>}</span></label>) : <p>{t('没有可安全恢复的字段。')}</p>}<Button variant="ghost" size="small" onClick={() => setRestorePlan(null)}>{t('返回修改记录')}</Button></div>}

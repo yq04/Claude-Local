@@ -42,6 +42,10 @@ test('today uses distinct hourly buckets and excludes future hours from the reco
   expect(hours[5].future).toBe(true);
   expect(hours.filter(row => !row.future)).toHaveLength(5);
   expect(hours.at(-1)?.day).toBe('2026-10-20T23:00');
+  const yesterday = dailySeries([{day: '2026-10-19T18:00', totals: {...emptyUsage(), total_tokens: 55}}], 'yesterday', new Date(2026, 9, 20, 4, 35));
+  expect(yesterday).toHaveLength(24);
+  expect(yesterday[18].totals.total_tokens).toBe(55);
+  expect(yesterday.every(row => !row.future)).toBe(true);
 });
 
 test('named-timezone hourly rows keep real 23/25 slot counts and repeated wall-clock labels', () => {

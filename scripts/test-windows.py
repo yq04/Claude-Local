@@ -176,10 +176,13 @@ throw 'private fixture diagnostic'"""
         result=self.invoke('uninstall');self.assertEqual(result.returncode,0,result.stderr);self.assertFalse((self.bin/'claude.cmd').exists());self.assets()
     def test_native_update_uses_cli_without_uninstall_or_installer(self):
         binary,version=self.native();original=binary.read_bytes()
+        stale_old=self.file('.local/bin/claude.exe.old.12345','stale-old-binary')
+        stale_ver=self.file('.local/share/claude/versions/2.0.9','stale-version-binary')
         result=self.invoke('update')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual((self.home/'updated').read_text(),'claude update')
         self.assertEqual(binary.read_bytes(),original);self.assertEqual(version.read_bytes(),original)
+        self.assertFalse(stale_old.exists());self.assertFalse(stale_ver.exists())
         self.assertIn('CC_CLI_DONE=1',result.stdout);self.assets()
     def test_failed_native_update_keeps_program_and_never_reports_success(self):
         binary,version=self.native();original=binary.read_bytes();self.env['CC_FIXTURE_FAIL']='1'

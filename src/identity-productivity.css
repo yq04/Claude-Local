@@ -115,12 +115,9 @@
   border-color: rgba(52, 211, 153, 0.4);
 }
 
-/* 预计额度进度条柔和显示与 7d 消耗步调刻度 */
+/* 预计额度进度条与 7d 消耗步调刻度 */
 .identity-quota-track.quota-track-inferred {
-  opacity: 0.85;
-}
-.identity-quota-track.quota-track-inferred > i {
-  filter: saturate(0.88);
+  opacity: 1;
 }
 .identity-quota-pace-tick {
   position: absolute;

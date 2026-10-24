@@ -172,6 +172,21 @@ class QuotaArchiveTests(unittest.TestCase):
         for name, kind in [("data/sym", "link"), ("data/0", "file")]:
             with self.subTest(name=name), self.assertRaises(ValueError):
                 self.read(encrypt(zstd(tar_bytes(extra=[(name, kind)]))))
+        # Archives with >80 null-uname project files must not overflow bsdtar stderr diagnostics.
+        many_extra = [(f"data/3/plans/plan-{i:03d}.md", "null_uname") for i in range(90)]
+        buf = io.BytesIO(tar_bytes())
+        out = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="r") as src, tarfile.open(fileobj=out, mode="w", format=tarfile.USTAR_FORMAT) as dst:
+            for m in src.getmembers():
+                m.uname = m.gname = ""
+                dst.addfile(m, src.extractfile(m))
+            for name, _ in many_extra:
+                m = tarfile.TarInfo(name)
+                m.size, m.uname, m.gname = 4, "", ""
+                dst.addfile(m, io.BytesIO(b"test"))
+        cj_many, cred_many, _ = self.read(encrypt(zstd(out.getvalue())))
+        self.assertEqual(cj_many["oauthAccount"]["accountUuid"], "fixture-account")
+        self.assertEqual(cred_many["claudeAiOauth"]["accessToken"], "synthetic-only")
 
 
 if __name__ == "__main__":
