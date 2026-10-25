@@ -20,6 +20,13 @@ import {
   summarizeBatchResult,
   isTerminalBatchState,
   isMatchingBatchTarget,
+  DEFAULT_AUTO_WAKEUP_CONFIG,
+  formatMinuteOfDay,
+  parseMinuteOfDay,
+  isWithinWakeupTimeWindow,
+  computeSameAccountWakeupDelayMs,
+  computeCrossAccountSpacingMs,
+  evaluateWakeupAccount,
   type OnlineQuotaResult,
   type OnlineQuotaStatus,
 } from './identity-online-quota';
@@ -577,3 +584,115 @@ test('formatOnlineQuotaStatus and formatSubscriptionAndResets resolve real bilin
   }
   setLocale('zh');
 });
+
+test('auto-wakeup custom time window handles normal and cross-midnight ranges', () => {
+  expect(formatMinuteOfDay(480)).toBe('08:00');
+  expect(formatMinuteOfDay(1410)).toBe('23:30');
+  expect(parseMinuteOfDay('08:30')).toBe(510);
+  expect(parseMinuteOfDay('invalid', 480)).toBe(480);
+
+  const dayCfg = { ...DEFAULT_AUTO_WAKEUP_CONFIG, enabled: true, useTimeWindow: true, startMinute: 8 * 60, endMinute: 23 * 60 };
+  expect(isWithinWakeupTimeWindow(dayCfg, new Date('2026-10-25T07:59:00'))).toBe(false);
+  expect(isWithinWakeupTimeWindow(dayCfg, new Date('2026-10-25T08:00:00'))).toBe(true);
+  expect(isWithinWakeupTimeWindow(dayCfg, new Date('2026-10-25T22:59:00'))).toBe(true);
+  expect(isWithinWakeupTimeWindow(dayCfg, new Date('2026-10-25T23:00:00'))).toBe(false);
+
+  const nightCfg = { ...dayCfg, startMinute: 21 * 60, endMinute: 2 * 60 };
+  expect(isWithinWakeupTimeWindow(nightCfg, new Date('2026-10-25T20:30:00'))).toBe(false);
+  expect(isWithinWakeupTimeWindow(nightCfg, new Date('2026-10-25T22:15:00'))).toBe(true);
+  expect(isWithinWakeupTimeWindow(nightCfg, new Date('2026-10-25T01:30:00'))).toBe(true);
+  expect(isWithinWakeupTimeWindow(nightCfg, new Date('2026-10-25T02:05:00'))).toBe(false);
+});
+
+test('auto-wakeup progressive same-account backoff, cross-account spacing and standby prewarm', () => {
+  expect(computeSameAccountWakeupDelayMs(0, () => 0)).toBe(180_000);
+  expect(computeSameAccountWakeupDelayMs(0, () => 1)).toBe(600_000);
+  expect(computeSameAccountWakeupDelayMs(1, () => 0)).toBe(1_500_000);
+  expect(computeSameAccountWakeupDelayMs(1, () => 1)).toBe(3_600_000);
+
+  expect(computeCrossAccountSpacingMs(true, () => 0)).toBe(150_000);
+  expect(computeCrossAccountSpacingMs(false, () => 0)).toBe(360_000);
+
+  const cfg = { ...DEFAULT_AUTO_WAKEUP_CONFIG, enabled: true };
+  const fp = 'a'.repeat(64);
+  const nowSec = 1_761_400_000;
+  const nowMs = nowSec * 1000;
+  const baseCandidate = {
+    accountId: 'b'.repeat(32),
+    expectedIdentity: fp,
+    hasDedicatedProxy: true,
+    isCurrentRunningCli: false,
+    inferred5h: true,
+    inferredReset5h: nowSec - 10,
+    r5: null,
+    used5h: 0,
+    rem7d: 75,
+    known7d: true,
+  };
+
+  // 1st reset (streak=0): schedules 3 min later when random=0
+  const eval1 = evaluateWakeupAccount(baseCandidate, undefined, cfg, 80, 0, nowMs, () => 0);
+  expect(eval1.decision).toBe('scheduled');
+  expect(eval1.unusedStreak).toBe(0);
+  expect(eval1.waitRemainingSec).toBe(180);
+
+  // At scheduled time: becomes ready_to_wake
+  const evalReady = evaluateWakeupAccount(baseCandidate, eval1.updatedRuntime, cfg, 80, 0, nowMs + 180_000, () => 0);
+  expect(evalReady.decision).toBe('ready_to_wake');
+
+  // Simulate wakeup completed, opening a new window at nowSec + 18000, which then expires without user usage (used5h=0)
+  const afterWakeRuntime = {
+    ...evalReady.updatedRuntime,
+    lastWokenForResetSec: baseCandidate.inferredReset5h,
+    lastWokenAtMs: nowMs + 180_000,
+    wokenWindowResetSec: nowSec + 18000,
+    usedDuringWokenWindow: false,
+  };
+  const nextCycleSec = nowSec + 18010;
+  const evalCycle2 = evaluateWakeupAccount(
+    { ...baseCandidate, inferredReset5h: nowSec + 18000 },
+    afterWakeRuntime,
+    cfg,
+    80,
+    0,
+    nextCycleSec * 1000,
+    () => 0
+  );
+  // Streak incremented to 1, and wait time lengthened to 25 minutes (1500s)!
+  expect(evalCycle2.unusedStreak).toBe(1);
+  expect(evalCycle2.decision).toBe('scheduled');
+  expect(evalCycle2.waitRemainingSec).toBe(1500);
+
+  // Simulate 2nd unused cycle expiring -> streak becomes 2 -> enters standby_idle when active account has 80% (>40%)
+  const afterWake2Runtime = {
+    ...evalCycle2.updatedRuntime,
+    lastWokenForResetSec: nowSec + 18000,
+    wokenWindowResetSec: nowSec + 36000,
+    usedDuringWokenWindow: false,
+  };
+  const evalCycle3 = evaluateWakeupAccount(
+    { ...baseCandidate, inferredReset5h: nowSec + 36000 },
+    afterWake2Runtime,
+    cfg,
+    80,
+    0,
+    (nowSec + 36010) * 1000,
+    () => 0
+  );
+  expect(evalCycle3.unusedStreak).toBe(2);
+  expect(evalCycle3.decision).toBe('standby_idle');
+
+  // When active account drops to 35% (<= 40% threshold), standby account immediately schedules pre-warm!
+  const evalPrewarm = evaluateWakeupAccount(
+    { ...baseCandidate, inferredReset5h: nowSec + 36000 },
+    evalCycle3.updatedRuntime,
+    cfg,
+    35,
+    0,
+    (nowSec + 36020) * 1000,
+    () => 0
+  );
+  expect(evalPrewarm.decision).toBe('scheduled');
+  expect(evalPrewarm.waitRemainingSec).toBe(90);
+});
+

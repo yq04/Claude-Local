@@ -740,6 +740,91 @@ class OnlineQuotaTests(unittest.TestCase):
             self.assertEqual(result["stage"], "exit_check")
             fetch.assert_not_called()
 
+    def test_wakeup_sends_cli_aligned_messages_and_parses_ratelimit_headers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            custom_user_id = "d" * 64
+            (home / ".claude.json").write_text(
+                json.dumps({"oauthAccount": account, "userID": custom_user_id}),
+                encoding="utf-8",
+            )
+            now_s = int(time.time())
+            captured_post = {}
+
+            class DummyPostResponse:
+                status = 200
+                headers = {
+                    "anthropic-ratelimit-unified-5h-utilization": "0.0015",
+                    "anthropic-ratelimit-unified-5h-reset": str(now_s + 18000),
+                    "anthropic-ratelimit-unified-7d-utilization": "0.345",
+                    "anthropic-ratelimit-unified-7d-reset": str(now_s + 432000),
+                }
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    return False
+                def read(self, _limit):
+                    return b'{"id":"msg_01","type":"message"}'
+
+            class DummyPostOpener:
+                def open(self, request, timeout=None):
+                    captured_post["url"] = request.full_url
+                    captured_post["method"] = request.get_method()
+                    captured_post["headers"] = {k.lower(): v for k, v in request.header_items()}
+                    captured_post["body"] = json.loads(request.data.decode("utf-8"))
+                    return DummyPostResponse()
+
+            with patch.object(online, "_fetch", return_value=(200, json.dumps(self.profile(account)).encode(), {})) as fetch_mock, \
+                 patch.object(online.urllib.request, "build_opener", return_value=DummyPostOpener()):
+                result = online.run_wakeup(app, home, "current", self.expected(account))
+
+            self.assertEqual(result["status"], "updated")
+            self.assertEqual(result["updated_windows"], ["5h", "7d"])
+            self.assertEqual(fetch_mock.call_count, 1)
+            self.assertEqual(fetch_mock.call_args.args[1], online.PROFILE_ENDPOINT)
+            self.assertEqual(captured_post["url"], online.MESSAGES_ENDPOINT)
+            self.assertEqual(captured_post["method"], "POST")
+            hdrs = captured_post["headers"]
+            self.assertEqual(hdrs.get("x-app"), "cli")
+            self.assertEqual(hdrs.get("x-stainless-lang"), "js")
+            self.assertEqual(hdrs.get("x-stainless-package-version"), "0.128.0")
+            self.assertIn("oauth-2025-04-20", hdrs.get("anthropic-beta", ""))
+            session_id = hdrs.get("x-claude-code-session-id")
+            self.assertTrue(session_id and len(session_id) == 36)
+            meta_user = json.loads(captured_post["body"]["metadata"]["user_id"])
+            self.assertEqual(meta_user["device_id"], custom_user_id)
+            self.assertEqual(meta_user["account_uuid"], account["accountUuid"])
+            self.assertEqual(meta_user["session_id"], session_id)
+            ledger = json.loads((app / "quota_ledger.json").read_text(encoding="utf-8"))
+            entry = ledger["accounts"]["fixture@example.invalid"]
+            self.assertAlmostEqual(entry["server_anchor"]["utilization"]["five_hour"]["utilization"], 0.15, places=2)
+            self.assertAlmostEqual(entry["server_anchor"]["utilization"]["seven_day"]["utilization"], 34.5, places=2)
+
+    def test_wakeup_falls_back_to_sonnet_and_usage_endpoint_when_headers_stripped(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            now_s = int(time.time())
+            models_tried = []
+
+            def fake_post(_token, model, _device_id, _account_uuid, route=None):
+                models_tried.append(model)
+                if model == online.WAKEUP_MODELS[0]:
+                    return 404, b"", {}
+                # Return 200 without ratelimit headers so fallback to GET /api/oauth/usage triggers
+                return 200, b"{}", {}
+
+            usage_payload = {
+                "five_hour": {"utilization": 0.2, "resets_at": now_s + 17990},
+                "seven_day": {"utilization": 28.0, "resets_at": now_s + 300000},
+            }
+            with patch.object(online, "_post_wakeup", side_effect=fake_post), \
+                 patch.object(online, "_fetch", side_effect=self.mocked_success(account, usage_payload)) as fetch_mock:
+                result = online.run_wakeup(app, home, "current", self.expected(account))
+
+            self.assertEqual(result["status"], "updated")
+            self.assertEqual(models_tried, list(online.WAKEUP_MODELS))
+            self.assertEqual(fetch_mock.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

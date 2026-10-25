@@ -284,7 +284,7 @@ def _read_online_identity(vault, archive, master_key=None):
     route = proxy_fields(result.get("settings", {}))
     route.update(proxy_fields(result.get("local", {})))
     cj = result.get("account", {})
-    return {key: cj[key] for key in ("oauthAccount", "cachedUsageUtilization") if key in cj}, \
+    return {key: cj[key] for key in ("oauthAccount", "cachedUsageUtilization", "userID") if key in cj}, \
         {"claudeAiOauth": credentials.get("claudeAiOauth")}, route
 
 

@@ -8,7 +8,7 @@
 
 更新日期：2026-10-25。本文件面向完全没有本会话上下文的新会话。先读本文、根目录 `AGENTS.md`、`CLAUDE.md`，修改具体模块前再读相应目录的 `CLAUDE.md` 和源码头部。
 
-**当前事实：本会话已完成 `0.3.1` 版本的全部界面排版美化、Windows 隔离浏览器缓存目录 ACL 自愈修复、用量分析模型家族与推理档位（Effort）分布、切换前额度对比与隔离状态展示、会话接力清空草稿以及全应用实用化文案升级；已通过全量自动化测试、13 项隐私探针审计打包，无感热更新至本机 `D:\1_app\Claude-Local\claude-local.exe`（全程未中断任何正在运行的 `claude.exe`），并已同步提交推送 Git 标签 `v0.3.1` 及上传发布 GitHub Release `v0.3.1`（`Claude-Local_0.3.1_x64-setup.exe`）。当前没有任何技术或发布阻塞。**
+**当前事实：本会话在完成 `0.3.1` 界面排版美化与 GitHub Release 发布后，继续完成了第 7 项核心演进——「5h 额度窗口到期自动续杯 / 轻指令唤醒（含防风控阶梯退避、跨账号错峰、自定义生效时段与一键持久化开关）」。最新代码已通过全量自动化测试（Python 33 项、Bun 112 项、Rust Online 19 项、Playwright 额度重置与在线唤醒 18 项），无感热更新至本机 `D:\1_app\Claude-Local\claude-local.exe`（全程未中断任何正在运行的 `claude.exe`），并已按用户要求提交至本地 Git 仓库（暂不重新打包 NSIS 安装器或上传 GitHub Release）。当前没有任何技术阻塞。**
 
 ---
 
@@ -16,9 +16,9 @@
 
 Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，React/TypeScript 提供界面，Tauri/Rust 管理本机能力，Python 采集并写入额度账本。主程序 `claude-local.exe`，标识 `ai.local.claude-local`；伴生浏览器为 Claude-Local Browser。数据按用户保存在 `%APPDATA%/ai.local.claude-local`，普通启动不启动浏览器，只有用户动作或 `--browser` 才启动。
 
-在 `0.3.0` 基线之上，2026-10-25 先后完成了 **前四阶段底层视觉/防封/HUD 升级** 与 **本会话（v0.3.1）针对用户实机截图与使用习惯的 6 项细节打磨、功能增强及打包发布**：
+在 `0.3.0` 基线之上，2026-10-25 先后完成了 **前四阶段底层视觉/防封/HUD 升级** 与 **本会话（v0.3.1 及后续本地演进）针对用户实机截图与连续使用习惯的 7 项细节打磨与功能增强**：
 
-### 1.1 本会话（v0.3.1）完成的 6 项核心任务
+### 1.1 本会话完成的 7 项核心任务
 1. **图 1 优化（「浏览环境」按钮整合进顶部栏）**：
    - 修改 `src/browser.tsx`、`src/style.css`：移除原本带虚线分隔的独立底部按钮栏，将 **「打开浏览器并实测」**、**「正常退出浏览器」** 与 **「设为默认浏览器」** 直接整合进「启动内置浏览器与 CLI 授权联动」卡片的顶部标题行右侧，下方紧接说明文案与 CLI OAuth 授权提示，消除割裂感。
 2. **图 1 优化（「浏览器数据」字体样式统一 + 根治「无法枚举缓存。」）**：
@@ -35,6 +35,15 @@ Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，React/TypeSc
    - `src/task-handoff.tsx`：在「会话接力」面板顶部操作栏新增 **「清空草稿」** 按钮及状态反馈。
 6. **全应用文案去浮夸化、实用化**：
    - `src/locales/zh.yaml`、`src/locales/en.yaml`、`scripts/test-local-shell.mjs`：遵循用户“不要用太过高级或啰嗦的话语，尽可能实用”的要求，将侧栏副标题从「本地身份座舱」改为「多账号与环境管理」，将主题/风格名称从「月之亮面 / 月之暗面 / 座舱蓝 / 座舱卡片 / 浅色羊皮纸」改为直观的「浅色 / 深色 / 经典蓝 / 简洁卡片」，并精简防封核验、悬浮监控窗与外观设置说明。
+7. **5h 额度到期自动续杯 / 轻指令唤醒（含深度防风控保护）**：
+   - **逆向与协议对齐**（`scripts/quota_archive.py`、`scripts/claude_quota_online.py`）：逆向本机官方 `claude.exe v2.1.310` 的 `probeQuotaStatus` 与 `GWe()`，在内存只读解包 `.baga` 时额外投影每个账号真实的 64 位 `.claude.json` `userID`（`device_id`），在 `run_wakeup` 中经该账号绑定的专属代理向 `https://api.anthropic.com/v1/messages?beta=true` 发送带完整 `X-Claude-Code-Session-Id`、`x-client-request-id`、`X-Stainless-*` 请求头、多态自然 CLI 短指令池（随机 `max_tokens: 16/24/32`）与 `metadata.user_id`（`device_id` + `account_uuid` + `session_id`）的极轻请求，并直接从响应头 `anthropic-ratelimit-unified-5h/7d-utilization` 与 `reset` 解析最新 5h 倒计时写入 `quota_ledger.json`（无需切号或中断正在运行的 `claude.exe`）。
+   - **原生 Tauri 门禁与命令**（`src-tauri/src/identities/online.rs`、`src-tauri/src/main.rs`）：新增 `identities_wakeup_quota_window`，复用双阶段提交锁与冻结 `expected_identity` 校验，接受 `source: "wakeup_messages"`。
+   - **四重防风控状态机与前端交互**（`src/identity-online-quota.ts`、`src/identities.tsx`、`src/identity-productivity.css`）：
+     1. **顶栏一键持久化开关（`自动续杯` + 时段胶囊）**：未启用时 100% 保持现有被动行为；启用后跨重启自动持久化，后台自动检测已重置账号并触发续杯。
+     2. **自定义生效时间段**：支持任意 `HH:mm – HH:mm`（含跨午夜时段如 `21:00 – 02:00`）及快捷预设（`08:00-23:00`、`09:00-19:00`、`全天`）。
+     3. **同一账号等待时间自动加长（阶梯退避）**：刚用过的账号重置后延迟 `3–10 分钟` 唤醒；若连续 1 轮（5h）未使用，下次自动拉长至 `25–60 分钟`；若连续 `>= 2` 轮（10h+）未使用，自动转入 **「按需待命」**，仅当主力号 5h 剩余低于阈值（默认 `40%`，可选 `30%/40%/50%`）时才联动唤醒。
+     4. **不同账号之间强制错峰间隔**：独立代理账号间至少间隔 `2.5–5.5 分钟`，共用系统代理账号间自动加倍至 `6–13 分钟`，杜绝并发脉冲。
+     5. **单账号 / 批量手动一键唤醒**：在「额度详情」弹窗底部与「在线查询」面板均提供 **「唤醒 5h 计时」** 按钮。
 
 ### 1.2 同日早些时候完成的四项底层架构基线（已包含在 `0.3.1` 中）
 - **实时额度悬浮监控窗（HUD）**：统一 `340×278`（展开）/ `340×152`（精简）并在 `monitor_window_resize` 中同步锁定 `min_size` / `max_size`，禁用双击最大化，采用 `token-monitor` 风格双列 5h/7d 看板。
@@ -50,9 +59,9 @@ Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，React/TypeSc
 - **版本号**：`0.3.1`（已同步 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/CLAUDE.md`、`README.md`、`CLAUDE.md`、`docs/RELEASE_NOTES_0.3.1.md`）。
 - **源码提交与标签**：Commit `f11276f`，Tag `v0.3.1`（已推送至 `origin/main` 与 `origin/v0.3.1`，并发布 GitHub Release `https://github.com/yq04/Claude-Local/releases/tag/v0.3.1`）。
 - **产物目录**：`.local/artifacts/20261025T151849Z-ee8ffc4e85e046aca90f24f45db8a95b`（状态记录于 `.local/last-local-update.json`）。
-- **本机安装路径**：`D:\1_app\Claude-Local\claude-local.exe`（已热更新并验证窗口正常启动，版本号 `0.3.1`）。
-- **宿主 `claude-local.exe` SHA256**：`06dfb613b8de7225b6ba1c5eb18f15a926eb94f4fb5bd750ff5011c72ecc8a11`。
-- **安装器 `Claude-Local_0.3.1_x64-setup.exe` SHA256**：`0bdcceed1bd2939a6efee50e4044656b31c3b9635947c50db6dd62ed15777f38`。
+- **本机安装路径**：`D:\1_app\Claude-Local\claude-local.exe`（已热更新包含 5h 自动续杯功能的最新构建，版本号 `0.3.1`，最新本机 `claude-local.exe` SHA256 为 `b0bf467886f886438a30034828385a276fa6440b3ab471ae58dc8222a87bd263`，`D:\1_app\Claude-Local\scripts\claude_quota_online.py` 与 `quota_archive.py` 已同步更新）。
+- **已发布的 `v0.3.1` 归档宿主 SHA256**：`06dfb613b8de7225b6ba1c5eb18f15a926eb94f4fb5bd750ff5011c72ecc8a11`。
+- **已发布的 `v0.3.1` 安装器 `Claude-Local_0.3.1_x64-setup.exe` SHA256**：`0bdcceed1bd2939a6efee50e4044656b31c3b9635947c50db6dd62ed15777f38`。
 - **隐私与安全审计**：独立资源审计 109 项、私密探针 13 项，零发现（`findings: 0`）；`--quota-core` 管道冒烟测试 `pass`；更新前后未中断任何正在运行的 `claude.exe`（`missingClaudeCount: 0`）。
 
 ### 2.2 已执行的验证

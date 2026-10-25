@@ -131,6 +131,16 @@ function execute(command:string,args:any){
   }
   return {...result,source:'oauth',observed_at_ms:result.status==='updated'?Date.now():undefined,retry_at_ms:result.retry_at_ms||Date.now()+60000};
  }
+ if(command==='identities_wakeup_quota_window'){
+  const summary=args.accountId==='current'?state.current:state.summaries[args.accountId];
+  if(!summary||!args.expectedIdentity||summary.quota_identity!==args.expectedIdentity)return {status:'account_mismatch'};
+  const result=fixture.onlineResultsById[args.accountId]??fixture.onlineResult;
+  if(result.status==='updated'){
+   Object.assign(summary,{quota_5h_used:1,quota_5h_reset_at:Math.floor(Date.now()/1000)+18000,quota_5h_source:'server_anchor',quota_5h_observed_at_ms:Date.now(),quota_7d_used:Math.min(100,Math.max(1,summary.quota_7d_used??10)),quota_7d_reset_at:Math.floor(Date.now()/1000)+604800,quota_7d_source:'server_anchor',quota_7d_observed_at_ms:Date.now()});
+   fixture.quotaRevision++;
+  }
+  return {...result,source:'wakeup_messages',observed_at_ms:result.status==='updated'?Date.now():undefined,retry_at_ms:result.retry_at_ms||Date.now()+60000};
+ }
  if(command==='identities_sync_subscription'){
   if(!args.expectedIdentity||state.current.quota_identity!==args.expectedIdentity)throw 'quotaOnline.accountMismatch';
   Object.assign(state.current,{billing_date_kind:'next_renewal',billing_date:Math.floor(Date.now()/1000)+86400*20,billing_observed_at_ms:Date.now(),manual_resets_remaining:0,manual_resets_observed_at_ms:Date.now()});

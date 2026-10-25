@@ -927,6 +927,25 @@ pub async fn identities_refresh_quota(
     .map_err(|_| "quotaOnline.unavailable".to_string())?
 }
 
+#[tauri::command]
+pub async fn identities_wakeup_quota_window(
+    app: tauri::AppHandle,
+    account_id: String,
+    expected_identity: String,
+) -> Result<OnlineQuotaResult, String> {
+    if !valid_account(&account_id) {
+        return Err("quotaOnline.unavailable".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        collect(
+            &app,
+            json!({"account_id":account_id,"expected_identity":expected_identity,"wakeup":true}),
+        )
+    })
+    .await
+    .map_err(|_| "quotaOnline.unavailable".to_string())?
+}
+
 #[derive(Clone)]
 struct QuotaGroup {
     target: QuotaTarget,

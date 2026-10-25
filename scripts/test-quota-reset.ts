@@ -5,6 +5,7 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {strict as assert} from 'node:assert';
+import {mkdir} from 'node:fs/promises';
 import type {Browser} from 'playwright-core';
 
 export async function testQuotaReset(browser:Browser,base:string) {
@@ -68,6 +69,38 @@ export async function testQuotaReset(browser:Browser,base:string) {
   await current5h.getByText('77%',{exact:true}).waitFor();
   assert.equal(await current5h.getAttribute('data-quota-inferred'),null);
   assert.equal(await current5h.locator('time').count(),1);
+  checks++;
+
+  // Verify 1-click 5h wakeup button on an expired/reset-inferred saved account (Identity 3)
+  await page.evaluate(()=>(window as any).identityFixture.language('zh'));
+  const savedResetCard=cards.nth(2);
+  await savedResetCard.locator('.identity-quota-open').click();
+  const savedDialog=page.getByRole('dialog');
+  const wakeBtn=savedDialog.getByRole('button',{name:'唤醒 5h 计时',exact:true});
+  await wakeBtn.waitFor();
+  await wakeBtn.click();
+  await savedDialog.getByText('已唤醒 5h 窗口并刷新下次重置时间。',{exact:true}).waitFor();
+  await savedDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();
+  await savedResetCard.locator('[data-quota-window="5h"]').getByText('99%',{exact:true}).waitFor();
+  assert.equal(await savedResetCard.locator('[data-quota-window="5h"]').getAttribute('data-quota-inferred'),null);
+  checks++;
+
+  // Verify header Auto-Wakeup toggle and online dialog Auto-Wakeup config panel
+  const headerWakeToggle=page.getByRole('button',{name:'自动续杯',exact:true});
+  await headerWakeToggle.click();
+  await page.getByRole('button',{name:'自动续杯 · 已开',exact:true}).waitFor();
+  const configChip=page.locator('.wakeup-config-trigger');
+  assert.equal(await configChip.innerText(),'08:00-23:00');
+  await configChip.click();
+  const onlineDialog=page.getByRole('dialog');
+  await onlineDialog.getByText('5h 到期自动续杯',{exact:true}).waitFor();
+  await onlineDialog.getByRole('button',{name:'09:00-19:00',exact:true}).click();
+  assert.equal(await configChip.innerText(),'09:00-19:00');
+  await mkdir('.local/preview/identity-quota',{recursive:true});
+  await page.screenshot({path:'.local/preview/identity-quota/wakeup-panel-zh.png'});
+  await onlineDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();
+  await page.getByRole('button',{name:'自动续杯 · 已开',exact:true}).click();
+  await page.getByRole('button',{name:'自动续杯',exact:true}).waitFor();
   checks++;
 
   assert.deepEqual(errors,[]);

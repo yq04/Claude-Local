@@ -175,6 +175,7 @@ fn main() {
             cleaner::residue::claude_residue_clean,
             identities::identities_read,
             identities::online::identities_refresh_quota,
+            identities::online::identities_wakeup_quota_window,
             identities::online::identities_refresh_all_quotas,
             identities::online::identities_quota_revision,
             identities::online::identities_quota_batch_state,

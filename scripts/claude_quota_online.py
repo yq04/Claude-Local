@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import importlib.util
 import json
 import math
@@ -25,6 +26,7 @@ import time
 import urllib.error
 import urllib.request
 import urllib.parse
+import uuid
 from pathlib import Path
 
 _QUOTA_PATH = Path(__file__).with_name("claude_quota.py")
@@ -40,8 +42,20 @@ except ImportError:
 
 ENDPOINT = "https://api.anthropic.com/api/oauth/usage"
 PROFILE_ENDPOINT = "https://api.anthropic.com/api/oauth/profile"
+MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages?beta=true"
 TRACE_ENDPOINT = "https://www.cloudflare.com/cdn-cgi/trace"
 BETA = "oauth-2025-04-20"
+WAKEUP_BETA = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14"
+WAKEUP_MODELS = ("claude-haiku-4-5-20251001", "claude-sonnet-4-6")
+WAKEUP_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude."
+_WAKEUP_PROMPTS = (
+    ("quota", 1),
+    ("Reply with one word: ready", 32),
+    ("ping - respond with ok only", 16),
+    ("status check, reply ok", 24),
+    ("echo ack", 16),
+    ("reply 1", 16),
+)
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_CLI_VERSION = "2.1.304"
 DEFAULT_ALLOWED_EXIT_COUNTRIES = ("US",)
@@ -247,7 +261,7 @@ def _account_identity(cj: dict, cred: dict) -> tuple[dict, dict, str]:
 
 def _read_live(claude_home: Path):
     cj = _load_json(claude_home / ".claude.json")
-    cj = {key: cj[key] for key in ("oauthAccount", "cachedUsageUtilization") if key in cj}
+    cj = {key: cj[key] for key in ("oauthAccount", "cachedUsageUtilization", "userID") if key in cj}
     cred = _load_json(claude_home / ".claude" / ".credentials.json")
     acc, oauth, identity = _account_identity(cj, cred)
     cj["_online_route"] = proxy_fields(_load_settings(claude_home / ".claude" / "settings.json"))
@@ -410,6 +424,126 @@ def _verify_exit_country(route, allowed_countries=DEFAULT_ALLOWED_EXIT_COUNTRIES
         return False, None
     allowed = {c.strip().upper() for c in allowed_countries if isinstance(c, str) and c.strip()}
     return (country in allowed), country
+
+
+def _device_id(cj: dict, identity: str) -> str:
+    """Resolve the account's 64-hex .claude.json userID or derive a deterministic per-account device_id."""
+    raw = cj.get("userID") if isinstance(cj, dict) else None
+    if isinstance(raw, str):
+        cleaned = raw.strip().lower()
+        if IDENTITY_RE.fullmatch(cleaned):
+            return cleaned
+    return hashlib.sha256(("claude-local-device-id:" + identity).encode("utf-8")).hexdigest()
+
+
+def _wakeup_prompt_and_tokens() -> tuple[str, int]:
+    return secrets.choice(_WAKEUP_PROMPTS)
+
+
+def _build_wakeup_headers(token: str, session_id: str, request_id: str) -> dict[str, str]:
+    """Align wakeup request headers with official claude.exe 2.1.x (@anthropic-ai/sdk 0.128.0)."""
+    return {
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": WAKEUP_BETA,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "x-app": "cli",
+        "X-Claude-Code-Session-Id": session_id,
+        "x-client-request-id": request_id,
+        "X-Stainless-Lang": "js",
+        "X-Stainless-Package-Version": "0.128.0",
+        "X-Stainless-OS": "Windows",
+        "X-Stainless-Arch": "x64",
+        "X-Stainless-Runtime": "node",
+        "X-Stainless-Runtime-Version": "v24.3.0",
+        "X-Stainless-Retry-Count": "0",
+        "X-Stainless-Timeout": "600",
+    }
+
+
+def _post_wakeup(token: str, model: str, device_id: str, account_uuid: str, route=None):
+    """Send a lightweight CLI-aligned /v1/messages request to start the next 5h rolling window."""
+    if route is None:
+        raise RouteUnavailable()
+    session_id = str(uuid.uuid4())
+    request_id = str(uuid.uuid4())
+    prompt_text, max_tok = _wakeup_prompt_and_tokens()
+    metadata_user_id = json.dumps({
+        "device_id": device_id,
+        "account_uuid": account_uuid,
+        "session_id": session_id,
+    }, separators=(",", ":"))
+    body = json.dumps({
+        "model": model,
+        "max_tokens": max_tok,
+        "system": [{"type": "text", "text": WAKEUP_SYSTEM_PROMPT}],
+        "messages": [{"role": "user", "content": prompt_text}],
+        "metadata": {"user_id": metadata_user_id},
+    }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        MESSAGES_ENDPOINT,
+        data=body,
+        headers=_build_wakeup_headers(token, session_id, request_id),
+        method="POST",
+    )
+    proxies = dict(route[1])
+    handler = _FrozenProxy(proxies, account_route=route[0] == "account_proxy")
+    opener = urllib.request.build_opener(handler, _NoRedirect())
+    try:
+        with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_RESPONSE_BYTES:
+                return "invalid_response", None, None
+            return response.status, raw, response.headers
+    except urllib.error.HTTPError as exc:
+        return exc.code, None, exc.headers
+    except (TimeoutError, OSError, urllib.error.URLError, RouteUnavailable):
+        return "network_error", None, None
+
+
+def parse_ratelimit_headers(headers, account_uuid: str, observed_ms: int):
+    """Extract 5h/7d window utilization and reset timestamps directly from /v1/messages response headers."""
+    if not headers:
+        raise ValueError("missing ratelimit headers")
+    lower_map = {str(k).lower(): v for k, v in (headers.items() if hasattr(headers, "items") else ())}
+    utilization = {}
+    updated = []
+    for window, suffix in WINDOWS.items():
+        raw_util = lower_map.get(f"anthropic-ratelimit-unified-{suffix}-utilization")
+        raw_reset = lower_map.get(f"anthropic-ratelimit-unified-{suffix}-reset")
+        if raw_util is None or raw_reset is None:
+            continue
+        try:
+            val = float(raw_util)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not math.isfinite(val) or val < 0:
+            continue
+        # Unified ratelimit headers report ratio in [0.0, 1.0]; convert to percentage [0.0, 100.0].
+        pct = round(val * 100.0, 4) if val <= 1.0 else val
+        if pct > 100.0:
+            continue
+        reset = _reset_seconds(raw_reset)
+        if reset is None and isinstance(raw_reset, str) and raw_reset.strip().isdigit():
+            reset = _reset_seconds(int(raw_reset.strip()))
+        if reset is None or reset <= observed_ms // 1000:
+            continue
+        utilization[window] = {
+            "utilization": float(pct),
+            "resets_at": dt.datetime.fromtimestamp(reset, dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+            "fetchedAtMs": observed_ms,
+        }
+        updated.append(suffix)
+    if not updated:
+        raise ValueError("no valid ratelimit headers")
+    return {
+        "accountUuid": account_uuid,
+        "fetchedAtMs": observed_ms,
+        "utilization": utilization,
+        "server_anchor_observed_windows": list(utilization),
+    }, updated
 
 
 def _fetch(token: str, endpoint: str = ENDPOINT, route=None):
@@ -951,6 +1085,119 @@ def run(app_data: Path, claude_home: Path, account_id: str,
     return _result(status, retry_at_ms=actual_retry, last_observed_at_ms=last_observed, route_mode=route[0])
 
 
+def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
+               expected_identity: str | None = None, commit_guard=None) -> dict:
+    """Trigger a lightweight /v1/messages request to start the next 5h quota window and persist the new anchor."""
+    if quota is None:
+        return _result("unavailable")
+    try:
+        cj, cred, acc, oauth, identity = _resolve_expected(app_data, claude_home, account_id, expected_identity)
+        route = _route(cj)
+    except RouteUnavailable:
+        return _result("route_unavailable", reason="unsupported_proxy", stage="route")
+    except IdentityMismatch:
+        return _result("account_mismatch")
+    except PermissionError:
+        return _result("auth_required")
+    except LookupError:
+        return _result("unavailable")
+    except (OSError, ValueError, sqlite3.Error, RuntimeError):
+        return _result("unavailable")
+    now_ms = int(time.time() * 1000)
+    try:
+        lease = _claim(app_data, identity, now_ms)
+    except (OSError, TimeoutError):
+        return _result("unavailable")
+    if isinstance(lease, dict):
+        return lease
+    token = _valid_access_token(oauth, now_ms)
+    if token is None:
+        try:
+            _finish_state(app_data, identity, lease, now_ms, "auth_required")
+        except (OSError, TimeoutError):
+            return _result("unavailable")
+        return _result("auth_required")
+    route_fields = cj.get("_online_route", {}) if isinstance(cj.get("_online_route"), dict) else {}
+    if os.environ.get("CLAUDE_LOCAL_VERIFY_EXIT") == "1" or route_fields.get("CLAUDE_LOCAL_VERIFY_EXIT") == "1":
+        allowed_raw = route_fields.get("CLAUDE_LOCAL_ALLOWED_COUNTRIES") or os.environ.get("CLAUDE_LOCAL_ALLOWED_COUNTRIES")
+        allowed = tuple(c.strip() for c in allowed_raw.split(",") if c.strip()) if isinstance(allowed_raw, str) and allowed_raw.strip() else DEFAULT_ALLOWED_EXIT_COUNTRIES
+        exit_ok, exit_country = _verify_exit_country(route, allowed)
+        if not exit_ok:
+            try:
+                finished = _finish_state(app_data, identity, lease, int(time.time() * 1000), "route_unavailable")
+            except (OSError, TimeoutError):
+                return _result("unavailable")
+            retry_at = finished[0] if finished else None
+            return _result("route_unavailable", retry_at_ms=retry_at,
+                           reason="non_us_exit" if exit_country else "exit_check_failed",
+                           stage="exit_check", country=exit_country, route_mode=route[0])
+    profile_code, profile_raw, profile_headers = _fetch(token, PROFILE_ENDPOINT, route)
+    profile_now = int(time.time() * 1000)
+    status, retry = _classify_http_result(profile_code, profile_headers, profile_now)
+    if status is None:
+        try:
+            profile = json.loads(profile_raw.decode("utf-8"))
+            validate_profile(profile, acc)
+        except LookupError:
+            status, retry = "account_mismatch", None
+        except (UnicodeError, ValueError, TypeError, OverflowError):
+            status, retry = "invalid_response", None
+    if status is None:
+        device_id = _device_id(cj, identity)
+        msg_code, msg_raw, msg_headers = None, None, None
+        for model in WAKEUP_MODELS:
+            msg_code, msg_raw, msg_headers = _post_wakeup(token, model, device_id, acc["accountUuid"], route)
+            if msg_code not in (400, 404):
+                break
+        observed_ms = int(time.time() * 1000)
+        status, retry = _classify_http_result(msg_code, msg_headers, observed_ms)
+        if status is None:
+            anchor, updated = None, None
+            try:
+                anchor, updated = parse_ratelimit_headers(msg_headers, acc["accountUuid"], observed_ms)
+            except ValueError:
+                # Fallback to GET /api/oauth/usage if the proxy stripped custom response headers.
+                usage_code, raw, headers = _fetch(token, ENDPOINT, route)
+                observed_ms = int(time.time() * 1000)
+                status, retry = _classify_http_result(usage_code, headers, observed_ms)
+                if status is None:
+                    try:
+                        payload = json.loads(raw.decode("utf-8"))
+                        anchor, updated = validate_usage(payload, acc["accountUuid"], observed_ms)
+                    except LookupError:
+                        status, retry = "account_mismatch", None
+                    except (UnicodeError, ValueError, TypeError, OverflowError):
+                        status, retry = "invalid_response", None
+            if status is None and anchor is not None and updated:
+                try:
+                    if commit_guard is not None and not commit_guard():
+                        _finish_state(app_data, identity, lease, int(time.time() * 1000), "cancelled")
+                        return _result("cancelled")
+                    status, retry_at = _commit_success(
+                        app_data, claude_home, account_id, expected_identity, token,
+                        identity, lease, observed_ms, cj, cred, anchor, route)
+                    if status == "updated":
+                        return _result("updated", observed_at_ms=observed_ms, retry_at_ms=retry_at,
+                                       last_observed_at_ms=observed_ms, updated_windows=updated,
+                                       source="oauth", verified_at_ms=observed_ms, route_mode=route[0])
+                    if status == "cooldown":
+                        return _result("cooldown")
+                    if status == "route_unavailable":
+                        return _result(status, retry_at_ms=retry_at, reason="route_changed", stage="commit", route_mode=route[0])
+                    return _result(status, retry_at_ms=retry_at, route_mode=route[0])
+                except (OSError, TimeoutError, sqlite3.Error, RuntimeError):
+                    status, retry = "unavailable", None
+    observed_ms = int(time.time() * 1000)
+    try:
+        finished = _finish_state(app_data, identity, lease, observed_ms, status, retry)
+    except (OSError, TimeoutError):
+        return _result("unavailable")
+    if finished is None:
+        return _result("cooldown")
+    actual_retry, last_observed = finished
+    return _result(status, retry_at_ms=actual_retry, last_observed_at_ms=last_observed, route_mode=route[0])
+
+
 MAX_PROTOCOL_LINE = 16 * 1024
 
 
@@ -1021,6 +1268,8 @@ def main(argv=None):
         elif isinstance(request, dict) and "browser_snapshot" in request:
             result = import_browser_snapshot(Path(args.app_data), Path(args.claude_home),
                                              account_id, request.get("browser_snapshot"), expected_identity, commit_guard)
+        elif isinstance(request, dict) and request.get("wakeup") is True:
+            result = run_wakeup(Path(args.app_data), Path(args.claude_home), account_id, expected_identity, commit_guard)
         else:
             result = run(Path(args.app_data), Path(args.claude_home), account_id, expected_identity, commit_guard)
     except (ValueError, OSError):
