@@ -55,56 +55,70 @@ Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，React/TypeSc
 
 ## 2. 已经完成了什么
 
-### 2.1 `0.3.1` 打包、审计、本机热更新与 GitHub Release 回执（2026-10-25）
+### 2.1 `0.3.1` 发布回执与后续本地「5h 自动续杯」热更新（2026-10-25）
 - **版本号**：`0.3.1`（已同步 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/CLAUDE.md`、`README.md`、`CLAUDE.md`、`docs/RELEASE_NOTES_0.3.1.md`）。
-- **源码提交与标签**：Commit `f11276f`，Tag `v0.3.1`（已推送至 `origin/main` 与 `origin/v0.3.1`，并发布 GitHub Release `https://github.com/yq04/Claude-Local/releases/tag/v0.3.1`）。
-- **产物目录**：`.local/artifacts/20261025T151849Z-ee8ffc4e85e046aca90f24f45db8a95b`（状态记录于 `.local/last-local-update.json`）。
-- **本机安装路径**：`D:\1_app\Claude-Local\claude-local.exe`（已热更新包含 5h 自动续杯功能的最新构建，版本号 `0.3.1`，最新本机 `claude-local.exe` SHA256 为 `b0bf467886f886438a30034828385a276fa6440b3ab471ae58dc8222a87bd263`，`D:\1_app\Claude-Local\scripts\claude_quota_online.py` 与 `quota_archive.py` 已同步更新）。
-- **已发布的 `v0.3.1` 归档宿主 SHA256**：`06dfb613b8de7225b6ba1c5eb18f15a926eb94f4fb5bd750ff5011c72ecc8a11`。
-- **已发布的 `v0.3.1` 安装器 `Claude-Local_0.3.1_x64-setup.exe` SHA256**：`0bdcceed1bd2939a6efee50e4044656b31c3b9635947c50db6dd62ed15777f38`。
-- **隐私与安全审计**：独立资源审计 109 项、私密探针 13 项，零发现（`findings: 0`）；`--quota-core` 管道冒烟测试 `pass`；更新前后未中断任何正在运行的 `claude.exe`（`missingClaudeCount: 0`）。
+- **源码分支与提交记录**：
+  - 当前本地分支：`feature/functional-reliability-20261023`
+  - 最新本地提交（5h 自动续杯与防风控）：Commit `5d78c00`（`feat(quota): add CLI-aligned 5h reset auto-wakeup with anti-ban progressive delay and custom time window`）。
+  - 已推送的 `v0.3.1` 发布提交与标签：Commit `f11276f` & `371dd1b`，Tag `v0.3.1`（已推送至 `origin/main` 与 `origin/v0.3.1`，并发布 GitHub Release `https://github.com/yq04/Claude-Local/releases/tag/v0.3.1`）。
+- **本机安装路径**：`D:\1_app\Claude-Local\claude-local.exe`
+  - 已无感热更新包含「5h 到期自动续杯」的最新 Release 构建，最新本机 `claude-local.exe` SHA256 为 `b0bf467886f886438a30034828385a276fa6440b3ab471ae58dc8222a87bd263`；
+  - `D:\1_app\Claude-Local\scripts\claude_quota_online.py`、`D:\1_app\Claude-Local\scripts\quota_archive.py` 与 `D:\1_app\Claude-Local\browser-ui\` 已同步更新；
+  - 全程未中断任何正在运行的 `claude.exe`（`MissingClaudeProcesses: 0`）。
+- **已发布的 `v0.3.1` 归档产物与安装器回执**：
+  - 产物目录：`.local/artifacts/20261025T151849Z-ee8ffc4e85e046aca90f24f45db8a95b`（状态记录于 `.local/last-local-update.json`）。
+  - 归档宿主 `claude-local.exe` SHA256：`06dfb613b8de7225b6ba1c5eb18f15a926eb94f4fb5bd750ff5011c72ecc8a11`。
+  - 安装器 `Claude-Local_0.3.1_x64-setup.exe` SHA256：`0bdcceed1bd2939a6efee50e4044656b31c3b9635947c50db6dd62ed15777f38`。
+  - 独立资源审计 109 项、私密探针 13 项，零发现（`findings: 0`）；`--quota-core` 管道冒烟测试 `pass`。
 
 ### 2.2 已执行的验证
-- **前端与双语字典单测**：`bun test` **21 个测试文件、110 项测试（9,630 断言）全部通过**；`bun run build`（`tsc --noEmit && vite build`）零错误通过。
-- **Rust 原生测试**：`cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol` **223 项测试全部通过**（含 `model_effort_tiers_are_parsed_and_aggregated_per_model` 与 18 项 `browser::tests`）。
+- **Python 在线查询与 1-Token 唤醒单测**：`python scripts/test-claude-quota-online.py` **33 项测试全部通过**（含 CLI 请求头/设备指纹对齐、响应头 `anthropic-ratelimit-unified-5h/7d-*` 解析、Haiku->Sonnet 模型回退与 `/api/oauth/usage` 兜底）。
+- **前端与双语字典单测**：`bun test` **21 个测试文件、112 项测试（9,852 断言）全部通过**（含跨午夜生效时段判定、同账号阶梯退避 `3-10m -> 25-60m -> 按需待命`、跨账号错峰与主力号 `<40%` 联动预热）；`bun run build`（`tsc --noEmit && vite build`）零错误通过。
+- **Rust 原生测试**：`cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol` **全量通过**（其中 `identities::online` 19 项、全库 223+ 项）。
 - **Playwright UI 全套回归**：
-  - `node scripts/test-local-shell.mjs .local/preview-shell`：通过（含 `180×286` 卡片几何、浅色/深色主题切换、中英切换与交接复制）。
-  - `node --experimental-strip-types scripts/test-identities-ui.ts`：**68/68 项断言全部通过**（含额度详情与切换确认弹窗）。
-  - `node --experimental-strip-types scripts/test-handoff-ui.ts`：通过。
-  - `node scripts/test-usage-statistics.mjs .local/preview-usage`（38/38）、`--layout-only`（96/96）、`--quick-only`（16/16）：全部通过。
+  - `bun scripts/test-identities-ui.ts --quota-reset-only`（**8/8 通过**，含到期账号一键「唤醒 5h 计时」、顶栏「自动续杯」开关、生效时段切换与配置面板）。
+  - `bun scripts/test-identities-ui.ts --online-only`（**10/10 通过**）。
+  - `node scripts/test-local-shell.mjs .local/preview-shell`、`node --experimental-strip-types scripts/test-identities-ui.ts`、`node --experimental-strip-types scripts/test-handoff-ui.ts`、`node scripts/test-usage-statistics.mjs .local/preview-usage`（含 `--layout-only` 与 `--quick-only`）：全部通过。
 
 ---
 
 ## 3. 当前卡在哪、遗留什么、工作树状态
 
-**没有任何技术、测试或发布阻塞。`0.3.1` 已完成本机热更新、Git 推送与 GitHub Release 上传。**
+**没有任何技术或测试阻塞。**
 
-新会话需要注意以下工作树保留项：
-- 工作树中用户原有的 `AGENTS.md` 修改以及未跟踪的 `--help/`、`.planning/`、`.rivet/`、`docs/superpowers/`、`docs/plans/2026-10-22-identity-quota.md`、`p6b-i18n.json`、`TOKEN_MONITOR_RESEARCH_AND_PLAN.md` 均属于故意保留的规划/规则文件，**切勿删除或运行 `git clean` / `git checkout -- .`**。
+新会话需要注意以下当前状态与边界：
+1. **发布状态说明**：
+   - `v0.3.1`（含前 6 项界面与功能优化）已完成 NSIS 安装器打包并发布至 GitHub Release。
+   - 第 7 项 **「5h 额度到期自动续杯 / 轻指令唤醒」**（Commit `5d78c00`）已按用户“目前只考虑本地，暂时不打包和上传，注意做好项目版本的管理（git）”的指令，**完成了本机 `D:\1_app\Claude-Local` 热更新与本地 Git 提交，尚未重新打包 NSIS 安装器或推送到远端 GitHub**。若用户在下一会话要求打包上传（如 `0.3.2` 或更新发布包），再执行完整 NSIS 审计打包与推送流程。
+2. **工作树保留项（切勿删除）**：
+   - 工作树中用户原有的 `AGENTS.md` 修改以及未跟踪的 `--help/`、`.planning/`、`.rivet/`、`docs/superpowers/`、`docs/plans/2026-10-22-identity-quota.md`、`p6b-i18n.json`、`TOKEN_MONITOR_RESEARCH_AND_PLAN.md` 均属于故意保留的规划/规则文件，**切勿删除或运行 `git clean` / `git checkout -- .`**。
 
 ---
 
 ## 4. 下一步计划是什么与代码入口
 
 1. **新会话启动检查**：
-   - 先只读查看 `git status --short`、`.local/last-local-update.json` 和用户最新指令。
+   - 先只读查看 `git status --short`、`git log -n 5 --oneline` 和用户最新指令。
 2. **按用户后续指令行动**：
-   - 若用户提出新的界面或功能迭代需求，在当前 `0.3.1` 基线上开发，并通过 `.local/tools/complete-local-update-0.3.1.ps1 -InstallDirectory 'D:\1_app\Claude-Local'`（或创建下一版本脚本）执行审计打包与本机热更新。
+   - **若用户在实机使用「自动续杯」后提出微调需求**（例如调整默认时间段、延迟区间或 UI 细节）：直接修改下述核心入口，运行单测与 `cargo build --release --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol` 后热更新至 `D:\1_app\Claude-Local`。
+   - **若用户要求将「自动续杯」正式打包并上传发布（如 `0.3.2`）**：同步递增版本号，运行 `.local/tools/complete-local-update-0.3.1.ps1`（或对应新版本脚本）完成 13 项隐私探针审计打包，再推送 Git 标签与上传 GitHub Release。
 
 核心源码入口：
+- `scripts/claude_quota_online.py`、`scripts/quota_archive.py`、`src-tauri/src/identities/online.rs`、`src/identity-online-quota.ts`：5h 到期自动续杯 / 轻指令唤醒引擎（`/v1/messages?beta=true` CLI 指纹对齐、`anthropic-ratelimit-unified-5h/7d-*` 响应头解析、同账号阶梯退避、跨账号错峰与自定义时间段状态机）。
+- `src/identities.tsx`、`src/identity-productivity.css`、`src/identity-quota.ts`、`src/task-handoff.tsx`：身份管理顶栏「自动续杯」胶囊、在线查询弹窗内的自动续杯配置面板、额度详情一键「唤醒 5h 计时」、切换前额度对比与隔离状态展示、会话接力草稿清空。
 - `src-tauri/src/identities/usage.rs`、`src/usage-model.ts`、`src/usage-statistics.tsx`、`src/usage-trend.tsx`、`src/usage-statistics.css`：用量分析、SQLite `events.effort` 增量迁移与历史回填、模型家族胶囊及推理档位（Effort）分布。
 - `src-tauri/src/identities/private.rs`、`src-tauri/src/browser/profile.rs`、`src/browser.tsx`：隔离浏览器配置目录 Windows DACL 继承修复（`ensure_owner_dacl`）、缓存大小实时枚举与浏览环境紧凑顶栏。
 - `src/system.tsx`、`src/vps.tsx`、`src/style.css`：电脑环境单行内联控制条、网络环境 `2×2` 连通性诊断网格与单层工作区光学毛玻璃系统。
-- `src/identities.tsx`、`src/identity-quota.ts`、`src/task-handoff.tsx`：身份卡片、切换前额度对比与隔离状态展示、会话接力模板与草稿清空。
 
 常用针对性验证命令：
 
 ```powershell
+python scripts/test-claude-quota-online.py
 bun test
 bun run build
 cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol
-node scripts/test-local-shell.mjs .local/preview-shell
-node --experimental-strip-types scripts/test-identities-ui.ts
+bun scripts/test-identities-ui.ts --quota-reset-only
+bun scripts/test-identities-ui.ts --online-only
 node scripts/test-usage-statistics.mjs .local/preview-usage --layout-only
 ```
 
@@ -112,32 +126,40 @@ node scripts/test-usage-statistics.mjs .local/preview-usage --layout-only
 
 ## 5. 踩过的坑：绝对不要再踩
 
-### 5.1 本会话（v0.3.1）新踩过的关键深坑
-1. **Windows 下隔离浏览器缓存报「无法枚举缓存。」（`PermissionDenied`）是 Chromium AppContainer 沙箱改写子目录 ACL 所致，必须保留 `ensure_owner_dacl` 继承权修复。**
+### 5.1 本会话新踩过的 8 个关键深坑
+1. **`anthropic-ratelimit-unified-5h-reset` 响应头返回的是纯数字 Unix 秒字符串（如 `"1761426000"`），解析时必须先转为 `int` 再交给 `_reset_seconds`。**
+   - `scripts/claude_quota_online.py` 原有的 `_reset_seconds(raw)` 只接受 `int`/`float` 或 ISO-8601 日期字符串；若直接把 HTTP 响应头里的纯数字字符串传进去会被当作非法格式返回 `None`。`parse_ratelimit_headers` 中必须先判断 `raw_reset.strip().isdigit()` 并转为 `int(raw_reset.strip())`。
+2. **向 `/v1/messages?beta=true` 发送 1-Token 唤醒请求时，绝不能发送死板的 `"hi"` + `max_tokens: 1` 或缺失 `metadata.user_id`（风控/反蒸馏红线）。**
+   - 逆向本机官方 `claude.exe v2.1.310`（`probeQuotaStatus` 与 `GWe()`）证实：真实 CLI 请求必然携带 `X-Claude-Code-Session-Id: <uuid4>`、`x-client-request-id: <uuid4>`、`X-Stainless-*` 请求头以及 `metadata.user_id: JSON.stringify({device_id: <64-hex .claude.json userID>, account_uuid, session_id})`。必须从 `.baga` 归档中的 `.claude.json` 投影出每个账号真实的 `userID`，并使用多态自然短指令池与随机 `max_tokens`（`16/24/32`）。
+3. **身份页及在线查询弹窗（`onlinePanelOpen`）严禁使用 `role="combobox"` 的 `<Select>` 控件，且后台自动续杯定时器在合成测试环境（`'identityFixture' in window`）下默认静默。**
+   - `scripts/test-identity-batch.ts` 第 68 行有严格断言 `assert.equal(await page.getByRole('combobox').count(), 0)`，第 219 行通过 `page.clock.runFor(360001)` 验证无隐藏后台请求。因此生效时段选择器必须使用 `<input type="time">` + 预设胶囊按钮，且后台自动续杯 `useEffect` 在 `'identityFixture' in window && !window.__enableAutoWakeupTest` 时不自动发起后台网络请求。
+4. **本地估算到期（`local_estimate` 且 `expired5h === true`）的账号，`evaluateQuota` 返回的 `inferredReset5h` 与 `r5` 均为 `null`，唤醒状态机必须回退读取 `summary?.quota_5h_reset_at`。**
+   - 若只传 `q?.inferredReset5h ?? q?.r5 ?? null`，本地估算刚过期的账号在唤醒面板中会被误判为 `not_expired`（显示未知或计时中），导致状态标签与「唤醒 5h 计时」按钮不一致。
+5. **Windows 下隔离浏览器缓存报「无法枚举缓存。」（`PermissionDenied`）是 Chromium AppContainer 沙箱改写子目录 ACL 所致，必须保留 `ensure_owner_dacl` 继承权修复。**
    - `private.rs` 的 `lock(path)` 默认创建的是 `NO_INHERITANCE` 的 DACL；当 Chromium 启动并创建 `profile\Default\Cache` 时，Chromium 会给 `Cache` 注入 AppContainer SID，导致如果父目录 `Default` 没有当前用户的 `SUB_CONTAINERS_AND_OBJECTS_INHERIT` 权限，主程序枚举缓存就会被系统拒绝。
    - **铁律**：绝不能在 `Default` 或 `Cache` 上粗暴调用 `private::lock`（会清掉 Chromium 的 AppContainer SID 导致浏览器崩溃），必须使用 `private::ensure_owner_dacl`（将当前用户的继承权限**合并**进既有 DACL）。
-2. **`detectModelFamily` 对非特定家族（`other`）的模型必须返回 `label: null`，不要返回 `'Claude'`。**
+6. **`detectModelFamily` 对非特定家族（`other`）的模型必须返回 `label: null`，不要返回 `'Claude'`。**
    - `src/usage-model.ts` 中若给未知 `claude-*` 测试模型返回 `'Claude'` 胶囊标签，既无信息增量，又会在窄窗口测试中挤占模型名空间；仅对明确的 `Opus`、`Sonnet`、`Fable`、`Haiku` 返回胶囊标签。
-3. **切勿同时并发启动多个带 Vite Server 的 Playwright 测试脚本（如 `test-identities-ui.ts` 与 `test-usage-statistics.mjs`）。**
+7. **切勿同时并发启动多个带 Vite Server 的 Playwright 测试脚本（如 `test-identities-ui.ts` 与 `test-usage-statistics.mjs`）。**
    - 多个 Vite 实例同时读写 `node_modules/.vite` 依赖缓存会触发 `Re-optimizing dependencies` 并导致页面在断言中途自动 reload 报错；Playwright 界面测试必须串行执行。
-4. **修改 `src/locales/zh.yaml` 中的主题/按钮显示名称时，必须同步检查 `scripts/test-local-shell.mjs` 等 Playwright 脚本中的 `getByRole(..., { name })` 定位器。**
+8. **修改 `src/locales/zh.yaml` 中的主题/按钮显示名称时，必须同步检查 `scripts/test-local-shell.mjs` 等 Playwright 脚本中的 `getByRole(..., { name })` 定位器。**
    - 例如将 `"月之暗面"` 的中文译文改为更实用的 `"深色"` 后，`scripts/test-local-shell.mjs` 第 105 行的 `getByRole('radio', { name: '深色', exact: true })` 必须同步更新。
 
 ### 5.2 既有工程铁律（持续有效）
-5. **自定义壁纸毛玻璃切忌「双重 `backdrop-filter`」或「全透明 `.workspace` + 独立模糊 `.card`（百叶窗效应）」。**
+9. **自定义壁纸毛玻璃切忌「双重 `backdrop-filter`」或「全透明 `.workspace` + 独立模糊 `.card`（百叶窗效应）」。**
    - 只在 `.workspace` 和 `.app-sidebar` 上做 **1 次** 全局 `backdrop-filter: blur(var(--glass-blur))`；内部所有 `.card` 必须设置 `backdrop-filter: none !important`。
-6. **切勿把全局表格/分割线变量 `--landing-line` 改成高不透明度白色，也切勿在浅色模式下用纯黑遮罩压暗壁纸或给全局文字加 `text-shadow`。**
-7. **Cromma UI 组件库自带不透明 `--card` / `--input` / `--segment-thumb` 变量，开启壁纸时必须在 `html[data-has-wallpaper='true']` 下同步覆盖为半透明。**
-8. **Tauri v2 悬浮监控窗切换精简/展开高度时，必须在 `monitor_window_resize` 中依次更新 `set_min_size` -> `set_max_size` -> `set_size`，且宽度严格统一为 `340.0`。**
-9. **`Claude Code CLI` 报 `Auto mode is unavailable` / `powershell denied by auto mode` 是云端 ATIS 分类器熔断所致，需在 `settings.json` 中保持 `"defaultMode": "bypassPermissions"` 与 `"disableAutoMode": "disable"`。**
-10. **主界面环境验证扩展为 10 项（`5×2`）后，前后端与布局测试断言必须同步对齐 `10`。**
-11. **Tauri v2 在 Windows (WebView2) 下创建/操控子窗口的命令必须是 `pub async fn`，且必须在 `capabilities/main.json` 注册窗口名 `["main", "monitor"]`。**
-12. **`usage_statistics_read` 绝不能与 `identities_read` 共用同一个全局长锁（必须保持独立 `USAGE_LOCK`）。**
-13. **静态 `5h` 重置显示（`inferred === true`）绝不能使用 `<time>` 标签，且必须保持 `180×286` 卡片几何。**
-14. **双语 YAML 字典与源码 `t('...')` 调用受 `src/i18n.test.ts` 严格门禁保护（中英键集合与插槽必须 100% 一致，`en.yaml` 与 JSX 中严禁混入裸中文字符）。**
-15. **部分源码文件（如 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src/locales/*.yaml`、`src/system.tsx`）采用 CRLF 行尾，编辑时注意匹配。**
-16. **GitHub Release 保持干净，只上传单个 `Claude-Local_<ver>_x64-setup.exe` 安装包文件。**
-17. **不终止 `claude.exe`，不清理共享工作树，敏感探针不入对话或 Git；每次改写 `HANDOFF.md` 前先归档至 `.local/handoff-backups/` 并校验 SHA256。**
+10. **切勿把全局表格/分割线变量 `--landing-line` 改成高不透明度白色，也切勿在浅色模式下用纯黑遮罩压暗壁纸或给全局文字加 `text-shadow`。**
+11. **Cromma UI 组件库自带不透明 `--card` / `--input` / `--segment-thumb` 变量，开启壁纸时必须在 `html[data-has-wallpaper='true']` 下同步覆盖为半透明。**
+12. **Tauri v2 悬浮监控窗切换精简/展开高度时，必须在 `monitor_window_resize` 中依次更新 `set_min_size` -> `set_max_size` -> `set_size`，且宽度严格统一为 `340.0`。**
+13. **`Claude Code CLI` 报 `Auto mode is unavailable` / `powershell denied by auto mode` 是云端 ATIS 分类器熔断所致，需在 `settings.json` 中保持 `"defaultMode": "bypassPermissions"` 与 `"disableAutoMode": "disable"`。**
+14. **主界面环境验证扩展为 10 项（`5×2`）后，前后端与布局测试断言必须同步对齐 `10`。**
+15. **Tauri v2 在 Windows (WebView2) 下创建/操控子窗口的命令必须是 `pub async fn`，且必须在 `capabilities/main.json` 注册窗口名 `["main", "monitor"]`。**
+16. **`usage_statistics_read` 绝不能与 `identities_read` 共用同一个全局长锁（必须保持独立 `USAGE_LOCK`）。**
+17. **静态 `5h` 重置显示（`inferred === true`）绝不能使用 `<time>` 标签，且必须保持 `180×286` 卡片几何。**
+18. **双语 YAML 字典与源码 `t('...')` 调用受 `src/i18n.test.ts` 严格门禁保护（中英键集合与插槽必须 100% 一致，`en.yaml` 与 JSX 中严禁混入裸中文字符）。**
+19. **部分源码文件（如 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src/locales/*.yaml`、`src/system.tsx`）采用 CRLF 行尾，编辑时注意匹配。**
+20. **GitHub Release 保持干净，只上传单个 `Claude-Local_<ver>_x64-setup.exe` 安装包文件。**
+21. **不终止 `claude.exe`，不清理共享工作树，敏感探针不入对话或 Git；每次改写 `HANDOFF.md` 前先归档至 `.local/handoff-backups/` 并校验 SHA256。**
 
 ---
 
