@@ -359,7 +359,7 @@ fn preferences_preserve_assets_and_block_both_geolocation_modes() {
 #[test]
 fn observations_required() {
     let checks = network::checks(&machine(), &Config::default(), None, None, "148");
-    assert_eq!(checks.iter().filter(|x| x.status == "pending").count(), 9);
+    assert_eq!(checks.iter().filter(|x| x.status == "pending").count(), 10);
     assert!(
         network::parse(&serde_json::json!({"success":true,"ip":"fake","country_code":"US"}))
             .is_err()
@@ -720,8 +720,14 @@ fn deep_probes_close_graphics_and_webrtc_checks() {
         webdriver: Some(false),
         graphics_ok: Some(true),
         webgl_renderer: Some("ANGLE (Apple, Apple M3 Pro, OpenGL 4.1)".into()),
+        tz_offset_ok: Some(true),
+        tz_offset_detail: Some("America/New_York (UTC-05:00)".into()),
+        media_fingerprint_ok: Some(true),
+        media_fingerprint_detail: Some("Canvas 2D + AudioContext 48000Hz".into()),
+        client_hints_ok: Some(true),
+        client_hints_detail: Some("UA-CH 桌面端 · 24-bit 屏幕".into()),
     };
     let checks = network::checks(&m, &c, Some(&report), Some(&host), "148");
-    assert_eq!(checks.len(), 9);
+    assert_eq!(checks.len(), 10);
     assert!(checks.iter().all(|item| item.status == "ok"));
 }

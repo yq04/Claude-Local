@@ -55,6 +55,15 @@ export function verifyBrowser(context:BrowserContext|null,report:Report|null,lin
   if(report.graphics_ok!==undefined){
    add('硬件图形渲染',report.webgl_renderer||(report.graphics_ok?'真实硬件 GPU':'软件渲染 / 缺失'),'真实硬件 WebGL / Canvas',report.graphics_ok);
   }
+  if(report.tz_offset_ok!==undefined){
+   add('时区偏移校验',report.tz_offset_detail||(report.tz_offset_ok?'Intl 与系统时钟一致':'时区偏移冲突'),'Intl 时区与时钟偏移一致',report.tz_offset_ok);
+  }
+  if(report.media_fingerprint_ok!==undefined){
+   add('Canvas / 音频指纹',report.media_fingerprint_detail||(report.media_fingerprint_ok?'Canvas 2D 与音频正常':'Canvas / 音频异常'),'真实 Canvas 2D 与音频采样',report.media_fingerprint_ok);
+  }
+  if(report.client_hints_ok!==undefined){
+   add('客户端提示与屏幕',report.client_hints_detail||(report.client_hints_ok?'桌面端 UA-CH 与 24-bit 屏幕':'客户端提示或屏幕异常'),'桌面端 UA-CH 与 24-bit 屏幕',report.client_hints_ok);
+  }
  }
  const phase:VerificationPhase=busy?'checking':!problems.length&&checks.length>0&&checks.every(check=>check.ok)?'passed':'failed';
  return {phase,checks,problems:[...new Set(problems)],failures:checks.filter(check=>!check.ok)};

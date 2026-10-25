@@ -11,7 +11,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AppDialog } from './dialog';
 import { CleanupActivity, useCleanupActivity } from './cleaner-activity';
-import { DEEP_VERIFY_SITES, type BrowserConfig, type BrowserState, type DefaultBrowser } from './browser-model';
+import { type BrowserConfig, type BrowserState, type DefaultBrowser } from './browser-model';
 import { formatBytes } from './cleaner-model';
 import { usePageRefresh } from './app-events';
 import { maskDisplayName, maskEmailAddress, usePreferences } from './settings-model';
@@ -24,14 +24,6 @@ export function BrowserPanel({ onBusy }: {
     const [state, setState] = useState<BrowserState | null>(null), [draft, setDraft] = useState<BrowserConfig | null>(null), [busy, setBusy] = useState(''), [error, setError] = useState(''), [confirm, setConfirm] = useState<'reset' | 'align' | null>(null);
     const gate = useRef(false), live = useRef(true);
     const [accepted, setAccepted] = useState(false), [advancedOpen, setAdvancedOpen] = useState(false);
-    const [copiedVerifySite, setCopiedVerifySite] = useState('');
-    async function copyVerifySite(id: string, url: string) {
-        try {
-            await navigator.clipboard.writeText(url);
-            setCopiedVerifySite(id);
-            window.setTimeout(() => setCopiedVerifySite(prev => (prev === id ? '' : prev)), 1800);
-        } catch { /* ignore */ }
-    }
     const activity = useCleanupActivity();
     const [clock, setClock] = useState(Date.now);
     useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30000); return () => window.clearInterval(timer); }, []);
@@ -154,33 +146,12 @@ export function BrowserPanel({ onBusy }: {
 
         <div className="browser-sections">
             <div className="network-action-card browser-hero-card">
-                <div className="network-action-row">
-                    <div className="network-action-main">
-                        <div className="network-action-head">
-                            <h2>{t("启动内置浏览器与 CLI 授权联动")}</h2>
-                            <span className={`identity-policy-mode ${state?.running ? 'ok' : ''}`}>
-                                {state?.running ? t("运行中") : t("未运行")}
-                            </span>
-                        </div>
-                        <p className="network-action-desc">
-                            {t("browserSafety.heroDescription")}
-                        </p>
-                        {state?.identity?.name && (
-                            <p className="identity-policy-hint">
-                                {t("browserSafety.boundIdentity", { name: maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask) }) || `绑定本地身份：${maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask)}`}{state.identity.email ? ` (${maskEmailAddress(state.identity.email, prefs.privacyMask)})` : ''}
-                            </p>
-                        )}
-                        {state?.identity?.status && !['linked', 'draft'].includes(state.identity.status) && (
-                            <p className="identity-policy-hint">
-                                {t(`browserSafety.status_${state.identity.status}`)}
-                            </p>
-                        )}
-                        {state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim() && (
-                            <p className="identity-policy-hint">
-                                {t("browserSafety.cliProxyMismatch", { cliProxy: state.identity.cli_proxy, browserProxy: (draft?.proxy || '').trim() || t("browserSafety.proxyManaged") })}{' '}
-                                <Button variant="secondary" size="small" disabled={disabled} onClick={() => { edit('proxy', state?.identity?.cli_proxy || ''); setAdvancedOpen(true); }}>{t("browserSafety.syncCliProxy")}</Button>
-                            </p>
-                        )}
+                <div className="browser-hero-top">
+                    <div className="network-action-head">
+                        <h2>{t("启动内置浏览器与 CLI 授权联动")}</h2>
+                        <span className={`identity-policy-mode ${state?.running ? 'ok' : ''}`}>
+                            {state?.running ? t("运行中") : t("未运行")}
+                        </span>
                     </div>
                     <div className="network-action-buttons">
                         <Button variant="secondary" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
@@ -195,6 +166,34 @@ export function BrowserPanel({ onBusy }: {
                             {preferred?.is_default ? t("已是默认浏览器") : t("设为默认浏览器")}
                         </Button>
                     </div>
+                </div>
+                <div className="browser-hero-body">
+                    <p className="network-action-desc">
+                        {t("browserSafety.heroDescription")}
+                    </p>
+                    <div className="browser-hero-meta">
+                        {state?.identity?.name && (
+                            <span className="identity-policy-mode">
+                                {t("browserSafety.boundIdentity", { name: maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask) }) || `绑定本地身份：${maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask)}`}{state.identity.email ? ` (${maskEmailAddress(state.identity.email, prefs.privacyMask)})` : ''}
+                            </span>
+                        )}
+                        {state?.engine_version && (
+                            <span className="identity-policy-mode">
+                                Chromium {state.engine_version}
+                            </span>
+                        )}
+                    </div>
+                    {state?.identity?.status && !['linked', 'draft'].includes(state.identity.status) && (
+                        <p className="identity-policy-hint">
+                            {t(`browserSafety.status_${state.identity.status}`)}
+                        </p>
+                    )}
+                    {state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim() && (
+                        <p className="identity-policy-hint">
+                            {t("browserSafety.cliProxyMismatch", { cliProxy: state.identity.cli_proxy, browserProxy: (draft?.proxy || '').trim() || t("browserSafety.proxyManaged") })}{' '}
+                            <Button variant="secondary" size="small" disabled={disabled} onClick={() => { edit('proxy', state?.identity?.cli_proxy || ''); setAdvancedOpen(true); }}>{t("browserSafety.syncCliProxy")}</Button>
+                        </p>
+                    )}
                 </div>
             </div>
 
@@ -242,52 +241,39 @@ export function BrowserPanel({ onBusy }: {
                     ))}
                 </div>
                 {state?.report?.error && <p className="system-feedback error">{t("浏览器出口检测：")}{t(state.report.error)}</p>}
-                <div className="browser-deep-sites">
-                    <span className="browser-deep-sites-label">{t("browserVerify.hubTitle")}</span>
-                    <div className="browser-deep-sites-list">
-                        {DEEP_VERIFY_SITES.map(site => (
-                            <Button
-                                key={site.id}
-                                variant="ghost"
-                                size="small"
-                                title={`${site.name} · ${t(site.passRuleKey)}`}
-                                onClick={() => void copyVerifySite(site.id, site.url)}
-                            >
-                                {copiedVerifySite === site.id ? `✓ ${site.name}` : `${site.name} · ${t("browserVerify.copyUrl")}`}
-                            </Button>
-                        ))}
-                    </div>
-                </div>
             </div>
 
-            <div className="network-action-card">
-                <div className="network-action-head">
+            <div className="network-action-card browser-data-card">
+                <div className="browser-data-header">
                     <h2>{t("浏览器数据")}</h2>
+                    <span className={`identity-policy-mode ${state?.running ? '' : 'ok'}`}>
+                        {state?.running ? t("browserSafety.closeBeforeClean") : `${t("日常释放缓存")} · ${formatBytes(cache.reduce((sum, x) => sum + x.bytes, 0))}`}
+                    </span>
                 </div>
                 <div className="browser-data-scenarios">
                     <div className="browser-scenario-card">
-                        <div className="browser-scenario-copy">
+                        <div className="browser-scenario-top">
                             <div className="browser-scenario-head">
                                 <strong>{t("日常释放缓存")}</strong>
                                 <span className="identity-policy-mode ok">{formatBytes(cache.reduce((sum, x) => sum + x.bytes, 0))}</span>
                             </div>
-                            <p>{t("安全清理网页图片与脚本缓存，保留 Claude 登录状态、书签与密码（需先关闭浏览器）。")}</p>
+                            <Button variant="secondary" size="small" disabled={disabled || state?.running || !cache.length || !!state?.cache_error} loading={busy === 'browser_clear'} onClick={() => void act('browser_clear', { includeSiteData: false })}>{t("一键清理缓存")}</Button>
                         </div>
-                        <Button variant="secondary" size="small" disabled={disabled || state?.running || !cache.length || !!state?.cache_error} loading={busy === 'browser_clear'} onClick={() => void act('browser_clear', { includeSiteData: false })}>{t("一键清理缓存")}</Button>
+                        <p className="browser-scenario-desc">{t("安全清理网页图片与脚本缓存，保留 Claude 登录状态、书签与密码（需先关闭浏览器）。")}</p>
                     </div>
                     <div className="browser-scenario-card">
-                        <div className="browser-scenario-copy">
+                        <div className="browser-scenario-top">
                             <div className="browser-scenario-head">
                                 <strong>{t("深度重置当前浏览器")}</strong>
                             </div>
-                            <p>{t("仅在当前身份网页出现异常风控时使用；将清空当前身份的 Cookie、登录状态与扩展，不影响其他身份。")}</p>
+                            <Button variant="secondary" size="small" disabled={disabled || state?.running} loading={busy === 'browser_reset'} onClick={() => { setAccepted(false); setConfirm('reset'); }}>{t("全清理")}</Button>
                         </div>
-                        <Button variant="secondary" size="small" disabled={disabled || state?.running} loading={busy === 'browser_reset'} onClick={() => { setAccepted(false); setConfirm('reset'); }}>{t("全清理")}</Button>
+                        <p className="browser-scenario-desc">{t("仅在当前身份网页出现异常风控时使用；将清空当前身份的 Cookie、登录状态与扩展，不影响其他身份。")}</p>
                     </div>
                 </div>
-                {state?.cache_error && <p role="alert">{t(state.cache_error)}</p>}
+                {state?.cache_error && <p role="alert" className="browser-cache-error">{t(state.cache_error)}</p>}
                 <Disclosure className="browser-cache-details" triggerClassName="browser-cache-trigger" summary={`${t("查看底层缓存目录明细")} (${cache.length})`}>
-                    <div className="browser-cache">{state?.cache.length ? state.cache.map(x => <div key={x.path}><span>{x.path}</span><small>{x.login ? t("站点数据") : formatBytes(x.bytes)}</small></div>) : <p>{t("未发现缓存项目。")}</p>}</div>
+                    <div className="browser-cache">{state?.cache.length ? state.cache.map(x => <div key={x.path}><span>{x.path}</span><small>{x.login ? t("站点数据") : formatBytes(x.bytes)}</small></div>) : <p className="browser-cache-empty">{t("未发现缓存项目。")}</p>}</div>
                 </Disclosure>
             </div>
 
@@ -299,16 +285,13 @@ export function BrowserPanel({ onBusy }: {
                         <div>
                             <label htmlFor="fingerprint-seed">{t("稳定指纹种子")}</label>
                             <Input id="fingerprint-seed" type="number" min={1} max={4294967295} value={draft?.seed ?? ''} disabled={disabled || state?.running} onChange={e => edit('seed', Number(e.currentTarget.value))} />
+                            <p className="system-hint">{t("browserSafety.seedHint")}</p>
                         </div>
                         <div>
                             <label htmlFor="browser-proxy">{t("浏览器代理")}</label>
                             <Input id="browser-proxy" placeholder="http://127.0.0.1:7897" value={draft?.proxy || ''} disabled={disabled || state?.running} onChange={e => edit('proxy', e.currentTarget.value)} />
                             <p className="system-hint">{t("留空使用 TUN；指定代理须含端口。")}</p>
                         </div>
-                    </div>
-                    <div className="browser-advanced-toggles">
-                        <label className="browser-toggle"><Checkbox checked={draft?.follow_machine || false} disabled={disabled || state?.running} onCheckedChange={v => edit('follow_machine', v === true)} />{t("语言与时区跟随机器")}</label>
-                        <label className="browser-toggle"><Checkbox checked={draft?.native_graphics || false} disabled={disabled || state?.running} onCheckedChange={v => edit('native_graphics', v === true)} />{t("使用真实设备指纹")}</label>
                     </div>
                     {!draft?.follow_machine && (
                         <div className="browser-advanced-grid">
@@ -322,8 +305,14 @@ export function BrowserPanel({ onBusy }: {
                             </div>
                         </div>
                     )}
-                    <div className="system-card-actions">
-                        <Button variant="secondary" size="small" disabled={disabled || state?.running || !changed} loading={busy === 'browser_save'} onClick={() => draft && void act('browser_save', { config: draft })}>{t("保存设置")}</Button>
+                    <div className="browser-advanced-footer">
+                        <div className="browser-advanced-toggles">
+                            <label className="browser-toggle"><Checkbox checked={draft?.follow_machine || false} disabled={disabled || state?.running} onCheckedChange={v => edit('follow_machine', v === true)} />{t("语言与时区跟随机器")}</label>
+                            <label className="browser-toggle"><Checkbox checked={draft?.native_graphics || false} disabled={disabled || state?.running} onCheckedChange={v => edit('native_graphics', v === true)} />{t("使用真实设备指纹")}</label>
+                        </div>
+                        <div className="system-card-actions">
+                            <Button variant="secondary" size="small" disabled={disabled || state?.running || !changed} loading={busy === 'browser_save'} onClick={() => draft && void act('browser_save', { config: draft })}>{t("保存设置")}</Button>
+                        </div>
                     </div>
                 </div>
             </Disclosure>

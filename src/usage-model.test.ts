@@ -3,7 +3,7 @@
 // [POS]: Pure presentation tests; no runtime identities or browser profiles.
 // [PROTOCOL]: Keep tests proportional to the usage presentation contract.
 import {expect, test} from 'bun:test';
-import {cacheHitRate, dailySeries, emptyUsage, formatUsageNumber, summarizeUsageTrend} from './usage-model';
+import {cacheHitRate, dailySeries, detectModelFamily, emptyUsage, formatUsageNumber, summarizeUsageTrend} from './usage-model';
 
 test('cache hits include creation and uncached prompt tokens in the denominator', () => {
   expect(cacheHitRate({...emptyUsage(), input_tokens: 20, cache_creation_tokens: 20, cache_read_tokens: 60})).toBe(0.6);
@@ -89,4 +89,12 @@ test('hourly averages divide by actual elapsed interval duration for partial DST
     {day: '2026-04-05T02:00+10:30', start_at: 1_775_332_200, end_at: 1_775_335_800, totals: {...emptyUsage(), total_tokens: 900}, future: true},
   ];
   expect(summarizeUsageTrend(rows)).toEqual({average: 60, peak: rows[0]});
+});
+
+test('detectModelFamily classifies Opus, Sonnet, Fable and Haiku identifiers cleanly', () => {
+  expect(detectModelFamily('claude-opus-4-7')).toEqual({key: 'opus', label: 'Opus'});
+  expect(detectModelFamily('claude-sonnet-4-6')).toEqual({key: 'sonnet', label: 'Sonnet'});
+  expect(detectModelFamily('claude-fable-preview')).toEqual({key: 'fable', label: 'Fable'});
+  expect(detectModelFamily('claude-haiku-4-5')).toEqual({key: 'haiku', label: 'Haiku'});
+  expect(detectModelFamily('claude-test-model')).toEqual({key: 'other', label: null});
 });

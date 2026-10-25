@@ -180,6 +180,9 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
           backdrop: 'custom',
           surfaceStyle: 'glass',
           accent: record.suggestedAccent,
+          glassBlur: 12,
+          glassOpacity: 62,
+          wallpaperDim: 6,
         });
       });
     } catch (e) {

@@ -1,5 +1,5 @@
 // [INPUT]: 标准库文件系统、当前用户身份与 Windows ACL API。
-// [OUTPUT]: 私有目录/文件、链接与所有权检查、同步原子写入与超过 MAX_PATH 的 Win32 名称调用。
+// [OUTPUT]: 私有目录/文件、链接与所有权检查、本人目录继承权限补齐、同步原子写入与超过 MAX_PATH 的 Win32 名称调用。
 // [POS]: 身份保险库的磁盘边界；创建时明确用户所有者/DACL，已有父目录仅校验而不覆写权限；Win32 调用统一使用长路径。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use std::{fs, io::Write, path::Path};
@@ -277,4 +277,66 @@ pub fn sync_parent(path: &Path) {
         }
     }
     let _ = path;
+}
+pub fn ensure_owner_dacl(path: &Path) -> Result<(), String> {
+    safe(path)?;
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::{
+            Foundation::LocalFree,
+            Security::{
+                Authorization::*, DACL_SECURITY_INFORMATION, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+            },
+        };
+        let sid = crate::windows::current_sid().ok_or("无法读取当前用户 SID。")?;
+        let entry = EXPLICIT_ACCESS_W {
+            grfAccessPermissions: 0x1f01ff,
+            grfAccessMode: GRANT_ACCESS,
+            grfInheritance: SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+            Trustee: TRUSTEE_W {
+                pMultipleTrustee: std::ptr::null_mut(),
+                MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+                TrusteeForm: TRUSTEE_IS_SID,
+                TrusteeType: TRUSTEE_IS_USER,
+                ptstrName: sid.as_ptr() as *mut u16,
+            },
+        };
+        let wide: Vec<u16> = crate::windows::wide_path(path);
+        unsafe {
+            let mut old_dacl = std::ptr::null_mut();
+            let mut descriptor = std::ptr::null_mut();
+            let _ = GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut old_dacl,
+                std::ptr::null_mut(),
+                &mut descriptor,
+            );
+            let mut acl = std::ptr::null_mut();
+            let set_res = SetEntriesInAclW(1, &entry, old_dacl, &mut acl);
+            if !descriptor.is_null() {
+                LocalFree(descriptor.cast());
+            }
+            if set_res != 0 {
+                return Err("无法补齐本人目录访问权限。".into());
+            }
+            let status = SetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                acl,
+                std::ptr::null(),
+            );
+            LocalFree(acl.cast());
+            if status != 0 {
+                return Err("无法补齐本人目录访问权限。".into());
+            }
+        }
+    }
+    Ok(())
 }

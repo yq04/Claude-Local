@@ -102,7 +102,7 @@ try{
  await page.screenshot({path:join(output,'08-network-zh.png'),fullPage:true});
  await page.getByRole('button',{name:'软件设置',exact:true}).click();
  await page.getByRole('tab',{name:'外观与布局',exact:true}).click();
- await page.getByRole('radio',{name:'月之暗面',exact:true}).click();
+ await page.getByRole('radio',{name:'深色',exact:true}).click();
  await page.mouse.move(2,2);
  await page.screenshot({path:join(output,'06-settings-dark-zh.png'),fullPage:true});
  await page.getByRole('button',{name:'身份管理',exact:true}).click();

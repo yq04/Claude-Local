@@ -1,5 +1,5 @@
 // [INPUT]: Bounded Claude Code usage JSONL, identity HMAC keys, private SQLite ledger and optional IANA display timezone.
-// [OUTPUT]: Redacted aggregates, DST-correct local calendar trends with explicit hourly intervals, and stable fallback attribution.
+// [OUTPUT]: Redacted aggregates, per-model reasoning effort breakdowns, DST-correct local calendar trends with explicit hourly intervals, and stable fallback attribution.
 // [POS]: Read-only identity usage command and pre-switch collection boundary; never reads credentials, archives, or session bodies into the ledger.
 // [PROTOCOL]: Complete-line offsets and bounded prefix/tail hashes live only in the usage ledger; identity database user_version remains 3. See identities/CLAUDE.md.
 use super::{catalog, private};
@@ -51,9 +51,16 @@ pub struct UsageDaily {
     pub totals: UsageTotals,
 }
 #[derive(Clone, Serialize)]
+pub struct UsageEffort {
+    pub effort: String,
+    pub totals: UsageTotals,
+}
+#[derive(Clone, Serialize)]
 pub struct UsageModel {
     pub model: String,
     pub totals: UsageTotals,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub efforts: Vec<UsageEffort>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UsageAttributionConfig {
@@ -152,6 +159,7 @@ pub(super) struct Event {
     pub message_key: Option<String>,
     pub ts: u64,
     pub model: String,
+    pub effort: String,
     pub counts: Counts,
     pub account: Option<String>,
     pub weak: bool,
@@ -180,6 +188,35 @@ fn clean_model(v: &Value) -> String {
         .take(80)
         .collect::<String>()
         .to_ascii_lowercase()
+}
+
+fn clean_effort(obj: &Value, msg: &Value) -> String {
+    let raw = obj
+        .get("perTurnEffort")
+        .and_then(Value::as_str)
+        .or_else(|| obj.get("effort").and_then(Value::as_str))
+        .or_else(|| msg.get("effort").and_then(Value::as_str))
+        .unwrap_or("")
+        .trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+    raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        .take(24)
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
+fn effort_rank(effort: &str) -> u8 {
+    match effort {
+        "max" => 0,
+        "xhigh" => 1,
+        "high" => 2,
+        "medium" => 3,
+        "low" => 4,
+        _ => 5,
+    }
 }
 
 fn bounded_line(reader: &mut BufReader<File>) -> io::Result<Option<(Vec<u8>, bool)>> {
@@ -278,6 +315,7 @@ pub(super) fn parse_file_from(
     let mut complete_offset = start_offset;
     let mut weak = false;
     let mut complete = true;
+    let mut last_effort = String::new();
     loop {
         let (line, terminated) = match bounded_line(&mut reader) {
             Ok(Some(v)) => v,
@@ -304,6 +342,10 @@ pub(super) fn parse_file_from(
             complete = false;
             continue;
         };
+        let line_effort = clean_effort(&obj, obj.get("message").unwrap_or(&Value::Null));
+        if !line_effort.is_empty() {
+            last_effort = line_effort.clone();
+        }
         if obj.get("type").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
@@ -331,6 +373,11 @@ pub(super) fn parse_file_from(
             continue;
         }
         let model = clean_model(&msg["model"]);
+        let effort = if !line_effort.is_empty() {
+            line_effort
+        } else {
+            last_effort.clone()
+        };
         let msg_id = msg.get("id").and_then(Value::as_str).unwrap_or("");
         let request_id = obj.get("requestId").and_then(Value::as_str).unwrap_or("");
         let session = obj
@@ -370,6 +417,7 @@ pub(super) fn parse_file_from(
             message_key,
             ts: current_ts,
             model,
+            effort,
             counts,
             account: None,
             weak: is_weak,
@@ -384,6 +432,9 @@ pub(super) fn parse_file_from(
                 }
                 if old.model == "unknown" {
                     old.model = event.model.clone();
+                }
+                if old.effort.is_empty() && !event.effort.is_empty() {
+                    old.effort = event.effort.clone();
                 }
             })
             .or_insert(event);
@@ -490,7 +541,7 @@ pub(super) fn open_ledger(path: &Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|_| "usage ledger cannot be opened")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|_| "usage ledger busy")?;
-    conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS events(event_key TEXT PRIMARY KEY,message_key TEXT,ts INTEGER NOT NULL,model TEXT NOT NULL,input INTEGER NOT NULL,output INTEGER NOT NULL,creation INTEGER NOT NULL,cache_read INTEGER NOT NULL,reasoning INTEGER,account_key TEXT,weak INTEGER NOT NULL,sidechain INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS files(file_key TEXT PRIMARY KEY,size INTEGER NOT NULL,mtime INTEGER NOT NULL,offset INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS boundaries(ts INTEGER NOT NULL,account_key TEXT); CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);").map_err(|_| "usage ledger schema unavailable")?;
+    conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS events(event_key TEXT PRIMARY KEY,message_key TEXT,ts INTEGER NOT NULL,model TEXT NOT NULL,effort TEXT NOT NULL DEFAULT '',input INTEGER NOT NULL,output INTEGER NOT NULL,creation INTEGER NOT NULL,cache_read INTEGER NOT NULL,reasoning INTEGER,account_key TEXT,weak INTEGER NOT NULL,sidechain INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS files(file_key TEXT PRIMARY KEY,size INTEGER NOT NULL,mtime INTEGER NOT NULL,offset INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS boundaries(ts INTEGER NOT NULL,account_key TEXT); CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);").map_err(|_| "usage ledger schema unavailable")?;
     let has_offset: bool = conn
         .prepare("PRAGMA table_info(files)")
         .ok()
@@ -553,6 +604,24 @@ pub(super) fn open_ledger(path: &Path) -> Result<Connection, String> {
             [],
         )
         .map_err(|_| "usage ledger migration failed")?;
+    }
+    let has_effort: bool = conn
+        .prepare("PRAGMA table_info(events)")
+        .ok()
+        .and_then(|mut q| {
+            q.query_map([], |r| r.get::<_, String>(1))
+                .ok()
+                .map(|rows| rows.flatten().any(|n| n == "effort"))
+        })
+        .unwrap_or(false);
+    if !has_effort {
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN effort TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(|_| "usage ledger migration failed")?;
+        conn.execute("UPDATE files SET guard=''", [])
+            .map_err(|_| "usage ledger migration failed")?;
     }
     conn.execute_batch("CREATE INDEX IF NOT EXISTS events_timestamp ON events(ts); CREATE INDEX IF NOT EXISTS events_message ON events(message_key,sidechain);")
         .map_err(|_| "usage ledger index unavailable")?;
@@ -747,7 +816,7 @@ pub(super) fn persist_scan(
                 .map_err(|_| "usage replay cleanup failed")?;
             }
         }
-        tx.execute("INSERT INTO events(event_key,message_key,ts,model,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) ON CONFLICT(event_key) DO UPDATE SET ts=MAX(events.ts,excluded.ts),input=MAX(events.input,excluded.input),output=MAX(events.output,excluded.output),creation=MAX(events.creation,excluded.creation),cache_read=MAX(events.cache_read,excluded.cache_read),reasoning=CASE WHEN events.reasoning IS NULL THEN excluded.reasoning WHEN excluded.reasoning IS NULL THEN events.reasoning ELSE MAX(events.reasoning,excluded.reasoning) END,model=CASE WHEN events.model='unknown' THEN excluded.model ELSE events.model END,weak=MIN(events.weak,excluded.weak)",params![e.event_key,e.message_key,e.ts as i64,e.model,e.counts.input as i64,e.counts.output as i64,e.counts.creation as i64,e.counts.read as i64,e.counts.reasoning.map(|x|x as i64),e.account,e.weak as i64,e.sidechain as i64]).map_err(|_|"usage event write failed")?;
+        tx.execute("INSERT INTO events(event_key,message_key,ts,model,effort,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(event_key) DO UPDATE SET ts=MAX(events.ts,excluded.ts),input=MAX(events.input,excluded.input),output=MAX(events.output,excluded.output),creation=MAX(events.creation,excluded.creation),cache_read=MAX(events.cache_read,excluded.cache_read),reasoning=CASE WHEN events.reasoning IS NULL THEN excluded.reasoning WHEN excluded.reasoning IS NULL THEN events.reasoning ELSE MAX(events.reasoning,excluded.reasoning) END,model=CASE WHEN events.model='unknown' THEN excluded.model ELSE events.model END,effort=CASE WHEN excluded.effort!='' THEN excluded.effort ELSE events.effort END,weak=MIN(events.weak,excluded.weak)",params![e.event_key,e.message_key,e.ts as i64,e.model,e.effort,e.counts.input as i64,e.counts.output as i64,e.counts.creation as i64,e.counts.read as i64,e.counts.reasoning.map(|x|x as i64),e.account,e.weak as i64,e.sidechain as i64]).map_err(|_|"usage event write failed")?;
     }
     for (key, size, mtime, offset, guard) in cache {
         tx.execute("INSERT INTO files(file_key,size,mtime,offset,guard) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(file_key) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,offset=excluded.offset,guard=excluded.guard",params![key,*size as i64,*mtime as i64,*offset as i64,guard]).map_err(|_|"usage cache write failed")?;
@@ -1574,18 +1643,19 @@ pub(super) fn read_at_with_timezone_now(
     }
     let mut rows = Vec::new();
     {
-        let mut q=conn.prepare("SELECT COALESCE(account_key,''),ts,model,input,output,creation,cache_read,reasoning FROM events WHERE ts>=?1 AND ts<=?2 ORDER BY ts").map_err(|_|"usage ledger unavailable")?;
+        let mut q=conn.prepare("SELECT COALESCE(account_key,''),ts,model,COALESCE(effort,''),input,output,creation,cache_read,reasoning FROM events WHERE ts>=?1 AND ts<=?2 ORDER BY ts").map_err(|_|"usage ledger unavailable")?;
         let mapped = q
             .query_map(params![weak_from, weak_to], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, i64>(1)?.max(0) as u64,
                     r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(3)?,
                     r.get::<_, i64>(4)?,
                     r.get::<_, i64>(5)?,
                     r.get::<_, i64>(6)?,
-                    r.get::<_, Option<i64>>(7)?,
+                    r.get::<_, i64>(7)?,
+                    r.get::<_, Option<i64>>(8)?,
                 ))
             })
             .map_err(|_| "usage ledger unavailable")?;
@@ -1599,7 +1669,8 @@ pub(super) fn read_at_with_timezone_now(
     let mut unknown = UsageTotals::default();
     let mut buckets: BTreeMap<i64, UsageTotals> = BTreeMap::new();
     let mut models: BTreeMap<String, UsageTotals> = BTreeMap::new();
-    for (owner, ts, model, i, o, c, r, reason) in rows {
+    let mut model_efforts: BTreeMap<String, BTreeMap<String, UsageTotals>> = BTreeMap::new();
+    for (owner, ts, model, effort, i, o, c, r, reason) in rows {
         if start.is_some_and(|s| ts < s)
             || end.is_some_and(|e| ts >= e)
             || ts > snapshot_now
@@ -1644,7 +1715,21 @@ pub(super) fn read_at_with_timezone_now(
                 }
             };
             add_row(buckets.entry(bucket).or_default(), i, o, c, r, reason);
-            add_row(models.entry(model).or_default(), i, o, c, r, reason);
+            add_row(models.entry(model.clone()).or_default(), i, o, c, r, reason);
+            if !effort.is_empty() {
+                add_row(
+                    model_efforts
+                        .entry(model)
+                        .or_default()
+                        .entry(effort)
+                        .or_default(),
+                    i,
+                    o,
+                    c,
+                    r,
+                    reason,
+                );
+            }
         }
     }
     if unknown.requests > 0 {
@@ -1752,7 +1837,26 @@ pub(super) fn read_at_with_timezone_now(
         granularity: if hourly { "hour" } else { "day" }.into(),
         models: models
             .into_iter()
-            .map(|(model, totals)| UsageModel { model, totals })
+            .map(|(model, totals)| {
+                let mut efforts: Vec<UsageEffort> = model_efforts
+                    .remove(&model)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(effort, totals)| UsageEffort { effort, totals })
+                    .collect();
+                efforts.sort_by(|a, b| {
+                    b.totals
+                        .total_tokens
+                        .cmp(&a.totals.total_tokens)
+                        .then_with(|| effort_rank(&a.effort).cmp(&effort_rank(&b.effort)))
+                        .then_with(|| a.effort.cmp(&b.effort))
+                });
+                UsageModel {
+                    model,
+                    totals,
+                    efforts,
+                }
+            })
             .collect(),
         warnings,
         attribution,

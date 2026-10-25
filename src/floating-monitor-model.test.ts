@@ -5,11 +5,13 @@
 
 import { describe, expect, test } from 'bun:test'
 import {
+  computeContextMeter,
   computeMonitorWindowBar,
   deriveMonitorActivityMode,
   formatCompactCount,
   formatExhaustionEta,
   formatVelocityLabel,
+  formatWindowResetLabel,
   recommendedMonitorPollIntervalMs,
 } from './floating-monitor-model'
 import {
@@ -70,6 +72,27 @@ describe('floating-monitor-model', () => {
     })
     expect(computeMonitorWindowBar(80).tone).toBe('warn')
     expect(computeMonitorWindowBar(92).tone).toBe('danger')
+  })
+
+  test('computes context meter and window reset labels cleanly', () => {
+    expect(computeContextMeter(undefined)).toEqual({
+      usedPct: null,
+      fillWidthPct: 0,
+      tone: 'unknown',
+    })
+    expect(computeContextMeter(40)).toEqual({
+      usedPct: 40,
+      fillWidthPct: 40,
+      tone: 'ok',
+    })
+    expect(computeContextMeter(75).tone).toBe('warn')
+    expect(computeContextMeter(94).tone).toBe('danger')
+
+    expect(formatWindowResetLabel('14h 11m', false, '7d', 'zh')).toBe('重置 14h 11m')
+    expect(formatWindowResetLabel('14h 11m', false, '7d', 'en')).toBe('Reset 14h 11m')
+    expect(formatWindowResetLabel('', true, '5h', 'zh')).toBe('重置 5h')
+    expect(formatWindowResetLabel('', true, '5h', 'en')).toBe('Reset 5h')
+    expect(formatWindowResetLabel('', false, '5h', 'zh')).toBe('—')
   })
 
   test('cross-window storage reload synchronizes preferences and custom wallpaper', () => {

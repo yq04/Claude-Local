@@ -142,6 +142,12 @@ export function formatExhaustionEta(
     : `约 ${hours}h ${mins}m 触顶`
 }
 
+export interface MonitorContextMeter {
+  usedPct: number | null
+  fillWidthPct: number
+  tone: MonitorBarTone
+}
+
 export function computeMonitorWindowBar(usedPct: number | undefined | null): MonitorWindowBar {
   if (typeof usedPct !== 'number' || !Number.isFinite(usedPct)) {
     return {
@@ -161,6 +167,41 @@ export function computeMonitorWindowBar(usedPct: number | undefined | null): Mon
     fillWidthPct: remaining === 0 ? 0 : Math.max(4, remaining),
     tone,
   }
+}
+
+export function computeContextMeter(contextUsedPct: number | undefined | null): MonitorContextMeter {
+  if (typeof contextUsedPct !== 'number' || !Number.isFinite(contextUsedPct)) {
+    return {
+      usedPct: null,
+      fillWidthPct: 0,
+      tone: 'unknown',
+    }
+  }
+  const usedPct = Math.max(0, Math.min(100, Math.round(contextUsedPct)))
+  const tone: MonitorBarTone =
+    usedPct >= 90 ? 'danger' : usedPct >= 70 ? 'warn' : 'ok'
+  return {
+    usedPct,
+    fillWidthPct: usedPct === 0 ? 0 : Math.max(8, usedPct),
+    tone,
+  }
+}
+
+export function formatWindowResetLabel(
+  countdown: string | undefined | null,
+  inferred: boolean,
+  windowTag: '5h' | '7d',
+  language: Locale = 'zh',
+): string {
+  const prefix = language === 'en' ? 'Reset' : '重置'
+  const trimmed = (countdown ?? '').trim()
+  if (trimmed.length > 0) {
+    return `${prefix} ${trimmed}`
+  }
+  if (inferred) {
+    return `${prefix} ${windowTag}`
+  }
+  return '—'
 }
 
 export function postMonitorBusMessage(message: MonitorBusMessage): void {

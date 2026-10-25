@@ -25,6 +25,13 @@ export const KOOKEEY_REFERRAL_URL = 'https://www.kookeey.com/?aff=14151075';
 
 const claudeDomains = ['claude.ai', 'api.anthropic.com', 'platform.claude.com', 'downloads.claude.ai'] as const;
 
+const domainRoleKeys: Record<(typeof claudeDomains)[number], string> = {
+  'claude.ai': 'network.role_claude_ai',
+  'api.anthropic.com': 'network.role_api',
+  'platform.claude.com': 'network.role_platform',
+  'downloads.claude.ai': 'network.role_downloads',
+};
+
 export function buildAiProxyPrompt(locale: Locale = 'zh'): string {
   return (locale === 'en' ? [
     'I have an iKuuu subscription and a Kookeey US static residential SOCKS5 proxy. Help configure Clash Verge Rev for Claude-Local, Claude Code and Claude websites.',
@@ -114,6 +121,7 @@ export function VpsPanel() {
             <div className="network-action-row">
               <div className="network-action-main">
                 <div className="network-action-head">
+                  <span className="local-badge" aria-hidden="true">01</span>
                   <h2 id="ikuuu-setup-title">{t('准备前置专线（iKuuu）')}</h2>
                 </div>
                 <p className="network-action-desc">
@@ -139,6 +147,7 @@ export function VpsPanel() {
             <div className="network-action-row">
               <div className="network-action-main">
                 <div className="network-action-head">
+                  <span className="local-badge" aria-hidden="true">02</span>
                   <h2 id="kookeey-setup-title">{t('准备美国静态家宽（Kookeey）')}</h2>
                 </div>
                 <p className="network-action-desc">
@@ -164,6 +173,7 @@ export function VpsPanel() {
             <div className="network-action-row">
               <div className="network-action-main">
                 <div className="network-action-head">
+                  <span className="local-badge" aria-hidden="true">03</span>
                   <h2 id="ai-setup-title">{t('复制提示词交给 AI 自动配置')}</h2>
                 </div>
                 <p className="network-action-desc">
@@ -189,8 +199,11 @@ export function VpsPanel() {
         {/* Claude 服务连通性检测 */}
         <section className="domain-diagnostics" aria-labelledby="diagnostics-title" data-status={phase} aria-busy={diagnosing}>
           <div className="domain-diagnostics-header">
-            <div className="network-action-head">
-              <h2 id="diagnostics-title">{t('Claude 服务连通性')}</h2>
+            <div className="domain-diagnostics-title-group">
+              <div className="network-action-head">
+                <h2 id="diagnostics-title">{t('Claude 服务连通性')}</h2>
+              </div>
+              <p className="system-hint">{t('仅在点击后检测服务连通性；结果不代表账号可用或已验证公网出口。')}</p>
             </div>
             <Button
               variant="secondary"
@@ -202,13 +215,13 @@ export function VpsPanel() {
               {diagnosing ? t('检测中') : phase === 'idle' ? t('开始检测') : t('重新检测')}
             </Button>
           </div>
-          <p className="system-hint">{t('仅在点击后检测服务连通性；结果不代表账号可用或已验证公网出口。')}</p>
           <div className={`domain-outcome ${phase}`} role="status" aria-live="polite">
             <span className="domain-outcome-symbol" aria-hidden="true">
               {phase === 'passed' ? '✓' : phase === 'failed' ? '×' : phase === 'checking' ? '◌' : '·'}
             </span>
             <strong>{t(statusText)}</strong>
             {diagnostics && !diagnosticsError && <span>{t('已通过 {v0} / {v1} 项', {v0: passed, v1: claudeDomains.length})}</span>}
+            {phase === 'idle' && <span>{t('network.idleOutcomeHint')}</span>}
             {diagnosticsError && <p>{t(diagnosticsError)}</p>}
           </div>
           <ul className="domain-diagnostics-list">
@@ -218,7 +231,10 @@ export function VpsPanel() {
               return (
                 <li key={domain} className={`domain-diagnostics-item ${status}`}>
                   <div className="domain-item-info">
-                    <span className="domain-name">{domain}</span>
+                    <div className="domain-name-row">
+                      <span className="domain-name">{domain}</span>
+                      <span className="domain-role">{t(domainRoleKeys[domain])}</span>
+                    </div>
                     {item && (
                       <span className="domain-detail">
                         {item.status_code ? `HTTP ${item.status_code} · ` : ''}

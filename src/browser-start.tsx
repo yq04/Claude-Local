@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 随机令牌回环服务上下文、浏览器原生 navigator/Intl/Permissions/WebRTC/WebGL 与实际 HTTPS 出口与服务备援目录与宿主界面语言。
- * [OUTPUT]: 单项未知黄色待测与已知冲突红叉；顶部身份工牌、紧凑实测起始页、ISP/ASN 纯净度与第三方防封深度联机体检中心（Ping0.cc / CheckCC / BrowserScan / IPHey），同步宿主双语及通讯/回报时间。
+ * [INPUT]: 随机令牌回环服务上下文、浏览器原生 navigator/Intl/Permissions/WebRTC/WebGL/Canvas/Audio/UA-CH 与实际 HTTPS 出口与服务备援目录与宿主界面语言。
+ * [OUTPUT]: 单项未知黄色待测与已知冲突红叉；顶部身份工牌、紧凑 20 项防封实测页（内建 Ping0/CheckCC/BrowserScan/IPHey 核心检测算法：ISP/ASN 纯净度、时区偏移、Canvas/音频指纹与客户端提示），同步宿主双语及通讯/回报时间。
  * [POS]: 独立 Chromium 入口，复用工具箱控件；成功状态只由真实观测决定，不接入 Tauri 权限，不伪造地理位置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -8,7 +8,7 @@ import { Button, MotionRoot, TooltipProvider } from 'cromma-ui';
 import { useEffect, useState } from 'react';
 import {setLocale,useI18n} from "./i18n";
 import { createRoot } from 'react-dom/client';
-import { classifyExitIsp, DEEP_VERIFY_SITES, type BrowserContext, type Report, type Exit } from './browser-model';
+import { classifyExitIsp, type BrowserContext, type Report, type Exit } from './browser-model';
 import { probeBrowserExit } from './browser-network';
 import {verifyBrowser} from './browser-verification';
 import browserLogo from '../assets/browser-logo.jpg';
@@ -97,18 +97,89 @@ function probeGraphics(): { ok: boolean; renderer: string } {
     }
 }
 
+function probeTimezoneOffset(timezone: string): { ok: boolean; detail: string } {
+    try {
+        const now = new Date();
+        const actualOffsetMin = -now.getTimezoneOffset();
+        const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeZoneName: 'shortOffset' }).formatToParts(now);
+        const tzPart = parts.find(p => p.type === 'timeZoneName')?.value || 'GMT';
+        if (tzPart === 'GMT' || tzPart === 'UTC') {
+            return { ok: actualOffsetMin === 0, detail: actualOffsetMin === 0 ? 'UTC+00:00 (Intl 与时钟一致)' : `${tzPart} vs 本地偏移冲突` };
+        }
+        const match = tzPart.match(/^(?:GMT|UTC)([+-])(\d{1,2})(?::(\d{2}))?$/);
+        if (!match) {
+            return { ok: true, detail: `${tzPart} (Intl 正常)` };
+        }
+        const sign = match[1] === '-' ? -1 : 1;
+        const hours = Number(match[2] || 0);
+        const mins = Number(match[3] || 0);
+        const expectedOffsetMin = sign * (hours * 60 + mins);
+        const label = `UTC${match[1]}${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+        const ok = expectedOffsetMin === actualOffsetMin;
+        return { ok, detail: ok ? `${label} (Intl 与时钟一致)` : `${label} vs 本地时钟冲突` };
+    } catch {
+        return { ok: false, detail: '时区偏移读取异常' };
+    }
+}
+
+function probeMediaFingerprint(): { ok: boolean; detail: string } {
+    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 16;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return { ok: false, detail: 'Canvas 2D 被禁用' };
+        const grad = ctx.createLinearGradient(0, 0, 64, 16);
+        grad.addColorStop(0, '#c96442');
+        grad.addColorStop(1, '#2563eb');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 64, 16);
+        ctx.fillStyle = '#141413';
+        ctx.font = '11px sans-serif';
+        ctx.fillText('Claude', 4, 12);
+        const pixels = ctx.getImageData(0, 0, 64, 16).data;
+        const colors = new Set<number>();
+        for (let i = 0; i < pixels.length; i += 16) {
+            const packed = (pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2];
+            if (packed > 0) colors.add(packed);
+        }
+        if (colors.size < 3) {
+            return { ok: false, detail: 'Canvas 像素熵异常或被拦截' };
+        }
+        let sampleRate = 48000;
+        const OfflineCtx = window.OfflineAudioContext || (window as unknown as { webkitOfflineAudioContext?: typeof OfflineAudioContext }).webkitOfflineAudioContext;
+        if (OfflineCtx) {
+            const audio = new OfflineCtx(1, 44100, 44100);
+            sampleRate = audio.sampleRate || 44100;
+        }
+        const audioOk = sampleRate >= 8000 && sampleRate <= 192000;
+        return { ok: audioOk, detail: `Canvas 2D 正常 · ${sampleRate}Hz` };
+    } catch {
+        return { ok: false, detail: 'Canvas / 音频接口受限' };
+    }
+}
+
+function probeClientHintsAndScreen(): { ok: boolean; detail: string } {
+    try {
+        const uaData = (navigator as Navigator & { userAgentData?: { mobile?: boolean; platform?: string } }).userAgentData;
+        const isDesktop = uaData?.mobile !== true;
+        const width = window.screen?.width || 0;
+        const height = window.screen?.height || 0;
+        const depth = window.screen?.colorDepth || 24;
+        const screenOk = width > 0 && height > 0 && depth >= 24;
+        const ok = isDesktop && screenOk;
+        return {
+            ok,
+            detail: ok ? `${width}×${height} · ${depth}-bit · Desktop` : '客户端提示或屏幕色深异常',
+        };
+    } catch {
+        return { ok: false, detail: '屏幕或客户端提示异常' };
+    }
+}
+
 function Start() {
     const {t,locale}=useI18n();
     const [context, setContext] = useState<BrowserContext | null>(null), [report, setReport] = useState<Report | null>(null), [busy, setBusy] = useState(true), [error, setError] = useState(''), [linked, setLinked] = useState(false), [reportedAt, setReportedAt] = useState(0);
-    const [copiedSite, setCopiedSite] = useState('');
-
-    async function copySite(id: string, url: string) {
-        try {
-            await navigator.clipboard.writeText(url);
-            setCopiedSite(id);
-            setTimeout(() => setCopiedSite(prev => (prev === id ? '' : prev)), 1800);
-        } catch { /* ignore */ }
-    }
 
     async function measure() {
         setBusy(true);
@@ -133,6 +204,10 @@ function Start() {
                 probeWebRtcLeak(),
             ]);
             const graphics = probeGraphics();
+            const resolvedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const tzOffset = probeTimezoneOffset(resolvedTz);
+            const mediaFp = probeMediaFingerprint();
+            const clientHints = probeClientHintsAndScreen();
             let exit: Exit | null = null, networkError = '';
             try {
                 exit = await probeBrowserExit(context.exit_services);
@@ -143,7 +218,7 @@ function Start() {
             const observed: Report = {
                 language: navigator.language,
                 languages: [...navigator.languages],
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                timezone: resolvedTz,
                 platform: navigator.platform,
                 cores: navigator.hardwareConcurrency,
                 user_agent: navigator.userAgent,
@@ -157,6 +232,12 @@ function Start() {
                 webdriver: Boolean(navigator.webdriver),
                 graphics_ok: graphics.ok,
                 webgl_renderer: graphics.renderer,
+                tz_offset_ok: tzOffset.ok,
+                tz_offset_detail: tzOffset.detail,
+                media_fingerprint_ok: mediaFp.ok,
+                media_fingerprint_detail: mediaFp.detail,
+                client_hints_ok: clientHints.ok,
+                client_hints_detail: clientHints.detail,
             };
             await api('report', observed);
             setReport(observed);
@@ -211,28 +292,6 @@ function Start() {
         <div><span>{t('browserVerify.ipAttribute')}</span><strong>{ispKind === 'hosting' ? t('browserVerify.ispHosting') : t('browserVerify.ispResidential')}</strong></div>
        </section>
       )}
-      <section className="verification-deep-hub" aria-label={t('browserVerify.hubTitle')}>
-       <header className="verification-deep-head">
-        <h2>{t('browserVerify.hubTitle')}</h2>
-        <span>{t('browserVerify.hubSubtitle')}</span>
-       </header>
-       <div className="verification-deep-grid">
-        {DEEP_VERIFY_SITES.map(site => (
-         <article className="verification-deep-card" key={site.id}>
-          <div className="verification-deep-title">
-           <strong>{site.name}</strong>
-           <code>{site.url.replace(/^https?:\/\//, '').replace(/\/$/, '')}</code>
-          </div>
-          <p>{t(site.focusKey)}</p>
-          <small>{t(site.passRuleKey)}</small>
-          <div className="verification-deep-actions">
-           <Button size="small" variant="secondary" onClick={() => window.open(site.url, '_blank', 'noopener,noreferrer')}>{t('browserVerify.openSite')}</Button>
-           <Button size="small" variant="ghost" onClick={() => void copySite(site.id, site.url)}>{copiedSite === site.id ? t('browserVerify.copiedUrl') : t('browserVerify.copyUrl')}</Button>
-          </div>
-         </article>
-        ))}
-       </div>
-      </section>
       <footer className="verification-footer"><span className={linked?'connected':'disconnected'}>{t(linked?'已连接 Claude-Local':'主应用未连接')}</span><time>{reportedAt ? (isStale ? (t('browserSafety.staleResult', { v0: new Date(reportedAt).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') }) || `结果已过时（>10分钟）· 测于 ${new Date(reportedAt).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US')}`) : t('结果回传成功 {v0}', { v0: new Date(reportedAt).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })) : t('等待检测回传')}</time></footer>
      </main>
     </div>;

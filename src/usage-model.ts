@@ -22,6 +22,15 @@ export type UsageAttributionConfig = {
   unassigned_requests: number;
   unassigned_tokens: number;
 };
+export type UsageEffort = {
+  effort: string;
+  totals: UsageTotals;
+};
+export type UsageModel = {
+  model: string;
+  totals: UsageTotals;
+  efforts?: UsageEffort[];
+};
 export type UsageSnapshot = {
   generated_at: number;
   tracking_since: number | null;
@@ -31,10 +40,18 @@ export type UsageSnapshot = {
   daily: UsageDay[];
   granularity?: 'hour' | 'day';
   timezone?: string;
-  models: {model: string; totals: UsageTotals}[];
+  models: UsageModel[];
   warnings: string[];
   attribution?: UsageAttributionConfig;
 };
+export function detectModelFamily(model: string): {key: 'opus' | 'sonnet' | 'fable' | 'haiku' | 'other'; label: string | null} {
+  const lower = model.toLowerCase();
+  if (lower.includes('opus')) return {key: 'opus', label: 'Opus'};
+  if (lower.includes('fable')) return {key: 'fable', label: 'Fable'};
+  if (lower.includes('sonnet')) return {key: 'sonnet', label: 'Sonnet'};
+  if (lower.includes('haiku')) return {key: 'haiku', label: 'Haiku'};
+  return {key: 'other', label: null};
+}
 export const emptyUsage = (): UsageTotals => ({input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: 0, reasoning_tokens: null, requests: 0});
 export function cacheHitRate(totals: UsageTotals): number | null {
   const prompt = totals.input_tokens + totals.cache_creation_tokens + totals.cache_read_tokens;

@@ -3,10 +3,10 @@
 额度入口默认只读取本地身份摘要与 CLI 被动观测；identities_quota_revision 约2秒检查账本和配置文件元数据，首次检查及变化时刷新摘要，摘要读取成功后才确认版本，失败或旧响应被替代则下次重试。元数据检查不读取正文。在线额度查询、前台定时查询和绑定浏览器资料补充放在标题⋯菜单打开的弹窗；手动批次按冻结指纹验证所有账号、最多两路并发，运行中可恢复/取消，失败状态不覆盖本地额度。
 共享操作控件：普通 Button 统一使用中性 secondary 皮肤、28px 高与10px水平内距，按文字占宽；图标按钮、导航和180×286工牌内专用几何保留，危险确认显式红色。账号筛选框随已选文本占宽，弹出选项保持可读宽度；不修改 vendor 原语或业务行为。
 界面只管理输入、状态和执行记录；本机权限交给原生层；网络页提供发行者批准的固定推广链接和配置提示词复制，用户点击后才检测固定 Claude 服务连通性，没有收件人链接编辑、Skill 安装或自动外部导航。两入口复用 YAML 中英文文案，原始诊断保留到呈现时翻译；系统语言与界面语言独立。
-browser.tsx: 统一全宽卡片风格的浏览器环境控制台（启动内置浏览器与 CLI 授权联动、绑定身份隐私遮罩与状态/CLI代理不一致提醒及一键同步、目标地区环境一致性核验与一键对齐、按身份自动隔离的日常释放缓存与排障全清理）及默认折叠的指纹与代理高级设置抽屉；去除机械序号徽章；站点永久删除使用 Alert 警告并默认取消；复用 Cromma UI 和活动日志。缓存明细与高级设置统一使用 Cromma Disclosure，未保存修改时高级设置保持展开。
-browser-model.ts: 有界浏览器身份摘要与同步状态；工具箱与起始页共享配置、目标地区、机器、出口服务目录、ASN/ISP/机房分类（classifyExitIsp）、第三方深度核验站点目录（DEEP_VERIFY_SITES）、观测接收时间与默认浏览器契约；effectiveBrowserTarget 统一解析跟随电脑的有效时区/语言及 en→en-US，不接入原生权限；三平台设备/CPU/版本核验由共用函数保持一致，Windows 必须 Win32。
-browser-start.tsx: 检测区上方紧凑黑色身份工牌、绑定状态与不匹配/未知/断连；真实观测与回报编排（含 WebRTC 泄漏、WebGL 硬件渲染与 webdriver 反自动化探针）、ISP/ASN 属性展示及第三方防封深度联机体检中心（Ping0.cc / CheckCC.org / BrowserScan / IPHey）；重测清空旧结果，断连/未知/上报失败不通过；不接入 Tauri 权限。
-browser-verification.ts: 纯核验模型，逐项实际/目标值与失败清单，沿用宿主配置时区/语言/平台规则；只有完整回传且所有实测匹配才通过。
+browser.tsx: 统一全宽卡片风格的浏览器环境控制台（顶栏标题右侧内联集成「打开浏览器并实测」「设为默认浏览器」与「正常退出浏览器」、绑定身份隐私遮罩与状态/CLI代理不一致提醒及一键同步、10项（5×2满格）目标地区与防封特征核验及一键对齐、按身份自动隔离的日常释放缓存与排障全清理）及默认折叠的指纹与代理高级设置抽屉（底部内联开关与保存动作对齐）；去除机械序号徽章；站点永久删除使用 Alert 警告并默认取消；复用 Cromma UI 和活动日志。缓存明细与高级设置统一使用 Cromma Disclosure，未保存修改时高级设置保持展开。
+browser-model.ts: 有界浏览器身份摘要与同步状态；工具箱与起始页共享配置、目标地区、机器、出口服务目录、ASN/ISP/机房分类（classifyExitIsp）、时区偏移/Canvas音频/客户端提示探针字段、观测接收时间与默认浏览器契约；effectiveBrowserTarget 统一解析跟随电脑的有效时区/语言及 en→en-US，不接入原生权限；三平台设备/CPU/版本核验由共用函数保持一致，Windows 必须 Win32。
+browser-start.tsx: 检测区上方紧凑黑色身份工牌、绑定状态与不匹配/未知/断连；真实观测与回报编排（内建 WebRTC 泄漏、WebGL 硬件渲染、webdriver 反自动化、CheckCC 时区偏移、BrowserScan Canvas/音频采样、IPHey UA-CH/屏幕色深与 Ping0 ISP/ASN 属性全套 20 项 5×4 满格原生体检）；重测清空旧结果，断连/未知/上报失败不通过；不接入 Tauri 权限。
+browser-verification.ts: 纯核验模型，20项逐项实际/目标值与失败清单，沿用宿主配置时区/语言/平台规则与内建第三方防封算法；只有完整回传且所有实测匹配才通过。
 browser-verification.test.ts: 跨平台虚构上下文验证三态、失败原因、连接/定位未知和目标时区改变，不访问网络。
 browser-network.ts: 按宿主服务目录经浏览器当前路由检测出口，限流/故障切换服务，校验结果并保留失败原因。
 browser-network.test.ts: 模拟限流、备用响应与非法出口，验证故障恢复和错误信息，不访问外网。
@@ -37,7 +37,7 @@ claude-residue-panel.tsx: 身份页内带「切号已自动清理」状态徽章
 cleaner-activity.tsx: 单次调用隔离的 ActivityController 与身份卡片正下方 IdentityOperationProgress；身份/空身份/残留清理共用真实事件阶段、局部 n/N 与脉冲，不预填步骤或按时间推算百分比，未知总量只显示运行。失败/回滚/完成带警告分开呈现，保留实际耗时和原始日志用于即时切换语言；其他页面沿用 CleanupActivity。
 cleaner-model.ts: 文件残留快照类型与选择规则、POSIX/Windows 路径父子去重、子项排除、重扫编号映射与规模格式化，供预览和执行共享。
 cleaner-model.test.ts: 预设、跨平台父子选择隔离与重扫不扩大选择的回归，不调用清理命令。
-system.tsx: 时区/语言并排的等宽圆角卡片，状态徽章随标题布局，目标选择独占一行、操作紧凑靠右；定位为下方全宽横条，内容窄于572px时卡片堆叠。当前观测与目标草稿分离，未知定位不显示关闭，保留平台判断、授权、错误和任务锁。
+system.tsx: 时区/语言并排的等宽圆角卡片，状态徽章随标题布局，目标选择小标题、下拉框与操作按钮合并为单行紧凑横排；定位为下方全宽横条，内容窄于572px时卡片堆叠。当前观测与目标草稿分离，未知定位不显示关闭，保留平台判断、授权、错误和任务锁。
 index.css: 系统字体与明确的 Microsoft YaHei UI 中文回退、中性黑白基础主题入口及共享控件扫描；Landing 的几何与纹理归 style.css。
 locales/: 双语 YAML 目录及导入类型，包含使用说明页的操作、安全和账号风险文案、软件设置页文案、智能环境托管文案、新账号 3 步添加指引文案以及 iKuuu + Kookeey 链式代理配置指南文案；见其 CLAUDE.md。
 i18n.ts: 共享界面语言订阅与文案格式化；优先精确键，动态原生结果按最具体模板匹配，未知诊断保留原文；切换语言保留 Claude-Local 主窗口标题，伴生核验页标题独立。
@@ -49,8 +49,8 @@ settings.tsx: 独立「软件设置」页；对齐 Cockpit Tools 顶栏左标题
 backup-panel.tsx / backup-panel.css: 软件设置的数据管理页内提供加密身份备份、只读预检、明确选择的救援证据副本、口令与完整性检查，以及创建新隔离恢复副本；固定显示备份范围和诊断标记，不接受覆盖已有文件，原身份库不会被恢复流程替换。
 settings-model.ts / settings-model.test.ts: 纯前端响应式视图偏好存储与消毒层（只保留有界面消费者的选项，旧版无效键读取即丢弃），同步根元素 .dark 类与 data-theme-mode / data-accent / data-sidebar / data-surface / data-backdrop / data-font / data-mono-font / data-reduce-motion / data-ui-scale 属性及 --glass-blur / --glass-opacity / --wallpaper-dim 光学毛玻璃 CSS 变量、页面缩放、一键主题预设（applyThemePreset）与 View Transitions 平滑切换辅助（startSmoothTransition）；不保存凭据或个人路径。
 wallpaper-store.ts / wallpaper-store.test.ts: 纯前端自定义本地壁纸引擎；在内存中通过 Canvas 将本地图片降采样压缩为高清 WebP/JPEG Data URI，利用感知色距提取壁纸主色调映射至 6 套 AccentTone（rgbToSuggestedAccent / sampleRgbaBufferForAccent），同步根元素 --custom-wallpaper-image 变量且绝不记录任何本地文件路径与文件名。
-floating-monitor.tsx / floating-monitor-model.ts / floating-monitor-model.test.ts / floating-monitor.css: 独立可开关无边框置顶「实时额度悬浮监控窗」（?window=monitor）与纯模型计算；100% 本地只读遥测（3s 活跃 / 12s 待机自适应节奏，零后台 OAuth 请求），展示当前账号 5h/7d 双槽进度、7d 消耗步调刻度、实时 Token 速率（tok/m）、燃烧速率与触顶预警（formatExhaustionEta）、缓存命中率及 200k 上下文水位，并通过 BroadcastChannel 与主窗口实时同步外观、玻璃参数与隐私打码状态。
-usage-statistics.tsx: CPAMP 分析层次适配的本地用量工作台；集中时间（今天/昨天/近7天/近30天/全部）/账号筛选与重置、默认自动归属未绑定历史用量、四张统一指标卡、趋势均值/峰值、图表/数据切换、模型响应/占比与账号明细。可见页面读取完成后等待30秒刷新，隐藏暂停、返回重读、卸载清理，同筛选错误保留旧数据；不更改 Python 配额采集或轮询 OAuth。时段与图表/数据切换使用 Cromma Tabs，统计口径说明使用 Disclosure，重置筛选使用 Button。
+floating-monitor.tsx / floating-monitor-model.ts / floating-monitor-model.test.ts / floating-monitor.css: 独立可开关无边框置顶固定尺寸「实时额度悬浮监控窗」（?window=monitor）与纯模型计算；100% 本地只读遥测（3s 活跃 / 12s 待机自适应节奏，零后台 OAuth 请求），参考 Token Monitor 采用 5h/7d 双列并排紧凑进度条、7d 消耗步调刻度、羽毛渐变分割线、活跃会话 200k 上下文微表与双宫格用量/速率磁贴，窗口尺寸恒定且禁止双击全屏，并通过 BroadcastChannel 与主窗口实时同步外观、玻璃参数与隐私打码状态。
+usage-statistics.tsx: CPAMP 分析层次适配的本地用量工作台；集中时间（今天/昨天/近7天/近30天/全部）/账号筛选与重置、默认自动归属未绑定历史用量、四张统一指标卡、趋势均值/峰值/活跃时段数、图表/数据切换、模型家族标签（Opus/Sonnet/Fable/Haiku）/响应/占比/Effort推理档位（max/xhigh/high/medium/low）分布、单次均值/缓存命中底栏与账号明细。可见页面读取完成后等待30秒刷新，隐藏暂停、返回重读、卸载清理，同筛选错误保留旧数据；不更改 Python 配额采集或轮询 OAuth。时段与图表/数据切换使用 Cromma Tabs，统计口径说明使用 Disclosure，重置筛选使用 Button。
 usage-trend.tsx / usage-statistics.css: 紧凑总Token SVG与响应式趋势/模型双栏；按真实小时区间呈现23/25小时和偏移标签，旧无区间快照兼容24槽，未来留空；键盘/指针精确值、筛选保护旧悬停索引，保持全页无横溢。
 usage-table.tsx: 本地时段明细视图；仅已发生时段，时间/总Token/响应数排序、每页10行、精确值与可聚焦局部横滚；切换视图、排序和翻页不发起IPC，刷新保留有效页码。
 usage-model.ts / usage-model.test.ts: 脱敏 Token 聚合契约、K/M/B 与精确值、缓存命中率；小时/自然日与完整历史补零、剔除未来的均值/峰值及合成测试；不读取身份配置或会话文件。

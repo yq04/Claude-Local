@@ -6,7 +6,7 @@ online.rs runtime probe: 每候选最多10秒，真实 cryptography/AES-GCM 冷�
 online.rs: 用户触发的固定端点额度读取与网页摘要导入；批量命令最多256个冻结指纹目标、共享Cleaner事务锁、双worker、按quota_identity去重（current优先）、逐账号quota-batch-progress事件与独立结果，重入固定busy；冻结State预校验一次，Python按expected指纹重新解析并提交校验。隐藏Python子进程、每子进程30s、有界stdin/stdout和固定错误状态，不输出凭据、不轮换授权、不切换身份。结果source仅接受oauth/browser，透传当前/旧真实观测时间。显式allow_browser_fallback=true时仅AuthRequired/Unavailable/NetworkError尝试已运行绑定资料，Python确认browser成功才覆盖OAuth结果；默认关闭。只读按quota_identity重建网页订阅/手动重置及逐字段观测时间，不继承未验证的旧缓存字段；Python保持所有额度/网页元数据文件唯一写入者。
 mod.rs: 当前/空/已保存身份（读取时经 Store::open 完成旧版索引、孤儿摘要清理、摘要离线额度惰性回填、只读 quota_ledger.json 跨账号同步、逐窗更新与可信服务端重置后的明确推定、死锁垃圾清理）、无需目录扫描的进程停止与切换/恢复/重命名/直接删除 Tauri 命令，复用 Cleaner 全局事务锁；进程停止通道可选且报告开始/真实完成/失败，兼容旧调用；UI 只接收目录和允许的账号显示字段及离线额度百分比。
 backup.rs / backup_tests.rs: PBKDF2-HMAC-SHA256 派生口令密钥并用现有 AES-GCM 帧格式加密限额流；常规副本通过 SQLite online backup 快照索引且仅打包主密钥与被索引引用的归档。救援模式只打包白名单直系证据文件并标记未验证，检查后恢复到新的私有隔离目录，不替换活动身份库；synthetic tests 覆盖认证/损坏拒绝、WAL 快照、目标冲突与新副本隔离，不访问真实身份。
-usage.rs / usage_tests.rs: 独立私有 SQLite Token 账本；JSONL完整行游标、8KiB头部/边界采样哈希、旧游标兼容和时间/回放索引；跨文件去重与累计值合并，保留HMAC归属。命名IANA时区按事件本地日历归组，真实小时含start_at/end_at和偏移标签，保留23/25小时及半小时转换；未来槽无虚构用量，旧offset调用继续兼容。只返回脱敏聚合，不写Claude配置或Python额度账本；采样仍不能证明任意中段从未改写，损坏文件保持重试。测试只用合成目录/日志。
+usage.rs / usage_tests.rs: 独立私有 SQLite Token 账本；JSONL完整行游标、8KiB头部/边界采样哈希、旧游标兼容和时间/回放索引；跨文件去重与累计值合并，保留HMAC归属与每模型推理档位（effort/perTurnEffort）分布统计。命名IANA时区按事件本地日历归组，真实小时含start_at/end_at和偏移标签，保留23/25小时及半小时转换；未来槽无虚构用量，旧offset调用继续兼容。只返回脱敏聚合，不写Claude配置或Python额度账本；采样仍不能证明任意中段从未改写，损坏文件保持重试。测试只用合成目录/日志。
 database.rs: 默认开启联动且保留显式关闭，SQLite v3 管理稳定账号槽位、不可变归档代次、HMAC 索引、脱敏身份摘要（含离线额度与孤儿摘要自动回收）、空身份临时记录回收、切换时间戳（active_since）与持久恢复状态；旧 v1/v2 事务迁移，覆盖指针与恢复标记同事务提交；短期进程内 Mutex 串行化文件创建到初始化提交，避免 Windows 创建句柄令并发 SQLite 打开降级只读，IMMEDIATE 事务继续保护并发迁移，返回后释放锁；凭据正文不入库。
 database_tests.rs: 临时规范目录与合成 SQLite 验证 24 轮 Barrier 并发首次建库、缺失保险库目录创建和旧 v1 迁移至 v3；连接显式释放后清理临时目录，不读取真实身份资料或调用原生/浏览器命令。
 store.rs: 先验收归档再切换工作区、原地保存快照、恢复后即时跨账号残留消毒与旧归档历史会话/项目路径无损合并、切换前采集 Token 用量和成功绑定/切换/恢复后的账号统计边界、失败回滚、独立恢复检查点与无新增备份删除；清除/恢复按完成源数量报告局部进度，凭据/提交/回滚显式阶段；关键阶段强制核验进程，文件循环每 250ms 复查。
@@ -17,7 +17,7 @@ catalog.rs: 有界读取账号 UUID/组织（缺失时邮箱/组织），以本�
 compression.rs: Zstandard 级别 3 流式压缩与校验和，读取侧限制窗口并按魔数兼容旧 gzip；外层认证协议不变。
 optimization_tests.rs: 虚构 A/B 连续切换、原地保存与离线额度摘要回填、空身份往返无泄漏、独立代理与仓库路径隔离、跨账号 plugins/model-catalog/groveConfigCache 与共享会话风控脱敏（含 api-request-blob/bridge-session 剥离、中断 tool_use/tool_result 成对自愈、tengu_exit 拆弹）、旧归档历史会话与项目映射无损合并、凭据刷新、跨组织隔离、覆盖崩溃恢复、压缩兼容与认证尾部拒绝；手动 500 会话性能样本不设不稳定的 CI 时间阈值。
 codec.rs: 压缩流与 ring AES-256-GCM 帧，独立归档密钥和认证结尾；拒绝篡改、截断与非法归档成员。
-private.rs: POSIX 0700/0600 与 Windows 创建时指定当前用户所有者/独占 DACL、原子写入；提供原子独占私有目录创建，已有目录仅校验不改写父级 DACL，拒绝所有者变化、链接和特殊文件。
+private.rs: POSIX 0700/0600 与 Windows 创建时指定当前用户所有者/独占 DACL、原子写入；提供原子独占私有目录创建与子目录可继承所有者访问控制自愈（ensure_owner_dacl，保留 Chromium AppContainer SID），拒绝所有者变化、链接和特殊文件。
 tests.rs: 临时账号/会话样本的空身份、恢复、配置保留、损坏/链接拒绝、选择删除、跨策略恢复和缺失主密钥拒绝；验证完成源计数、压缩/归档/提交先后与显式回滚，覆盖标准库默认写入（含 Windows 管理员默认所有者）与私有创建层，不接触真实账号。
 browser_link.rs: 回环页有界身份摘要（含当前本地 CLI 代理回传供不一致比对）、绑定不匹配/未知状态且无凭据输出；SQLite 身份到独占浏览器资料的绑定、身份 ID 派生非零种子与碰撞登记；选择指针随切换/回滚同事务提交，旧卡合并保留当前资料。
 browser_link_tests.rs: 默认勾选/显式关闭保留与身份摘要无令牌/不冒充网站账号；临时目录验证 A/B 复用、空资料轮换、迁移、种子碰撞与数据库拒绝不提交；无真实账号。

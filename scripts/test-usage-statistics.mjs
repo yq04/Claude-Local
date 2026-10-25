@@ -484,7 +484,7 @@ try {
   assert.equal(await identityCards.nth(1).locator('.identity-sub-resets-block').count(),0);
   assert.equal(await identityCards.nth(2).locator('[data-quota-window="5h"] i').count(),0);
   assert.match(await identityCards.nth(2).innerText(),/Max 20x/i);
-  for(const [windowName,datePattern] of [['5h',/^\d{2}:\d{2}$/],['7d',/^\d{2}-\d{2} \d{2}:\d{2}$/]]){
+  for(const [windowName,datePattern] of [['5h',/^\d{2}-\d{2} \d{2}:\d{2}$/],['7d',/^\d{2}-\d{2} \d{2}:\d{2}$/]]){
     const reset=identityCards.first().locator('[data-quota-window="'+windowName+'"] .identity-quota-reset');
     assert.match(await reset.locator('time.identity-reset-time').innerText(),datePattern,'Reset date/time must be readable text without a repeated reset prefix');
     const resetSemantics=await reset.evaluate(node=>[node.getAttribute('title'),node.getAttribute('aria-label'),...Array.from(node.querySelectorAll('[title],[aria-label]')).flatMap(child=>[child.getAttribute('title'),child.getAttribute('aria-label')])].filter(Boolean).join(' '));

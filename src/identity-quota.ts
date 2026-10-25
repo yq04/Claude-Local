@@ -44,7 +44,7 @@ export function evaluateWeeklyPace(used7d: number, reset7dSec: number | null | u
   const ahead = !suppressed && clampedUsed < 100 && deltaUsedPct >= 15;
   return {expectedUsedPct, expectedRemPct, deltaUsedPct, suppressed, ahead};
 }
-export function formatResetClock(resetSec: number | null | undefined, includeDate: boolean) {
+export function formatResetClock(resetSec: number | null | undefined, includeDate = true) {
   if (!resetSec) return '';
   const dt = new Date(resetSec * 1000);
   if (!Number.isFinite(dt.getTime())) return '';

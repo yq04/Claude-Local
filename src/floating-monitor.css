@@ -28,11 +28,12 @@
   isolation: isolate;
   width: 100vw;
   height: 100vh;
+  box-sizing: border-box;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 10px 12px;
-  gap: 7px;
+  padding: 9px 12px 10px;
+  gap: 5px;
   color: var(--foreground);
   font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
@@ -121,69 +122,81 @@
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding-bottom: 5px;
-  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+  position: relative;
   cursor: move;
+  flex-shrink: 0;
+}
+
+.monitor-hud-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    var(--border) 18%,
+    var(--border) 82%,
+    transparent 100%
+  );
+  pointer-events: none;
 }
 
 .monitor-hud-status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
   flex: 1;
 }
 
+.monitor-hud-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--local-accent);
+  flex-shrink: 0;
+}
+
 .monitor-hud-dot {
-  width: 8px;
-  height: 8px;
+  width: 6.5px;
+  height: 6.5px;
   border-radius: 999px;
   flex-shrink: 0;
   background: var(--muted-foreground);
-  opacity: 0.65;
+  opacity: 0.55;
   transition: background-color 220ms ease, box-shadow 220ms ease, opacity 220ms ease;
 }
 
 .monitor-hud-dot.is-active {
   opacity: 1;
   background: var(--hud-ok);
-  box-shadow: 0 0 0 3px var(--hud-ok-soft);
+  box-shadow: 0 0 0 2.5px var(--hud-ok-soft);
 }
 
 .monitor-hud-status-text {
-  font-size: 11.5px;
-  font-weight: 650;
-  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.monitor-hud-shield {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--hud-ok);
-  background: var(--hud-ok-soft);
-  border: 1px solid var(--hud-ok-border);
-  flex-shrink: 0;
-}
-
 .monitor-hud-controls {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   flex-shrink: 0;
   cursor: default;
 }
 
 .monitor-hud-icon-btn {
-  width: 22px;
-  height: 22px;
+  width: 21px;
+  height: 21px;
   padding: 0;
   border-radius: 6px;
   border: 1px solid transparent;
@@ -192,10 +205,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
   line-height: 1;
+  outline: none;
   cursor: pointer;
   transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.monitor-hud-icon-btn:focus-visible {
+  border-color: var(--local-accent);
 }
 
 .monitor-hud-icon-btn:hover {
@@ -204,10 +221,11 @@
   border-color: var(--border);
 }
 
-.monitor-hud-icon-btn.is-pinned {
+.monitor-hud-icon-btn.is-pinned,
+.monitor-hud-icon-btn.is-active-mode {
   color: var(--local-accent);
   background: var(--local-accent-soft);
-  border-color: color-mix(in srgb, var(--local-accent) 36%, transparent);
+  border-color: color-mix(in srgb, var(--local-accent) 34%, transparent);
 }
 
 .monitor-hud-account-row {
@@ -215,6 +233,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-shrink: 0;
+  cursor: move;
+}
+
+.monitor-hud-account-ident {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
 }
 
 .monitor-hud-account-name {
@@ -225,6 +252,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+.monitor-hud-account-check {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
 }
 
 .monitor-hud-badges {
@@ -241,103 +275,59 @@
   font-weight: 600;
   background: var(--local-accent-soft);
   color: var(--local-accent);
-  border: 1px solid color-mix(in srgb, var(--local-accent) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--local-accent) 28%, transparent);
 }
 
-.monitor-hud-badge.is-muted {
-  background: var(--muted);
-  color: var(--muted-foreground);
-  border-color: var(--border);
+/* Token Monitor 2-column side-by-side quota windows (5h | 7d) */
+.monitor-limit-windows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  flex-shrink: 0;
 }
 
-.monitor-hud-windows {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: 1;
-  justify-content: center;
+.monitor-limit-window {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
-.monitor-hud-window-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--card-elevated) 84%, transparent);
-  border: 1px solid var(--border);
-}
-
-.monitor-hud-window-top {
+.monitor-limit-text {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 6px;
-}
-
-.monitor-hud-window-left {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
   min-width: 0;
 }
 
-.monitor-hud-window-tag {
-  font-size: 10.5px;
-  font-weight: 700;
-  padding: 0 5px;
-  border-radius: 4px;
-  background: var(--accent);
-  color: var(--foreground);
-}
-
-.monitor-hud-window-pct {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--foreground);
-}
-
-.monitor-hud-window-reset {
-  font-size: 10.5px;
+.monitor-limit-label {
+  font-size: 11px;
+  font-weight: 500;
   color: var(--muted-foreground);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.monitor-hud-window-right {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  font-size: 10.5px;
-  color: var(--muted-foreground);
-}
-
-.monitor-hud-eta-warn {
-  padding: 0 5px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 650;
-  color: var(--hud-warn);
-  background: var(--hud-warn-soft);
-  border: 1px solid var(--hud-warn-border);
+.monitor-limit-pct {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--foreground);
+  white-space: nowrap;
 }
 
 .monitor-hud-track {
   position: relative;
   width: 100%;
   height: 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--foreground) 13%, transparent);
   overflow: visible;
 }
 
 .monitor-hud-fill {
   height: 100%;
-  border-radius: 999px;
+  border-radius: 3px;
   background: var(--hud-ok);
-  transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1), background-color 220ms ease;
+  transition: width 320ms cubic-bezier(0.22, 1, 0.36, 1), background-color 220ms ease;
 }
 
 .monitor-hud-fill.tone-warn {
@@ -364,23 +354,171 @@
   pointer-events: none;
 }
 
-.monitor-hud-footer {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 5px;
-  padding-top: 1px;
+.monitor-limit-reset {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-height: 13px;
+  min-width: 0;
 }
 
-.monitor-hud-metric-pill {
+.monitor-limit-reset-text {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-hud-eta-warn {
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 650;
+  color: var(--hud-warn);
+  background: var(--hud-warn-soft);
+  border: 1px solid var(--hud-warn-border);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Token Monitor feathered hairline divider */
+.monitor-feathered-divider {
+  width: 100%;
+  height: 1px;
+  flex-shrink: 0;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    var(--border) 22%,
+    var(--border) 78%,
+    transparent 100%
+  );
+}
+
+.monitor-hud-detail-body,
+.monitor-hud-compact-body {
   display: flex;
   flex-direction: column;
-  padding: 4px 6px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--card-elevated) 75%, transparent);
-  border: 1px solid var(--border);
+  justify-content: space-between;
+  gap: 5px;
+  flex: 1;
+  min-height: 0;
 }
 
-.monitor-hud-metric-label {
+/* Token Monitor active session & context headroom strip */
+.monitor-session-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.monitor-session-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+
+.monitor-session-glyph {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.monitor-session-glyph.is-active {
+  color: var(--hud-ok);
+}
+
+.monitor-session-model {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-session-reqs {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.monitor-session-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.monitor-session-context.tone-warn {
+  color: var(--hud-warn);
+}
+
+.monitor-session-context.tone-danger {
+  color: var(--hud-danger);
+}
+
+.monitor-context-meter {
+  width: 16px;
+  height: 3.5px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--foreground) 16%, transparent);
+  display: inline-flex;
+}
+
+.monitor-context-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--foreground) 56%, transparent);
+  transition: width 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.monitor-session-context.tone-warn .monitor-context-meter-fill {
+  background: var(--hud-warn);
+}
+
+.monitor-session-context.tone-danger .monitor-context-meter-fill {
+  background: var(--hud-danger);
+}
+
+.monitor-context-pct {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Token Monitor 2-column usage tiles */
+.monitor-usage-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.monitor-usage-tile {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card-elevated) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+}
+
+.monitor-usage-label {
   font-size: 9.5px;
   color: var(--muted-foreground);
   white-space: nowrap;
@@ -388,11 +526,46 @@
   text-overflow: ellipsis;
 }
 
-.monitor-hud-metric-value {
-  font-size: 11.5px;
+.monitor-usage-value {
+  font-size: 13px;
   font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--foreground);
   font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-usage-sub {
+  font-size: 9.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-compact-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.monitor-compact-shield {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-compact-velocity {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* Main window toggle button indicator */

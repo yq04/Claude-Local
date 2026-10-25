@@ -11,7 +11,7 @@ import {Refresh} from 'cromma-ui/pika';
 import {useI18n} from './i18n';
 import {usePageRefresh} from './app-events';
 import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
-import {cacheHitRate, dailySeries, formatUsageNumber, summarizeUsageTrend, type UsagePeriod, type UsageSnapshot, type UsageTotals} from './usage-model';
+import {cacheHitRate, dailySeries, detectModelFamily, formatUsageNumber, summarizeUsageTrend, type UsagePeriod, type UsageSnapshot, type UsageTotals} from './usage-model';
 import {UsageTrend} from './usage-trend';
 import {UsageTrendTable} from './usage-table';
 import {buildUsageTsv} from './usage-export';
@@ -170,14 +170,64 @@ export function UsageStatisticsPanel() {
           <div className="usage-analysis-grid" data-trend-view={trendView}>
           <section className="settings-card usage-chart-card">
             <div className="usage-panel-header"><div><GroupTitle>{t('usage.daily')}</GroupTitle></div><Tabs aria-label={t('usage.trendView')} size="small" value={trendView} onValueChange={value => setTrendView(value as 'chart' | 'data')} tabs={[{value: 'chart', label: t('usage.chartView')}, {value: 'data', label: t('usage.dataView')}]} /></div>
-            <div className="usage-chart-summary" title={t('usage.averageHint')}><div><span>{t(isHourly ? 'usage.averageHour' : 'usage.averageDay')}</span><strong title={num(trend.average)}>{num(trend.average, true)}<small>Token</small></strong></div><div><span>{t(isHourly ? 'usage.peakHour' : 'usage.peakDay')}</span><strong title={num(trend.peak?.totals.total_tokens)}>{num(trend.peak?.totals.total_tokens, true)}<small>{peakLabel}</small></strong></div></div>
+            <div className="usage-chart-summary" title={t('usage.averageHint')}>
+              <div><span>{t(isHourly ? 'usage.averageHour' : 'usage.averageDay')}</span><strong title={num(trend.average)}>{num(trend.average, true)}<small>Token</small></strong></div>
+              <div><span>{t(isHourly ? 'usage.peakHour' : 'usage.peakDay')}</span><strong title={num(trend.peak?.totals.total_tokens)}>{num(trend.peak?.totals.total_tokens, true)}<small>{peakLabel}</small></strong></div>
+              <div><span>{t(isHourly ? 'usage.activeHours' : 'usage.activeDays')}</span><strong>{days.filter(d => !d.future && d.totals.total_tokens > 0).length}<small>/ {days.filter(d => !d.future).length}</small></strong></div>
+            </div>
             {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={isHourly} timezone={snapshot.timezone} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={isHourly} timezone={snapshot.timezone} />}
             <div className="usage-chart-caption"><span><i aria-hidden="true" />{t('usage.total')}</span><span>{t(trendView === 'chart' ? 'usage.trendHint' : 'usage.tableHint')}</span></div>
           </section>
           <section className="settings-card usage-model-card">
             <div className="usage-panel-header"><div><GroupTitle aside={String(models.length)}>{t('usage.models')}</GroupTitle></div></div>
             <div className="usage-models">
-              {models.length ? models.slice(0, 6).map(row => <div className="usage-model-row" key={row.model}><div><strong title={row.model === 'unknown' ? t('usage.unknownModel') : row.model}>{row.model === 'unknown' ? t('usage.unknownModel') : row.model}</strong><span title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</span></div><div className="usage-model-track"><span style={{width: `${totals?.total_tokens ? Math.min(100, row.totals.total_tokens / totals.total_tokens * 100) : 0}%`}} /></div><div className="usage-model-caption"><small>{t('usage.responseCount', {n: num(row.totals.requests, true)})}</small><small>{t('usage.modelShare', {share: percent(totals?.total_tokens ? row.totals.total_tokens / totals.total_tokens : 0)})}</small></div></div>) : <p className="usage-model-empty">{t('usage.noModelData')}</p>}
+              {models.length ? models.slice(0, 6).map(row => {
+                const family = detectModelFamily(row.model);
+                const efforts = row.efforts ?? [];
+                return (
+                  <div className="usage-model-row" key={row.model} data-model-family={family.key}>
+                    <div>
+                      <span className="usage-model-title">
+                        {row.model !== 'unknown' && <em className="usage-model-family" data-family={family.key}>{family.label}</em>}
+                        <strong title={row.model === 'unknown' ? t('usage.unknownModel') : row.model}>{row.model === 'unknown' ? t('usage.unknownModel') : row.model}</strong>
+                      </span>
+                      <span title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</span>
+                    </div>
+                    <div className="usage-model-track"><span style={{width: `${totals?.total_tokens ? Math.min(100, row.totals.total_tokens / totals.total_tokens * 100) : 0}%`}} /></div>
+                    <div className="usage-model-caption">
+                      <small>{t('usage.responseCount', {n: num(row.totals.requests, true)})} · {t('usage.output')} {num(row.totals.output_tokens, true)}</small>
+                      <small>{t('usage.modelShare', {share: percent(totals?.total_tokens ? row.totals.total_tokens / totals.total_tokens : 0)})}</small>
+                    </div>
+                    {efforts.length > 0 && (
+                      <div className="usage-model-efforts" aria-label={t('usage.effortBreakdown')}>
+                        <div className="usage-effort-header">
+                          <span>{t('usage.effortBreakdown')}</span>
+                          <span>{efforts.map(ef => ef.effort).join(' · ')}</span>
+                        </div>
+                        <div className="usage-effort-list">
+                          {efforts.map(ef => {
+                            const efShare = row.totals.total_tokens ? ef.totals.total_tokens / row.totals.total_tokens : 0;
+                            return (
+                              <div className="usage-effort-row" key={ef.effort} data-effort={ef.effort}>
+                                <div className="usage-effort-top">
+                                  <span className="usage-effort-badge" data-effort={ef.effort}>{ef.effort}</span>
+                                  <small>{t('usage.responseCount', {n: num(ef.totals.requests, true)})}</small>
+                                  <strong title={num(ef.totals.total_tokens)}>{num(ef.totals.total_tokens, true)} <small>({percent(efShare)})</small></strong>
+                                </div>
+                                <div className="usage-effort-track"><span data-effort={ef.effort} style={{width: `${Math.min(100, Math.max(2, efShare * 100))}%`}} /></div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              }) : <p className="usage-model-empty">{t('usage.noModelData')}</p>}
+            </div>
+            <div className="usage-model-footer">
+              <span>{t('usage.avgPerRequest')} <strong>{totals?.requests ? num(Math.round(totals.total_tokens / totals.requests), true) : '—'}</strong></span>
+              <span>{t('usage.cacheHit')} <strong>{totals ? rate(totals) : '—'}</strong></span>
             </div>
           </section>
           </div>

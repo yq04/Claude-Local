@@ -1,5 +1,5 @@
-// [INPUT]: 显式代理地址、ipwho.is/ipapi.co HTTPS 出口信息与真实浏览器上报（含 WebRTC/WebGL/webdriver 深度防封探针）。
-// [OUTPUT]: 独立目标国家与配置语言核验、共用检测服务目录、出口解析（含 ASN/ISP/机房标识）与 9 项完整闭环检测；无上报或失败保持未核验。
+// [INPUT]: 显式代理地址、ipwho.is/ipapi.co HTTPS 出口信息与真实浏览器上报（含 WebRTC/WebGL/webdriver/时区偏移/Canvas音频/UA-CH 深度防封探针）。
+// [OUTPUT]: 独立目标国家与配置语言核验、共用检测服务目录、出口解析（含 ASN/ISP/机房标识）与 10 项完整闭环检测；无上报或失败保持未核验。
 // [POS]: 环境核验边界；只把出口与浏览器实测观测当证据，配置值不能冒充实际结果。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -145,6 +145,18 @@ pub struct Report {
     pub graphics_ok: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webgl_renderer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tz_offset_ok: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tz_offset_detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_fingerprint_ok: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_fingerprint_detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_hints_ok: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_hints_detail: Option<String>,
 }
 impl Report {
     pub fn valid(&self) -> bool {
@@ -171,6 +183,21 @@ impl Report {
                 .map(|x| x.len() < 300)
                 .unwrap_or(true)
             && self
+                .tz_offset_detail
+                .as_ref()
+                .map(|x| x.len() < 300)
+                .unwrap_or(true)
+            && self
+                .media_fingerprint_detail
+                .as_ref()
+                .map(|x| x.len() < 300)
+                .unwrap_or(true)
+            && self
+                .client_hints_detail
+                .as_ref()
+                .map(|x| x.len() < 300)
+                .unwrap_or(true)
+            && self
                 .exit
                 .as_ref()
                 .map(|x| {
@@ -182,6 +209,45 @@ impl Report {
                 })
                 .unwrap_or(true)
     }
+}
+pub fn is_hosting_exit(exit: &Exit) -> bool {
+    if exit.hosting == Some(true) {
+        return true;
+    }
+    let text = format!(
+        " {} {} ",
+        exit.isp.to_ascii_lowercase(),
+        exit.asn.as_deref().unwrap_or("").to_ascii_lowercase()
+    );
+    const HOSTING_KEYWORDS: [&str; 26] = [
+        "amazon",
+        "aws",
+        "google cloud",
+        "digitalocean",
+        "linode",
+        "akamai",
+        "vultr",
+        "choopa",
+        "constant company",
+        "hetzner",
+        "ovh",
+        "m247",
+        "contabo",
+        "leaseweb",
+        "datacamp",
+        "cdn77",
+        "cloudflare",
+        "fastly",
+        "oracle cloud",
+        "alibaba",
+        "aliyun",
+        "tencent",
+        "zenlayer",
+        "sharktech",
+        "datacenter",
+        "hosting",
+    ];
+    HOSTING_KEYWORDS.iter().any(|kw| text.contains(kw))
 }
 #[derive(Serialize)]
 pub struct Check {
@@ -349,6 +415,39 @@ pub fn checks(
                 format!("代理 DNS 与 QUIC 隔离已启用；实测：{detail}")
             } else {
                 "已设置代理 DNS、限制未代理 UDP、关闭 QUIC；尚未完成独立泄漏测试。".into()
+            },
+        ),
+        check(
+            "防封特征与出口纯净度",
+            report.and_then(|r| {
+                let exit = r.exit.as_ref()?;
+                let isp_ok = !is_hosting_exit(exit);
+                let probes_ok = r.tz_offset_ok.unwrap_or(true)
+                    && r.media_fingerprint_ok.unwrap_or(true)
+                    && r.client_hints_ok.unwrap_or(true);
+                Some(isp_ok && probes_ok)
+            }),
+            if let Some(r) = report {
+                if let Some(exit) = r.exit.as_ref() {
+                    let isp_tag = if is_hosting_exit(exit) {
+                        "IDC 机房（高风控）"
+                    } else {
+                        "ISP 原生特征"
+                    };
+                    let probes_tag = if r.tz_offset_ok == Some(false)
+                        || r.media_fingerprint_ok == Some(false)
+                        || r.client_hints_ok == Some(false)
+                    {
+                        "部分防封探针异常"
+                    } else {
+                        "时区偏移 / Canvas / UA-CH 正常"
+                    };
+                    format!("出口属性：{isp_tag}；探针：{probes_tag}")
+                } else {
+                    "等待出口与防封探针实测结果。".into()
+                }
+            } else {
+                "内建 ISP 纯净度、时区偏移、Canvas/音频与 UA-CH 深度核验；打开浏览器实测。".into()
             },
         ),
     ]

@@ -33,6 +33,7 @@ function formatHandoffStatus(status: string | null, t: (k: string) => string): s
     copied: '交接内容已复制',
     downloaded: '交接内容已下载',
     loaded: '交接内容已载入',
+    cleared: '交接草稿已清空',
     failed: '复制失败，请重试',
     fileTooLarge: '文件过大，交接文件最大限制为 64 KiB',
     emptyFile: '所选文件为空',
@@ -190,6 +191,7 @@ export function TaskHandoff({open: controlledOpen, onOpenChange}: {open?: boolea
           <Button variant="secondary" size="small" loading={busy} disabled={busy} onClick={() => void copy()}>{t('handoff.copy')}</Button>
           <Button variant="secondary" size="small" disabled={busy} onClick={download}>{t('handoff.download')}</Button>
           <Button variant="secondary" size="small" disabled={busy} onClick={triggerLoad}>{t('handoff.load') || '载入 Markdown'}</Button>
+          <Button variant="secondary" size="small" disabled={busy || !isDraftNonEmpty(notes)} onClick={() => {setNotes(emptyHandoffFields()); setStatus('cleared');}}>{t('handoff.clear')}</Button>
           <input
             ref={fileInputRef}
             type="file"

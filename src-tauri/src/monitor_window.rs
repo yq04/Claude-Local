@@ -15,10 +15,8 @@ use std::{
 use tauri::{Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl, WebviewWindowBuilder};
 
 const MONITOR_LABEL: &str = "monitor";
-const EXPANDED_WIDTH: f64 = 340.0;
-const EXPANDED_HEIGHT: f64 = 256.0;
-const COMPACT_WIDTH: f64 = 320.0;
-const COMPACT_HEIGHT: f64 = 152.0;
+const MONITOR_WIDTH: f64 = 312.0;
+const MONITOR_HEIGHT: f64 = 216.0;
 const MAX_JSONL_BYTES: u64 = 32 * 1024 * 1024;
 const FIVE_HOUR_SECS: u64 = 5 * 3600;
 const VELOCITY_WINDOW_SECS: u64 = 600;
@@ -452,14 +450,34 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     if window.label() != MONITOR_LABEL {
         return;
     }
-    if matches!(
-        event,
-        tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-    ) {
-        let _ = update_window_state(window.app_handle(), |state| {
-            state.open = false;
-        });
+    match event {
+        tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed => {
+            let _ = update_window_state(window.app_handle(), |state| {
+                state.open = false;
+            });
+        }
+        tauri::WindowEvent::Resized(_) => {
+            if window.is_maximized().unwrap_or(false) {
+                let _ = window.unmaximize();
+            }
+        }
+        _ => {}
     }
+}
+
+fn enforce_fixed_monitor_geometry(window: &tauri::WebviewWindow) {
+    if window.is_maximized().unwrap_or(false) {
+        let _ = window.unmaximize();
+    }
+    let _ = window.set_maximizable(false);
+    let _ = window.set_resizable(false);
+    let fixed = Size::Logical(LogicalSize {
+        width: MONITOR_WIDTH,
+        height: MONITOR_HEIGHT,
+    });
+    let _ = window.set_min_size(Some(fixed));
+    let _ = window.set_max_size(Some(fixed));
+    let _ = window.set_size(fixed);
 }
 
 fn position_top_right(app: &tauri::AppHandle, window: &tauri::WebviewWindow, width: f64) {
@@ -492,13 +510,9 @@ pub async fn monitor_window_set_open(
 ) -> Result<MonitorWindowState, String> {
     let current = current_window_state(&app);
     if open {
-        let (target_w, target_h) = if current.compact {
-            (COMPACT_WIDTH, COMPACT_HEIGHT)
-        } else {
-            (EXPANDED_WIDTH, EXPANDED_HEIGHT)
-        };
         if let Some(existing) = app.get_webview_window(MONITOR_LABEL) {
             let _ = existing.unminimize();
+            enforce_fixed_monitor_geometry(&existing);
             let _ = existing.show();
             let _ = existing.set_always_on_top(current.always_on_top);
             let _ = existing.set_focus();
@@ -509,16 +523,18 @@ pub async fn monitor_window_set_open(
                 WebviewUrl::App("index.html?window=monitor".into()),
             )
             .title("Claude-Local Monitor")
-            .inner_size(target_w, target_h)
-            .min_inner_size(290.0, 136.0)
-            .max_inner_size(460.0, 380.0)
+            .inner_size(MONITOR_WIDTH, MONITOR_HEIGHT)
+            .min_inner_size(MONITOR_WIDTH, MONITOR_HEIGHT)
+            .max_inner_size(MONITOR_WIDTH, MONITOR_HEIGHT)
             .decorations(false)
             .always_on_top(current.always_on_top)
-            .resizable(true)
+            .resizable(false)
+            .maximizable(false)
             .visible(false)
             .build()
             .map_err(|_| "无法创建实时额度悬浮监控窗。".to_string())?;
-            position_top_right(&app, &win, target_w);
+            enforce_fixed_monitor_geometry(&win);
+            position_top_right(&app, &win, MONITOR_WIDTH);
             let _ = win.show();
             let _ = win.set_always_on_top(current.always_on_top);
             let _ = win.set_focus();
@@ -552,12 +568,7 @@ pub async fn monitor_window_set_compact(
     compact: bool,
 ) -> Result<MonitorWindowState, String> {
     if let Some(win) = app.get_webview_window(MONITOR_LABEL) {
-        let (w, h) = if compact {
-            (COMPACT_WIDTH, COMPACT_HEIGHT)
-        } else {
-            (EXPANDED_WIDTH, EXPANDED_HEIGHT)
-        };
-        let _ = win.set_size(Size::Logical(LogicalSize { width: w, height: h }));
+        enforce_fixed_monitor_geometry(&win);
     }
     Ok(update_window_state(&app, |s| s.compact = compact))
 }
@@ -565,6 +576,9 @@ pub async fn monitor_window_set_compact(
 #[tauri::command]
 pub async fn monitor_window_start_drag(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window(MONITOR_LABEL) {
+        if win.is_maximized().unwrap_or(false) {
+            let _ = win.unmaximize();
+        }
         let _ = win.start_dragging();
     }
     Ok(())
@@ -676,5 +690,15 @@ mod tests {
         assert_eq!(metrics_cached, metrics);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn monitor_window_uses_fixed_non_resizable_geometry() {
+        assert_eq!(MONITOR_WIDTH, 312.0);
+        assert_eq!(MONITOR_HEIGHT, 216.0);
+        let default_state = MonitorWindowState::default();
+        assert!(!default_state.open);
+        assert!(default_state.always_on_top);
+        assert!(!default_state.compact);
     }
 }

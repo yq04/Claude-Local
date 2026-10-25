@@ -43,9 +43,9 @@ function authBadgeLabel(status: string | null | undefined, t: (key: string) => s
 
 function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, resetComplete = false, inferred = false, known, level, display, nowSec, pace = null, inDialog = false, t}: {label: string; used: number; remaining: number; resetAt: number | null; inferredResetAt?: number | null; resetComplete?: boolean; inferred?: boolean; known: boolean; level: string; display: 'remaining' | 'used'; nowSec: number; pace?: WeeklyPace | null; inDialog?: boolean; t: (key: string, slots?: Record<string, string | number>) => string}) {
   const value = display === 'used' ? used : remaining;
-  const reset = resetAt ? formatResetClock(resetAt, label === '7d') : '';
+  const reset = resetAt ? formatResetClock(resetAt, true) : '';
   const countdown = formatCompactEta(resetAt, nowSec);
-  const inferredClock = inferred && inferredResetAt ? formatResetClock(inferredResetAt, label === '7d' || nowSec - inferredResetAt >= 86400) : '';
+  const inferredClock = inferred && inferredResetAt ? formatResetClock(inferredResetAt, true) : '';
   const inferredElapsed = inferred && inferredResetAt ? formatElapsedSinceReset(inferredResetAt, nowSec) : '';
   const inferredStatusLabel = inferred
     ? t(display === 'used' ? 'identityCard.resetInferredUsed' : 'identityCard.resetInferredRemaining')
@@ -57,7 +57,7 @@ function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, r
   const resetLabel = inferred
     ? label
     : reset ? (resetPrefix ? `${resetPrefix} ${reset}` : reset) : resetComplete ? t('identityCard.windowExpired') : t('identityCard.resetUnavailable');
-  const rightMeta = countdown || (inDialog ? inferredTimeSummary : '');
+  const rightMeta = countdown || (inferred ? (inDialog && inferredTimeSummary ? `${label} · ${inferredTimeSummary}` : label) : '');
   const resetTooltip = countdown
     ? `${resetLabel} · ${countdown}`
     : inferred && inferredTimeSummary
@@ -87,7 +87,7 @@ function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, r
         )}
       </span>
       <span className="identity-quota-reset" title={resetTooltip}>
-        <span className="identity-quota-reset-label">{reset ? <>{clockIcon}<time className="identity-reset-time" dateTime={resetDateTime} aria-label={resetLabel}>{reset}</time></> : inferred ? <>{clockIcon}<span>{label}</span></> : resetLabel}</span>
+        <span className="identity-quota-reset-label">{reset ? <>{clockIcon}<time className="identity-reset-time" dateTime={resetDateTime} aria-label={resetLabel}>{reset}</time></> : inferred ? <>{clockIcon}<span>—</span></> : resetLabel}</span>
         {rightMeta && <span className="identity-quota-countdown">{rightMeta}</span>}
       </span>
     </div>
@@ -1433,6 +1433,17 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               )}
             </strong>
           </div>
+          <div className="identity-confirm-target">
+            <span>{t('quota.isolationStatus')}</span>
+            <strong>
+              {state?.browser.enabled
+                ? (detailsAreCurrent || (quotaDetails && state.browser.bound_ids.includes(quotaDetails.id))
+                    ? t('quota.isolatedBrowserActive')
+                    : t('quota.isolatedBrowserPending'))
+                : t('quota.isolatedBrowserOff')}
+              {detailsSummary?.proxy ? ` · ${t('quota.dedicatedProxy')}` : ''}
+            </strong>
+          </div>
           <Disclosure summary={t('quotaSetup.guideTitle')}>
             <div className="identity-confirm">
               {detailsSavedRecord && (
@@ -1549,10 +1560,26 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               </strong>
             </div>
           )}
+          {currentQuota && review !== 'recovery' && (
+            <div className="identity-confirm-target">
+              <span>{t('当前剩余额度')}</span>
+              <code>{currentQuota.detail}</code>
+            </div>
+          )}
           {targetQuota && (
             <div className="identity-confirm-target">
               <span>{t('目标剩余额度')}</span>
               <code>{targetQuota.detail}</code>
+            </div>
+          )}
+          {typeof review === 'object' && review && (
+            <div className="identity-confirm-target">
+              <span>{t('quota.isolationStatus')}</span>
+              <strong>
+                {state?.browser.enabled
+                  ? (state.browser.bound_ids.includes(review.id) ? t('quota.isolatedBrowserActive') : t('quota.isolatedBrowserPending'))
+                  : t('quota.isolatedBrowserOff')}
+              </strong>
             </div>
           )}
           {current?.proxy && (

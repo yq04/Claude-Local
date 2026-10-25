@@ -28,6 +28,7 @@ fn event(key: &str, ts: u64, counts: Counts) -> Event {
         message_key: None,
         ts,
         model: "sonnet".into(),
+        effort: String::new(),
         counts,
         account: None,
         weak: false,
@@ -1229,4 +1230,61 @@ fn fallback_attribution_stable_id_lifecycle_and_invariance() {
 
     drop(db);
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn model_effort_tiers_are_parsed_and_aggregated_per_model() {
+    let dir = temp_dir("effort-tiers");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    let projects = home.join(".claude").join("projects").join("demo");
+    super::private::directory(&vault).unwrap();
+    super::private::directory(&projects).unwrap();
+    let jsonl = projects.join("session.jsonl");
+    let mut f = super::private::create(&jsonl).unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-04-20T10:00:00Z",
+            "requestId": "req-1",
+            "perTurnEffort": "xhigh",
+            "message": {
+                "id": "msg-1",
+                "model": "claude-opus-5-5",
+                "usage": { "input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 850 }
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-04-20T10:05:00Z",
+            "requestId": "req-2",
+            "effort": "high",
+            "message": {
+                "id": "msg-2",
+                "model": "claude-opus-5-5",
+                "usage": { "input_tokens": 80, "output_tokens": 20, "cache_read_input_tokens": 300 }
+            }
+        })
+    )
+    .unwrap();
+    f.sync_all().unwrap();
+    drop(f);
+
+    let snap = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+    assert_eq!(snap.models.len(), 1);
+    assert_eq!(snap.models[0].model, "claude-opus-5-5");
+    assert_eq!(snap.models[0].totals.total_tokens, 1400);
+    assert_eq!(snap.models[0].efforts.len(), 2);
+    assert_eq!(snap.models[0].efforts[0].effort, "xhigh");
+    assert_eq!(snap.models[0].efforts[0].totals.total_tokens, 1000);
+    assert_eq!(snap.models[0].efforts[1].effort, "high");
+    assert_eq!(snap.models[0].efforts[1].totals.total_tokens, 400);
+    let _ = fs::remove_dir_all(dir);
 }

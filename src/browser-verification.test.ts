@@ -72,8 +72,15 @@ test('深度防封核验拦截高危 IDC 机房出口、次选中文残留、Web
   webdriver: false,
   graphics_ok: true,
   webgl_renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4080 Direct3D11)',
+  tz_offset_ok: true,
+  tz_offset_detail: 'GMT-7 · Intl 与系统时钟一致',
+  media_fingerprint_ok: true,
+  media_fingerprint_detail: 'Canvas 2D 正常 · 48000Hz',
+  client_hints_ok: true,
+  client_hints_detail: '1920×1080 · 24-bit · Desktop',
  };
  expect(verifyBrowser(context, cleanDeep, true, '', false).phase).toBe('passed');
+ expect(verifyBrowser(context, cleanDeep, true, '', false).checks.length).toBe(20);
 
  const idcReport: Report = {...cleanDeep, exit: {...cleanDeep.exit!, isp: 'Choopa, LLC / Vultr', asn: 'AS20473'}};
  expect(verifyBrowser(context, idcReport, true, '', false).failures.find(row => row.label === '出口 IP 属性')?.ok).toBe(false);
@@ -89,4 +96,13 @@ test('深度防封核验拦截高危 IDC 机房出口、次选中文残留、Web
 
  const swiftshaderReport: Report = {...cleanDeep, graphics_ok: false, webgl_renderer: 'Google SwiftShader'};
  expect(verifyBrowser(context, swiftshaderReport, true, '', false).failures.find(row => row.label === '硬件图形渲染')?.ok).toBe(false);
+
+ const tzSpoofReport: Report = {...cleanDeep, tz_offset_ok: false, tz_offset_detail: 'GMT-7 vs 本地偏移冲突'};
+ expect(verifyBrowser(context, tzSpoofReport, true, '', false).failures.find(row => row.label === '时区偏移校验')?.ok).toBe(false);
+
+ const canvasTamperReport: Report = {...cleanDeep, media_fingerprint_ok: false, media_fingerprint_detail: 'Canvas 2D 空白或被阻断'};
+ expect(verifyBrowser(context, canvasTamperReport, true, '', false).failures.find(row => row.label === 'Canvas / 音频指纹')?.ok).toBe(false);
+
+ const clientHintsReport: Report = {...cleanDeep, client_hints_ok: false, client_hints_detail: 'UA-CH 移动设备特征冲突'};
+ expect(verifyBrowser(context, clientHintsReport, true, '', false).failures.find(row => row.label === '客户端提示与屏幕')?.ok).toBe(false);
 });

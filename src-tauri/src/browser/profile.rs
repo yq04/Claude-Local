@@ -1,4 +1,4 @@
-// [INPUT]: 宿主独立资料目录、原生进程核验、Unix 所有权/权限元数据与已验证配置。
+// [INPUT]: 宿主独立资料目录、原生进程核验、本人目录继承权限补齐、Unix 所有权/权限元数据与已验证配置。
 // [OUTPUT]: 浏览资料占用保护、窄范围 Preferences 更新、缓存/登录数据清理及全资料重置。
 // [POS]: 文件边界；常规清理遍历固定位置，全清理枚举并清空独立资料目录，拒绝链接，不生成备份。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -65,6 +65,7 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let root = path.parent().ok_or("配置目录无效。")?;
     check_path(root, path)?;
     fs::create_dir_all(root).map_err(|_| "无法创建浏览器目录。")?;
+    let _ = crate::identities::private::ensure_owner_dacl(root);
     let temp = path.with_extension("pending");
     check_path(root, &temp)?;
     let data = serde_json::to_vec_pretty(value).map_err(|_| "配置编码失败。")?;
@@ -166,6 +167,19 @@ pub const SITE_DATA: &[&str] = &[
     "Default/BrowsingTopicsState",
     "Default/blob_storage",
 ];
+fn read_cache_dir(path: &Path) -> Result<fs::ReadDir, String> {
+    match fs::read_dir(path) {
+        Ok(entries) => Ok(entries),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            if let Some(parent) = path.parent() {
+                let _ = crate::identities::private::ensure_owner_dacl(parent);
+            }
+            crate::identities::private::ensure_owner_dacl(path)?;
+            fs::read_dir(path).map_err(|_| "无法枚举缓存。".to_string())
+        }
+        Err(_) => Err("无法枚举缓存。".into()),
+    }
+}
 fn size(path: &Path) -> Result<u64, String> {
     let meta = fs::symlink_metadata(path).map_err(|_| "无法读取缓存项目。")?;
     if crate::cleaner::linked(&meta) {
@@ -175,7 +189,7 @@ fn size(path: &Path) -> Result<u64, String> {
         return Ok(meta.len());
     }
     let mut bytes = 0;
-    for entry in fs::read_dir(path).map_err(|_| "无法枚举缓存。")? {
+    for entry in read_cache_dir(path)? {
         bytes += size(&entry.map_err(|_| "无法读取缓存条目。")?.path())?;
     }
     Ok(bytes)
@@ -281,7 +295,7 @@ pub fn reset(
         let directory = meta.is_dir();
         if directory {
             pending.extend(
-                fs::read_dir(&path)
+                read_cache_dir(&path)
                     .map_err(|_| "无法完整检查浏览器资料目录，未执行重置。")?
                     .map(|entry| entry.map(|e| e.path()))
                     .collect::<Result<Vec<_>, _>>()
