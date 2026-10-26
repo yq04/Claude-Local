@@ -8,11 +8,11 @@ wakeup-presentation.ts / wakeup-presentation.test.ts: 本地授权与服务端�
 界面只管理输入、状态和执行记录；本机权限交给原生层；网络页提供发行者批准的固定推广链接和配置提示词复制，用户点击后才检测固定 Claude 服务连通性，没有收件人链接编辑、Skill 安装或自动外部导航。两入口复用 YAML 中英文文案，原始诊断保留到呈现时翻译；系统语言与界面语言独立。
 browser.tsx: 统一全宽卡片风格的浏览器环境控制台（启动/退出/默认浏览器、身份状态、目标环境核验、缓存与高级设置）；原生核验项以稳定 ID 为键并按 ok/mismatch/pending 三态展示，未知与过时结果不显示整体通过。
 browser-model.ts: 有界浏览器身份摘要与同步状态；工具箱与起始页共享配置、目标地区、机器、出口服务目录、保守 ASN/ISP/机房分类（未知不视为住宅）、版本化报告字段与探针状态；effectiveBrowserTarget 统一解析跟随电脑的有效时区/语言及 en→en-US，不接入原生权限；三平台设备/CPU/版本核验由共用函数保持一致，Windows 必须 Win32。
-browser-start.tsx: 检测区上方紧凑黑色身份工牌与绑定状态；版本化测量报告及固定必需指标目录，缺项/旧报告保持待核验；WebRTC 只测无 STUN 的1000ms有界本地候选，完成事件与状态均检查，失败或超时为未知；音频只报告接口能力，不声称渲染指纹真实性；不接入 Tauri 权限。
-browser-webrtc.ts / browser-webrtc.test.ts: 浏览器起始页实际调用的无 STUN 本地候选采集器与注入 RTC/计时器；构造失败、offer 拒绝及采集截止均为未知；fakeRTC 定向测试不访问网络。
+browser-start.tsx: 检测区上方紧凑黑色身份工牌与绑定状态；20个稳定必需指标保持，缺项/旧报告待核验；WebRTC无STUN分阶段协商/收集并回传受控reason与耗时，完成证据才通过；地理结果缺机房字段时按宿主固定目录补充同IP分类，展示来源/受控失败，不视为住宅或账号安全保证；音频只报告接口能力，不接入Tauri权限。
+browser-webrtc.ts / browser-webrtc.test.ts: 实际调用的无STUN采集器；同步构造不消耗ICE预算，后续协商5秒/描述成功后收集2秒，空非null候选不冒充完成；拒绝/超时保持未知，晚到Promise不复活已关闭探针。合成时钟测试及固定引擎临时资料验收均不访问用户账号。
 browser-verification.ts: 固定必需指标 ID 与报告 schema 校验；逐项通过/失败/未知，缺项、旧版本、未识别 ISP 均不能通过；完整报告只有未知项时显示未完成，明确冲突/错误才失败。
 browser-verification.test.ts: 合成报告验证完整/缺项/旧版/未知出口与指标三态，不访问网络。
-browser-network.ts: 按宿主服务目录经浏览器当前路由检测出口，限流/故障切换服务，校验结果并保留失败原因。
+browser-network.ts: 按宿主服务目录经当前浏览器路由取得地理出口；仅缺hosting时补查固定IPQuery同IP的布尔分类，32KiB/3秒、omit credentials/no-referrer、禁重定向；失败保留原地理信息和受控原因，IPv6规范化匹配，不按ASN猜住宅。
 browser-network.test.ts: 模拟限流、备用响应与非法出口，验证故障恢复和错误信息，不访问外网。
 main.tsx: 独立产品壳、默认身份页与受限页面记忆；侧栏统一全四字标头（快速配置、网络环境、身份管理、用量分析、浏览环境、电脑环境、使用说明、软件设置），底部含语言/版本与命令面板入口；Ctrl+K/Cmd+K 尊重输入焦点、IME、其他模态和任务锁。命令面板导航八页、对当前可刷新页分发本地事件，身份项仅打开已有身份确认；Root 常驻受控手工交接弹窗。根 MotionRoot 读取「减少动画」偏好。
 command-palette.tsx / command-model.ts / command-model.test.ts: 键盘可搜索的八页面命令、当前页刷新、身份确认入口与交接入口；身份只在用户打开面板时只读载入，标签遵循隐私遮罩；方向键和 Home/End 更新活动项并滚入可视区但焦点留在搜索框；不执行身份切换。

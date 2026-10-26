@@ -35,7 +35,8 @@ export function verifyBrowser(context:BrowserContext|null,report:Report|null,lin
   if(!exit)problems.push('无法验证网络出口，请检查连接后重测。');
   add('exit.country','出口国家',exit?.country,region?.country,region&&exit?exit.country===region.country:null);
   const ispKind=classifyExitIsp(exit);
-  add('exit.provider','出口 IP 属性',ispKind==='hosting'?'已识别机房特征':ispKind==='isp'?'运营商标记为非机房':'运营商信息或机房分类不足，结果未知', '机房特征识别结果', ispKind==='hosting'?false:ispKind==='isp'?true:null);
+  const classificationFailures:Record<string,string>={rate_limited:'browserVerify.classificationError.rate_limited',timeout:'browserVerify.classificationError.timeout',http_error:'browserVerify.classificationError.http_error',network_error:'browserVerify.classificationError.network_error',invalid_response:'browserVerify.classificationError.invalid_response',ip_mismatch:'browserVerify.classificationError.ip_mismatch',response_too_large:'browserVerify.classificationError.response_too_large'};
+  add('exit.provider','出口 IP 属性',ispKind==='hosting'?'已识别机房特征':ispKind==='isp'?'分类数据源未标记为机房':classificationFailures[exit?.hosting_error||'']||'运营商信息或机房分类不足，结果未知', '机房特征识别结果', ispKind==='hosting'?false:ispKind==='isp'?true:null);
   add('page.timezone','网页时区',report.timezone,target.timezone,!!report.timezone&&report.timezone===target.timezone);
   add('exit.timezone','出口时区',exit?.timezone,report.timezone,!!exit?.timezone&&exit.timezone===report.timezone);
   add('machine.timezone','本机时区',machine.timezone,report.timezone,!!machine.timezone&&machine.timezone===report.timezone);

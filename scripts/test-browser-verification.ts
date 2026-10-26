@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 现有隔离 Playwright 引擎、Vite 本机地址与虚构出口/宿主响应。
- * [OUTPUT]: 顶部身份卡顺序/双语/联动/不匹配/空身份与真实 browser.html 的检测中/通过/失败/未完成、图片解码、紧凑宽度/高度、未知目标单项黄色待测、重测与双语 DOM 回归。
+ * [OUTPUT]: 顶部身份卡/双语与真实 browser.html 的通过/失败/未完成；同IP分类补充、来源/限流/错配、分阶段RTC与旧目标未知的DOM回归。
  * [POS]: 身份 UI 回归共用引擎的伴生页验证，不截图、不调用真实宿主或外网。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -22,10 +22,14 @@ export async function testBrowserVerification(browser:Browser,base:string) {
  });
  const page=await context.newPage();page.setDefaultTimeout(10000);
  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
- let first=true, failure=false, unknown=false, partial=false, language='zh', reports=0;
+ let first=true, failure=false, unknown=false, partial=false, mismatch=false, language='zh', reports=0, classifications=0;
  let identity={linked:true,status:'linked',name:'Fixture identity',email:'fixture@example.invalid' as string|null,organization:'Fixture team' as string|null};
  await context.route('**/*',async route=>{
   const url=route.request().url();
+  if(url==='https://api.ipquery.io/203.0.113.1?format=json'){
+   classifications++;
+   return route.fulfill({status:partial?429:200,headers:{'Access-Control-Allow-Origin':'*'},json:partial?{}:{ip:mismatch?'203.0.113.2':'203.0.113.1',risk:{is_datacenter:false}}});
+  }
   if(!url.startsWith(base+'/'))return route.abort();
   if(url===base+'/context'){
    if(first){first=false;await gate;}
@@ -33,20 +37,22 @@ export async function testBrowserVerification(browser:Browser,base:string) {
     const high=await (navigator as any).userAgentData?.getHighEntropyValues(['platformVersion','uaFullVersion']);
     return {platform:navigator.platform.toLowerCase().includes('mac')?'macos':navigator.platform==='Win32'?'windows':'linux',version:high?.platformVersion||'',cores:navigator.hardwareConcurrency,engine:high?.uaFullVersion||navigator.userAgent.match(/(?:Chrome|Chromium)\/([\d.]+)/)?.[1]||''};
    });
-   return route.fulfill({json:{identity,ui_language:language,exit_services:[base+'/fixture-exit'],region:unknown?null:{id:'us-la',country:'US',language:'en-US',locale:'en_US',timezone:'America/Los_Angeles'},config:{follow_machine:false,language:'en-US',timezone:'America/Los_Angeles'},machine:{platform:observed.platform,version:observed.version,cores:observed.cores,timezone:'America/Los_Angeles',languages:['en-US'],locale:'en_US',locale_country:'US',location_enabled:false},engine_version:observed.engine}});
+   return route.fulfill({json:{identity,ui_language:language,exit_services:[base+'/fixture-exit'],exit_classification_service:'https://api.ipquery.io/',region:unknown?null:{id:'us-la',country:'US',language:'en-US',locale:'en_US',timezone:'America/Los_Angeles'},config:{follow_machine:false,language:'en-US',timezone:'America/Los_Angeles'},machine:{platform:observed.platform,version:observed.version,cores:observed.cores,timezone:'America/Los_Angeles',languages:['en-US'],locale:'en_US',locale_country:'US',location_enabled:false},engine_version:observed.engine}});
   }
-  if(url===base+'/fixture-exit')return route.fulfill({json:{ip:'203.0.113.1',country_code:failure?'JP':'US',city:'Fixture',timezone:'America/Los_Angeles',org:'Fixture carrier',...(partial?{}:{hosting:false})}});
+  if(url===base+'/fixture-exit')return route.fulfill({json:{ip:'203.0.113.1',country_code:failure?'JP':'US',city:'Fixture',timezone:'America/Los_Angeles',org:'Fixture carrier'}});
   if(url===base+'/report'){reports++;return route.fulfill({json:{ok:true}});}
   return route.continue();
  });
  try{
-  await page.goto(base+'/browser.html');
+  await page.goto(base+'/browser.html',{waitUntil:'domcontentloaded',timeout:30000});
   await page.waitForFunction(()=>document.querySelector('[data-verification]')?.getAttribute('data-verification')==='checking');
   assert.equal(await page.locator('.verification-signal i').first().evaluate(node=>getComputedStyle(node).animationName),'verification-ripple');
   release();
   await page.waitForFunction(()=>['passed','failed','incomplete'].includes(document.querySelector('[data-verification]')?.getAttribute('data-verification')||''));
   assert.equal(await page.locator('[data-verification]').getAttribute('data-verification'),'passed',`Unexpected checks: ${await page.locator('.verification-check:not(.ok) h2').allTextContents()}`);
   assert.equal(await page.locator('.verification-check.failed').count(),0);assert(reports>0);
+  assert(classifications>0,'Missing hosting must trigger same-IP classification.');
+  await page.getByText('IPQuery 分类数据；不等于住宅接入或账号安全保证',{exact:true}).waitFor();
   const badge=page.getByRole('region',{name:'浏览器身份',exact:true});
   await badge.getByRole('heading',{name:'Fixture identity',exact:true}).waitFor();
   assert.match(await badge.innerText(),/fixture@example.invalid/);assert.match(await badge.innerText(),/身份已联动/);
@@ -77,8 +83,15 @@ export async function testBrowserVerification(browser:Browser,base:string) {
   assert.equal(await page.locator('.verification-check.pending').count(),2);
   assert.equal(await page.locator('.verification-check.failed').count(),0);
   assert.equal(await page.locator('[data-verification]').getAttribute('data-verification'),'incomplete');
+  await page.getByText('机房分类服务限流；出口信息已保留，请稍后重测。',{exact:true}).waitFor();
   await page.waitForFunction(()=>getComputedStyle(document.querySelector('[data-verification]')!).backgroundColor==='rgb(255, 248, 223)');
-  partial=false;await page.evaluate(()=>(window as any).__rtcIncomplete=false);
+  partial=false;mismatch=true;await page.evaluate(()=>(window as any).__rtcIncomplete=false);
+  await page.getByRole('button',{name:'重新实测',exact:true}).click();
+  await page.getByRole('heading',{name:'检测未完成',exact:true}).waitFor();
+  await page.getByText('机房分类响应与当前出口不一致，未采用。',{exact:true}).waitFor();
+  assert.equal(await page.locator('.verification-check.ok').count(),19);
+  assert.equal(await page.locator('.verification-check.pending').count(),1);
+  mismatch=false;
   unknown=false;language='en';
   await page.getByRole('button',{name:'重新实测',exact:true}).click();
   await page.getByRole('heading',{name:'Checks passed',exact:true}).waitFor();
@@ -97,6 +110,6 @@ export async function testBrowserVerification(browser:Browser,base:string) {
   await page.locator('.verification-identity').getByText('Not linked',{exact:true}).waitFor();
   assert.equal(await page.locator('.verification-identity.linked').count(),0);
 
-  return 8;
+  return 10;
  } finally {release();await context.close();}
 }

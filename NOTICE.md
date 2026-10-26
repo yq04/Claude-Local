@@ -24,6 +24,8 @@ The five SVG icons in `assets/ai-icons` are unchanged graphics from [LobeHub lob
 
 ## Application dependencies
 
+Browser environment checks use ipwho.is and ipapi.co for exit metadata. When those responses omit a datacenter flag, an explicit environment check may query the same IP through IPQuery (https://ipquery.io/) for supplementary classification. These are external data services, not bundled software or application update sources; no provider API key is distributed. Classification reflects the provider's data and does not attest residential access or account safety.
+
 Tauri, React, Radix UI, Motion, Tailwind CSS, Vite, YAML and the Rust dependencies retain their respective licenses. `bun.lock` and `src-tauri/Cargo.lock` identify the versions used. Source distributions should retain upstream notices; binary releases should include the applicable notices for what they ship.
 
 ## Workflow references and branding

@@ -1,5 +1,5 @@
 // [INPUT]: 本机指纹引擎（优先 /Applications/Claude-Local Browser.app，回退 ~/Applications）、本地版浏览器包标识、配置/资料边界、真实浏览器观测、宿主界面语言与共享操作日志。
-// [OUTPUT]: 有界绑定身份上下文与浏览器设置/启动/缓存清理、显式完整资料重置、环境核验、用户触发的一次性订阅资料桥及按已保存账号打开既有绑定资料的固定用量页命令；测试构建只向合成链路导出回环接收器；账号连接命令不改全局 slot、launch.args 或系统浏览器注册。
+// [OUTPUT]: 有界绑定身份上下文、固定出口地理/分类服务目录与浏览器设置/启动/清理/核验及显式资料桥；账号连接不改全局 slot、launch.args 或系统注册。
 // [POS]: 独立浏览器模块的唯一编排入口；改变资料前必须退出浏览器；不自行改系统默认浏览器，只发起系统确认。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub(crate) mod config;
@@ -84,6 +84,7 @@ pub struct Context {
     identity: crate::identities::browser_link::BrowserIdentity,
     ui_language: String,
     exit_services: &'static [&'static str],
+    exit_classification_service: Option<&'static str>,
     region: Option<&'static crate::regions::Region>,
     config: Config,
     machine: Machine,
@@ -99,6 +100,7 @@ impl Context {
 pub struct Snapshot {
     ui_language: String,
     exit_services: &'static [&'static str],
+    exit_classification_service: Option<&'static str>,
     region: Option<&'static crate::regions::Region>,
     config: Config,
     machine: Machine,
@@ -229,6 +231,7 @@ fn open_session(
         identity: mask_browser_identity(identity_context(app)?, mask),
         ui_language: crate::ui_language::ui_language_read(app.clone()),
         exit_services: &network::SERVICES,
+        exit_classification_service: Some(network::CLASSIFICATION_SERVICE),
         region: config.region(machine),
         config: config.clone(),
         machine: machine.clone(),
@@ -483,6 +486,7 @@ fn snapshot(app: &tauri::AppHandle) -> Result<Snapshot, String> {
     Ok(Snapshot {
         ui_language: crate::ui_language::ui_language_read(app.clone()),
         exit_services: &network::SERVICES,
+        exit_classification_service: Some(network::CLASSIFICATION_SERVICE),
         region: config.region(&machine),
         config,
         machine,

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 随机令牌回环服务上下文、浏览器原生 navigator/Intl/Permissions/WebRTC/WebGL/Canvas/Audio/UA-CH 与实际 HTTPS 出口与服务备援目录与宿主界面语言。
- * [OUTPUT]: 单项未知与整体未完成保持黄色待测，已知冲突红叉；顶部身份工牌、紧凑 20 项防封实测页（内建 Ping0/CheckCC/BrowserScan/IPHey 核心检测算法：ISP/ASN 纯净度、时区偏移、Canvas/音频指纹与客户端提示），同步宿主双语及通讯/回报时间。
+ * [OUTPUT]: 单项未知与整体未完成保持黄色待测，明确机房分类来源和无STUN分阶段耗时，已知冲突红叉；顶部身份工牌、紧凑 20 项防封实测页（内建 Ping0/CheckCC/BrowserScan/IPHey 核心检测算法：ISP/ASN 纯净度、时区偏移、Canvas/音频指纹与客户端提示），同步宿主双语及通讯/回报时间。
  * [POS]: 独立 Chromium 入口，复用工具箱控件；成功状态只由真实观测决定，不接入 Tauri 权限，不伪造地理位置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -10,7 +10,7 @@ import {setLocale,useI18n} from "./i18n";
 import { createRoot } from 'react-dom/client';
 import { classifyExitIsp, type BrowserContext, type Report, type Exit } from './browser-model';
 import { probeBrowserExit } from './browser-network';
-import {probeWebRtcLocalCandidates,type WebRtcPeer} from './browser-webrtc';
+import {probeWebRtcLocalCandidates,type WebRtcPeer,type WebRtcProbeResult} from './browser-webrtc';
 import {verifyBrowser} from './browser-verification';
 import browserLogo from '../assets/browser-logo.jpg';
 import './index.css';
@@ -28,9 +28,9 @@ async function api<T>(route: string, body?: unknown): Promise<T> {
     return response.json();
 }
 
-function probeWebRtcLeak(): Promise<{ ok: boolean|null; detail: string }> {
+function probeWebRtcLeak(): Promise<WebRtcProbeResult> {
     if (typeof RTCPeerConnection === 'undefined') {
-        return Promise.resolve({ ok: null, detail: 'WebRTC 接口不可用，未测量' });
+        return Promise.resolve({ ok: null, detail: 'WebRTC 接口不可用，未测量', reason: 'constructor_error', elapsedMs: 0 });
     }
     return probeWebRtcLocalCandidates(
         () => new RTCPeerConnection({ iceServers: [] }) as unknown as WebRtcPeer,
@@ -167,7 +167,7 @@ function Start() {
             const clientHints = probeClientHintsAndScreen();
             let exit: Exit | null = null, networkError = '';
             try {
-                exit = await probeBrowserExit(context.exit_services);
+                exit = await probeBrowserExit(context.exit_services, fetch, context.exit_classification_service);
             }
             catch (e) {
                 networkError = e instanceof Error ? e.message : String(e);
@@ -187,6 +187,8 @@ function Start() {
                 error: networkError,
                 webrtc_ok: webrtc.ok,
                 webrtc_detail: webrtc.detail,
+                webrtc_reason: webrtc.reason,
+                webrtc_elapsed_ms: Number.isFinite(webrtc.elapsedMs) && webrtc.elapsedMs >= 0 && webrtc.elapsedMs <= 120000 ? Math.round(webrtc.elapsedMs) : undefined,
                 webdriver: Boolean(navigator.webdriver),
                 graphics_ok: graphics.ok,
                 webgl_renderer: graphics.renderer,
@@ -240,13 +242,14 @@ function Start() {
       </section>
       <div className="landing-section-band" aria-hidden="true"/>
       {phase==='failed'&&problems.length>0&&<section className="verification-reasons" aria-labelledby="verification-reasons-title"><h2 id="verification-reasons-title">{t('未通过原因')}</h2><ul>{problems.map(problem=><li key={problem}>{t(problem)}</li>)}</ul></section>}
-      {checks.length>0&&<section className="verification-results" aria-label={t('逐项检测结果')}>{checks.map(check=><article className={`verification-check ${check.ok==null?'pending':check.ok?'ok':'failed'}`} key={check.label}><header><h2>{t(check.label)}</h2><span aria-label={t(check.ok==null?'尚未核验':check.ok?'检测通过':'检测未通过')}>{check.ok==null?'—':check.ok?'✓':'×'}</span></header><strong>{t(check.actual)}</strong>{!check.ok&&<p>{t('目标：{v0}',{v0:t(check.expected)})}</p>}</article>)}</section>}
+      {checks.length>0&&<section className="verification-results" aria-label={t('逐项检测结果')}>{checks.map(check=><article className={`verification-check ${check.ok==null?'pending':check.ok?'ok':'failed'}`} key={check.label}><header><h2>{t(check.label)}</h2><span aria-label={t(check.ok==null?'尚未核验':check.ok?'检测通过':'检测未通过')}>{check.ok==null?'—':check.ok?'✓':'×'}</span></header><strong>{t(check.actual)}</strong>{!check.ok&&<p>{t('目标：{v0}',{v0:t(check.expected)})}</p>}{check.id==='probe.webrtc'&&report?.webrtc_elapsed_ms!=null&&<p>{t('browserVerify.probeElapsed',{seconds:(report.webrtc_elapsed_ms/1000).toFixed(1)})}</p>}</article>)}</section>}
       {phase==='checking'&&<div className="verification-loading" role="status">{t('正在读取浏览器与网络…')}</div>}
       {report?.exit&&(
        <section className="verification-network">
         <div><span>{t('出口 IP')}</span><strong>{report.exit.ip}</strong></div>
         <div><span>{t('国家 / 城市')}</span><strong>{report.exit.country} / {report.exit.city||'—'}</strong></div>
         <div><span>{t('browserVerify.ispAndAsn')}</span><strong>{[report.exit.asn, report.exit.isp].filter(Boolean).join(' · ') || '—'}</strong></div>
+        {report.exit.hosting_source==='ipquery'&&<div><span>{t('browserVerify.classificationSource')}</span><strong>{t('browserVerify.ipquerySource')}</strong></div>}
         {ispKind !== 'unknown' && <div><span>{t('browserVerify.ipAttribute')}</span><strong>{ispKind === 'hosting' ? t('browserVerify.ispHosting') : t('browserVerify.ispResidential')}</strong></div>}
        </section>
       )}

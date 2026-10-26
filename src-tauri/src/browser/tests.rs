@@ -1,5 +1,5 @@
-// [INPUT]: 临时样本、指纹参数、固定清理边界、托管扩展参数与合成 HTTP 样本。
-// [OUTPUT]: 缓存/旧站点清理保留资产，显式完整重置同时清除密码与密钥、全部子 Profile 并隔离兄弟资料；链接/进程重启阻断与真实删除计数；地区/网络及 Host/framing 回归。
+// [INPUT]: 临时样本、指纹参数、固定清理边界、托管扩展参数与注入地理/分类 HTTP 样本。
+// [OUTPUT]: 资料清理隔离、进程/链接阻断、地区/Host/framing、同 IP 布尔分类/失败保留地理与有界 WebRTC 诊断回归。
 // [POS]: 浏览器模块行为验证；不访问用户实际资料。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -457,6 +457,176 @@ fn rate_limited_service_falls_back_without_changing_route() {
 }
 
 #[test]
+fn classification_uses_frozen_proxy_and_preserves_base_geo_on_failure() {
+    use std::io::{BufRead, BufReader, Write};
+    let cases = vec![
+        ("200 OK", r#"{"ip":"203.0.113.2","risk":{"is_datacenter":false},"location":{"country_code":"US"}}"#.to_string(), None),
+        ("200 OK", r#"{"ip":"203.0.113.2","risk":{"is_datacenter":true}}"#.to_string(), None),
+        ("429 Too Many Requests", "private provider error".into(), Some("rate_limited")),
+        ("503 Unavailable", "private provider error".into(), Some("http_error")),
+        ("200 OK", "private malformed JSON".into(), Some("invalid_response")),
+        ("200 OK", r#"{"ip":"203.0.113.3","risk":{"is_datacenter":false}}"#.into(), Some("ip_mismatch")),
+        ("200 OK", r#"{"ip":"203.0.113.2","risk":{"is_datacenter":"false"}}"#.into(), Some("invalid_response")),
+        ("200 OK", r#"{"ip":"203.0.113.2","risk":{}}"#.into(), Some("invalid_response")),
+        ("200 OK", "x".repeat(32_769), Some("response_too_large")),
+    ];
+    for (status, body, error) in cases {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let base = r#"{"ip":"203.0.113.2","country_code":"JP","city":"Tokyo","timezone":"Asia/Tokyo","connection":{"asn":12345,"isp":"Unlisted fixture carrier"}}"#;
+            for (expected, status, body) in [
+                ("GET http://geo.invalid/ HTTP/1.1", "200 OK", base),
+                (
+                    "GET http://classification.invalid/203.0.113.2?format=json HTTP/1.1",
+                    status,
+                    body.as_str(),
+                ),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line.trim_end(), expected);
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        let exit = tauri::async_runtime::block_on(network::probe_with_classification(
+            &proxy,
+            &["http://geo.invalid/"],
+            Some("http://classification.invalid/"),
+        ))
+        .unwrap();
+        assert_eq!(exit.ip, "203.0.113.2");
+        assert_eq!(exit.country, "JP");
+        assert_eq!(exit.city, "Tokyo");
+        assert_eq!(exit.timezone, "Asia/Tokyo");
+        assert_eq!(exit.isp, "Unlisted fixture carrier");
+        assert_eq!(exit.asn.as_deref(), Some("AS12345"));
+        assert_eq!(exit.hosting_error.as_deref(), error);
+        if error.is_some() {
+            assert!(exit.hosting.is_none());
+            assert!(exit.hosting_source.is_none());
+        } else {
+            assert!(exit.hosting.is_some());
+            assert_eq!(exit.hosting_source.as_deref(), Some("ipquery"));
+        }
+        assert!(!serde_json::to_string(&exit).unwrap().contains("private"));
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn classification_matches_canonical_ipv6_and_skips_existing_hosting() {
+    use std::io::{BufRead, BufReader, Write};
+    for existing in [false, true] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let base = serde_json::json!({"ip":"2001:db8::1","country_code":"JP","hosting":if existing {Some(false)} else {None}}).to_string();
+            let classification =
+                r#"{"ip":"2001:0db8:0000:0000:0000:0000:0000:0001","risk":{"is_datacenter":true}}"#;
+            for body in std::iter::once(base.as_str()).chain((!existing).then_some(classification))
+            {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        let base = format!("http://{address}/");
+        let exit = tauri::async_runtime::block_on(network::probe_with_classification(
+            "",
+            &[&base],
+            Some(&base),
+        ))
+        .unwrap();
+        assert_eq!(exit.ip, "2001:db8::1");
+        assert_eq!(exit.hosting, Some(!existing));
+        assert_eq!(
+            exit.hosting_source.as_deref(),
+            if existing { None } else { Some("ipquery") }
+        );
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn report_bounds_classification_and_webrtc_diagnostics_without_rejecting_legacy() {
+    let mut report = network::Report {
+        cores: 1,
+        ..Default::default()
+    };
+    assert!(report.valid());
+    for reason in [
+        "complete",
+        "non_local_candidate",
+        "constructor_error",
+        "setup_error",
+        "offer_error",
+        "description_error",
+        "negotiation_timeout",
+        "gathering_timeout",
+    ] {
+        report.webrtc_reason = Some(reason.into());
+        report.webrtc_elapsed_ms = Some(120_000);
+        assert!(report.valid());
+    }
+    report.webrtc_elapsed_ms = Some(120_001);
+    assert!(!report.valid());
+    report.webrtc_elapsed_ms = None;
+    report.webrtc_reason = Some("arbitrary external error".into());
+    assert!(!report.valid());
+    report.webrtc_reason = None;
+    report.exit = Some(network::Exit {
+        ip: "203.0.113.2".into(),
+        ..Default::default()
+    });
+    assert!(report.valid());
+    report.exit.as_mut().unwrap().hosting_error = Some("rate_limited".into());
+    assert!(report.valid());
+    report.exit.as_mut().unwrap().hosting_error = Some("arbitrary external error".into());
+    assert!(!report.valid());
+    let exit = report.exit.as_mut().unwrap();
+    exit.hosting_error = None;
+    exit.hosting = Some(false);
+    exit.hosting_source = Some("ipquery".into());
+    assert!(report.valid());
+    report.exit.as_mut().unwrap().hosting_source = Some("arbitrary source".into());
+    assert!(!report.valid());
+}
+
+#[test]
 fn linux_platform_and_unknown_location_cannot_be_misreported_as_mac_or_disabled() {
     let mut m = machine();
     m.platform = "linux".into();
@@ -677,6 +847,7 @@ fn refreshed_context_recomputes_target_from_effective_machine_country() {
         },
         ui_language: "zh".into(),
         exit_services: &network::SERVICES,
+        exit_classification_service: Some(network::CLASSIFICATION_SERVICE),
         config: Config::default(),
         region: None,
         machine: machine(),
@@ -707,6 +878,7 @@ fn deep_probes_close_graphics_and_webrtc_checks() {
         isp: "Comcast Cable".into(),
         asn: Some("AS7922".into()),
         hosting: Some(false),
+        ..Default::default()
     };
     let report = network::Report {
         schema_version: Some(1),
@@ -732,16 +904,30 @@ fn deep_probes_close_graphics_and_webrtc_checks() {
         media_fingerprint_detail: Some("Canvas 2D + AudioContext 48000Hz".into()),
         client_hints_ok: Some(true),
         client_hints_detail: Some("UA-CH 桌面端 · 24-bit 屏幕".into()),
+        ..Default::default()
     };
     let checks = network::checks(&m, &c, Some(&report), Some(&host), "148");
     assert_eq!(checks.len(), 10);
     assert!(checks.iter().all(|item| item.status == "ok"));
     assert_eq!(checks[8].id, "probe.webrtc-local-candidates");
-    let old = network::Report { schema_version: None, ..report.clone() };
+    let old = network::Report {
+        schema_version: None,
+        ..report.clone()
+    };
     let old_checks = network::checks(&m, &c, Some(&old), Some(&host), "148");
     assert_eq!(old_checks[8].status, "pending");
     assert_eq!(old_checks[9].status, "pending");
-    let unknown_exit = network::Exit { hosting: None, isp: "Unlisted carrier".into(), ..host.clone() };
-    let unknown = network::Report { exit: Some(unknown_exit), ..report };
-    assert_eq!(network::checks(&m, &c, Some(&unknown), Some(&host), "148")[9].status, "pending");
+    let unknown_exit = network::Exit {
+        hosting: None,
+        isp: "Unlisted carrier".into(),
+        ..host.clone()
+    };
+    let unknown = network::Report {
+        exit: Some(unknown_exit),
+        ..report
+    };
+    assert_eq!(
+        network::checks(&m, &c, Some(&unknown), Some(&host), "148")[9].status,
+        "pending"
+    );
 }

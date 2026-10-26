@@ -1,11 +1,12 @@
-// [INPUT]: 显式代理地址、ipwho.is/ipapi.co HTTPS 出口信息与带 schema 版本的浏览器观测。
-// [OUTPUT]: 目标环境核验、出口分类与版本兼容探针检查；缺少/旧版观测保持 pending。
+// [INPUT]: 冻结的显式代理、ipwho.is/ipapi.co 地理信息、可选固定 IPQuery 分类与版本化浏览器观测。
+// [OUTPUT]: 同 IP 布尔分类/受控失败诊断、有界 WebRTC 原因/耗时与兼容核验；缺少观测保持 pending。
 // [POS]: 环境核验边界；WebRTC 仅为无 STUN 本地候选观察，不证明 DNS 或公网 STUN 状态。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
 pub const SERVICES: [&str; 2] = ["https://ipwho.is/", "https://ipapi.co/json/"];
+pub const CLASSIFICATION_SERVICE: &str = "https://api.ipquery.io/";
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct Exit {
     pub ip: String,
@@ -17,6 +18,10 @@ pub struct Exit {
     pub asn: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hosting: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosting_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosting_error: Option<String>,
 }
 pub fn parse(data: &Value) -> Result<Exit, String> {
     if data["success"].as_bool() == Some(false) || data["error"].as_bool() == Some(true) {
@@ -64,12 +69,21 @@ pub fn parse(data: &Value) -> Result<Exit, String> {
             .into(),
         asn,
         hosting,
+        ..Default::default()
     })
 }
 pub async fn probe(proxy: &str) -> Result<Exit, String> {
-    probe_urls(proxy, &SERVICES).await
+    probe_with_classification(proxy, &SERVICES, Some(CLASSIFICATION_SERVICE)).await
 }
+#[cfg(test)]
 pub(super) async fn probe_urls(proxy: &str, services: &[&str]) -> Result<Exit, String> {
+    probe_with_classification(proxy, services, None).await
+}
+pub(super) async fn probe_with_classification(
+    proxy: &str,
+    services: &[&str],
+    classification_service: Option<&str>,
+) -> Result<Exit, String> {
     let mut client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -112,7 +126,20 @@ pub(super) async fn probe_urls(proxy: &str, services: &[&str]) -> Result<Exit, S
         }
         .await;
         match result {
-            Ok(exit) => return Ok(exit),
+            Ok(mut exit) => {
+                if exit.hosting.is_none() {
+                    if let Some(service) = classification_service {
+                        match supplement_hosting(&client, &exit.ip, service).await {
+                            Ok(hosting) => {
+                                exit.hosting = Some(hosting);
+                                exit.hosting_source = Some("ipquery".into());
+                            }
+                            Err(error) => exit.hosting_error = Some(error.into()),
+                        }
+                    }
+                }
+                return Ok(exit);
+            }
             Err(error) => errors.push(format!("{name}：{error}")),
         }
     }
@@ -120,6 +147,58 @@ pub(super) async fn probe_urls(proxy: &str, services: &[&str]) -> Result<Exit, S
         "出口检测未完成（{}）。请检查 TUN/代理连接后重试。",
         errors.join("；")
     ))
+}
+async fn supplement_hosting(
+    client: &reqwest::Client,
+    ip: &str,
+    service: &str,
+) -> Result<bool, &'static str> {
+    let mut response = client
+        .get(format!("{service}{ip}?format=json"))
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_timeout() {
+                "timeout"
+            } else {
+                "network_error"
+            }
+        })?;
+    if !response.status().is_success() {
+        return Err(if response.status().as_u16() == 429 {
+            "rate_limited"
+        } else {
+            "http_error"
+        });
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| {
+        if e.is_timeout() {
+            "timeout"
+        } else {
+            "network_error"
+        }
+    })? {
+        if bytes.len() + chunk.len() > 32_768 {
+            return Err("response_too_large");
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let data: Value = serde_json::from_slice(&bytes).map_err(|_| "invalid_response")?;
+    let expected = ip
+        .parse::<std::net::IpAddr>()
+        .map_err(|_| "invalid_response")?;
+    let actual = data["ip"]
+        .as_str()
+        .and_then(|s| s.parse::<std::net::IpAddr>().ok())
+        .ok_or("invalid_response")?;
+    if actual != expected {
+        return Err("ip_mismatch");
+    }
+    data["risk"]["is_datacenter"]
+        .as_bool()
+        .ok_or("invalid_response")
 }
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -141,6 +220,10 @@ pub struct Report {
     pub webrtc_ok: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webrtc_detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webrtc_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webrtc_elapsed_ms: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdriver: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -175,6 +258,27 @@ impl Report {
             && self.cores > 0
             && self.cores <= 1024
             && self
+                .webrtc_reason
+                .as_deref()
+                .map(|reason| {
+                    matches!(
+                        reason,
+                        "complete"
+                            | "non_local_candidate"
+                            | "constructor_error"
+                            | "setup_error"
+                            | "offer_error"
+                            | "description_error"
+                            | "negotiation_timeout"
+                            | "gathering_timeout"
+                    )
+                })
+                .unwrap_or(true)
+            && self
+                .webrtc_elapsed_ms
+                .map(|elapsed| elapsed <= 120_000)
+                .unwrap_or(true)
+            && self
                 .webrtc_detail
                 .as_ref()
                 .map(|x| x.len() < 300)
@@ -208,6 +312,26 @@ impl Report {
                             .iter()
                             .all(|x| x.len() < 300)
                         && x.asn.as_ref().map(|a| a.len() < 80).unwrap_or(true)
+                        && x.hosting_source
+                            .as_deref()
+                            .map(|source| source == "ipquery" && x.hosting.is_some())
+                            .unwrap_or(true)
+                        && x.hosting_error
+                            .as_deref()
+                            .map(|error| {
+                                x.hosting.is_none()
+                                    && matches!(
+                                        error,
+                                        "rate_limited"
+                                            | "timeout"
+                                            | "http_error"
+                                            | "network_error"
+                                            | "invalid_response"
+                                            | "ip_mismatch"
+                                            | "response_too_large"
+                                    )
+                            })
+                            .unwrap_or(true)
                 })
                 .unwrap_or(true)
     }
@@ -471,7 +595,7 @@ pub fn checks(
                     let isp_tag = if is_hosting_exit(exit) {
                         "IDC 机房（高风控）"
                     } else if exit.hosting == Some(false) {
-                        "运营商标记为非机房"
+                        "分类数据源未标记为机房"
                     } else {
                         "运营商未知"
                     };

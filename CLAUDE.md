@@ -50,6 +50,7 @@ docs/AUTH_SYNC_0.1.1.md - Login/readiness synchronization, compact per-account s
 docs/RELEASE_VERIFICATION_0.1.1_SYNC.md - Pinned patch source, passing CI, installer/server checksum and local NSS-payload alignment; real-account and installer acceptance remain explicit limits.
 docs/CRYPTO_HARDENING_0.1.2.md - Compatible backup stage lifecycle, archive resource limits and owned-buffer/key-read hardening; existing archive formats, master keys and identity/session boundaries are preserved.
 docs/RELEASE_VERIFICATION_0.1.2_CRYPTO.md - Fixed source CI, audited installer/server digest, local payload match and unchanged read-only identity/archive metadata projections; real installation remains separate.
+docs/BROWSER_VERIFICATION_0.1.3.md - Historical optimistic results, phased no-STUN measurement and fixed same-IP supplementary classification; privacy flags, account stores and required check IDs remain intact.
 docs/screenshots/ - README screenshots of the actual frontend with synthetic data, masked reserved-domain emails, no real identity/network/path information or embedded text/EXIF metadata; see its source and privacy notes.
 
 Action geometry: ordinary application buttons use the shared small 28px height and 10px horizontal padding, with width determined by their labels. Pages use the existing neutral secondary variant; destructive confirmations retain explicit red styling. Account filters fit the selected label instead of a fixed wide column, while popup options retain readable width. No vendored primitives or action semantics are changed.
