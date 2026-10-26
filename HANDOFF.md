@@ -6,6 +6,18 @@
 -->
 # Claude-Local 会话交接（v0.3.1）
 
+## 2026-10-26 最新交付：0.1.0 已打包、上传并与本机对齐
+
+用户全权授权补齐打包上传，现已完成。`v0.1.0` 固定源码 `ff6bc8128de0732ca893afbdb76b1d7156f76a8a`，[GitHub 预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.1.0) 已发布到当前私有仓库（非草稿、prerelease），仅附 `Claude-Local_0.1.0_x64-setup.exe`。140,504,677 字节，SHA256 `37bfd3cbe1653dfaff9412fb4e2324304db44841c606d5fae480268d11bba1ec`，远端大小和digest一致。仓库可见性、旧标签/Release和43份文档待确认清理均未改变。
+
+最终CI [40270529041](https://github.com/yq04/Claude-Local/actions/runs/40270529041) 全部通过；其中发现的 Windows bsdtar 3.8.9 空属主警告措辞兼容已精确修复，未放宽未知警告、非零退出或归档认证/路径/大小边界。最终包已重新封入新helper，并通过109个解包文件hash/路径及13原始隐私探针（0发现）。中性构建custom-protocol、NSIS真实模板三语编译和保留数据守卫验证完成，未执行安装器或用户机系统修改测试。
+
+本机已采用最终安装包审计后的102项应用payload进行逐项核对，仅2项变更（host与quota_archive.py）先备份/hash后更新并重新打开。宿主与setup内NSS宿主完全一致，SHA256 `d509366aa0080b38da28fcad78774dc1cc55c56cdc0f19cb8436d8bb434aac4e`；原始UNK宿主为 `b0e04d5fdba5f9f685256b644fc18a582eab1c85a4dabb1ea15799500d59daa8`，仅Tauri格式标记3字节转换已审计。NSIS插件/卸载器不参与文件式更新，未执行；CLI进程及创建时间保持，missingClaudeCount=0，未终止浏览器、清理账号或进行真实唤醒请求。
+
+具体公开回执见 [0.1.0交付核验](docs/RELEASE_VERIFICATION_0.1.0.md)。私有完整任务、CI日志、备份/事务计划、最终receipt在 `.local/tasks/20261026-release-0.1.0/`，最终产物目录 `.local/artifacts/20261026T045011Z-8d9bc21614c648988167f04d686fcfe7/`；这些不得入Git。先前预修复安装器10959...保留但未上传，不能误发。后续文档提交不移动v0.1.0产品tag；下文“未打包/未上传”均属此前阶段历史。
+
+遗留仅为真实NSIS装卸/降级、真实账号权限验收及独立的公开分发许可/历史整理事项；不应因为已在私有仓库上传就宣称这些已完成。无新增更新源、自动公开发布、签名密钥或上游同步。
+
 ## 最新本机状态：连接恢复与唤醒反馈修复已安装（0.1.0 候选）
 
 用户随后报告：绑定浏览器登录后仍显示网页授权提醒、统一重试没有解释、手动唤醒无反馈。核查实机仍运行早前 `0.3.1`，所以本轮完成源码修复、定向验证、custom-protocol release 构建，并已成套更新本机至 **0.1.0 候选版**。旧标签/Release和仓库私有可见性保持；本轮未打包NSIS或发布。

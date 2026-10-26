@@ -12,6 +12,8 @@
 
 [版本说明](docs/RELEASE_NOTES_0.1.0.md) · [公开筹备边界](docs/PUBLIC_PREPARATION.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md) · [参与贡献](CONTRIBUTING.md)
 
+[下载 0.1.0 Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.0/Claude-Local_0.1.0_x64-setup.exe) · [预发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.0) · [打包、上传与本机一致性核验](docs/RELEASE_VERIFICATION_0.1.0.md)。当前仓库保持私有，下载需要仓库访问权限。
+
 遇到网页登录后仍无法查询或唤醒，先看 [网页额度与CLI授权恢复说明](docs/CONNECTION_RECOVERY.md)：两套授权独立，重试会分别显示网页读取失败和CLI唤醒阻断原因。
 
 ## 主要功能

@@ -23,6 +23,7 @@ docs/plans/2026-10-25-functional-audit/ - Redacted runtime evidence, source-back
 docs/CCBAGA_COMPARISON.md - Fixed-revision capability comparison and selective adoption priorities; no upstream sync or copied release workflow.
 docs/PUBLIC_PREPARATION.md - Public 0.1.0 candidate, retained private history, source-export policy and unresolved publication evidence.
 docs/CONNECTION_RECOVERY.md - Website quota recovery versus CLI wakeup authorization, explicit browser fallback failures and truthful admission feedback.
+docs/RELEASE_VERIFICATION_0.1.0.md - Exact private prerelease URL/installer SHA, passing CI, neutral 109-file/13-probe package audit and 102-file local NSS-host alignment; no real installer execution.
 docs/RELEASE_NOTES_0.1.0.md - Product-version reset candidate with unchanged data formats, prior tags retained and no installed/public release claim.
 docs/plans/2026-10-21-usage-account-safety/ - Historical proposal, source evidence and phased account-safety plan implemented in 0.1.4; 0.1.5 fixes quota evidence compatibility and shares Rust window-state rules.
 .github/workflows/ - Credential-free Windows checks and explicitly dispatched private build artifacts.
