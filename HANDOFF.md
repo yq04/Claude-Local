@@ -1,20 +1,34 @@
 <!--
-[INPUT]: Owner requests, reproduced local-auth/readiness defects, focused synthetic tests and versioned delivery receipts.
+[INPUT]: Compatible storage hardening, prior auth/readiness fixes, owner constraints, synthetic tests and verified versioned delivery receipts.
 [OUTPUT]: Context-free status, remaining work, next actions and non-negotiable pitfalls.
 [POS]: Repository-root handoff; personal identities, paths, process records and probes remain ignored in .local/.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only edits never rebuild a package or move product tags.
 -->
-# Claude-Local 新会话交接（0.1.1）
+# Claude-Local 新会话交接（0.1.2）
 
 更新：2026-10-26，America/New_York。先读本文、根 AGENTS.md / CLAUDE.md，改模块前读对应目录 CLAUDE.md 和源码头。本文取代此前交接的当前状态描述，历史发行事实仍保留。
 
-## 正在做什么
+## 当前任务：兼容加密存储加固（0.1.2已交付）
+
+用户明确决定保留.baga后缀，随后要求落实安全、可靠、正确、便捷且不影响本机及其他用户的改进。已完成暂存目录生命周期、归档解包限额、敏感缓冲和主密钥有界读取；没有引入新协议或资料迁移。
+
+- 固定源码/标签：`v0.1.2` → `9d642ea50425b716f94075aea517c3293127fee9`，[Windows CI 40292415566](https://github.com/yq04/Claude-Local/actions/runs/40292415566) success。后续纯文档提交不移动产品标签。
+- [0.1.2私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.1.2)，draft=false、prerelease=true。安装器`Claude-Local_0.1.2_x64-setup.exe`，140,582,806字节，SHA256`7ec212d4f1a46c708eeb629008a9c0c0708c7e20f8694408120af9e54f0b3858`；GitHub服务端digest及size精确匹配。
+- 新中性custom-protocol构建，解包审计109文件/13外部隐私探针/0发现。本机102项应用文件核对一致，7项实际变化；先备份/hash，宿主最后更新并验证启动。NSS/本机宿主SHA256`3408c2742798a160129dfcc16fc407f3167a4a5e2f8d1ae3245b1fd300cd207a`，原始UNK宿主`b472d27f26449751054999ad9376a51b42dcd6daf41e9985f151268f1a197fbb`，仅审计确认的3字节Tauri包标记差异。
+- 本机已运行0.1.2，missingClaudeCount=0，未关闭浏览器、未真实切号/查询/唤醒。更新前后只读元数据投影一致：3身份/3归档引用与文件大小mtime、3浏览器绑定及活动指针、SQLite v3和恢复标记均保持。测试及交付工具未直接读取真实归档/密钥/凭据/会话内容，也未改变自动开关。
+- 定向Rust22、Python6、前端/双语7及TypeScript检查通过；完整CI结果保存在私有ci-result.md，公开交付核验见docs/RELEASE_VERIFICATION_0.1.2_CRYPTO.md。
+
+实现：backup.rs的ScratchGuard只接管独占新建的当前操作目录，失败/异常收尾不扫历史目录；成功副本清理异常以可选diagnostics的staging_cleanup_failed显示，不撤销成功或删除原保险库。archive_limits.rs在tar预分配前限制GNU/PAX元数据和成员，实际展开流及尾部排空有界且仍检查认证结束；内容8GiB/100000成员/4096字节路径、清单1MiB、键控配置64MiB，另给合法tar开销余量。codec缓冲使用预分配Zeroizing，Store密钥最多读33字节严格要求32，不改密钥内容。
+
+继续保持.baga/BAGAID01/CLBKUP01、AES-256-GCM、PBKDF2参数、主密钥/ID/HMAC/SQLite版本/浏览器种子。不要重新提出或自动执行后缀改名、解密重加密、密钥轮换、DPAPI迁移或Argon2替换；这些不属于本次范围。完整安装/卸载/降级、真实消息权限和公开许可仍按下方遗留项处理。本轮源/HANDOFF备份、计划及交付回执在.local/tasks/20261026-crypto-hardening/，不提交Git。
+
+## 前一轮状态同步任务（已交付）
 
 用户反馈：两个账号已完成验证及 Claude Code 重新登录，应用仍显示旧授权错误/未知、续杯面板内容挤出；浏览器环境20项中只有出口运营商分类及 WebRTC 本地候选两项未知，其余18项通过。要求先查明原因，再修复并完整交付。此前已授权本机更新、打包和 GitHub 上传；不是只交源码。
 
 Claude-Local 是独立维护的 Windows 10/11 x64 桌面工具，React/TypeScript 前端、Tauri/Rust 原生事务、Python额度账本单写。主程序 claude-local.exe，应用ID ai.local.claude-local，可选浏览器注册名 Claude-Local-Browser，数据按用户保存在 %APPDATA%/ai.local.claude-local。默认身份管理页，普通启动不打开浏览器。不加 upstream、官方更新源、自动公开发布或别的软件发行依赖。
 
-## 已完成与交付
+## 前一轮0.1.1交付回执（历史）
 
 **0.1.1 已完成源码修复、本机文件式更新、custom-protocol NSIS 打包、隐私审计及私有 GitHub 预发布上传。没有构建/CI/上传阻塞；真实账号消息权限仍未代用户验收。**
 
@@ -63,7 +77,7 @@ Claude-Local 是独立维护的 Windows 10/11 x64 桌面工具，React/TypeScrip
 4. 43历史文档删除尚未获具体确认，旧清理清单/hash已漂移，不执行删除。用户全权负责打包上传未扩大成改史、强推、移标签、删Release或改变可见性。旧精简副本已落后于修复，不用于公开。
 5. 若后续继续功能增强，按需规划Windows单身份便携导入导出/安装排障，不重新做已完成Astra方案。文档更新不重建产品。
 
-当前无技术阻塞。下一会话先核对用户新反馈及只读状态；若只是补文档，不重建/覆盖0.1.1。已打开的浏览器核验页需刷新或由用户重新打开以加载新前端，不能为更新杀浏览器。
+当前无技术阻塞。下一会话先核对用户新反馈及只读状态；若只是补文档，不重建/覆盖0.1.2。已打开的浏览器核验页需刷新或由用户重新打开以加载新前端，不能为更新杀浏览器。
 
 ## 绝对不要再踩的坑
 
