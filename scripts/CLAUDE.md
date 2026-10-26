@@ -26,7 +26,7 @@ Windows local product tooling; not a mirror of another application's release flo
 - window-layout-checks.mjs: `node scripts/test-usage-statistics.mjs <output> --layout-only` reuses the isolated fictional IPC shell to check all eight pages at narrow/default/wide sizes in both locales/sidebar modes, full brand/navigation labels, readable wrapped onboarding, reachable short-window controls and preserved identity-card dimensions; screenshots wait for page entry motion and remain ignored with results.
 - test-runtime-resources.py: validates scripts/runtime-resources.json manifest against Tauri resource bundles and package audit allowlists.
 - test-quota-runtime.py: verifies Python interpreter capability probe under -E -s (Python 3.10+, cryptography AESGCM roundtrip, JSON, tarfile, base64).
-- test-quota-archive.py: verifies stream projection of BAGA archive, mandatory authenticated end frame, member allowlist and denial of path traversal; a failed synthetic null-owner Zstd fixture reports bounded tar version/exit/stderr diagnostics for Windows backend differences.
+- quota_archive.py / test-quota-archive.py: bounded authenticated BAGA stream projection, mandatory authenticated end frame, member allowlist and denial of path traversal. Windows bsdtar permits only the exact empty uname/gname conversion warnings targeting UTF-8 or current locale; synthetic regressions preserve rejection of real-owner/unknown warnings and nonzero exits, and failed null-owner fixtures report bounded tar version/exit/stderr diagnostics.
 - quota-native-chain-fixture.py: deterministic unbundled test launcher for native chain orchestration.
 - requirements-ci.txt: dependencies used only by synthetic CI verification.
 

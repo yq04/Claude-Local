@@ -1,5 +1,5 @@
 # [INPUT]: Synthetic encrypted gzip/Zstd tar streams and temporary fixture vaults.
-# [OUTPUT]: Strict frame/projection/resource regressions and synthetic-only Zstd failure diagnostics.
+# [OUTPUT]: Strict frame/projection/resource and null-owner warning regressions; synthetic diagnostics.
 # [POS]: No real account, network, extraction or machine mutation.
 # [PROTOCOL]: Keep scripts/CLAUDE.md aligned with the archive reader.
 import gzip
@@ -10,9 +10,10 @@ from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
+import time
 import tracemalloc
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import quota_archive as archive
@@ -167,6 +168,27 @@ class QuotaArchiveTests(unittest.TestCase):
         self.assertEqual(cj["oauthAccount"]["accountUuid"], "fixture-account")
         self.assertEqual(cred["claudeAiOauth"]["accessToken"], "synthetic-only")
         self.assertTrue(route)
+        # libarchive 3.8.9 names the target "current locale" instead of "UTF-8".
+        # Keep harmless null-owner warnings out of the bounded error budget while
+        # still rejecting real owner conversion errors, other warnings and exits.
+        warning = "tar.exe: data/0: Can't translate gname '(null)' to current locale\r\n"
+        for diagnostic, returncode, accepted in [
+                (warning * 120, 0, True),
+                (warning.replace("gname", "uname"), 0, True),
+                (warning.replace("(null)", "fixture"), 0, False),
+                (warning + "tar.exe: synthetic unexpected warning\r\n", 0, False),
+                (warning, 1, False)]:
+            with self.subTest(diagnostic=diagnostic[:90], returncode=returncode):
+                process = Mock(stdin=io.BytesIO(), stdout=io.BytesIO(tar_bytes()),
+                               stderr=io.BytesIO(diagnostic.encode()), returncode=returncode)
+                process.poll.return_value = returncode
+                with patch.object(archive.subprocess, "Popen", return_value=process):
+                    if accepted:
+                        selected = archive._scan(raw, {"manifest.json"}, time.monotonic() + 5)
+                        self.assertEqual(selected["manifest.json"]["version"], 1)
+                    else:
+                        with self.assertRaises(ValueError):
+                            archive._scan(raw, {"manifest.json"}, time.monotonic() + 5)
         with patch.object(archive, "MAX_EXPANDED", 4096), self.assertRaises(ValueError):
             self.read(encrypt(raw))
         for name, kind in [("data/sym", "link"), ("data/0", "file")]:

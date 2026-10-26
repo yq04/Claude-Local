@@ -1,6 +1,6 @@
 # [INPUT]: BAGAID01 archive, existing vault key and version-1 source manifest.
 # [OUTPUT]: In-memory account/OAuth/settings projection; no extracted files or project parsing.
-# [POS]: Bounded, authenticated online archive reader; legacy collector shares strict framing.
+# [POS]: Bounded authenticated reader; strict framing and Windows null-owner warning compatibility.
 # [PROTOCOL]: Update scripts/CLAUDE.md and runtime-resources.json when changing this boundary.
 """Read only online account evidence. Decrypted bytes never enter a temporary file."""
 from __future__ import annotations
@@ -174,7 +174,7 @@ def _scan(compressed, wanted, deadline):
     def stderr():
         while line := process.stderr.readline(4096):
             text = line.decode("utf-8", errors="replace").rstrip("\r\n")
-            if re.fullmatch(r".*: Can't translate [ug]name '\(null\)' to UTF-8", text):
+            if re.fullmatch(r".*: Can't translate [ug]name '\(null\)' to (?:UTF-8|current locale)", text):
                 continue
             if len(diagnostics) + len(line) <= 8192:
                 diagnostics.extend(line)
@@ -193,11 +193,12 @@ def _scan(compressed, wanted, deadline):
         process.wait(timeout=max(0.001, deadline - time.monotonic()))
         for thread in threads:
             thread.join(timeout=max(0.001, deadline - time.monotonic()))
-        # bsdtar may warn about empty Rust tar uname/gname. Every other warning
+        # bsdtar may warn about empty Rust tar uname/gname; 3.8.9 says "current
+        # locale" instead of "UTF-8". Every other warning
         # fails closed, including path sanitization during archive conversion.
         warnings = diagnostics.decode("utf-8", errors="replace").splitlines()
         if process.returncode or errors or any(
-                not re.fullmatch(r".*: Can't translate [ug]name '\(null\)' to UTF-8", line)
+                not re.fullmatch(r".*: Can't translate [ug]name '\(null\)' to (?:UTF-8|current locale)", line)
                 for line in warnings):
             raise ValueError("archive conversion failed")
         _check(deadline)
