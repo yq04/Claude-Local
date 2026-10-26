@@ -1,12 +1,19 @@
 /**
- * [INPUT]: 宿主上下文、共用有效时区/语言、真实浏览器观测、回传/连接状态与检测阶段。
- * [OUTPUT]: 每项的实际值、目标值、明确失败原因和红/黄/绿状态；涵盖出口国家/ISP 纯净度、时区、语言列表纯净度、硬件渲染、WebRTC 防泄漏与反自动化特征。
- * [POS]: 起始页的纯核验模型，与 DOM/网络分离，沿用宿主的时区、语言及设备规则。
+ * [INPUT]: 宿主上下文、共用有效时区/语言、版本化浏览器观测与回报状态。
+ * [OUTPUT]: 固定指标目录中的通过/失败/未知检查；缺失或旧版报告不能通过。
+ * [POS]: 起始页纯核验模型，与 DOM/网络分离；结果只描述已完成的有限测量。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {classifyExitIsp, effectiveBrowserTarget, matchesDevice, type BrowserContext, type Report} from './browser-model';
 export type VerificationPhase='checking'|'failed'|'passed';
-export type VerificationCheck={label:string;actual:string;expected:string;ok:boolean|null};
+export type VerificationCheck={id:string;label:string;actual:string;expected:string;ok:boolean|null;applicable:boolean};
+export const REPORT_SCHEMA_VERSION = 1;
+export const REQUIRED_CHECK_IDS = [
+ 'exit.country','exit.provider','page.timezone','exit.timezone','machine.timezone','page.language',
+ 'page.languages','machine.language','machine.locale','device.platform','device.cores','browser.version',
+ 'page.geolocation','machine.location','probe.webrtc','probe.webdriver','probe.graphics','probe.tz-offset',
+ 'probe.canvas-audio','probe.client-hints',
+] as const;
 export const REPORT_MAX_AGE_MS = 10 * 60 * 1000;
 export function verifyBrowser(context:BrowserContext|null,report:Report|null,linked:boolean,error:string,busy:boolean,reportedAt?:number|null) {
  const checks:VerificationCheck[]=[];
@@ -22,49 +29,36 @@ export function verifyBrowser(context:BrowserContext|null,report:Report|null,lin
   const target=effectiveBrowserTarget(context);
   const first=machine.languages[0]||'';
   const language=target.language;
-  const add=(label:string,actual:string|number|undefined|null,expected:string|number|undefined|null,ok:boolean|null)=>checks.push({label,actual:actual==null||actual===''?'尚未核验':String(actual),expected:expected==null||expected===''?'尚未核验':String(expected),ok});
+  const add=(id:string,label:string,actual:string|number|undefined|null,expected:string|number|undefined|null,ok:boolean|null,applicable=true)=>checks.push({id,label,actual:actual==null||actual===''?'尚未核验':String(actual),expected:expected==null||expected===''?'尚未核验':String(expected),ok:applicable?ok:null,applicable});
+  const current=report.schema_version===REPORT_SCHEMA_VERSION;
+  const observed=(value:boolean|undefined|null):boolean|null=>current&&(value===true||value===false)?value:null;
   if(!exit)problems.push('无法验证网络出口，请检查连接后重测。');
-  add('出口国家',exit?.country,region?.country,region&&exit?exit.country===region.country:null);
+  add('exit.country','出口国家',exit?.country,region?.country,region&&exit?exit.country===region.country:null);
   const ispKind=classifyExitIsp(exit);
-  if(ispKind!=='unknown'){
-   const ispSummary=[exit?.asn,exit?.isp].filter(Boolean).join(' · ');
-   add('出口 IP 属性',ispKind==='hosting'?`IDC 机房 (${ispSummary||'高风控'})`:`ISP 原生特征 (${ispSummary||'正常'})`,'ISP 原生特征 / 非高危机房',ispKind==='isp');
-  }
-  add('网页时区',report.timezone,target.timezone,!!report.timezone&&report.timezone===target.timezone);
-  add('出口时区',exit?.timezone,report.timezone,!!exit?.timezone&&exit.timezone===report.timezone);
-  add('本机时区',machine.timezone,report.timezone,!!machine.timezone&&machine.timezone===report.timezone);
-  add('网页语言',report.language,language,language&&report.language?report.language===language:null);
-  if(Array.isArray(report.languages)&&report.languages.length>1&&language){
-   const targetIsZh=language.toLowerCase().startsWith('zh');
-   const leakedZh=!targetIsZh&&report.languages.some(item=>item.toLowerCase().startsWith('zh'));
-   add('语言列表纯净度',report.languages.join(', '),targetIsZh?`${language} 序列`:`仅 ${language} 系（无中文残留）`,!leakedZh&&report.languages[0]===language);
-  }
-  add('本机首选语言',first,language,first&&language?first===language||first.startsWith(language+'-')||(config.follow_machine&&first==='en'&&language==='en-US'):null);
-  add('本机区域',machine.locale,region?.country,region&&machine.locale_country?machine.locale_country===region.country:null);
-  add('设备平台 / 版本',`${report.platform} / ${report.platform_version||'—'}`,`${machine.platform} / ${machine.version}`,matchesDevice({...machine,cores:report.cores},report));
-  add('逻辑 CPU',report.cores,machine.cores,report.cores>0&&report.cores===machine.cores);
-  add('浏览器实际版本',report.browser_version,context.engine_version,!!report.browser_version&&report.browser_version===context.engine_version);
-  add('网页定位权限',report.geolocation,'denied',report.geolocation==='denied');
-  add('本机定位',machine.location_enabled==null?'尚未核验':machine.location_enabled?'开启':'关闭','关闭',machine.location_enabled==null?null:machine.location_enabled===false);
-  if(report.webrtc_ok!==undefined){
-   add('WebRTC 泄漏防护',report.webrtc_detail||(report.webrtc_ok?'无公网/内网 IP 泄漏':'检出候选 IP 泄漏'),'无公网/内网 IP 泄漏',report.webrtc_ok);
-  }
-  if(report.webdriver!==undefined){
-   add('反自动化特征',report.webdriver?'navigator.webdriver = true':'navigator.webdriver = false','navigator.webdriver = false',report.webdriver===false);
-  }
-  if(report.graphics_ok!==undefined){
-   add('硬件图形渲染',report.webgl_renderer||(report.graphics_ok?'真实硬件 GPU':'软件渲染 / 缺失'),'真实硬件 WebGL / Canvas',report.graphics_ok);
-  }
-  if(report.tz_offset_ok!==undefined){
-   add('时区偏移校验',report.tz_offset_detail||(report.tz_offset_ok?'Intl 与系统时钟一致':'时区偏移冲突'),'Intl 时区与时钟偏移一致',report.tz_offset_ok);
-  }
-  if(report.media_fingerprint_ok!==undefined){
-   add('Canvas / 音频指纹',report.media_fingerprint_detail||(report.media_fingerprint_ok?'Canvas 2D 与音频正常':'Canvas / 音频异常'),'真实 Canvas 2D 与音频采样',report.media_fingerprint_ok);
-  }
-  if(report.client_hints_ok!==undefined){
-   add('客户端提示与屏幕',report.client_hints_detail||(report.client_hints_ok?'桌面端 UA-CH 与 24-bit 屏幕':'客户端提示或屏幕异常'),'桌面端 UA-CH 与 24-bit 屏幕',report.client_hints_ok);
-  }
+  add('exit.provider','出口 IP 属性',ispKind==='hosting'?'已识别机房特征':ispKind==='isp'?'运营商标记为非机房':'运营商未知', '机房特征识别结果', ispKind==='hosting'?false:ispKind==='isp'?true:null);
+  add('page.timezone','网页时区',report.timezone,target.timezone,!!report.timezone&&report.timezone===target.timezone);
+  add('exit.timezone','出口时区',exit?.timezone,report.timezone,!!exit?.timezone&&exit.timezone===report.timezone);
+  add('machine.timezone','本机时区',machine.timezone,report.timezone,!!machine.timezone&&machine.timezone===report.timezone);
+  add('page.language','网页语言',report.language,language,language&&report.language?report.language===language:null);
+  const targetIsZh=language.toLowerCase().startsWith('zh');
+  const leakedZh=!targetIsZh&&report.languages.some(item=>item.toLowerCase().startsWith('zh'));
+  add('page.languages','语言列表纯净度',report.languages.join(', '),targetIsZh?`${language} 序列`:`仅 ${language} 系`,report.languages.length>0&&!leakedZh&&report.languages[0]===language);
+  add('machine.language','本机首选语言',first,language,first&&language?first===language||first.startsWith(language+'-')||(config.follow_machine&&first==='en'&&language==='en-US'):null);
+  add('machine.locale','本机区域',machine.locale,region?.country,region&&machine.locale_country?machine.locale_country===region.country:null);
+  add('device.platform','设备平台 / 版本',`${report.platform} / ${report.platform_version||'—'}`,`${machine.platform} / ${machine.version}`,matchesDevice({...machine,cores:report.cores},report));
+  add('device.cores','逻辑 CPU',report.cores,machine.cores,report.cores>0&&report.cores===machine.cores);
+  add('browser.version','浏览器实际版本',report.browser_version,context.engine_version,!!report.browser_version&&report.browser_version===context.engine_version);
+  add('page.geolocation','网页定位权限',report.geolocation,'denied',report.geolocation==='denied');
+  add('machine.location','本机定位',machine.location_enabled==null?'尚未核验':machine.location_enabled?'开启':'关闭','关闭',machine.location_enabled==null?null:machine.location_enabled===false);
+  add('probe.webrtc','WebRTC 本地候选',current?report.webrtc_detail:undefined,'无非本地候选',observed(report.webrtc_ok));
+  add('probe.webdriver','自动化接口状态',report.webdriver?'navigator.webdriver = true':report.webdriver===false?'navigator.webdriver = false':undefined,'navigator.webdriver = false',current&&report.webdriver!==undefined?report.webdriver===false:null);
+  add('probe.graphics','图形接口状态',report.webgl_renderer, 'WebGL 可读取且非已知软件渲染',observed(report.graphics_ok));
+  add('probe.tz-offset','时区偏移读取',current?report.tz_offset_detail:undefined,'可比较的偏移值',observed(report.tz_offset_ok));
+  add('probe.canvas-audio','Canvas / 音频接口能力',current?report.media_fingerprint_detail:undefined,'Canvas 绘制与音频接口能力',observed(report.media_fingerprint_ok));
+  add('probe.client-hints','客户端提示与屏幕',current?report.client_hints_detail:undefined,'桌面端 UA-CH 与有效屏幕信息',observed(report.client_hints_ok));
+  if(!current)problems.push('检测报告版本过旧或无法识别，请重新实测。');
  }
- const phase:VerificationPhase=busy?'checking':!problems.length&&checks.length>0&&checks.every(check=>check.ok)?'passed':'failed';
- return {phase,checks,problems:[...new Set(problems)],failures:checks.filter(check=>!check.ok)};
+ const complete=checks.length===REQUIRED_CHECK_IDS.length&&REQUIRED_CHECK_IDS.every(id=>checks.some(check=>check.id===id&&check.applicable&&check.ok!==null));
+ const phase:VerificationPhase=busy?'checking':!problems.length&&complete&&checks.every(check=>check.ok===true)?'passed':'failed';
+ return {phase,checks,problems:[...new Set(problems)],failures:checks.filter(check=>check.ok!==true)};
 }

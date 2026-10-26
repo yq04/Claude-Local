@@ -1,6 +1,6 @@
 // [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统及系统修改记录/恢复命令、固定网络资源导航、独立界面语言与本地 Token 统计命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
 // [OUTPUT]: Claude-Local 独立窗口及主窗口尺寸记忆、托盘、SQLite 本地身份暂存/恢复、用户触发的有界在线额度读取、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、系统修改历史与冲突检查恢复、固定网络入口与 CI 固定启动诊断；--quota-core 在 GUI 初始化前提供纯 JSON 额度合并。
-// [POS]: 应用编排层；不注册翻译快捷键，不读取翻译设置或 API 密钥。
+// [POS]: 应用编排层；setup注册唯一进程级唤醒owner，实际Exit停止；CloseRequested仅隐藏托盘。不读取翻译设置或API密钥。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 // ----- 发布包必须内嵌前端资源，禁止依赖开发服务 -----
@@ -110,6 +110,7 @@ fn main() {
             app.manage(monitor_window::ManagedMonitorState::default());
             app.manage(cleaner::Cleaner::default());
             app.manage(browser::Browser::default());
+            identities::wakeup::WakeupOwner::start(app.handle())?;
             window_state::setup(app.handle());
             #[cfg(target_os = "macos")]
             if local_runtime::wants_browser(&std::env::args().collect::<Vec<_>>()) {
@@ -176,6 +177,10 @@ fn main() {
             identities::identities_read,
             identities::online::identities_refresh_quota,
             identities::online::identities_wakeup_quota_window,
+            identities::wakeup::identities_wakeup_state,
+            identities::wakeup::identities_wakeup_configure,
+            identities::wakeup::identities_wakeup_migrate,
+            identities::wakeup::identities_wakeup_resume,
             identities::online::identities_refresh_all_quotas,
             identities::online::identities_quota_revision,
             identities::online::identities_quota_batch_state,
@@ -229,6 +234,7 @@ fn main() {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => show(app),
             tauri::RunEvent::Exit => {
+                if let Some(owner) = app.try_state::<identities::wakeup::WakeupOwner>() { owner.stop(); }
                 window_state::flush(app);
                 browser::forget_start_url(app)
             }

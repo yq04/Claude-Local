@@ -229,7 +229,7 @@ export function BrowserPanel({ onBusy }: {
                 </div>
                 <div className="browser-check-grid">
                     {checks.map(x => (
-                        <div className={`browser-check check-${x.status}`} key={t(x.title)}>
+                        <div className={`browser-check check-${x.status}`} key={x.id}>
                             <span aria-label={t(x.status === 'ok' ? "已核验" : x.status === 'mismatch' ? "存在冲突" : "尚未核验")}>
                                 {x.status === 'ok' ? '✓' : x.status === 'mismatch' ? '!' : '—'}
                             </span>

@@ -1,7 +1,7 @@
 // [INPUT]: Bounded Claude Code usage JSONL, identity HMAC keys, private SQLite ledger and optional IANA display timezone.
 // [OUTPUT]: Redacted aggregates, per-model reasoning effort breakdowns, DST-correct local calendar trends with explicit hourly intervals, and stable fallback attribution.
 // [POS]: Read-only identity usage command and pre-switch collection boundary; never reads credentials, archives, or session bodies into the ledger.
-// [PROTOCOL]: Complete-line offsets and bounded prefix/tail hashes live only in the usage ledger; identity database user_version remains 3. See identities/CLAUDE.md.
+// [PROTOCOL]: Complete-line offsets, bounded prefix/tail hashes, and bounded cursor effort context live only in the usage ledger; identity database user_version remains 3. See identities/CLAUDE.md.
 use super::{catalog, private};
 use chrono::{DateTime, Datelike, Days, LocalResult, NaiveDate, TimeZone, Utc};
 use chrono_tz::{GapInfo, Tz};
@@ -178,6 +178,19 @@ fn now() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
+pub(super) const USAGE_PARSER_VERSION: i64 = 1;
+pub(super) const MAX_EFFORT_RECOVERY_BYTES: u64 = 64 * 1024;
+
+#[derive(Clone, Debug)]
+pub(super) struct FileCursor {
+    pub size: u64,
+    pub mtime: u64,
+    pub offset: u64,
+    pub guard: String,
+    pub effort: String,
+    pub parser_version: i64,
+}
+
 fn clean_model(v: &Value) -> String {
     let raw = v.as_str().unwrap_or("").trim();
     if raw.is_empty() {
@@ -190,14 +203,8 @@ fn clean_model(v: &Value) -> String {
         .to_ascii_lowercase()
 }
 
-fn clean_effort(obj: &Value, msg: &Value) -> String {
-    let raw = obj
-        .get("perTurnEffort")
-        .and_then(Value::as_str)
-        .or_else(|| obj.get("effort").and_then(Value::as_str))
-        .or_else(|| msg.get("effort").and_then(Value::as_str))
-        .unwrap_or("")
-        .trim();
+fn clean_effort_str(raw: &str) -> String {
+    let raw = raw.trim();
     if raw.is_empty() {
         return String::new();
     }
@@ -206,6 +213,73 @@ fn clean_effort(obj: &Value, msg: &Value) -> String {
         .take(24)
         .collect::<String>()
         .to_ascii_lowercase()
+}
+
+fn clean_effort(obj: &Value, msg: &Value) -> String {
+    let raw = obj
+        .get("perTurnEffort")
+        .and_then(Value::as_str)
+        .or_else(|| obj.get("effort").and_then(Value::as_str))
+        .or_else(|| msg.get("perTurnEffort").and_then(Value::as_str))
+        .or_else(|| msg.get("effort").and_then(Value::as_str))
+        .unwrap_or("")
+        .trim();
+    clean_effort_str(raw)
+}
+
+fn recover_prefix_effort(path: &Path, start_offset: u64) -> String {
+    if start_offset == 0 {
+        return String::new();
+    }
+    let Ok(mut file) = File::open(path) else {
+        return String::new();
+    };
+    let scan_start = start_offset.saturating_sub(MAX_EFFORT_RECOVERY_BYTES);
+    if file.seek(SeekFrom::Start(scan_start)).is_err() {
+        return String::new();
+    }
+    let mut reader = BufReader::new(file);
+    if scan_start > 0 {
+        // Discard the initial partial line so only cleanly delimited lines are parsed.
+        match bounded_line(&mut reader) {
+            Ok(Some((_, true))) => {}
+            _ => return String::new(),
+        }
+    }
+    let mut recovered = String::new();
+    loop {
+        let pos = match reader.stream_position() {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        if pos >= start_offset {
+            break;
+        }
+        let (line, terminated) = match bounded_line(&mut reader) {
+            Ok(Some(v)) => v,
+            _ => break,
+        };
+        if !terminated {
+            break;
+        }
+        let end_pos = match reader.stream_position() {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        if end_pos > start_offset {
+            break;
+        }
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(obj) = serde_json::from_slice::<Value>(&line) {
+            let effort = clean_effort(&obj, obj.get("message").unwrap_or(&Value::Null));
+            if !effort.is_empty() {
+                recovered = effort;
+            }
+        }
+    }
+    recovered
 }
 
 fn effort_rank(effort: &str) -> u8 {
@@ -263,7 +337,8 @@ pub(super) fn parse_file(
     events: &mut HashMap<String, Event>,
     warnings: &mut Vec<String>,
 ) -> Option<(u64, u64, bool)> {
-    let (size, mtime, offset, complete) = parse_file_from(path, file_tag, events, warnings, 0)?;
+    let (size, mtime, offset, complete, _) =
+        parse_file_from_with_context(path, file_tag, events, warnings, 0, "")?;
     Some((size, mtime, complete && offset == size))
 }
 
@@ -274,6 +349,19 @@ pub(super) fn parse_file_from(
     warnings: &mut Vec<String>,
     start_offset: u64,
 ) -> Option<(u64, u64, u64, bool)> {
+    let (size, mtime, offset, complete, _) =
+        parse_file_from_with_context(path, file_tag, events, warnings, start_offset, "")?;
+    Some((size, mtime, offset, complete))
+}
+
+pub(super) fn parse_file_from_with_context(
+    path: &Path,
+    file_tag: &str,
+    events: &mut HashMap<String, Event>,
+    warnings: &mut Vec<String>,
+    start_offset: u64,
+    initial_effort: &str,
+) -> Option<(u64, u64, u64, bool, String)> {
     let meta = match fs::symlink_metadata(path) {
         Ok(v) => v,
         Err(_) => {
@@ -315,7 +403,7 @@ pub(super) fn parse_file_from(
     let mut complete_offset = start_offset;
     let mut weak = false;
     let mut complete = true;
-    let mut last_effort = String::new();
+    let mut last_effort = clean_effort_str(initial_effort);
     loop {
         let (line, terminated) = match bounded_line(&mut reader) {
             Ok(Some(v)) => v,
@@ -442,7 +530,7 @@ pub(super) fn parse_file_from(
     if weak {
         warnings.push("weak_ids".into());
     }
-    Some((meta.len(), modified, complete_offset, complete))
+    Some((meta.len(), modified, complete_offset, complete, last_effort))
 }
 
 // At most 8 KiB of completed data is read to distinguish normal appends from
@@ -462,8 +550,8 @@ fn scan_dir(
     depth: usize,
     events: &mut HashMap<String, Event>,
     warnings: &mut Vec<String>,
-    cache: &mut Vec<(String, u64, u64, u64, String)>,
-    known: &HashMap<String, (u64, u64, u64, String)>,
+    cache: &mut Vec<(String, u64, u64, u64, String, String, i64)>,
+    known: &HashMap<String, FileCursor>,
 ) {
     if depth > MAX_DEPTH {
         warnings.push("partial_scan".into());
@@ -497,31 +585,52 @@ fn scan_dir(
                 .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
                 .map(|v| v.as_nanos() as u64);
             let old = known.get(&tag).filter(|old| {
-                old.2 <= meta.len()
-                    && !old.3.is_empty()
-                    && cursor_guard(&path, old.2).ok().as_ref() == Some(&old.3)
+                old.offset <= meta.len()
+                    && !old.guard.is_empty()
+                    && cursor_guard(&path, old.offset).ok().as_ref() == Some(&old.guard)
             });
             if let (Some(old), Some(mtime)) = (old, mtime) {
-                if old.0 == meta.len() && old.1 == mtime && old.2 == meta.len() {
+                if old.size == meta.len() && old.mtime == mtime && old.offset == meta.len() {
                     continue;
                 }
             }
-            let start_offset = match (old, mtime) {
+            let (start_offset, initial_effort) = match (old, mtime) {
                 (Some(old), Some(mtime))
-                    if meta.len() > old.0 || (meta.len() == old.0 && mtime == old.1) =>
+                    if meta.len() > old.size || (meta.len() == old.size && mtime == old.mtime) =>
                 {
-                    old.2.min(old.0)
+                    let offset = old.offset.min(old.size);
+                    let effort = if old.parser_version >= USAGE_PARSER_VERSION {
+                        clean_effort_str(&old.effort)
+                    } else if offset > 0 {
+                        recover_prefix_effort(&path, offset)
+                    } else {
+                        String::new()
+                    };
+                    (offset, effort)
                 }
-                _ => 0,
+                _ => (0, String::new()),
             };
-            if let Some((len, mtime, offset, complete)) =
-                parse_file_from(&path, &tag, events, warnings, start_offset)
-            {
+            if let Some((len, mtime, offset, complete, last_effort)) = parse_file_from_with_context(
+                &path,
+                &tag,
+                events,
+                warnings,
+                start_offset,
+                &initial_effort,
+            ) {
                 if !complete {
                     continue;
                 }
                 match cursor_guard(&path, offset) {
-                    Ok(guard) => cache.push((tag, len, mtime, offset, guard)),
+                    Ok(guard) => cache.push((
+                        tag,
+                        len,
+                        mtime,
+                        offset,
+                        guard,
+                        last_effort,
+                        USAGE_PARSER_VERSION,
+                    )),
                     Err(_) => warnings.push("partial_scan".into()),
                 }
             }
@@ -541,7 +650,7 @@ pub(super) fn open_ledger(path: &Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|_| "usage ledger cannot be opened")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|_| "usage ledger busy")?;
-    conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS events(event_key TEXT PRIMARY KEY,message_key TEXT,ts INTEGER NOT NULL,model TEXT NOT NULL,effort TEXT NOT NULL DEFAULT '',input INTEGER NOT NULL,output INTEGER NOT NULL,creation INTEGER NOT NULL,cache_read INTEGER NOT NULL,reasoning INTEGER,account_key TEXT,weak INTEGER NOT NULL,sidechain INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS files(file_key TEXT PRIMARY KEY,size INTEGER NOT NULL,mtime INTEGER NOT NULL,offset INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS boundaries(ts INTEGER NOT NULL,account_key TEXT); CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);").map_err(|_| "usage ledger schema unavailable")?;
+    conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS events(event_key TEXT PRIMARY KEY,message_key TEXT,ts INTEGER NOT NULL,model TEXT NOT NULL,effort TEXT NOT NULL DEFAULT '',input INTEGER NOT NULL,output INTEGER NOT NULL,creation INTEGER NOT NULL,cache_read INTEGER NOT NULL,reasoning INTEGER,account_key TEXT,weak INTEGER NOT NULL,sidechain INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS files(file_key TEXT PRIMARY KEY,size INTEGER NOT NULL,mtime INTEGER NOT NULL,offset INTEGER NOT NULL DEFAULT 0,guard TEXT NOT NULL DEFAULT '',effort TEXT NOT NULL DEFAULT '',parser_version INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS boundaries(ts INTEGER NOT NULL,account_key TEXT); CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);").map_err(|_| "usage ledger schema unavailable")?;
     let has_offset: bool = conn
         .prepare("PRAGMA table_info(files)")
         .ok()
@@ -572,6 +681,37 @@ pub(super) fn open_ledger(path: &Path) -> Result<Connection, String> {
         // Revalidate old cached files once; existing event ownership is unchanged.
         conn.execute(
             "ALTER TABLE files ADD COLUMN guard TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(|_| "usage ledger migration failed")?;
+    }
+    let (has_file_effort, has_parser_version): (bool, bool) = conn
+        .prepare("PRAGMA table_info(files)")
+        .and_then(|mut q| {
+            let rows = q.query_map([], |r| r.get::<_, String>(1))?;
+            let mut effort = false;
+            let mut version = false;
+            for col in rows.flatten() {
+                if col == "effort" {
+                    effort = true;
+                }
+                if col == "parser_version" {
+                    version = true;
+                }
+            }
+            Ok((effort, version))
+        })
+        .map_err(|_| "usage ledger schema unavailable")?;
+    if !has_file_effort {
+        conn.execute(
+            "ALTER TABLE files ADD COLUMN effort TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(|_| "usage ledger migration failed")?;
+    }
+    if !has_parser_version {
+        conn.execute(
+            "ALTER TABLE files ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0",
             [],
         )
         .map_err(|_| "usage ledger migration failed")?;
@@ -782,7 +922,7 @@ pub(super) fn persist_scan(
     conn: &Connection,
     events: HashMap<String, Event>,
     boundaries: &[(u64, Option<String>)],
-    cache: &[(String, u64, u64, u64, String)],
+    cache: &[(String, u64, u64, u64, String, String, i64)],
 ) -> Result<(), String> {
     let tx = conn
         .unchecked_transaction()
@@ -818,8 +958,20 @@ pub(super) fn persist_scan(
         }
         tx.execute("INSERT INTO events(event_key,message_key,ts,model,effort,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(event_key) DO UPDATE SET ts=MAX(events.ts,excluded.ts),input=MAX(events.input,excluded.input),output=MAX(events.output,excluded.output),creation=MAX(events.creation,excluded.creation),cache_read=MAX(events.cache_read,excluded.cache_read),reasoning=CASE WHEN events.reasoning IS NULL THEN excluded.reasoning WHEN excluded.reasoning IS NULL THEN events.reasoning ELSE MAX(events.reasoning,excluded.reasoning) END,model=CASE WHEN events.model='unknown' THEN excluded.model ELSE events.model END,effort=CASE WHEN excluded.effort!='' THEN excluded.effort ELSE events.effort END,weak=MIN(events.weak,excluded.weak)",params![e.event_key,e.message_key,e.ts as i64,e.model,e.effort,e.counts.input as i64,e.counts.output as i64,e.counts.creation as i64,e.counts.read as i64,e.counts.reasoning.map(|x|x as i64),e.account,e.weak as i64,e.sidechain as i64]).map_err(|_|"usage event write failed")?;
     }
-    for (key, size, mtime, offset, guard) in cache {
-        tx.execute("INSERT INTO files(file_key,size,mtime,offset,guard) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(file_key) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,offset=excluded.offset,guard=excluded.guard",params![key,*size as i64,*mtime as i64,*offset as i64,guard]).map_err(|_|"usage cache write failed")?;
+    for (key, size, mtime, offset, guard, effort, parser_version) in cache {
+        tx.execute(
+            "INSERT INTO files(file_key,size,mtime,offset,guard,effort,parser_version) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(file_key) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,offset=excluded.offset,guard=excluded.guard,effort=excluded.effort,parser_version=excluded.parser_version",
+            params![
+                key,
+                *size as i64,
+                *mtime as i64,
+                *offset as i64,
+                guard,
+                effort,
+                *parser_version,
+            ],
+        )
+        .map_err(|_| "usage cache write failed")?;
     }
     tx.execute("INSERT INTO meta(key,value) VALUES('last_scan',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[now().to_string()]).map_err(|_|"usage scan timestamp write failed")?;
     tx.commit().map_err(|_| "usage ledger commit failed".into())
@@ -1048,17 +1200,23 @@ pub(crate) fn collect_before_switch(vault: &Path, home: &Path, _account_key: Opt
     ensure_tracking_start(&conn, vault, home);
     mark_external_gap(&conn, vault, home);
     let mut known = HashMap::new();
-    if let Ok(mut q) = conn.prepare("SELECT file_key,size,mtime,offset,guard FROM files") {
+    if let Ok(mut q) = conn.prepare(
+        "SELECT file_key,size,mtime,offset,guard,COALESCE(effort,''),COALESCE(parser_version,0) FROM files",
+    ) {
         if let Ok(rows) = q.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?.max(0) as u64,
-                r.get::<_, i64>(2)?.max(0) as u64,
-                r.get::<_, i64>(3)?.max(0) as u64,
-                r.get::<_, String>(4)?,
+                FileCursor {
+                    size: r.get::<_, i64>(1)?.max(0) as u64,
+                    mtime: r.get::<_, i64>(2)?.max(0) as u64,
+                    offset: r.get::<_, i64>(3)?.max(0) as u64,
+                    guard: r.get::<_, String>(4)?,
+                    effort: r.get::<_, String>(5)?,
+                    parser_version: r.get::<_, i64>(6)?,
+                },
             ))
         }) {
-            known.extend(rows.flatten().map(|(k, s, m, o, g)| (k, (s, m, o, g))));
+            known.extend(rows.flatten());
         }
     }
     let mut events = HashMap::new();
@@ -1302,22 +1460,15 @@ pub(crate) fn set_fallback_account_id(
     read_attribution_config(vault)
 }
 
-pub(crate) fn clear_fallback_account_id(
-    vault: &Path,
-) -> Result<UsageAttributionConfig, String> {
+pub(crate) fn clear_fallback_account_id(vault: &Path) -> Result<UsageAttributionConfig, String> {
     let ledger_path = vault.join("usage.sqlite");
     let conn = open_ledger(&ledger_path)?;
-    conn.execute(
-        "DELETE FROM meta WHERE key='fallback_account_id'",
-        [],
-    )
-    .map_err(|_| "usage attribution clear failed")?;
+    conn.execute("DELETE FROM meta WHERE key='fallback_account_id'", [])
+        .map_err(|_| "usage attribution clear failed")?;
     read_attribution_config(vault)
 }
 
-pub(crate) fn read_attribution_config(
-    vault: &Path,
-) -> Result<UsageAttributionConfig, String> {
+pub(crate) fn read_attribution_config(vault: &Path) -> Result<UsageAttributionConfig, String> {
     let ledger_path = vault.join("usage.sqlite");
     let conn = open_ledger(&ledger_path)?;
     let saved_fallback: Option<String> = conn
@@ -1330,7 +1481,8 @@ pub(crate) fn read_attribution_config(
         .map_err(|_| "usage attribution unavailable")?;
 
     let db = identity_db_readonly(vault).ok();
-    let fallback_account_name = if let (Some(id), Some(db)) = (saved_fallback.as_ref(), db.as_ref()) {
+    let fallback_account_name = if let (Some(id), Some(db)) = (saved_fallback.as_ref(), db.as_ref())
+    {
         db.query_row(
             "SELECT name FROM identities WHERE id=?1 AND empty=0",
             [id],
@@ -1364,9 +1516,9 @@ pub(crate) fn read_attribution_config(
 
     let mut unassigned_requests = 0u64;
     let mut unassigned_tokens = 0u64;
-    if let Ok(mut q) = conn.prepare(
-        "SELECT COALESCE(account_key,''),input,output,creation,cache_read FROM events",
-    ) {
+    if let Ok(mut q) =
+        conn.prepare("SELECT COALESCE(account_key,''),input,output,creation,cache_read FROM events")
+    {
         if let Ok(rows) = q.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -1468,17 +1620,23 @@ pub(super) fn read_at_with_timezone_now(
     let projects = home.join(".claude").join("projects");
     if let Ok(meta) = fs::symlink_metadata(&projects) {
         if meta.is_dir() && private::safe(&projects).is_ok() {
-            if let Ok(mut q) = conn.prepare("SELECT file_key,size,mtime,offset,guard FROM files") {
+            if let Ok(mut q) = conn.prepare(
+                "SELECT file_key,size,mtime,offset,guard,COALESCE(effort,''),COALESCE(parser_version,0) FROM files",
+            ) {
                 if let Ok(rows) = q.query_map([], |r| {
                     Ok((
                         r.get::<_, String>(0)?,
-                        r.get::<_, i64>(1)?.max(0) as u64,
-                        r.get::<_, i64>(2)?.max(0) as u64,
-                        r.get::<_, i64>(3)?.max(0) as u64,
-                        r.get::<_, String>(4)?,
+                        FileCursor {
+                            size: r.get::<_, i64>(1)?.max(0) as u64,
+                            mtime: r.get::<_, i64>(2)?.max(0) as u64,
+                            offset: r.get::<_, i64>(3)?.max(0) as u64,
+                            guard: r.get::<_, String>(4)?,
+                            effort: r.get::<_, String>(5)?,
+                            parser_version: r.get::<_, i64>(6)?,
+                        },
                     ))
                 }) {
-                    known.extend(rows.flatten().map(|(k, s, m, o, g)| (k, (s, m, o, g))));
+                    known.extend(rows.flatten());
                 }
             }
             scan_dir(&projects, 0, &mut events, &mut warnings, &mut cache, &known);
@@ -1671,10 +1829,7 @@ pub(super) fn read_at_with_timezone_now(
     let mut models: BTreeMap<String, UsageTotals> = BTreeMap::new();
     let mut model_efforts: BTreeMap<String, BTreeMap<String, UsageTotals>> = BTreeMap::new();
     for (owner, ts, model, effort, i, o, c, r, reason) in rows {
-        if start.is_some_and(|s| ts < s)
-            || end.is_some_and(|e| ts >= e)
-            || ts > snapshot_now
-        {
+        if start.is_some_and(|s| ts < s) || end.is_some_and(|e| ts >= e) || ts > snapshot_now {
             continue;
         }
         let id = key_to_id
@@ -1790,13 +1945,16 @@ pub(super) fn read_at_with_timezone_now(
     let attribution = {
         let effective_id = saved_fallback.filter(|id| accounts.iter().any(|a| &a.id == id));
         let fallback_account_name = effective_id.as_ref().and_then(|id| {
-            accounts.iter().find(|a| &a.id == id).map(|a| a.name.clone())
+            accounts
+                .iter()
+                .find(|a| &a.id == id)
+                .map(|a| a.name.clone())
         });
         let mut unassigned_requests = 0u64;
         let mut unassigned_tokens = 0u64;
-        if let Ok(mut q) = conn.prepare(
-            "SELECT COALESCE(account_key,''),input,output,creation,cache_read FROM events",
-        ) {
+        if let Ok(mut q) = conn
+            .prepare("SELECT COALESCE(account_key,''),input,output,creation,cache_read FROM events")
+        {
             if let Ok(rows) = q.query_map([], |r| {
                 Ok((
                     r.get::<_, String>(0)?,

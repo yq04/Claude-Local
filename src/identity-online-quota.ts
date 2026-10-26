@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 在线额度状态/原因白名单、持久批次结果契约、前台轮询设置与订阅重置元数据。
- * [OUTPUT]: 可恢复批次聚合/终态格式化、严格目标指纹校验、额度结果分级、前台串行调度与独立时钟/过期状态的订阅重置脱敏模型。
- * [POS]: 身份管理前端纯模型；不访问网络或凭据，原生 Tauri 任务负责请求、取消和账本提交。
+ * [OUTPUT]: 批次/额度纯模型、前台串行读取、严格新5h确认，以及单例原生调度快照订阅、白名单旧状态迁移和显式设置IPC。
+ * [POS]: 仅原生owner调度唤醒；前端桥不设唤醒timer、不读取凭据或发HTTP，不写额度账本。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { IdentitySubscriptionMetadata } from './identity-model';
@@ -40,6 +40,9 @@ export interface OnlineQuotaResult {
   verified_at_ms?: number;
   runtime_stage?: 'probe' | 'execute';
   runtime_reason?: 'missing_resource' | 'no_compatible_runtime' | 'missing_dependency' | 'probe_failed' | 'timeout' | 'invalid_response';
+  wakeup_effect?: 'request_accepted' | 'quota_observed' | 'new_5h_confirmed' | 'outcome_unknown';
+  wakeup_5h_reset_at?: number;
+  wakeup_audit_status?: 'written' | 'unavailable';
 }
 
 export function formatOnlineQuotaStatus(
@@ -617,6 +620,89 @@ export const DEFAULT_AUTO_WAKEUP_CONFIG: AutoWakeupConfig = {
   excludedIdentities: [],
 };
 
+/** Native is the sole scheduling owner. This store only migrates and displays IPC snapshots. */
+export interface NativeWakeupAccount extends AutoWakeupAccountRuntime {
+  decision: string;
+  capability: 'http_connect' | 'auth_required' | 'transport_unsupported' | '';
+  unknown: boolean;
+  authBlocked: boolean;
+  recoveryAllowed: boolean;
+}
+export interface NativeWakeupSnapshot {
+  schema: 1;
+  migrated: boolean;
+  config: AutoWakeupConfig;
+  targets: string[];
+  lastGlobalWakeupAtMs: number;
+  nextGlobalAtMs: number;
+  accounts: Record<string, NativeWakeupAccount>;
+  status: string;
+  runtime: string;
+}
+let nativeWakeupSnapshot: NativeWakeupSnapshot = {
+  schema: 1, migrated: false, config: {...DEFAULT_AUTO_WAKEUP_CONFIG}, targets: [],
+  lastGlobalWakeupAtMs: 0, nextGlobalAtMs: 0, accounts: {}, status: 'loading', runtime: 'unknown',
+};
+const wakeupSubscribers = new Set<() => void>();
+export function readNativeWakeupSnapshot(): NativeWakeupSnapshot { return nativeWakeupSnapshot; }
+export function subscribeNativeWakeup(callback: () => void): () => void {
+  wakeupSubscribers.add(callback);
+  return () => { wakeupSubscribers.delete(callback); };
+}
+function publishNativeWakeup(snapshot: NativeWakeupSnapshot): void {
+  if (!snapshot || snapshot.schema !== 1 || !snapshot.config || !snapshot.accounts) return;
+  nativeWakeupSnapshot = snapshot;
+  for (const callback of wakeupSubscribers) callback();
+}
+let nativeWakeupInitialization: Promise<void> | null = null;
+export function initializeNativeWakeupBridge(): Promise<void> {
+  // Synthetic pages remain passive unless their explicit native scheduler mock is enabled.
+  if (typeof window !== 'undefined' && 'identityFixture' in window
+    && !(window as unknown as {__enableNativeWakeupTest?: boolean}).__enableNativeWakeupTest) return Promise.resolve();
+  if (nativeWakeupInitialization) return nativeWakeupInitialization;
+  nativeWakeupInitialization = (async () => {
+    const [{invoke}, {listen}] = await Promise.all([import('@tauri-apps/api/core'), import('@tauri-apps/api/event')]);
+    await listen<NativeWakeupSnapshot>('wakeup-scheduler-state', event => publishNativeWakeup(event.payload));
+    const snapshot = await invoke<NativeWakeupSnapshot>('identities_wakeup_state');
+    publishNativeWakeup(snapshot);
+    if (!snapshot.migrated) {
+      // Old keys are retained. Only native acknowledgement confirms the enabled switch.
+      publishNativeWakeup(await invoke<NativeWakeupSnapshot>('identities_wakeup_migrate', {
+        migration: {schema: 1, config: loadAutoWakeupConfig(), state: boundedLegacyWakeupState(loadAutoWakeupState())},
+      }));
+    }
+  })().catch(error => {
+    publishNativeWakeup({...nativeWakeupSnapshot, config: {...nativeWakeupSnapshot.config, enabled: false}, status: String(error) === 'wakeup.runtimeUnavailable' ? 'runtime_unavailable' : 'storage_error'});
+  });
+  return nativeWakeupInitialization;
+}
+export interface LegacyWakeupMigrationState {
+  lastGlobalWakeupAtMs: number;
+  accounts: Record<string, Pick<AutoWakeupAccountRuntime, 'lastAttemptAtMs' | 'backoffUntilMs' | 'lastStatus'>>;
+}
+export function boundedLegacyWakeupState(state: AutoWakeupStateStore): LegacyWakeupMigrationState {
+  const accounts: LegacyWakeupMigrationState['accounts'] = {};
+  for (const [identity, value] of Object.entries(state.accounts).slice(0, 256)) {
+    if (!/^[0-9a-f]{64}$/.test(identity) || !value || typeof value !== 'object') continue;
+    const a: LegacyWakeupMigrationState['accounts'][string] = {lastAttemptAtMs: null, backoffUntilMs: null, lastStatus: null};
+    const time = (x: unknown) => typeof x === 'number' && Number.isSafeInteger(x) && x >= 0 && x <= 8_640_000_000_000 ? x : null;
+    // Legacy success and idle counters were not reliable evidence; retain only guards.
+    a.lastAttemptAtMs = time(value.lastAttemptAtMs);
+    a.backoffUntilMs = time(value.backoffUntilMs);
+    a.lastStatus = value.lastStatus === 'auth_required' || value.lastStatus === 'outcome_unknown' ? value.lastStatus : null;
+    accounts[identity] = a;
+  }
+  return {lastGlobalWakeupAtMs: Number.isSafeInteger(state.lastGlobalWakeupAtMs) && state.lastGlobalWakeupAtMs >= 0 && state.lastGlobalWakeupAtMs <= 8_640_000_000_000 ? state.lastGlobalWakeupAtMs : 0, accounts};
+}
+export async function configureNativeWakeup(config: AutoWakeupConfig): Promise<void> {
+  const {invoke} = await import('@tauri-apps/api/core');
+  publishNativeWakeup(await invoke<NativeWakeupSnapshot>('identities_wakeup_configure', {config}));
+}
+export async function resumeNativeWakeup(expectedIdentity: string): Promise<void> {
+  const {invoke} = await import('@tauri-apps/api/core');
+  publishNativeWakeup(await invoke<NativeWakeupSnapshot>('identities_wakeup_resume', {expectedIdentity}));
+}
+
 export interface AutoWakeupAccountRuntime {
   /** 连续自动唤醒后未实际使用（used5h <= 1%）的轮数：0=刚用过，1=空转1轮，>=2=进入按需待命 */
   unusedStreak: number;
@@ -624,6 +710,8 @@ export interface AutoWakeupAccountRuntime {
   lastWokenForResetSec: number | null;
   /** 最近一次自动唤醒成功的时间戳（毫秒） */
   lastWokenAtMs: number | null;
+  /** 最近一次真实唤醒调用的时间戳（毫秒），含失败或结果未知 */
+  lastAttemptAtMs: number | null;
   /** 最近一次自动唤醒后开启的新 5h 窗口 reset_at（秒），用于追踪该窗口内是否产生真实使用 */
   wokenWindowResetSec: number | null;
   /** 在最近一次自动唤醒开启的窗口期内，用户是否真实使用过该账号（used5h > 1%） */
@@ -647,6 +735,7 @@ export function defaultAccountWakeupRuntime(): AutoWakeupAccountRuntime {
     unusedStreak: 0,
     lastWokenForResetSec: null,
     lastWokenAtMs: null,
+    lastAttemptAtMs: null,
     wokenWindowResetSec: null,
     usedDuringWokenWindow: false,
     scheduledForResetSec: null,
@@ -715,12 +804,13 @@ export function loadAutoWakeupConfig(): AutoWakeupConfig {
   }
 }
 
-export function saveAutoWakeupConfig(config: AutoWakeupConfig): void {
+export function saveAutoWakeupConfig(config: AutoWakeupConfig): boolean {
   try {
-    if (typeof localStorage === 'undefined') return;
+    if (typeof localStorage === 'undefined') return false;
     localStorage.setItem(AUTO_WAKEUP_CONFIG_KEY, JSON.stringify(config));
+    return true;
   } catch {
-    // Ignore storage errors in restricted environments
+    return false;
   }
 }
 
@@ -742,13 +832,20 @@ export function loadAutoWakeupState(): AutoWakeupStateStore {
   }
 }
 
-export function saveAutoWakeupState(store: AutoWakeupStateStore): void {
+export function saveAutoWakeupState(store: AutoWakeupStateStore): boolean {
   try {
-    if (typeof localStorage === 'undefined') return;
+    if (typeof localStorage === 'undefined') return false;
     localStorage.setItem(AUTO_WAKEUP_STATE_KEY, JSON.stringify(store));
+    return true;
   } catch {
-    // Ignore storage errors
+    return false;
   }
+}
+
+export function isConfirmedNewWakeup5h(result: OnlineQuotaResult): result is OnlineQuotaResult & {wakeup_5h_reset_at: number} {
+  return result.status === 'updated' && Array.isArray(result.updated_windows) && result.updated_windows.includes('5h')
+    && result.wakeup_effect === 'new_5h_confirmed' && Number.isSafeInteger(result.wakeup_5h_reset_at)
+    && result.wakeup_5h_reset_at! > 0;
 }
 
 export interface WakeupCandidateInput {

@@ -1,5 +1,6 @@
 # locales/
 > L2 | 父级: ../CLAUDE.md
+wakeup.*: 应用运行/托盘隐藏/真正退出边界、scope变化暂停、HTTP CONNECT类型支持（不代表网络可达）、无账号探针失败、逐账号暂停/一次受控授权恢复、最近尝试与审计写入失败；两语同键同插槽，不暴露代理值或身份指纹。
 zh.yaml: localEdition.* 独立产品品牌与版本信息（全量默认简体中文）；身份、浏览器联动、离线额度、清理与电脑设置文案；独立本地帮助、软件设置页（外观/主题/布局/动画/隐私/版本中心）、iKuuu + Kookeey 快捷操作与 AI 自动配置提示词文案，以及用户手动触发的 Claude 服务连通性/逐域原因说明；数值以命名插槽传入，不含业务分支。
 en.yaml: 与中文同键、同插槽的独立产品和功能文案（含软件设置页与网络环境快捷配置全量英文对照）；固定域名诊断明确服务连通性与公网出口、账号可用性的区别；不得翻译配置值、路径或用户输入。
 yaml.d.ts: 构建期 YAML 导入类型；解析器由 Vite 使用，运行包只有静态对象。
@@ -19,6 +20,7 @@ identitySearch.* / identityDiagnostic.*: 可见别名检索、视图排序、观
 usage.allAccounts: concise All label in both catalogs.
 quick.readFailed / quick.failedChecks / quick.followsMachine: 独立读取失败、具体分区与跟随电脑配置的同键同插槽双语提示。
 quotaOnline.runtimeStage.* / quotaOnline.runtimeReason.* / quotaOnline.reason.* / quotaOnline.stage.* / quotaOnline.routeMode.* / quotaOnline.status.*: P0 探针/采集运行阶段与失败原因、P1 路由模式及 route_unavailable 状态映射。
+wakeup.*: 唤醒尝试与确认新5h窗口的双语反馈；明确未知结果的延迟重试、授权恢复要求及配置/状态持久化失败，不将缓存或仅7d观测表述为5h成功。
 usage.attribution* / usage.dst*: P6B 未归属用量稳定账号兜底归属预览/确认/清除、IANA 时区与 23h/25h 夏令时日历徽章双语文案。
 cli.installGuide / cli.installCommand / cli.copyInstall / cli.recheck: CLI 未安装时官方 Windows 安装指引与复制、重新检查双语文案。
 quick.troubleshoot* / identitySafety.troubleshootHelp: 快速配置排障卡片与使用说明缓存/残留清理入口导航提示。

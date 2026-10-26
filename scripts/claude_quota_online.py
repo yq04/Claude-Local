@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # [INPUT]: Minimal authenticated account/settings projection, explicit selector, profile/usage or bound browser snapshots with independent clocks.
-# [OUTPUT]: Sanitized status JSON; opt-in nonce-bound two-phase commit grant; Python-owned atomic quota ledger and bounded manual-reset validity.
+# [OUTPUT]: Sanitized status plus explicit wakeup-effect/5h-reset evidence; opt-in two-phase commit; Python-owned atomic quota ledger and bounded manual-reset validity.
 # [POS]: Network outside native identity door; grant before writer lock; never refreshes credentials or edits Claude configuration.
 # [PROTOCOL]: Update scripts/CLAUDE.md when changing identity binding or persistence boundaries.
 """Fetch OAuth usage without refreshing or modifying local credentials."""
@@ -1086,7 +1086,8 @@ def run(app_data: Path, claude_home: Path, account_id: str,
 
 
 def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
-               expected_identity: str | None = None, commit_guard=None) -> dict:
+               expected_identity: str | None = None, commit_guard=None,
+               expired_reset_at: int | None = None) -> dict:
     """Trigger a lightweight /v1/messages request to start the next 5h quota window and persist the new anchor."""
     if quota is None:
         return _result("unavailable")
@@ -1129,8 +1130,9 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
                 return _result("unavailable")
             retry_at = finished[0] if finished else None
             return _result("route_unavailable", retry_at_ms=retry_at,
-                           reason="non_us_exit" if exit_country else "exit_check_failed",
+                           reason="country_not_allowed" if exit_country else "exit_check_failed",
                            stage="exit_check", country=exit_country, route_mode=route[0])
+    stage = "profile"
     profile_code, profile_raw, profile_headers = _fetch(token, PROFILE_ENDPOINT, route)
     profile_now = int(time.time() * 1000)
     status, retry = _classify_http_result(profile_code, profile_headers, profile_now)
@@ -1143,6 +1145,7 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
         except (UnicodeError, ValueError, TypeError, OverflowError):
             status, retry = "invalid_response", None
     if status is None:
+        stage = "messages"
         device_id = _device_id(cj, identity)
         msg_code, msg_raw, msg_headers = None, None, None
         for model in WAKEUP_MODELS:
@@ -1151,12 +1154,18 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
                 break
         observed_ms = int(time.time() * 1000)
         status, retry = _classify_http_result(msg_code, msg_headers, observed_ms)
+        if msg_code == "network_error":
+            status, retry = "network_error", None
+            stage = "messages"
+            return _finish_wakeup_failure(app_data, identity, lease, status, retry, stage,
+                                          wakeup_effect="outcome_unknown", route_mode=route[0])
         if status is None:
             anchor, updated = None, None
             try:
                 anchor, updated = parse_ratelimit_headers(msg_headers, acc["accountUuid"], observed_ms)
             except ValueError:
                 # Fallback to GET /api/oauth/usage if the proxy stripped custom response headers.
+                stage = "usage"
                 usage_code, raw, headers = _fetch(token, ENDPOINT, route)
                 observed_ms = int(time.time() * 1000)
                 status, retry = _classify_http_result(usage_code, headers, observed_ms)
@@ -1169,6 +1178,14 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
                     except (UnicodeError, ValueError, TypeError, OverflowError):
                         status, retry = "invalid_response", None
             if status is None and anchor is not None and updated:
+                reset_5h = None
+                try:
+                    if "5h" in updated:
+                        reset_5h = _reset_seconds(anchor.get("utilization", {}).get("five_hour", {}).get("resets_at"))
+                except (AttributeError, TypeError, ValueError):
+                    reset_5h = None
+                confirmed_5h = bool(reset_5h and expired_reset_at is not None
+                                    and reset_5h > int(time.time()) and reset_5h > expired_reset_at)
                 try:
                     if commit_guard is not None and not commit_guard():
                         _finish_state(app_data, identity, lease, int(time.time() * 1000), "cancelled")
@@ -1177,15 +1194,22 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
                         app_data, claude_home, account_id, expected_identity, token,
                         identity, lease, observed_ms, cj, cred, anchor, route)
                     if status == "updated":
+                        effect = "new_5h_confirmed" if confirmed_5h else "quota_observed"
                         return _result("updated", observed_at_ms=observed_ms, retry_at_ms=retry_at,
                                        last_observed_at_ms=observed_ms, updated_windows=updated,
-                                       source="oauth", verified_at_ms=observed_ms, route_mode=route[0])
+                                       source="oauth", verified_at_ms=observed_ms, route_mode=route[0],
+                                       stage="commit",
+                                       wakeup_effect=effect,
+                                       wakeup_5h_reset_at=reset_5h if confirmed_5h else None)
                     if status == "cooldown":
                         return _result("cooldown")
                     if status == "route_unavailable":
-                        return _result(status, retry_at_ms=retry_at, reason="route_changed", stage="commit", route_mode=route[0])
-                    return _result(status, retry_at_ms=retry_at, route_mode=route[0])
+                        return _result(status, retry_at_ms=retry_at, reason="route_changed", stage="commit", route_mode=route[0],
+                                       wakeup_effect="outcome_unknown")
+                    return _result(status, retry_at_ms=retry_at, route_mode=route[0], stage="commit",
+                                   wakeup_effect="outcome_unknown")
                 except (OSError, TimeoutError, sqlite3.Error, RuntimeError):
+                    stage = "commit"
                     status, retry = "unavailable", None
     observed_ms = int(time.time() * 1000)
     try:
@@ -1195,7 +1219,23 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
     if finished is None:
         return _result("cooldown")
     actual_retry, last_observed = finished
-    return _result(status, retry_at_ms=actual_retry, last_observed_at_ms=last_observed, route_mode=route[0])
+    reason = {"auth_required": "auth_required", "rate_limited": "rate_limited"}.get(status)
+    return _result(status, retry_at_ms=actual_retry, last_observed_at_ms=last_observed,
+                   route_mode=route[0], stage=stage, reason=reason,
+                   wakeup_effect="outcome_unknown" if status == "network_error" and stage == "messages" else None)
+
+
+def _finish_wakeup_failure(app_data, identity, lease, status, retry, stage, **fields):
+    try:
+        finished = _finish_state(app_data, identity, lease, int(time.time() * 1000), status, retry)
+    except (OSError, TimeoutError):
+        return _result("unavailable", stage="commit", wakeup_effect="outcome_unknown")
+    if finished is None:
+        return _result("cooldown", stage="commit", wakeup_effect="outcome_unknown")
+    actual_retry, last_observed = finished
+    reason = {"auth_required": "auth_required", "rate_limited": "rate_limited"}.get(status)
+    return _result(status, retry_at_ms=actual_retry, last_observed_at_ms=last_observed,
+                   stage=stage, reason=reason, **fields)
 
 
 MAX_PROTOCOL_LINE = 16 * 1024
@@ -1269,7 +1309,12 @@ def main(argv=None):
             result = import_browser_snapshot(Path(args.app_data), Path(args.claude_home),
                                              account_id, request.get("browser_snapshot"), expected_identity, commit_guard)
         elif isinstance(request, dict) and request.get("wakeup") is True:
-            result = run_wakeup(Path(args.app_data), Path(args.claude_home), account_id, expected_identity, commit_guard)
+            expired_reset_at = request.get("expired_reset_at")
+            if expired_reset_at is not None and (isinstance(expired_reset_at, bool) or not isinstance(expired_reset_at, int) or expired_reset_at <= 0):
+                result = _result("invalid_response")
+            else:
+                result = run_wakeup(Path(args.app_data), Path(args.claude_home), account_id,
+                                    expected_identity, commit_guard, expired_reset_at)
         else:
             result = run(Path(args.app_data), Path(args.claude_home), account_id, expected_identity, commit_guard)
     except (ValueError, OSError):

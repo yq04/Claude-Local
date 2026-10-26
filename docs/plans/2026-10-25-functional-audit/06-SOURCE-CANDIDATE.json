@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "base_commit": "66ffd00a8dbd14d0bd20581d151c9f6b35eb4c03",
+  "version_metadata": "0.3.1",
+  "status": "verified_local_source_candidate_not_deployed",
+  "hash_basis": "working-tree bytes; Git may normalize line endings",
+  "scope": "owner-authorized Astra batches 1-5; synthetic verification and frontend production build",
+  "files": [
+    {
+      "path": "scripts/CLAUDE.md",
+      "sha256": "f646c26362f4dc6d8f39e756327deb6ea7c0646c5614eb759687db313de324d1"
+    },
+    {
+      "path": "scripts/claude_quota_online.py",
+      "sha256": "cabe072332c95a45d642a4fa9ef84bb296b8ba19242ecedbabd30f8c7c96119f"
+    },
+    {
+      "path": "scripts/test-claude-quota-online.py",
+      "sha256": "722894f952156cc6cc341198c6a76af91327ae7a958b0b5eb2b578c15ed34190"
+    },
+    {
+      "path": "scripts/test-identities-ui.ts",
+      "sha256": "3081b90bd9a26f214f9f5f93066ec33b1e4543c72eff30cf3fd5a8670469d7a5"
+    },
+    {
+      "path": "scripts/test-native-wakeup.ts",
+      "sha256": "928aead7f7e40b010c9b3a1854a48d8211bbef8aacad0573f6bfa4b5077749c3"
+    },
+    {
+      "path": "scripts/test-quota-reset.ts",
+      "sha256": "3b02bf58e52bbbbd97e4cc952d0b50643b7f63dfb759d627fe6d05e21cac1c89"
+    },
+    {
+      "path": "src-tauri/src/CLAUDE.md",
+      "sha256": "7b366de1553514ee2cb5fd60c040d18b8d0729391f9e6bc123baede77d2d0d48"
+    },
+    {
+      "path": "src-tauri/src/browser/CLAUDE.md",
+      "sha256": "36ebc01ccf157e79e83e685dc8fe5a0c556ebc747ef0418cf3f63854d80f4714"
+    },
+    {
+      "path": "src-tauri/src/browser/network.rs",
+      "sha256": "246847a6f425eeda513c8da4118fa04f6114094598ff26f1ed8c4c21fb058113"
+    },
+    {
+      "path": "src-tauri/src/browser/tests.rs",
+      "sha256": "346dea46b1c8ee681ca4b11930e0b81fc440c28fdd10eb38ea69e68bb7acb922"
+    },
+    {
+      "path": "src-tauri/src/identities/CLAUDE.md",
+      "sha256": "32ed674587c5e7f4cb102644bf772f630a327bb0fa8f9c7fac998bdcc9c260e0"
+    },
+    {
+      "path": "src-tauri/src/identities/mod.rs",
+      "sha256": "caf86a6bb12601fd8ef3b5779e56e260bd3ec79ca7972597958176eb2f5b9b58"
+    },
+    {
+      "path": "src-tauri/src/identities/online.rs",
+      "sha256": "dbb44d559c3a3e47ae74b24a0f373d6a43e8f38cb996fee7a2eaa0d28954276d"
+    },
+    {
+      "path": "src-tauri/src/identities/usage.rs",
+      "sha256": "812427935858a6262c68a430afb429bc17445b42590dacc61eed7e7f3f59f1c3"
+    },
+    {
+      "path": "src-tauri/src/identities/usage_tests.rs",
+      "sha256": "992d79d95de7f3a57f00fe8ccf9529f14f9219c945b9d12154a76a8ecb453867"
+    },
+    {
+      "path": "src-tauri/src/identities/wakeup.rs",
+      "sha256": "88552db739419d29dee840dce25efc2c18a14513bf76d0f8f1a57316692294ec"
+    },
+    {
+      "path": "src-tauri/src/identities/wakeup_audit.rs",
+      "sha256": "c2fd010462ff4d98fb5ae4a2621f9a3ce8f84813afffe9d6feb8b4bcea00d0c5"
+    },
+    {
+      "path": "src-tauri/src/identities/wakeup_tests.rs",
+      "sha256": "c8b4832f0d1a95e8b4d72319f0d2a7104598085e5850b90786b2be6fc70bb2cb"
+    },
+    {
+      "path": "src-tauri/src/main.rs",
+      "sha256": "5d25e5bc72b310837d042d948bca6a94643d4cccdd3cd1a627fad13bcefac1e7"
+    },
+    {
+      "path": "src/CLAUDE.md",
+      "sha256": "86bd4af0811f8a09e56a382ebc2c15bf1f431ea97d0087329b3a0456ca425f09"
+    },
+    {
+      "path": "src/browser-model.ts",
+      "sha256": "5f507e5585ffbc2bb542b9ece4844640952e3c906869d75f56d5cb1df20dea6d"
+    },
+    {
+      "path": "src/browser-network.test.ts",
+      "sha256": "1dafecd6e261cb2a0052dd25d8d71c1b626666017fc495e94afa50df4b59d3db"
+    },
+    {
+      "path": "src/browser-start.tsx",
+      "sha256": "0b353afcea5be4e0c8c7e33ba2197679ee8195f5016f57b81ed6a14d9d48cdbc"
+    },
+    {
+      "path": "src/browser-verification.test.ts",
+      "sha256": "6e972ed5d8786ad78566454b7462bd375173ca0ccc379ce85d878eb8c28d6897"
+    },
+    {
+      "path": "src/browser-verification.ts",
+      "sha256": "29867cb1555d4673098c3955c5445b1177d460cd1b7070bd1609721f912347c1"
+    },
+    {
+      "path": "src/browser-webrtc.test.ts",
+      "sha256": "f7ff6b26aafa49f48880a01ca225336c2d811c4728d9515c28a366f2d0c52bcd"
+    },
+    {
+      "path": "src/browser-webrtc.ts",
+      "sha256": "65eeb6d5be4ec1fdf008fe6939f5049f5a9d606a2f9c9c1d2b9ea5b90deb56fb"
+    },
+    {
+      "path": "src/browser.tsx",
+      "sha256": "a7a793168e7ec40490688586d7ecff605c19c922d666f41eddad61f6c63d2608"
+    },
+    {
+      "path": "src/identities.tsx",
+      "sha256": "31fa76149fc229d0413db59f84b3899309a966eb9b7c2800d9e5794964adae92"
+    },
+    {
+      "path": "src/identity-online-quota.test.ts",
+      "sha256": "c4cf327b1334e89c4eed486c1fd7b27b524722fb4b18d25ffd5f8337537c1700"
+    },
+    {
+      "path": "src/identity-online-quota.ts",
+      "sha256": "4d8b9f187beea3a48903a986e46091a31e232d2a3683705c05ec94ee344cb26a"
+    },
+    {
+      "path": "src/locales/CLAUDE.md",
+      "sha256": "ce33a315aebbb293670947e1d3ca139118ac9f6caa1bf42de9795a971bc73c1d"
+    },
+    {
+      "path": "src/locales/en.yaml",
+      "sha256": "7abab1315d349bedcf2fa29e31a1f9ba014135a0c82bbabf1dbf519b9926b409"
+    },
+    {
+      "path": "src/locales/zh.yaml",
+      "sha256": "e23182c4fe46d689c926ac685b516b525ffe8d0ce6098aa9607181ee589bc3c8"
+    },
+    {
+      "path": "src/main.tsx",
+      "sha256": "953613ecdf66d1fc987aeb8891f5bbb466f73b0bc4a645badda5809711f77d85"
+    },
+    {
+      "path": "tests/CLAUDE.md",
+      "sha256": "181390a560ab023ac23bab5244faae3733883052f9d13ca6f3e9f953e98001c9"
+    },
+    {
+      "path": "tests/identities-fixture.tsx",
+      "sha256": "0a1062299df87c628d05558837537cae50454ab250890efde743ab04cd7f0f40"
+    }
+  ]
+}

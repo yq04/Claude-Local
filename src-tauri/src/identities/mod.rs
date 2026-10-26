@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务门与显式身份写入代次、Tauri 进度通道。
-// [OUTPUT]: 当前/空/已保存身份、有界账号显示信息、只读网页权益摘要、用户保留选项、浏览器联动确认及真实阶段进度的停止/切换/恢复/删除命令。
+// [OUTPUT]: 身份/网页摘要与管理命令、跳过活动session扫描的原生调度摘要入口及唯一进程级唤醒owner。
 // [POS]: GUI 身份管理的原生入口；在线子模块仅允许固定额度端点和白名单回执，不提供凭据读取或任意文件/网络接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 mod archive;
@@ -15,6 +15,7 @@ pub(crate) mod database;
 #[cfg(test)]
 mod database_tests;
 pub(crate) mod online;
+pub(crate) mod wakeup;
 #[cfg(test)]
 mod optimization_tests;
 pub(crate) mod private;
@@ -116,6 +117,9 @@ fn vault(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         .join("identity-vault"))
 }
 fn state(app: &tauri::AppHandle) -> Result<State, String> {
+    state_for(app, true)
+}
+fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, String> {
     let vault_path = vault(app)?;
     let root_path = crate::cleaner::identity::root()?;
     let db = database::Database::open(&vault_path)?;
@@ -184,7 +188,7 @@ fn state(app: &tauri::AppHandle) -> Result<State, String> {
             .clone(),
         records,
         summaries,
-        sessions: profile::active_sessions(&root_path),
+        sessions: if include_sessions { profile::active_sessions(&root_path) } else { Vec::new() },
         active,
         recovery: db.get("recovery")?,
         running: crate::cleaner::identity::processes_running()?,

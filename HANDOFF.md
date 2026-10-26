@@ -1,10 +1,24 @@
 <!--
-[INPUT]: Verified 0.3.1 workstation update, NSIS 13-probe privacy audit, GitHub v0.3.1 release publication, and full session optimization history.
+[INPUT]: Verified 0.3.1 installed baseline, owner-authorized Astra source implementation, scoped synthetic verification, and prior release receipts.
 [OUTPUT]: Context-free task/status/next-step/pitfalls guide with exact delivery evidence for a brand-new session.
 [POS]: Repository root handoff; machine paths, PIDs, credentials and private probes stay in ignored .local/.
 [PROTOCOL]: Archive this file and verify SHA256 before rewriting. Documentation-only updates never rebuild or move product tags.
 -->
 # Claude-Local 会话交接（v0.3.1）
+
+## 2026-10-25 后续源码状态：Astra 优化已实施，尚未部署
+
+用户随后要求更新 Agent Reach、核查续杯差异并执行 [Astra 方案](docs/plans/2026-10-25-functional-audit/04-ASTRA-OPTIMIZATION-PLAN.md)。Agent Reach 已实际升级至 1.6.0，保留原配置；这是开发工具升级，不是产品更新。
+
+**当前源码已完成第一至第五批优化，并通过定向验证。** 主要变化：严格确认新 5h 窗口并直接返回新 reset；有限匿名自动/手动审计及阶段诊断；应用进程级唯一原生调度器替代身份页 timer；私有配置迁移、共享尝试预算、逐账号暂停及一次受控授权恢复；未知结果只由合格的新鲜服务端被动锚点解除；浏览器固定指标/报告版本与未知三态；实际 WebRTC 异常/超时返回未知；Effort 上下文与文件游标同事务保存，旧游标仅在追加时进行紧邻尾部 64KiB 有界恢复。保持 Python 单写额度账本、账号冻结/提交复核、身份格式和既有用户数据兼容。
+
+验证回执：Python 在线 35 项、Bun 定向 40 项、前端 production build、Rust online 14 / audit 1 / scheduler 14 / browser 18，以及 GUI wakeup 7 / quota-reset 8 均通过。Usage 首轮 27 项通过、1 项新增断言失败，按既有未知档位聚合契约修正后该项单独重跑通过；不把两轮混写成一次 28/28。只验证合成数据与隔离环境，未执行真实账号请求或系统修改。详见 [执行记录](docs/plans/2026-10-25-functional-audit/05-EXECUTION-RESULTS.md) 与 [源码候选](docs/plans/2026-10-25-functional-audit/06-SOURCE-CANDIDATE.json)。
+
+**安装和发布边界：** 版本元数据仍为 0.3.1；本次未构建 release 宿主、热更新已安装程序、重打 NSIS、推送或发布。下文的本机 exe 哈希、`5d78c00` 和 v0.3.1 安装器是此前交付基线，不代表新优化已部署。以后需要本机更新时，再按现有备份/隐私审计流程执行；不中断 `claude.exe`。新增字段要求宿主/前端/helper成套更新，不能混装新旧文件。
+
+已知取舍：未证实独立出口的账号统一采用每次尝试一次性抽样的 6–13 分钟错峰；系统睡眠/退出及真实账号验收仍待隔离验证，授权失败不能靠程序自动续凭据解决。可选通知与成本估算未增加。当前源码以本分支最新 Git 提交及上述执行回执为准。
+
+以下保留此前 v0.3.1 实机交付历史。
 
 更新日期：2026-10-25。本文件面向完全没有本会话上下文的新会话。先读本文、根目录 `AGENTS.md`、`CLAUDE.md`，修改具体模块前再读相应目录的 `CLAUDE.md` 和源码头部。
 

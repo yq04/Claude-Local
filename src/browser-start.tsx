@@ -10,6 +10,7 @@ import {setLocale,useI18n} from "./i18n";
 import { createRoot } from 'react-dom/client';
 import { classifyExitIsp, type BrowserContext, type Report, type Exit } from './browser-model';
 import { probeBrowserExit } from './browser-network';
+import {probeWebRtcLocalCandidates,type WebRtcPeer} from './browser-webrtc';
 import {verifyBrowser} from './browser-verification';
 import browserLogo from '../assets/browser-logo.jpg';
 import './index.css';
@@ -27,54 +28,13 @@ async function api<T>(route: string, body?: unknown): Promise<T> {
     return response.json();
 }
 
-async function probeWebRtcLeak(): Promise<{ ok: boolean; detail: string }> {
+function probeWebRtcLeak(): Promise<{ ok: boolean|null; detail: string }> {
     if (typeof RTCPeerConnection === 'undefined') {
-        return { ok: true, detail: 'WebRTC 已禁用（无泄漏）' };
+        return Promise.resolve({ ok: null, detail: 'WebRTC 接口不可用，未测量' });
     }
-    return new Promise(resolve => {
-        let settled = false;
-        const leakedIps = new Set<string>();
-        let pc: RTCPeerConnection | null = null;
-        const finish = () => {
-            if (settled) return;
-            settled = true;
-            try { pc?.close(); } catch { /* ignore */ }
-            if (leakedIps.size > 0) {
-                resolve({ ok: false, detail: `检出候选 IP：${[...leakedIps].slice(0, 2).join(', ')}` });
-            } else {
-                resolve({ ok: true, detail: '未检出公网/局域网 IP 泄漏' });
-            }
-        };
-        const timer = setTimeout(finish, 300);
-        try {
-            pc = new RTCPeerConnection({ iceServers: [] });
-            pc.createDataChannel('probe');
-            pc.onicecandidate = event => {
-                const cand = event.candidate?.candidate || '';
-                if (!cand) {
-                    clearTimeout(timer);
-                    finish();
-                    return;
-                }
-                const parts = cand.split(/\s+/);
-                const addr = parts[4] || '';
-                if (addr && !addr.endsWith('.local') && addr !== '127.0.0.1' && addr !== '::1' && addr !== '0.0.0.0') {
-                    if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(addr) || addr.includes(':')) {
-                        leakedIps.add(addr);
-                    }
-                }
-            };
-            void pc.createOffer()
-                .then(offer => pc?.setLocalDescription(offer))
-                .catch(() => {
-                    clearTimeout(timer);
-                    finish();
-                });
-        } catch {
-            clearTimeout(timer);
-            finish();
-        }
-    });
+    return probeWebRtcLocalCandidates(
+        () => new RTCPeerConnection({ iceServers: [] }) as unknown as WebRtcPeer,
+    );
 }
 
 function probeGraphics(): { ok: boolean; renderer: string } {
@@ -122,7 +82,7 @@ function probeTimezoneOffset(timezone: string): { ok: boolean; detail: string } 
     }
 }
 
-function probeMediaFingerprint(): { ok: boolean; detail: string } {
+function probeMediaFingerprint(): { ok: boolean|null; detail: string } {
     try {
         const canvas = document.createElement('canvas');
         canvas.width = 64;
@@ -146,16 +106,13 @@ function probeMediaFingerprint(): { ok: boolean; detail: string } {
         if (colors.size < 3) {
             return { ok: false, detail: 'Canvas 像素熵异常或被拦截' };
         }
-        let sampleRate = 48000;
         const OfflineCtx = window.OfflineAudioContext || (window as unknown as { webkitOfflineAudioContext?: typeof OfflineAudioContext }).webkitOfflineAudioContext;
-        if (OfflineCtx) {
-            const audio = new OfflineCtx(1, 44100, 44100);
-            sampleRate = audio.sampleRate || 44100;
-        }
-        const audioOk = sampleRate >= 8000 && sampleRate <= 192000;
-        return { ok: audioOk, detail: `Canvas 2D 正常 · ${sampleRate}Hz` };
+        if (!OfflineCtx) return { ok: null, detail: 'Canvas 2D 可绘制；OfflineAudioContext 不可用，音频能力未知' };
+        const audio = new OfflineCtx(1, 44100, 44100);
+        const audioOk = audio.sampleRate >= 8000 && audio.sampleRate <= 192000;
+        return { ok: audioOk, detail: `Canvas 2D 可绘制 · OfflineAudioContext ${audio.sampleRate}Hz（未渲染音频样本）` };
     } catch {
-        return { ok: false, detail: 'Canvas / 音频接口受限' };
+        return { ok: null, detail: 'Canvas / 音频接口读取失败，结果未知' };
     }
 }
 
@@ -217,6 +174,7 @@ function Start() {
             }
             const observed: Report = {
                 language: navigator.language,
+                schema_version: 1,
                 languages: [...navigator.languages],
                 timezone: resolvedTz,
                 platform: navigator.platform,
@@ -289,7 +247,7 @@ function Start() {
         <div><span>{t('出口 IP')}</span><strong>{report.exit.ip}</strong></div>
         <div><span>{t('国家 / 城市')}</span><strong>{report.exit.country} / {report.exit.city||'—'}</strong></div>
         <div><span>{t('browserVerify.ispAndAsn')}</span><strong>{[report.exit.asn, report.exit.isp].filter(Boolean).join(' · ') || '—'}</strong></div>
-        <div><span>{t('browserVerify.ipAttribute')}</span><strong>{ispKind === 'hosting' ? t('browserVerify.ispHosting') : t('browserVerify.ispResidential')}</strong></div>
+        {ispKind !== 'unknown' && <div><span>{t('browserVerify.ipAttribute')}</span><strong>{ispKind === 'hosting' ? t('browserVerify.ispHosting') : t('browserVerify.ispResidential')}</strong></div>}
        </section>
       )}
       <footer className="verification-footer"><span className={linked?'connected':'disconnected'}>{t(linked?'已连接 Claude-Local':'主应用未连接')}</span><time>{reportedAt ? (isStale ? (t('browserSafety.staleResult', { v0: new Date(reportedAt).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') }) || `结果已过时（>10分钟）· 测于 ${new Date(reportedAt).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US')}`) : t('结果回传成功 {v0}', { v0: new Date(reportedAt).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })) : t('等待检测回传')}</time></footer>

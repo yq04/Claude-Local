@@ -7,10 +7,10 @@
 export type BrowserConfig={seed:number;proxy:string;follow_machine:boolean;language:string;timezone:string;native_graphics:boolean};
 export type Machine={platform:string;version:string;cores:number;timezone:string;languages:string[];locale:string;locale_country?:string;location_enabled:boolean|null;timezones:string[]};
 export type Exit={ip:string;country:string;city:string;timezone:string;isp:string;asn?:string;hosting?:boolean};
-export type Report={language:string;languages:string[];timezone:string;platform:string;cores:number;user_agent:string;platform_version:string;browser_version:string;geolocation:string;exit:Exit|null;error:string;webrtc_ok?:boolean;webrtc_detail?:string;webdriver?:boolean;graphics_ok?:boolean;webgl_renderer?:string;tz_offset_ok?:boolean;tz_offset_detail?:string;media_fingerprint_ok?:boolean;media_fingerprint_detail?:string;client_hints_ok?:boolean;client_hints_detail?:string};
+export type Report={schema_version?:number;language:string;languages:string[];timezone:string;platform:string;cores:number;user_agent:string;platform_version:string;browser_version:string;geolocation:string;exit:Exit|null;error:string;webrtc_ok?:boolean|null;webrtc_detail?:string;webdriver?:boolean;graphics_ok?:boolean;webgl_renderer?:string;tz_offset_ok?:boolean|null;tz_offset_detail?:string;media_fingerprint_ok?:boolean|null;media_fingerprint_detail?:string;client_hints_ok?:boolean|null;client_hints_detail?:string};
 export type BrowserIdentity={linked:boolean;status:'linked'|'draft'|'empty'|'unlinked'|'mismatch'|'unknown';name:string|null;email:string|null;organization:string|null;cli_proxy?:string|null};
 export type BrowserContext={identity?:BrowserIdentity;ui_language:'zh'|'en';exit_services:string[];region:{id:string;label:string;country:string;language:string;locale:string;timezone:string}|null;config:BrowserConfig;machine:Machine;engine_version:string};
-export type BrowserState=BrowserContext&{engine_ready:boolean;running:boolean;profile:string;identity_linked?:boolean;cache:{path:string;bytes:number;login:boolean}[];cache_error:string;report:Report|null;report_received_at:number|null;machine_exit:Exit|null;checks:{title:string;status:'ok'|'mismatch'|'pending';detail:string}[]};
+export type BrowserState=BrowserContext&{engine_ready:boolean;running:boolean;profile:string;identity_linked?:boolean;cache:{path:string;bytes:number;login:boolean}[];cache_error:string;report:Report|null;report_received_at:number|null;machine_exit:Exit|null;checks:{id:string;title:string;status:'ok'|'mismatch'|'pending';detail:string}[]};
 export type DefaultBrowser={is_default:boolean;http:string;https:string;installed:boolean;app:string};
 
 const HOSTING_ISP_RE = /\b(amazon|aws|google\s*cloud|gcp|microsoft|azure|digitalocean|linode|akamai|vultr|choopa|constant\s*company|hetzner|ovh|m247|contabo|leaseweb|datacamp|cdn77|cloudflare|fastly|oracle\s*cloud|alibaba|aliyun|tencent|zenlayer|sharktech|multacom|psychz|quadranet|colocrossing|nocix|wholesale\s*internet|scaleway|upcloud|kamatera|bandwagon|it7\s*networks|hostwinds|racknerd|buyvm|frantech|dmit|cloudie|v\.ps|xtom|kurun|cera|ceranetworks|datacenter|data\s*center|hosting|vps|cloud\s*server)\b/i;
@@ -19,9 +19,9 @@ export function classifyExitIsp(exit?: Pick<Exit, 'isp' | 'asn' | 'hosting'> | n
     if (!exit) return 'unknown';
     if (exit.hosting === true) return 'hosting';
     const combined = `${exit.isp || ''} ${exit.asn || ''}`.trim();
-    if (!combined) return exit.hosting === false ? 'isp' : 'unknown';
+    if (!combined) return 'unknown';
     if (HOSTING_ISP_RE.test(combined)) return 'hosting';
-    return 'isp';
+    return exit.hosting === false ? 'isp' : 'unknown';
 }
 
 export type DeepVerifySite = {

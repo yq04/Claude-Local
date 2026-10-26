@@ -5,6 +5,24 @@
  * [PROTOCOL]: Keep this suite aligned with src/CLAUDE.md.
  */
 import { expect, test } from 'bun:test';
+import {boundedLegacyWakeupState, readNativeWakeupSnapshot, defaultAccountWakeupRuntime} from './identity-online-quota';
+
+test('native scheduler bridge starts disabled without issuing IPC', () => {
+  expect(readNativeWakeupSnapshot().config.enabled).toBe(false);
+  expect(readNativeWakeupSnapshot().status).toBe('loading');
+});
+
+test('legacy migration is bounded and never invents successful windows or idle rounds', () => {
+  const identity = 'a'.repeat(64);
+  const old = {...defaultAccountWakeupRuntime(), unusedStreak: 7, lastWokenForResetSec: 100,
+    wokenWindowResetSec: 200, lastAttemptAtMs: 30_000, backoffUntilMs: 60_000, lastStatus: 'auth_required'};
+  const migrated = boundedLegacyWakeupState({lastGlobalWakeupAtMs: 30_000, accounts: {[identity]: old, invalid: old}});
+  expect(migrated.lastGlobalWakeupAtMs).toBe(30_000);
+  expect(migrated.accounts).toEqual({[identity]: {lastAttemptAtMs: 30_000, backoffUntilMs: 60_000, lastStatus: 'auth_required'}});
+  expect(boundedLegacyWakeupState({lastGlobalWakeupAtMs: Infinity, accounts: {[identity]: {...old, lastAttemptAtMs: NaN, lastStatus: 'unexpected raw server text'}}})).toEqual({
+    lastGlobalWakeupAtMs: 0, accounts: {[identity]: {lastAttemptAtMs: null, backoffUntilMs: 60_000, lastStatus: null}},
+  });
+});
 import { translate, setLocale } from './i18n';
 import {
   formatOnlineQuotaStatus,
@@ -27,9 +45,29 @@ import {
   computeSameAccountWakeupDelayMs,
   computeCrossAccountSpacingMs,
   evaluateWakeupAccount,
+  isConfirmedNewWakeup5h,
+  saveAutoWakeupConfig,
   type OnlineQuotaResult,
   type OnlineQuotaStatus,
 } from './identity-online-quota';
+
+test('only explicit fresh 5h confirmation counts as a wakeup success', () => {
+  expect(isConfirmedNewWakeup5h({status: 'updated', updated_windows: ['7d'], wakeup_effect: 'quota_observed'})).toBe(false);
+  expect(isConfirmedNewWakeup5h({status: 'cached', wakeup_effect: 'outcome_unknown', wakeup_5h_reset_at: 2_000_000_000})).toBe(false);
+  expect(isConfirmedNewWakeup5h({status: 'updated', updated_windows: ['5h'], wakeup_effect: 'new_5h_confirmed', wakeup_5h_reset_at: 2_000_000_000})).toBe(true);
+  expect(isConfirmedNewWakeup5h({status: 'updated', wakeup_effect: 'new_5h_confirmed'})).toBe(false);
+});
+
+test('auto-wakeup config persistence failure is reported', () => {
+  const prior = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', {configurable: true, value: {setItem() { throw new Error('blocked'); }}});
+  try {
+    expect(saveAutoWakeupConfig(DEFAULT_AUTO_WAKEUP_CONFIG)).toBe(false);
+  } finally {
+    if (prior) Object.defineProperty(globalThis, 'localStorage', prior);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  }
+});
 
 test('formatOnlineQuotaStatus correctly resolves status and cooldown remaining', () => {
   const dummyT = (k: string, slots?: Record<string, string | number>) => {

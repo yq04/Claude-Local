@@ -1,5 +1,5 @@
 // [INPUT]: Explicit account selectors and frozen fingerprints, packaged Python collector, account-bound browser summaries and fixed local quota/config file metadata.
-// [OUTPUT]: Bounded retained/cancellable batch snapshots and two-phase commit grants; Python owns every ledger write.
+// [OUTPUT]: Bounded quota batches, strict wakeup confirmation/effect contract and native private audit; Python owns every ledger write.
 // [POS]: Shared orchestration allows 10s cold runtime probes within one 30s preparation budget outside the identity door; frozen identity/epoch is rechecked at commit.
 // [PROTOCOL]: Batch progress is quota-batch-progress; update identities/CLAUDE.md and the package resource allowlist.
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,23 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{Emitter, Manager};
+
+#[path = "wakeup_audit.rs"]
+mod wakeup_audit;
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeupEffect {
+    RequestAccepted,
+    QuotaObserved,
+    #[serde(rename = "new_5h_confirmed")]
+    New5hConfirmed,
+    OutcomeUnknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeupAuditStatus { Written, Unavailable }
 
 const MAX_QUOTA_BATCH: usize = 256;
 const BATCH_BUDGET: Duration = Duration::from_secs(120);
@@ -67,11 +84,19 @@ pub struct OnlineQuotaResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_scope: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wakeup_effect: Option<WakeupEffect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wakeup_5h_reset_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wakeup_audit_status: Option<WakeupAuditStatus>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -224,9 +249,13 @@ impl OnlineQuotaResult {
             runtime_reason: None,
             reason: None,
             stage: None,
+            country: None,
             route_mode: None,
             retry_scope: None,
             verified_at_ms: None,
+            wakeup_effect: None,
+            wakeup_5h_reset_at: None,
+            wakeup_audit_status: None,
         }
     }
 
@@ -441,11 +470,15 @@ fn parse_result(bytes: &[u8]) -> Option<OnlineQuotaResult> {
         !matches!(
             v,
             "unsupported_proxy" | "route_changed" | "auth_required" | "rate_limited"
+                | "non_us_exit" | "country_not_allowed" | "exit_check_failed" | "audit_write_failed"
         )
     }) || result
         .stage
         .as_deref()
-        .is_some_and(|v| !matches!(v, "route" | "commit"))
+        .is_some_and(|v| !matches!(v, "profile" | "messages" | "usage" | "route" | "exit_check" | "commit"))
+        || result.country.as_deref().is_some_and(|v| {
+            v.len() != 2 || !v.bytes().all(|b| b.is_ascii_uppercase())
+        })
         || result
             .route_mode
             .as_deref()
@@ -464,6 +497,13 @@ fn parse_result(bytes: &[u8]) -> Option<OnlineQuotaResult> {
         .updated_windows
         .as_ref()
         .is_some_and(|windows| windows.len() > 2 || windows.iter().any(|w| w != "5h" && w != "7d"))
+    {
+        return None;
+    }
+    if result.wakeup_5h_reset_at.is_some_and(|v| v == 0)
+        || (result.wakeup_effect == Some(WakeupEffect::New5hConfirmed)
+            && (result.wakeup_5h_reset_at.is_none()
+                || result.updated_windows.as_ref().map_or(true, |w| !w.iter().any(|x| x == "5h"))))
     {
         return None;
     }
@@ -606,6 +646,15 @@ fn select_runtime(
         }
     }
     Err(last_reason)
+}
+
+pub(super) fn wakeup_runtime_capability(app: &tauri::AppHandle) -> Result<(), String> {
+    let script = script_path(app).ok_or_else(|| "missing_resource".to_string())?;
+    let probe_script = script.with_file_name("quota_runtime.py");
+    let deadline = Instant::now() + PREPARATION_BUDGET;
+    select_runtime(|candidate| runtime_probe(candidate, &probe_script, None, deadline))
+        .map(|_| ())
+        .map_err(str::to_string)
 }
 
 fn terminal_result(status: OnlineStatus) -> OnlineQuotaResult {
@@ -932,18 +981,60 @@ pub async fn identities_wakeup_quota_window(
     app: tauri::AppHandle,
     account_id: String,
     expected_identity: String,
+    trigger: Option<String>,
+    expired_reset_at: Option<u64>,
 ) -> Result<OnlineQuotaResult, String> {
     if !valid_account(&account_id) {
         return Err("quotaOnline.unavailable".into());
     }
+    let trigger = trigger.unwrap_or_else(|| "manual".into());
+    if !matches!(trigger.as_str(), "auto" | "manual")
+        || expired_reset_at.is_some_and(|v| v == 0 || v > now_ms() / 1000 + 31_536_000)
+    {
+        return Err("quotaOnline.unavailable".into());
+    }
     tauri::async_runtime::spawn_blocking(move || {
-        collect(
-            &app,
-            json!({"account_id":account_id,"expected_identity":expected_identity,"wakeup":true}),
-        )
+        super::wakeup::request(&app, &account_id, &expected_identity, trigger == "auto", expired_reset_at)
     })
     .await
     .map_err(|_| "quotaOnline.unavailable".to_string())?
+}
+
+pub(super) fn collect_wakeup_audited(
+    app: &tauri::AppHandle,
+    account_id: String,
+    expected_identity: String,
+    trigger: &str,
+    expired_reset_at: Option<u64>,
+) -> Result<OnlineQuotaResult, String> {
+    let mut result = collect(
+        app,
+        json!({"account_id":account_id,"expected_identity":expected_identity,"wakeup":true,
+               "trigger":trigger,"expired_reset_at":expired_reset_at}),
+    );
+    if let Ok(value) = result.as_mut() {
+        validate_wakeup_confirmation(value, expired_reset_at, now_ms() / 1000);
+        let audit_ok = app.path().app_data_dir().ok().is_some_and(|app_data| {
+            wakeup_audit::record(&app_data, trigger, &expected_identity, expired_reset_at, value).is_ok()
+        });
+        value.wakeup_audit_status = Some(if audit_ok { WakeupAuditStatus::Written } else { WakeupAuditStatus::Unavailable });
+        if !audit_ok {
+            value.stage = Some("commit".into());
+            value.reason = Some("audit_write_failed".into());
+        }
+    }
+    result
+}
+
+fn validate_wakeup_confirmation(result: &mut OnlineQuotaResult, old_reset_at: Option<u64>, now_s: u64) {
+    if result.wakeup_effect == Some(WakeupEffect::New5hConfirmed)
+        && result.wakeup_5h_reset_at.map_or(true, |reset| {
+            reset <= now_s || old_reset_at.map_or(true, |old| reset <= old)
+        })
+    {
+        result.wakeup_effect = Some(WakeupEffect::QuotaObserved);
+        result.wakeup_5h_reset_at = None;
+    }
 }
 
 #[derive(Clone)]
@@ -1651,6 +1742,19 @@ print(json.dumps({'type':'result','result':{'status':'updated','source':'oauth'}
         assert!(parse_result(br#"{"status":"updated","source":"other"}"#).is_none());
         assert!(parse_result(br#"{"status":"updated","accessToken":"synthetic"}"#).is_none());
         assert!(parse_result(br#"{"status":"updated","updated_windows":["other"]}"#).is_none());
+        let confirmed = parse_result(br#"{"status":"updated","updated_windows":["5h"],"stage":"commit","wakeup_effect":"new_5h_confirmed","wakeup_5h_reset_at":2000000000}"#).unwrap();
+        assert_eq!(confirmed.wakeup_effect, Some(WakeupEffect::New5hConfirmed));
+        assert!(parse_result(br#"{"status":"updated","updated_windows":["7d"],"wakeup_effect":"new_5h_confirmed","wakeup_5h_reset_at":2000000000}"#).is_none());
+        assert!(parse_result(br#"{"status":"route_unavailable","stage":"exit_check","reason":"country_not_allowed","country":"GB"}"#).is_some());
+        assert!(parse_result(br#"{"status":"route_unavailable","stage":"exit_check","reason":"country_not_allowed","country":"x1"}"#).is_none());
+        assert!(parse_result(br#"{"status":"updated","stage":"messages","country":"US"}"#).is_some());
+        let mut stale = confirmed.clone();
+        validate_wakeup_confirmation(&mut stale, Some(1_999_999_999), 2_000_000_000);
+        assert_eq!(stale.wakeup_effect, Some(WakeupEffect::QuotaObserved));
+        assert_eq!(stale.wakeup_5h_reset_at, None);
+        let mut missing_old = confirmed.clone();
+        validate_wakeup_confirmation(&mut missing_old, None, 1_900_000_000);
+        assert_eq!(missing_old.wakeup_effect, Some(WakeupEffect::QuotaObserved));
         assert!(!valid_account("../other"));
     }
 

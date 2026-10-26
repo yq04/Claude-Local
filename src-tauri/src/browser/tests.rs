@@ -377,6 +377,7 @@ fn country_checks_follow_region_instead_of_assuming_america() {
     config.language = "ja".into();
     config.timezone = "Asia/Tokyo".into();
     let mut report = network::Report {
+        schema_version: None,
         language: "ja".into(),
         languages: vec!["ja".into()],
         timezone: "Asia/Tokyo".into(),
@@ -470,6 +471,7 @@ fn linux_platform_and_unknown_location_cannot_be_misreported_as_mac_or_disabled(
     );
     assert!(args.contains(&"--fingerprint-platform=linux".into()));
     let report = network::Report {
+        schema_version: None,
         language: "en-US".into(),
         languages: vec!["en-US".into()],
         timezone: m.timezone.clone(),
@@ -526,6 +528,7 @@ fn distinct_iana_timezones_remain_conflicts_on_every_platform() {
     machine.languages = vec!["de".into()];
     machine.locale_country = "DE".into();
     let report = network::Report {
+        schema_version: None,
         language: "de".into(),
         languages: machine.languages.clone(),
         timezone: "Europe/Paris".into(),
@@ -572,6 +575,7 @@ fn windows_report_requires_real_platform_cpu_and_version() {
     m.platform = "windows".into();
     m.version = "10.0.26100".into();
     let mut report = network::Report {
+        schema_version: None,
         language: "en-US".into(),
         languages: vec!["en-US".into()],
         timezone: m.timezone.clone(),
@@ -611,6 +615,7 @@ fn follow_machine_taiwan_preserves_language_script_and_checks_actual_country() {
     assert_eq!(config.region(&machine).map(|r| r.id), Some("tw"));
     assert_eq!(config.language(&machine), "zh-Hans-TW");
     let mut report = network::Report {
+        schema_version: None,
         language: "zh-Hans-TW".into(),
         languages: machine.languages.clone(),
         timezone: machine.timezone.clone(),
@@ -704,6 +709,7 @@ fn deep_probes_close_graphics_and_webrtc_checks() {
         hosting: Some(false),
     };
     let report = network::Report {
+        schema_version: Some(1),
         language: "en-US".into(),
         languages: vec!["en-US".into()],
         timezone: "America/New_York".into(),
@@ -730,4 +736,12 @@ fn deep_probes_close_graphics_and_webrtc_checks() {
     let checks = network::checks(&m, &c, Some(&report), Some(&host), "148");
     assert_eq!(checks.len(), 10);
     assert!(checks.iter().all(|item| item.status == "ok"));
+    assert_eq!(checks[8].id, "probe.webrtc-local-candidates");
+    let old = network::Report { schema_version: None, ..report.clone() };
+    let old_checks = network::checks(&m, &c, Some(&old), Some(&host), "148");
+    assert_eq!(old_checks[8].status, "pending");
+    assert_eq!(old_checks[9].status, "pending");
+    let unknown_exit = network::Exit { hosting: None, isp: "Unlisted carrier".into(), ..host.clone() };
+    let unknown = network::Report { exit: Some(unknown_exit), ..report };
+    assert_eq!(network::checks(&m, &c, Some(&unknown), Some(&host), "148")[9].status, "pending");
 }

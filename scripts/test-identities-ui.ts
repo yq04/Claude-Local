@@ -19,6 +19,8 @@ import {testIdentityOperation} from './test-identity-operation.ts';
 import {testQuotaReset} from './test-quota-reset.ts';
 import {testIdentityOnline} from './test-identity-online.ts';
 import {testIdentityPassive} from './test-identity-passive.ts';
+import {testNativeWakeup} from './test-native-wakeup.ts';
+const wakeupOnly=process.argv.includes('--wakeup-only');
 const quotaResetOnly=process.argv.includes('--quota-reset-only');
 const onlineOnly=process.argv.includes('--online-only');
 const passiveOnly=process.argv.includes('--passive-only');
@@ -42,7 +44,10 @@ try{browser=await chromium.launch({executablePath:resolve('browser-runtime',engi
 catch(error){await server.close();await rm(temporary,{recursive:true,force:true});throw error;}
 let checks=0;
 try{
- if(passiveOnly){
+ if(wakeupOnly){
+  checks+=await testNativeWakeup(browser,base);
+  console.log(`${checks} native wakeup bridge UI checks passed; synthetic IPC only.`);
+ }else if(passiveOnly){
   checks+=await testIdentityPassive(browser,base);
   console.log(`${checks} passive quota UI checks passed; synthetic IPC only.`);
  }else if(onlineOnly){

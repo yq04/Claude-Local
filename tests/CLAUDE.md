@@ -1,5 +1,6 @@
 # tests/
 > L2 | 父级: ../CLAUDE.md
+identities-fixture.tsx 原生唤醒扩展：仅__enableNativeWakeupTest显式启用Root同款单例bridge与state/configure/migrate/resume mock；showOtherPage/remountIdentity验证快照跨卸载保留，不启动原生owner或HTTP。普通fixture无唤醒后台IPC，GUI桥测试不代表真实Windows睡眠/退出测试。
 network.html: 网络页独立 Vite 测试入口，不进入生产构建。
 network-fixture.tsx: 真实 VpsPanel、诊断调用记录和可显式释放的虚构 IPC；成功/部分失败/异常/空返回及原生复制拒绝开关，验证隐藏固定链接、复制失败/恢复、只在点击后诊断，无真实剪贴板写入、联网或导航。
 identities.html: 独立 Vite 测试入口，生产 rollup 只含 index/browser，不打包本页。

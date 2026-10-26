@@ -25,7 +25,8 @@ test('无效 IP 与失败响应不能被当作核验成功，保留 HTTP 原因'
 test('出口解析提取 ASN 与机房 hosting 标识并区分 ISP 宽带与 IDC 机房',()=>{
   const residential=parseExit({ip:'203.0.113.10',country_code:'US',timezone:{id:'America/Los_Angeles'},connection:{asn:7922,isp:'Comcast Cable Communications'}});
   expect(residential.asn).toBe('AS7922');
-  expect(classifyExitIsp(residential)).toBe('isp');
+  expect(classifyExitIsp(residential)).toBe('unknown');
+  expect(classifyExitIsp({...residential,hosting:false})).toBe('isp');
   const datacenter=parseExit({ip:'203.0.113.20',country_code:'US',timezone:'America/New_York',asn:'AS14061',org:'DigitalOcean, LLC'});
   expect(datacenter.asn).toBe('AS14061');
   expect(classifyExitIsp(datacenter)).toBe('hosting');

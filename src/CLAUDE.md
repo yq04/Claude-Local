@@ -1,13 +1,15 @@
 # src/
 > L2 | 父级: ../CLAUDE.md
+原生自动续杯接线：main.tsx常驻bridge只初始化一次旧localStorage迁移和native快照订阅；identity-online-quota.ts保留旧纯模型兼容但不调度请求，快照由Rust独占；identities.tsx只显示native计划/能力/最近尝试/等待原因、逐账号暂停和一次授权恢复。原身份页15秒唤醒timer和localStorage运行writer已删除，切页不取消原生工作；配置保存确认前不更新开关，普通fixture不触发后台scheduler IPC。
 额度入口默认只读取本地身份摘要与 CLI 被动观测；identities_quota_revision 约2秒检查账本和配置文件元数据，首次检查及变化时刷新摘要，摘要读取成功后才确认版本，失败或旧响应被替代则下次重试。元数据检查不读取正文。在线额度查询、前台定时查询和绑定浏览器资料补充放在标题⋯菜单打开的弹窗；手动批次按冻结指纹验证所有账号、最多两路并发，运行中可恢复/取消，失败状态不覆盖本地额度。
 共享操作控件：普通 Button 统一使用中性 secondary 皮肤、28px 高与10px水平内距，按文字占宽；图标按钮、导航和180×286工牌内专用几何保留，危险确认显式红色。账号筛选框随已选文本占宽，弹出选项保持可读宽度；不修改 vendor 原语或业务行为。
 界面只管理输入、状态和执行记录；本机权限交给原生层；网络页提供发行者批准的固定推广链接和配置提示词复制，用户点击后才检测固定 Claude 服务连通性，没有收件人链接编辑、Skill 安装或自动外部导航。两入口复用 YAML 中英文文案，原始诊断保留到呈现时翻译；系统语言与界面语言独立。
-browser.tsx: 统一全宽卡片风格的浏览器环境控制台（顶栏标题右侧内联集成「打开浏览器并实测」「设为默认浏览器」与「正常退出浏览器」、绑定身份隐私遮罩与状态/CLI代理不一致提醒及一键同步、10项（5×2满格）目标地区与防封特征核验及一键对齐、按身份自动隔离的日常释放缓存与排障全清理）及默认折叠的指纹与代理高级设置抽屉（底部内联开关与保存动作对齐）；去除机械序号徽章；站点永久删除使用 Alert 警告并默认取消；复用 Cromma UI 和活动日志。缓存明细与高级设置统一使用 Cromma Disclosure，未保存修改时高级设置保持展开。
-browser-model.ts: 有界浏览器身份摘要与同步状态；工具箱与起始页共享配置、目标地区、机器、出口服务目录、ASN/ISP/机房分类（classifyExitIsp）、时区偏移/Canvas音频/客户端提示探针字段、观测接收时间与默认浏览器契约；effectiveBrowserTarget 统一解析跟随电脑的有效时区/语言及 en→en-US，不接入原生权限；三平台设备/CPU/版本核验由共用函数保持一致，Windows 必须 Win32。
-browser-start.tsx: 检测区上方紧凑黑色身份工牌、绑定状态与不匹配/未知/断连；真实观测与回报编排（内建 WebRTC 泄漏、WebGL 硬件渲染、webdriver 反自动化、CheckCC 时区偏移、BrowserScan Canvas/音频采样、IPHey UA-CH/屏幕色深与 Ping0 ISP/ASN 属性全套 20 项 5×4 满格原生体检）；重测清空旧结果，断连/未知/上报失败不通过；不接入 Tauri 权限。
-browser-verification.ts: 纯核验模型，20项逐项实际/目标值与失败清单，沿用宿主配置时区/语言/平台规则与内建第三方防封算法；只有完整回传且所有实测匹配才通过。
-browser-verification.test.ts: 跨平台虚构上下文验证三态、失败原因、连接/定位未知和目标时区改变，不访问网络。
+browser.tsx: 统一全宽卡片风格的浏览器环境控制台（启动/退出/默认浏览器、身份状态、目标环境核验、缓存与高级设置）；原生核验项以稳定 ID 为键并按 ok/mismatch/pending 三态展示，未知与过时结果不显示整体通过。
+browser-model.ts: 有界浏览器身份摘要与同步状态；工具箱与起始页共享配置、目标地区、机器、出口服务目录、保守 ASN/ISP/机房分类（未知不视为住宅）、版本化报告字段与探针状态；effectiveBrowserTarget 统一解析跟随电脑的有效时区/语言及 en→en-US，不接入原生权限；三平台设备/CPU/版本核验由共用函数保持一致，Windows 必须 Win32。
+browser-start.tsx: 检测区上方紧凑黑色身份工牌与绑定状态；版本化测量报告及固定必需指标目录，缺项/旧报告保持待核验；WebRTC 只测无 STUN 的短时本地候选，失败或超时为未知；音频只报告接口能力，不声称渲染指纹真实性；不接入 Tauri 权限。
+browser-webrtc.ts / browser-webrtc.test.ts: 浏览器起始页实际调用的无 STUN 本地候选采集器与注入 RTC/计时器；构造失败、offer 拒绝及采集截止均为未知；fakeRTC 定向测试不访问网络。
+browser-verification.ts: 固定必需指标 ID 与报告 schema 校验；逐项通过/失败/未知，缺项、旧版本、未识别 ISP 均不能通过。
+browser-verification.test.ts: 合成报告验证完整/缺项/旧版/未知出口与指标三态，不访问网络。
 browser-network.ts: 按宿主服务目录经浏览器当前路由检测出口，限流/故障切换服务，校验结果并保留失败原因。
 browser-network.test.ts: 模拟限流、备用响应与非法出口，验证故障恢复和错误信息，不访问外网。
 main.tsx: 独立产品壳、默认身份页与受限页面记忆；侧栏统一全四字标头（快速配置、网络环境、身份管理、用量分析、浏览环境、电脑环境、使用说明、软件设置），底部含语言/版本与命令面板入口；Ctrl+K/Cmd+K 尊重输入焦点、IME、其他模态和任务锁。命令面板导航八页、对当前可刷新页分发本地事件，身份项仅打开已有身份确认；Root 常驻受控手工交接弹窗。根 MotionRoot 读取「减少动画」偏好。
@@ -22,12 +24,12 @@ productivity-shell.css: 经典侧栏底部自适应两行网格避免命令按�
 navigation.ts / navigation.test.ts: 本机页面偏好白名单（含 settings 设置页和 usage Token 统计页）、存储失败回退身份页；不存账号或路径。
 help.tsx: 双语只读本地产品说明，含置顶的「新用户与添加新号」三步法及身份/浏览器/离线额度/网络诊断/电脑设置分节说明（统一采用与软件设置一致的强调色竖条标头，去除机械数字序号），Cromma Disclosure 折叠应用使用、账号边界与申诉；不读取用户资料或调用原生命令；手工交接由共享有界模板显式打开。
 identity-connections.tsx / identity-connections.test.ts: 中央身份连接与路由修复队列；严格校验当前完整账号/指纹清单的冻结子集，只为明确的授权失败提供按账号打开已有绑定浏览器资料，只提交待处理子集到既有统一额度命令；进程内保留结果以跨页面卸载呈现成功与原失败，不保存凭据或落盘账号结果，合成测试覆盖双成功/授权/路由队列、冷却重试、重新挂载和过期指纹拒绝。
-identities.tsx: 紧凑身份工作台与180×286工牌；顶部默认按钮执行本地身份摘要同步并给出已同步徽章反馈，同时提供一键持久化开关的「自动续杯」胶囊与生效时段配置入口；定时元数据检查接收CLI被动额度的本地变化；无订阅/重置资料时紧凑卡片省略该行，详情仍保留未知。在线额度批次、前台定时查询开关、5h 到期自动续杯配置面板（含自定义生效时段、待命号联动阈值、逐账号防风控退避状态与一键唤醒）和集中修复队列位于标题⋯菜单或时段胶囊打开的弹窗；默认身份页无在线说明和结果错误。额度详情弹窗在 reset_inferred 状态下显示剩余/已用双语语义文案、原锚点与已过时长（formatElapsedSinceReset）、7d 消耗步调、一键「唤醒 5h 计时」与「在线校准额度」入口。关闭弹窗会停用前台定时查询，不取消原生批次；批次重新挂载后以紧凑进度/打开/取消入口恢复，不强制打开弹窗。手动在线批次按冻结指纹读取全部当前/保存账号，最多两路并发；结果不清除本地观测，目标身份变化使旧结果失效；成功服务端锚点按原有严格账号绑定合并。保持额度窗口来源区分、预计恢复说明、180×286卡片、身份安全和保留策略现有行为。
+identities.tsx: 紧凑身份工作台与180×286工牌；顶部默认按钮执行本地身份摘要同步并给出已同步徽章反馈，同时提供一键持久化开关的「自动续杯」胶囊与生效时段配置入口；定时元数据检查接收CLI被动额度的本地变化；无订阅/重置资料时紧凑卡片省略该行，详情仍保留未知。在线额度批次、前台定时查询开关、5h 到期自动续杯配置面板（含自定义生效时段、待命号联动阈值、逐账号防风控退避状态与一键唤醒）和集中修复队列位于标题⋯菜单或时段胶囊打开的弹窗；只有原生回传新鲜 `new_5h_confirmed` reset 才记作成功，7d/cached/未知结果均持久退避；auth_required 显示需重新连接或手动恢复，不宣称时间到自动解锁；配置保存失败不更新界面。唤醒调用附带 auto/manual 与 expiredResetAt。手动在线批次按冻结指纹读取全部当前/保存账号，最多两路并发；结果不清除本地观测，目标身份变化使旧结果失效；成功服务端锚点按原有严格账号绑定合并。保持额度窗口来源区分、预计恢复说明、180×286卡片、身份安全和保留策略现有行为。
 identity-model.ts: 浏览器绑定脱敏状态与 SQLite 受限目录、当前/暂存显示字段（含离线/在线 5h/7d 额度百分比、逐窗来源/实际观测时间、quota_identity 64hex脱敏指纹、重置时间戳、订阅日期、重置余额、manual_resets_valid_until 与各自独立的观测时间戳）和保留策略契约；订阅日期与重置资料缺失保持未知，不复用 OAuth 凭据有效期。
 identity-list.ts / identity-list.test.ts: 仅保留逐窗观测年龄格式化，搜索/排序辅助已移除；身份页固定当前卡，其余卡片按原生记录顺序显示。
 identity-diagnostics.ts / identity-diagnostics.test.ts: literal白名单诊断JSON，仅限有界版本、时间、来源枚举与配置/资源flag；运行时始终未验证，不包含账号名/邮箱/id/代理/路径或原始命令。
 identity-productivity.css: 观测年龄、⋯无障碍下拉菜单、顶部自动续杯胶囊、在线额度与5h到期自动续杯配置面板、紧凑活动批次状态、预计进度条弱化、Pro/Max药丸、前台自动刷新开关与集中连接修复队列的局部紧凑布局，维持180×286工牌；已清除搜索/排序行及其空结果样式。
-identity-online-quota.ts / identity-online-quota.test.ts: 在线额度状态解析、批量目标构建与指纹集变动检测（buildBatchTargets/generateBatchRequestId/formatBatchProgress）、严格目标指纹核验（isExpectedCurrentTarget/isExpectedSavedTarget）、冷却倒计时格式化、带独立观测时钟和有限有效期/过期状态的订阅与重置格式化、前台聚焦180s串行调度器，以及 5h 到期自动续杯纯模型（含跨午夜生效时段判定 isWithinWakeupTimeWindow、同账号阶梯退避 computeSameAccountWakeupDelayMs、跨账号错峰间隔 computeCrossAccountSpacingMs 与主力号联动唤醒 evaluateWakeupAccount），保证离线/在线数据来源真实性与纯模型测试验证。
+identity-online-quota.ts / identity-online-quota.test.ts: 在线额度状态解析、批量目标构建与指纹集变动检测（buildBatchTargets/generateBatchRequestId/formatBatchProgress）、严格目标指纹核验（isExpectedCurrentTarget/isExpectedSavedTarget）、冷却倒计时格式化、带独立观测时钟和有限有效期/过期状态的订阅与重置格式化、前台聚焦180s串行调度器，以及 5h 到期自动续杯纯模型（含跨午夜时段、逐账号阶梯退避、跨账号错峰、主力号联动唤醒、严格新5h确认及配置保存失败检测），不访问网络或凭据。
 identity-quota.ts / identity-quota.test.ts: 逐窗优先读取 5h/7d 来源，兼容旧整体来源；可信服务端重置时间已过时显示 reset_inferred 本地预计恢复及已重置时长（formatElapsedSinceReset），保留原观测且不推算下一重置；缺少可信依据仍未知。evaluateWeeklyPace 按 7d 锚点计算已耗时占比与实际消耗偏差（重置后前24小时静默，超前>=15%预警）。evaluateQuota.recommendable 保持严格非预计契约，切到最优号支持 5h 已静置恢复且 7d 窗口有效的备用账号（同分优先实测账号）。身份页仅更新本地显示时钟，不增加每小时/手动之外的原生读取；详情逐窗展示来源/观测时间，卡片维持180×286。
 claude-cli-panel.tsx: 身份页内的品牌 CLI 维护卡片，展示本地版本/路径（支持路径一键复制）与用户手动检查的最新版本，未安装时展示官方 Windows 安装命令复制与「重新检查」入口；读取失败显示不可读与手动重试，不误报未安装，读取错误和操作错误分别保留；运行中禁用更新，首次挂载只读，不自动结束进程。
 usage-attribution.ts / usage-attribution.test.ts: 用量归属纯模型；提供脱敏账号标签（复用 settings-model 的 maskDisplayName/maskEmailAddress，防止本地邮箱别名泄露）、未归属用量范围预览、DST 23h/25h 判定与 IANA 时区格式化。

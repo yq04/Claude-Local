@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Tauri 官方 mockIPC、真实身份/浏览器组件与虚构的内存状态。
- * [OUTPUT]: 40 个虚构身份、可控在线结果、被动额度 revision/read 故障注入、持久批次快照/取消/恢复、残留清单与可释放 IPC，供无头浏览器验证任务恢复和身份隔离。
+ * [OUTPUT]: 显式开启的原生调度快照mock、40 个虚构身份、可控在线结果、被动额度 revision/read 故障注入、持久批次快照/取消/恢复、残留清单与可释放 IPC，供无头浏览器验证任务恢复和身份隔离。
  * [POS]: 独立测试入口；没有原生命令、真实目录、账号或网络，生产 rollup 不包含此入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -8,6 +8,7 @@ import {createRoot} from 'react-dom/client';
 import {mockIPC} from '@tauri-apps/api/mocks';
 import {MotionRoot,TooltipProvider} from 'cromma-ui';
 import {IdentityPanel} from '../src/identities';
+import {initializeNativeWakeupBridge, DEFAULT_AUTO_WAKEUP_CONFIG, type NativeWakeupSnapshot} from '../src/identity-online-quota';
 import {BrowserPanel} from '../src/browser';
 import type {BrowserState} from '../src/browser-model';
 import {defaultPolicy,type IdentityState} from '../src/identity-model';
@@ -40,11 +41,17 @@ type Pending={command:string;args:any;resolve:(value:unknown)=>void;reject:(erro
 const deferred=new Set<string>(),pending:Pending[]=[];
 if((window as any).__deferInitialQuotaRevision)deferred.add('identities_quota_revision');
 let batchState:any=null;
+let wakeupNative:NativeWakeupSnapshot={schema:1,migrated:false,config:{...DEFAULT_AUTO_WAKEUP_CONFIG},targets:[],lastGlobalWakeupAtMs:0,nextGlobalAtMs:0,accounts:{},status:'disabled',runtime:'unknown'};
+const nativeWakeupMode=Boolean((window as any).__enableNativeWakeupTest);
+
 const eventListeners=new Map<number,{event:string;handler:number}>();let nextEventId=1;
 function emitFixtureEvent(event:string,payload:unknown){for(const [id,listener] of eventListeners){if(listener.event===event)(window as any).__TAURI_INTERNALS__.runCallback(listener.handler,{event,id,payload});}}
 const fixture={commands,state,residue,browser:browserState,browserBusy:false,quotaRevision:1,onlineResultsById:{} as Record<string,any>,onlineResult:{status:'updated',updated_windows:['5h','7d'],verified_at_ms:Date.now(),retry_at_ms:0},root:null as any,get identityReads(){return identityReads;},get identityReadAttempts(){return identityReadAttempts;},get identityReadFailures(){return identityReadFailures;},get quotaRevisionReads(){return quotaRevisionReads;},get pending(){return pending.map(row=>row.command);},language:setLocale,setFailure:(command:string)=>{fail=command;},recover:()=>{state.recovery=id(1);},
  updatePassiveQuota:(used:number)=>{Object.assign(state.current,{quota_5h_used:used,quota_5h_source:'server_anchor',quota_5h_observed_at_ms:Date.now()});fixture.quotaRevision++;},
  emitEvent:emitFixtureEvent,
+ get wakeup(){return structuredClone(wakeupNative);},
+ publishWakeup:(patch:Partial<NativeWakeupSnapshot>)=>{wakeupNative={...wakeupNative,...patch};emitFixtureEvent('wakeup-scheduler-state',structuredClone(wakeupNative));},
+ showOtherPage:()=>{fixture.root.render(<div data-testid="other-page">Other page</div>);},
  get batch(){return batchState?structuredClone(batchState):null;},
  remountIdentity:()=>{
   const host=document.getElementById('fixture')!;fixture.root.unmount();fixture.root=createRoot(host);
@@ -131,6 +138,16 @@ function execute(command:string,args:any){
   }
   return {...result,source:'oauth',observed_at_ms:result.status==='updated'?Date.now():undefined,retry_at_ms:result.retry_at_ms||Date.now()+60000};
  }
+ if(command==='identities_wakeup_state')return structuredClone(wakeupNative);
+ if(command==='identities_wakeup_configure'||command==='identities_wakeup_migrate'){
+  wakeupNative.config=structuredClone(command==='identities_wakeup_migrate'?args.migration.config:args.config);
+  wakeupNative.migrated=true;wakeupNative.runtime='available';wakeupNative.status=wakeupNative.config.enabled?'waiting':'disabled';
+  emitFixtureEvent('wakeup-scheduler-state',structuredClone(wakeupNative));return structuredClone(wakeupNative);
+ }
+ if(command==='identities_wakeup_resume'){
+  const account=wakeupNative.accounts[args.expectedIdentity];if(account?.unknown)throw 'wakeup.outcomeUnknown';
+  if(account)account.recoveryAllowed=true;emitFixtureEvent('wakeup-scheduler-state',structuredClone(wakeupNative));return structuredClone(wakeupNative);
+ }
  if(command==='identities_wakeup_quota_window'){
   const summary=args.accountId==='current'?state.current:state.summaries[args.accountId];
   if(!summary||!args.expectedIdentity||summary.quota_identity!==args.expectedIdentity)return {status:'account_mismatch'};
@@ -139,7 +156,7 @@ function execute(command:string,args:any){
    Object.assign(summary,{quota_5h_used:1,quota_5h_reset_at:Math.floor(Date.now()/1000)+18000,quota_5h_source:'server_anchor',quota_5h_observed_at_ms:Date.now(),quota_7d_used:Math.min(100,Math.max(1,summary.quota_7d_used??10)),quota_7d_reset_at:Math.floor(Date.now()/1000)+604800,quota_7d_source:'server_anchor',quota_7d_observed_at_ms:Date.now()});
    fixture.quotaRevision++;
   }
-  return {...result,source:'wakeup_messages',observed_at_ms:result.status==='updated'?Date.now():undefined,retry_at_ms:result.retry_at_ms||Date.now()+60000};
+  return {...result,source:'wakeup_messages',observed_at_ms:result.status==='updated'?Date.now():undefined,wakeup_effect:result.status==='updated'?'new_5h_confirmed':result.wakeup_effect,wakeup_5h_reset_at:result.status==='updated'?summary.quota_5h_reset_at:result.wakeup_5h_reset_at,retry_at_ms:result.retry_at_ms||Date.now()+60000};
  }
  if(command==='identities_sync_subscription'){
   if(!args.expectedIdentity||state.current.quota_identity!==args.expectedIdentity)throw 'quotaOnline.accountMismatch';
@@ -186,3 +203,5 @@ function execute(command:string,args:any){
 }
 fixture.root=createRoot(document.getElementById('fixture')!);
 fixture.root.render(<MotionRoot><TooltipProvider><div style={{width:740,height:752,margin:'20px auto',border:'1px solid #ddd'}}>{browserMode?<BrowserPanel onBusy={value=>{fixture.browserBusy=value;}}/>:<IdentityPanel/>}</div></TooltipProvider></MotionRoot>);
+
+if(nativeWakeupMode)void initializeNativeWakeupBridge();

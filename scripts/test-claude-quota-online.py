@@ -1,5 +1,5 @@
 # [INPUT]: Synthetic OAuth files, mock HTTP replies and temporary application data.
-# [OUTPUT]: OAuth/browser binding, single-use bounded grants, pre-grant denial, writer-lock order and ledger/state persistence regressions.
+# [OUTPUT]: OAuth/browser binding, bounded grants, writer-lock persistence, strict wakeup confirmation and controlled ambiguity regressions.
 # [POS]: Isolated tests for scripts/claude_quota_online.py; never uses real accounts or network.
 # [PROTOCOL]: Keep scripts/CLAUDE.md aligned with tested poller behavior.
 """Synthetic online quota tests; HTTP and credentials are always fixtures."""
@@ -776,10 +776,13 @@ class OnlineQuotaTests(unittest.TestCase):
 
             with patch.object(online, "_fetch", return_value=(200, json.dumps(self.profile(account)).encode(), {})) as fetch_mock, \
                  patch.object(online.urllib.request, "build_opener", return_value=DummyPostOpener()):
-                result = online.run_wakeup(app, home, "current", self.expected(account))
+                result = online.run_wakeup(app, home, "current", self.expected(account),
+                                           expired_reset_at=now_s - 60)
 
             self.assertEqual(result["status"], "updated")
             self.assertEqual(result["updated_windows"], ["5h", "7d"])
+            self.assertEqual(result["wakeup_effect"], "new_5h_confirmed")
+            self.assertEqual(result["wakeup_5h_reset_at"], now_s + 18000)
             self.assertEqual(fetch_mock.call_count, 1)
             self.assertEqual(fetch_mock.call_args.args[1], online.PROFILE_ENDPOINT)
             self.assertEqual(captured_post["url"], online.MESSAGES_ENDPOINT)
@@ -824,6 +827,42 @@ class OnlineQuotaTests(unittest.TestCase):
             self.assertEqual(result["status"], "updated")
             self.assertEqual(models_tried, list(online.WAKEUP_MODELS))
             self.assertEqual(fetch_mock.call_count, 2)
+
+    def test_wakeup_seven_day_only_and_old_reset_never_confirm(self):
+        for expired_reset_at in (None, int(time.time()) + 20000):
+            with self.subTest(expired_reset_at=expired_reset_at), tempfile.TemporaryDirectory() as temp:
+                app, home, account = self.fixture(Path(temp))
+                reset = int(time.time()) + 300000
+
+                def fake_post(*_args, **_kwargs):
+                    return 200, b"{}", {
+                        "anthropic-ratelimit-unified-5h-utilization": "0.05",
+                        "anthropic-ratelimit-unified-5h-reset": str(int(time.time()) + 18000),
+                        "anthropic-ratelimit-unified-7d-utilization": "0.25",
+                        "anthropic-ratelimit-unified-7d-reset": str(reset),
+                    }
+
+                with patch.object(online, "_fetch", return_value=(
+                        200, json.dumps(self.profile(account)).encode(), {})), \
+                     patch.object(online, "_post_wakeup", side_effect=fake_post):
+                    result = online.run_wakeup(app, home, "current", self.expected(account),
+                                               expired_reset_at=expired_reset_at)
+                self.assertEqual(result["status"], "updated")
+                self.assertEqual(result["updated_windows"], ["5h", "7d"])
+                self.assertEqual(result["wakeup_effect"], "quota_observed")
+                self.assertNotIn("wakeup_5h_reset_at", result)
+
+    def test_wakeup_messages_transport_failure_is_unknown_at_messages_stage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            with patch.object(online, "_fetch", return_value=(
+                    200, json.dumps(self.profile(account)).encode(), {})), \
+                 patch.object(online, "_post_wakeup", return_value=("network_error", None, None)):
+                result = online.run_wakeup(app, home, "current", self.expected(account),
+                                           expired_reset_at=int(time.time()) - 10)
+            self.assertEqual(result["status"], "network_error")
+            self.assertEqual(result["stage"], "messages")
+            self.assertEqual(result["wakeup_effect"], "outcome_unknown")
 
 
 if __name__ == "__main__":

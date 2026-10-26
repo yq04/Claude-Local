@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Claude-Local 品牌与座舱页面、共享页面图标和 YAML 文案、Cromma UI、任务锁与本地刷新/身份确认事件。
- * [OUTPUT]: 可折叠座舱侧栏、Ctrl+K 命令面板、活动页手动刷新入口、手工任务交接，以及八个产品页面。
+ * [OUTPUT]: 可折叠侧栏、命令面板、手动刷新、手工交接、八个页面及常驻原生唤醒迁移/快照桥（不调度请求）。
  * [POS]: 独立产品编排层；命令快捷键尊重输入、模态与任务锁，只读身份列表仅在面板打开时读取；交接字段仅内存保留。根 MotionRoot 读取减少动画偏好。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -10,6 +10,7 @@ import {useI18n} from './i18n';
 import {createRoot} from 'react-dom/client';
 import {getCurrentWindow} from '@tauri-apps/api/window';
 import {IdentityPanel} from './identities';
+import {initializeNativeWakeupBridge} from './identity-online-quota';
 import {BrowserPanel} from './browser';
 import {SystemPanel} from './system';
 import {QuickSetupPanel} from './quick-actions';
@@ -48,6 +49,7 @@ const titles: Record<Page, string> = {
 const PAGE_ORDER: readonly Page[] = ['quick', 'browser', 'system', 'vps', 'cleaner', 'usage', 'help', 'settings'];
 
 function App() {
+  useEffect(() => { void initializeNativeWakeupBridge(); }, []);
   const {t, locale} = useI18n();
   const prefs = usePreferences();
   const [page, setPageState] = useState<Page>(readPage);

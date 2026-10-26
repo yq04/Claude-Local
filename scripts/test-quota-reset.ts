@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 现有隔离 Playwright 引擎、Vite 本机地址与 tests/identities.html 的虚构 Tauri IPC。
- * [OUTPUT]: 闲置到期推定恢复（无额外 IPC/无虚构倒计时）、周额度与缺失/本地估计独立性、弹窗推定来源说明、双语 180×286 卡片几何与新真实观测覆盖 6 组核心 GUI 检查。
+ * [OUTPUT]: 闲置到期推定恢复、周额度与缺失/本地估计独立性、弹窗推定来源说明、仅显式新5h reset回传才报告唤醒成功、双语 180×286 卡片几何覆盖。
  * [POS]: 身份 UI 额度重置与推定恢复的无头行为回归；按钮标签按当前目录文案解析，独立 context + clock，不截图、不调用真实宿主或外网，try/finally 保证 context 关闭。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -12,6 +12,7 @@ export async function testQuotaReset(browser:Browser,base:string) {
  const context=await browser.newContext({viewport:{width:1040,height:820},reducedMotion:'reduce'});
  try {
   await context.route('**/*',route=>route.request().url().startsWith(base+'/')?route.continue():route.abort());
+  await context.addInitScript(()=>{(window as any).__enableNativeWakeupTest=true;});
   const page=await context.newPage();page.setDefaultTimeout(10000);
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   const now=2_000_000_000;

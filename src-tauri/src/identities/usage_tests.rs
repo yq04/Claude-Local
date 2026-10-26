@@ -1,5 +1,5 @@
 // [INPUT]: Synthetic usage fragments and isolated temporary files/SQLite ledgers.
-// [OUTPUT]: Regressions for idempotency/ownership, cursors, named-timezone DST calendars, stable fallback attribution and token semantics.
+// [OUTPUT]: Regressions for idempotency/ownership, cursors with bounded effort context and migration recovery, named-timezone DST calendars, stable fallback attribution and token semantics.
 // [POS]: Unit tests for identities::usage; never touches the user's Claude profile or identity vault.
 // [PROTOCOL]: Keep all fixtures synthetic and scoped to temporary directories.
 use super::usage::{self, Counts, Event};
@@ -361,7 +361,10 @@ fn aggregate_filters_keep_account_and_unattributed_totals_global_and_ignore_remo
         )
         .optional()
         .unwrap();
-    assert_eq!(has_meta, None, "read() must not auto-seed fallback_account_id into meta");
+    assert_eq!(
+        has_meta, None,
+        "read() must not auto-seed fallback_account_id into meta"
+    );
     drop(meta_conn);
 
     // Explicit fallback command sets the stable ID in meta.
@@ -678,6 +681,22 @@ fn legacy_file_cursor_migrates_without_changing_explicit_history_ownership() {
         conn.query_row("SELECT offset FROM files", [], |r| r.get::<_, i64>(0))
             .unwrap(),
         123
+    );
+    assert_eq!(
+        conn.query_row("SELECT guard FROM files", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        ""
+    );
+    assert_eq!(
+        conn.query_row("SELECT effort FROM files", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        ""
+    );
+    assert_eq!(
+        conn.query_row("SELECT parser_version FROM files", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
     );
     let counts = Counts {
         input: 4,
@@ -1142,15 +1161,65 @@ fn fallback_attribution_stable_id_lifecycle_and_invariance() {
 
     let ledger = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
     let mut initial_events = HashMap::new();
-    initial_events.insert("e-work-1".into(), event("e-work-1", 100, Counts { input: 10, output: 5, ..Counts::default() }));
-    initial_events.insert("e-work-2".into(), event("e-work-2", 101, Counts { input: 20, output: 10, ..Counts::default() }));
-    initial_events.insert("e-unassigned-1".into(), event("e-unassigned-1", 102, Counts { input: 30, output: 15, ..Counts::default() }));
-    initial_events.insert("e-unassigned-2".into(), event("e-unassigned-2", 103, Counts { input: 40, output: 20, ..Counts::default() }));
-    usage::persist_scan(&ledger, initial_events, &[
-        (100, Some("hmac-work-1".into())),
-        (101, Some("hmac-work-2".into())),
-        (102, None),
-    ], &[]).unwrap();
+    initial_events.insert(
+        "e-work-1".into(),
+        event(
+            "e-work-1",
+            100,
+            Counts {
+                input: 10,
+                output: 5,
+                ..Counts::default()
+            },
+        ),
+    );
+    initial_events.insert(
+        "e-work-2".into(),
+        event(
+            "e-work-2",
+            101,
+            Counts {
+                input: 20,
+                output: 10,
+                ..Counts::default()
+            },
+        ),
+    );
+    initial_events.insert(
+        "e-unassigned-1".into(),
+        event(
+            "e-unassigned-1",
+            102,
+            Counts {
+                input: 30,
+                output: 15,
+                ..Counts::default()
+            },
+        ),
+    );
+    initial_events.insert(
+        "e-unassigned-2".into(),
+        event(
+            "e-unassigned-2",
+            103,
+            Counts {
+                input: 40,
+                output: 20,
+                ..Counts::default()
+            },
+        ),
+    );
+    usage::persist_scan(
+        &ledger,
+        initial_events,
+        &[
+            (100, Some("hmac-work-1".into())),
+            (101, Some("hmac-work-2".into())),
+            (102, None),
+        ],
+        &[],
+    )
+    .unwrap();
     drop(ledger);
 
     // 1. Initial state: no fallback set
@@ -1160,8 +1229,20 @@ fn fallback_attribution_stable_id_lifecycle_and_invariance() {
     assert_eq!(snap0.attribution.unassigned_tokens, 105);
     assert_eq!(snap0.unattributed.requests, 2);
     assert_eq!(snap0.unattributed.total_tokens, 105);
-    let acc1_tokens = snap0.accounts.iter().find(|a| a.id == acc1_id).unwrap().totals.total_tokens;
-    let acc2_tokens = snap0.accounts.iter().find(|a| a.id == acc2_id).unwrap().totals.total_tokens;
+    let acc1_tokens = snap0
+        .accounts
+        .iter()
+        .find(|a| a.id == acc1_id)
+        .unwrap()
+        .totals
+        .total_tokens;
+    let acc2_tokens = snap0
+        .accounts
+        .iter()
+        .find(|a| a.id == acc2_id)
+        .unwrap()
+        .totals
+        .total_tokens;
     assert_eq!(acc1_tokens, 15);
     assert_eq!(acc2_tokens, 30);
     assert_eq!(snap0.totals.total_tokens, 45);
@@ -1170,11 +1251,14 @@ fn fallback_attribution_stable_id_lifecycle_and_invariance() {
     let invalid_id = "0192e2b3ffff70008000000000000099";
     assert!(usage::set_fallback_account_id(&vault, invalid_id).is_err());
     let ledger = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
-    let meta_val: Option<String> = ledger.query_row(
-        "SELECT value FROM meta WHERE key='fallback_account_id'",
-        [],
-        |r| r.get(0),
-    ).optional().unwrap();
+    let meta_val: Option<String> = ledger
+        .query_row(
+            "SELECT value FROM meta WHERE key='fallback_account_id'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .unwrap();
     assert_eq!(meta_val, None);
     drop(ledger);
 
@@ -1185,33 +1269,95 @@ fn fallback_attribution_stable_id_lifecycle_and_invariance() {
 
     // 4. Totals / trends / models / filters consistency with fallback active
     let snap1 = usage::read_at(&vault, &home, "all", None, 0).unwrap();
-    assert_eq!(snap1.attribution.fallback_account_id.as_deref(), Some(acc2_id));
-    assert_eq!(snap1.attribution.fallback_account_name.as_deref(), Some("Work"));
+    assert_eq!(
+        snap1.attribution.fallback_account_id.as_deref(),
+        Some(acc2_id)
+    );
+    assert_eq!(
+        snap1.attribution.fallback_account_name.as_deref(),
+        Some("Work")
+    );
     assert_eq!(snap1.unattributed.requests, 0);
-    assert_eq!(snap1.accounts.iter().find(|a| a.id == acc1_id).unwrap().totals.total_tokens, 15);
-    assert_eq!(snap1.accounts.iter().find(|a| a.id == acc2_id).unwrap().totals.total_tokens, 135);
+    assert_eq!(
+        snap1
+            .accounts
+            .iter()
+            .find(|a| a.id == acc1_id)
+            .unwrap()
+            .totals
+            .total_tokens,
+        15
+    );
+    assert_eq!(
+        snap1
+            .accounts
+            .iter()
+            .find(|a| a.id == acc2_id)
+            .unwrap()
+            .totals
+            .total_tokens,
+        135
+    );
     assert_eq!(snap1.totals.total_tokens, 150);
-    assert_eq!(snap1.daily.iter().map(|d| d.totals.total_tokens).sum::<u64>(), 150);
-    assert_eq!(snap1.models.iter().map(|m| m.totals.total_tokens).sum::<u64>(), 150);
+    assert_eq!(
+        snap1
+            .daily
+            .iter()
+            .map(|d| d.totals.total_tokens)
+            .sum::<u64>(),
+        150
+    );
+    assert_eq!(
+        snap1
+            .models
+            .iter()
+            .map(|m| m.totals.total_tokens)
+            .sum::<u64>(),
+        150
+    );
     let snap_acc2 = usage::read_at(&vault, &home, "all", Some(acc2_id), 0).unwrap();
     assert_eq!(snap_acc2.totals.total_tokens, 135);
 
     // 5. Raw events table remains completely unchanged (unaltered event evidence)
     let ledger = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
-    let unassigned_count: i64 = ledger.query_row(
-        "SELECT COUNT(*) FROM events WHERE account_key IS NULL OR account_key=''",
-        [],
-        |r| r.get(0),
-    ).unwrap();
-    assert_eq!(unassigned_count, 2, "Raw event ownership in events table must never be rewritten");
+    let unassigned_count: i64 = ledger
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE account_key IS NULL OR account_key=''",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        unassigned_count, 2,
+        "Raw event ownership in events table must never be rewritten"
+    );
     drop(ledger);
 
     // 6. Rename: Renaming acc2 in catalog preserves binding
-    db.execute("UPDATE identities SET name='Work (Personal)' WHERE id=?1", [acc2_id]).unwrap();
+    db.execute(
+        "UPDATE identities SET name='Work (Personal)' WHERE id=?1",
+        [acc2_id],
+    )
+    .unwrap();
     let snap_renamed = usage::read_at(&vault, &home, "all", None, 0).unwrap();
-    assert_eq!(snap_renamed.attribution.fallback_account_id.as_deref(), Some(acc2_id));
-    assert_eq!(snap_renamed.attribution.fallback_account_name.as_deref(), Some("Work (Personal)"));
-    assert_eq!(snap_renamed.accounts.iter().find(|a| a.id == acc2_id).unwrap().totals.total_tokens, 135);
+    assert_eq!(
+        snap_renamed.attribution.fallback_account_id.as_deref(),
+        Some(acc2_id)
+    );
+    assert_eq!(
+        snap_renamed.attribution.fallback_account_name.as_deref(),
+        Some("Work (Personal)")
+    );
+    assert_eq!(
+        snap_renamed
+            .accounts
+            .iter()
+            .find(|a| a.id == acc2_id)
+            .unwrap()
+            .totals
+            .total_tokens,
+        135
+    );
 
     // 7. Clear fallback rule: reversible back to unassigned state
     let cleared = usage::clear_fallback_account_id(&vault).unwrap();
@@ -1221,11 +1367,30 @@ fn fallback_attribution_stable_id_lifecycle_and_invariance() {
     assert_eq!(snap_cleared.attribution.fallback_account_id, None);
     assert_eq!(snap_cleared.unattributed.requests, 2);
     assert_eq!(snap_cleared.unattributed.total_tokens, 105);
-    assert_eq!(snap_cleared.accounts.iter().find(|a| a.id == acc2_id).unwrap().totals.total_tokens, 30);
+    assert_eq!(
+        snap_cleared
+            .accounts
+            .iter()
+            .find(|a| a.id == acc2_id)
+            .unwrap()
+            .totals
+            .total_tokens,
+        30
+    );
     assert_eq!(snap_cleared.totals.total_tokens, 45);
 
     // 8. Timezone source preserved
-    let snap_tz = usage::read_at_with_timezone_now(&vault, &home, "today", None, 0, None, Some("America/New_York"), 1000).unwrap();
+    let snap_tz = usage::read_at_with_timezone_now(
+        &vault,
+        &home,
+        "today",
+        None,
+        0,
+        None,
+        Some("America/New_York"),
+        1000,
+    )
+    .unwrap();
     assert_eq!(snap_tz.timezone.as_deref(), Some("America/New_York"));
 
     drop(db);
@@ -1286,5 +1451,506 @@ fn model_effort_tiers_are_parsed_and_aggregated_per_model() {
     assert_eq!(snap.models[0].efforts[0].totals.total_tokens, 1000);
     assert_eq!(snap.models[0].efforts[1].effort, "high");
     assert_eq!(snap.models[0].efforts[1].totals.total_tokens, 400);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn incremental_effort_cursor_preserves_tiers_across_appends_and_handles_migration_and_resets() {
+    let dir = temp_dir("effort-cursor-lifecycle");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    let projects = home.join(".claude").join("projects").join("test-proj");
+    super::private::directory(&vault).unwrap();
+    super::private::directory(&projects).unwrap();
+    let jsonl = projects.join("session.jsonl");
+
+    // 1. Initial write: user turn sets perTurnEffort="high", assistant has msg-1 (100 in, 50 out) without inline effort.
+    let mut f = super::private::create(&jsonl).unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "user",
+            "perTurnEffort": "high"
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-25T10:00:00Z",
+            "requestId": "req-1",
+            "message": {
+                "id": "msg-1",
+                "model": "claude-opus-test",
+                "usage": { "input_tokens": 100, "output_tokens": 50 }
+            }
+        })
+    )
+    .unwrap();
+    f.sync_all().unwrap();
+    drop(f);
+
+    // First scan: should record msg-1 as high effort, and persist cursor effort='high', parser_version=1.
+    let snap1 = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+    assert_eq!(snap1.totals.total_tokens, 150);
+    assert_eq!(snap1.totals.requests, 1);
+    assert_eq!(snap1.models.len(), 1);
+    assert_eq!(snap1.models[0].model, "claude-opus-test");
+    assert_eq!(snap1.models[0].totals.total_tokens, 150);
+    assert_eq!(snap1.models[0].efforts.len(), 1);
+    assert_eq!(snap1.models[0].efforts[0].effort, "high");
+    assert_eq!(snap1.models[0].efforts[0].totals.total_tokens, 150);
+
+    // Verify files table cursor has recorded effort='high' and parser_version=1 in SQLite ledger.
+    let ledger_path = vault.join("usage.sqlite");
+    let conn = usage::open_ledger(&ledger_path).unwrap();
+    let cursor_row: (i64, String, String, i64) = conn
+        .query_row(
+            "SELECT offset, guard, effort, parser_version FROM files",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert!(cursor_row.0 > 0);
+    assert!(!cursor_row.1.is_empty());
+    assert_eq!(cursor_row.2, "high");
+    assert_eq!(cursor_row.3, usage::USAGE_PARSER_VERSION);
+    drop(conn);
+
+    // 2. Incremental append: second assistant turn (msg-2, 80 in, 20 out) without inline effort.
+    let mut append = fs::OpenOptions::new().append(true).open(&jsonl).unwrap();
+    writeln!(
+        append,
+        "{}",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-25T10:05:00Z",
+            "requestId": "req-2",
+            "message": {
+                "id": "msg-2",
+                "model": "claude-opus-test",
+                "usage": { "input_tokens": 80, "output_tokens": 20 }
+            }
+        })
+    )
+    .unwrap();
+    append.sync_all().unwrap();
+    drop(append);
+
+    // Incremental read: must inherit 'high' effort from cursor, total tokens=250, requests=2.
+    let snap2 = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+    assert_eq!(snap2.totals.total_tokens, 250);
+    assert_eq!(snap2.totals.requests, 2);
+    assert_eq!(snap2.models[0].efforts.len(), 1);
+    assert_eq!(snap2.models[0].efforts[0].effort, "high");
+    assert_eq!(snap2.models[0].efforts[0].totals.total_tokens, 250);
+    assert_eq!(snap2.models[0].efforts[0].totals.requests, 2);
+
+    // 3. Equivalence check: scan identical file from byte 0 in a fresh vault.
+    let fresh_vault = dir.join("fresh-vault");
+    super::private::directory(&fresh_vault).unwrap();
+    let snap_fresh = usage::read_at(&fresh_vault, &home, "all", Some("unattributed"), 0).unwrap();
+    assert_eq!(snap_fresh.totals.total_tokens, snap2.totals.total_tokens);
+    assert_eq!(snap_fresh.totals.requests, snap2.totals.requests);
+    assert_eq!(
+        snap_fresh.models[0].efforts.len(),
+        snap2.models[0].efforts.len()
+    );
+    assert_eq!(
+        snap_fresh.models[0].efforts[0].effort,
+        snap2.models[0].efforts[0].effort
+    );
+    assert_eq!(
+        snap_fresh.models[0].efforts[0].totals.total_tokens,
+        snap2.models[0].efforts[0].totals.total_tokens
+    );
+
+    // 4. Mid-stream effort switch: user sets perTurnEffort="medium", assistant msg-3 (40 in, 10 out) without inline effort.
+    let mut append2 = fs::OpenOptions::new().append(true).open(&jsonl).unwrap();
+    writeln!(
+        append2,
+        "{}",
+        json!({
+            "type": "user",
+            "perTurnEffort": "medium"
+        })
+    )
+    .unwrap();
+    writeln!(
+        append2,
+        "{}",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-25T10:10:00Z",
+            "requestId": "req-3",
+            "message": {
+                "id": "msg-3",
+                "model": "claude-opus-test",
+                "usage": { "input_tokens": 40, "output_tokens": 10 }
+            }
+        })
+    )
+    .unwrap();
+    append2.sync_all().unwrap();
+    drop(append2);
+
+    let snap3 = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+    assert_eq!(snap3.totals.total_tokens, 300);
+    assert_eq!(snap3.totals.requests, 3);
+    assert_eq!(snap3.models[0].efforts.len(), 2);
+    // efforts are sorted: high (250 tokens), then medium (50 tokens)
+    assert_eq!(snap3.models[0].efforts[0].effort, "high");
+    assert_eq!(snap3.models[0].efforts[0].totals.total_tokens, 250);
+    assert_eq!(snap3.models[0].efforts[1].effort, "medium");
+    assert_eq!(snap3.models[0].efforts[1].totals.total_tokens, 50);
+
+    // Verify cursor updated to 'medium'
+    let conn = usage::open_ledger(&ledger_path).unwrap();
+    let current_effort: String = conn
+        .query_row("SELECT effort FROM files", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(current_effort, "medium");
+    drop(conn);
+
+    // 5. Truncation / rewrite / guard invalidation resets context: does NOT leak previous effort
+    // Overwrite the file with a completely different session having no effort specified.
+    fs::write(
+        &jsonl,
+        format!(
+            "{}
+",
+            json!({
+                "type": "assistant",
+                "timestamp": "2026-10-25T11:00:00Z",
+                "requestId": "req-truncated",
+                "message": {
+                    "id": "msg-truncated",
+                    "model": "claude-opus-test",
+                    "usage": { "input_tokens": 15, "output_tokens": 5 }
+                }
+            })
+        ),
+    )
+    .unwrap();
+
+    let _ = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+    let truncated_event_effort: String = usage::open_ledger(&ledger_path)
+        .unwrap()
+        .query_row(
+            "SELECT effort FROM events WHERE event_key LIKE '%msg-truncated%' OR message_key IS NOT NULL ORDER BY ts DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        truncated_event_effort, "",
+        "Truncated/rewritten file must reset context and not bleed previous effort"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn legacy_cursor_bounded_recovery_and_conservative_unknown_handling() {
+    let dir = temp_dir("legacy-effort-recovery");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    let projects = home.join(".claude").join("projects").join("legacy-proj");
+    super::private::directory(&vault).unwrap();
+    super::private::directory(&projects).unwrap();
+    let jsonl = projects.join("session.jsonl");
+
+    // Line 1: user turn with perTurnEffort="xhigh"
+    // Line 2: assistant turn (msg-leg-1)
+    let line1 = format!(
+        "{}
+",
+        json!({"type": "user", "perTurnEffort": "xhigh"})
+    );
+    let line2 = format!(
+        "{}
+",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-25T08:00:00Z",
+            "requestId": "req-leg-1",
+            "message": {
+                "id": "msg-leg-1",
+                "model": "claude-haiku-test",
+                "usage": { "input_tokens": 50, "output_tokens": 10 }
+            }
+        })
+    );
+    fs::write(&jsonl, format!("{line1}{line2}")).unwrap();
+
+    // First scan creates normal baseline:
+    let _ = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+
+    // Simulate an old ledger that was created before effort tracking:
+    // downgrade parser_version to 0 and blank out effort in files table!
+    let ledger_path = vault.join("usage.sqlite");
+    let conn = usage::open_ledger(&ledger_path).unwrap();
+    conn.execute("UPDATE files SET parser_version=0, effort=''", [])
+        .unwrap();
+    drop(conn);
+
+    // Append new assistant turn without effort:
+    let line3 = format!(
+        "{}
+",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-25T08:05:00Z",
+            "requestId": "req-leg-2",
+            "message": {
+                "id": "msg-leg-2",
+                "model": "claude-haiku-test",
+                "usage": { "input_tokens": 30, "output_tokens": 10 }
+            }
+        })
+    );
+    let mut append = fs::OpenOptions::new().append(true).open(&jsonl).unwrap();
+    append.write_all(line3.as_bytes()).unwrap();
+    append.sync_all().unwrap();
+    drop(append);
+
+    // Read again: with parser_version=0 on existing offset, bounded prefix recovery must find 'xhigh'
+    // in the prefix and correctly attribute msg-leg-2 to 'xhigh', upgrading parser_version to 1!
+    let snap = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+    let haiku = snap
+        .models
+        .iter()
+        .find(|m| m.model == "claude-haiku-test")
+        .unwrap();
+    assert_eq!(haiku.efforts.len(), 1);
+    assert_eq!(haiku.efforts[0].effort, "xhigh");
+    assert_eq!(haiku.efforts[0].totals.total_tokens, 100);
+
+    let conn = usage::open_ledger(&ledger_path).unwrap();
+    let (migrated_effort, migrated_ver): (String, i64) = conn
+        .query_row("SELECT effort, parser_version FROM files", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    assert_eq!(migrated_effort, "xhigh");
+    assert_eq!(migrated_ver, usage::USAGE_PARSER_VERSION);
+    drop(conn);
+
+    // Subcase A: file with NO effort anywhere in prefix should stay unknown (""), NOT guessed as high.
+    let jsonl_no_effort = projects.join("no-effort.jsonl");
+    fs::write(
+        &jsonl_no_effort,
+        format!(
+            "{}
+",
+            json!({
+                "type": "assistant",
+                "timestamp": "2026-10-25T09:00:00Z",
+                "requestId": "req-no-effort",
+                "message": {
+                    "id": "msg-no-effort",
+                    "model": "claude-haiku-test",
+                    "usage": { "input_tokens": 20, "output_tokens": 5 }
+                }
+            })
+        ),
+    )
+    .unwrap();
+    let _ = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+
+    let tag_no_effort = ring::digest::digest(
+        &ring::digest::SHA256,
+        jsonl_no_effort.to_string_lossy().as_bytes(),
+    );
+    let tag_hex = tag_no_effort
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let conn = usage::open_ledger(&ledger_path).unwrap();
+    conn.execute(
+        "UPDATE files SET parser_version=0, effort='' WHERE file_key=?1",
+        [&tag_hex],
+    )
+    .unwrap();
+    drop(conn);
+
+    // Append another turn without effort:
+    let mut append2 = fs::OpenOptions::new()
+        .append(true)
+        .open(&jsonl_no_effort)
+        .unwrap();
+    writeln!(
+        append2,
+        "{}",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-25T09:05:00Z",
+            "requestId": "req-no-effort-2",
+            "message": {
+                "id": "msg-no-effort-2",
+                "model": "claude-haiku-test",
+                "usage": { "input_tokens": 15, "output_tokens": 5 }
+            }
+        })
+    )
+    .unwrap();
+    append2.sync_all().unwrap();
+    drop(append2);
+
+    let snap_after = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+    let haiku_after = snap_after
+        .models
+        .iter()
+        .find(|m| m.model == "claude-haiku-test")
+        .unwrap();
+    // In UsageModel, efforts only holds explicit non-empty tiers (here only xhigh=100);
+    // unknown effort is not fabricated as an empty bucket; model totals contain all 145 tokens.
+    assert_eq!(haiku_after.efforts.len(), 1);
+    assert_eq!(haiku_after.efforts[0].effort, "xhigh");
+    assert_eq!(haiku_after.efforts[0].totals.total_tokens, 100);
+    assert_eq!(haiku_after.totals.total_tokens, 145);
+    assert!(haiku_after.efforts.iter().all(|e| e.effort != "high"));
+
+    let conn = usage::open_ledger(&ledger_path).unwrap();
+    let unk_events_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE model='claude-haiku-test' AND effort=''",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(unk_events_count, 2);
+    let no_effort_cursor: (String, i64) = conn
+        .query_row(
+            "SELECT effort, parser_version FROM files WHERE file_key=?1",
+            [&tag_hex],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(no_effort_cursor.0, "");
+    assert_eq!(no_effort_cursor.1, usage::USAGE_PARSER_VERSION);
+    drop(conn);
+
+    // Subcase B: file head has effort, BUT padding exceeds 64 KiB tail window.
+    // The bounded tail window [start_offset - 64KiB, start_offset] does NOT reach the head effort.
+    // The recovery strategy must NOT guess or forge 'max', but strictly return unknown ("").
+    let jsonl_far = projects.join("far-effort.jsonl");
+    let mut far_file = super::private::create(&jsonl_far).unwrap();
+    writeln!(
+        far_file,
+        "{}",
+        json!({"type": "user", "perTurnEffort": "max"})
+    )
+    .unwrap();
+    // Write 70 KiB of padding lines without effort
+    let padding_chunk = "x".repeat(1000);
+    for i in 0..70 {
+        writeln!(
+            far_file,
+            "{}",
+            json!({
+                "type": "assistant",
+                "timestamp": "2026-10-25T07:00:00Z",
+                "requestId": format!("req-pad-{i}"),
+                "message": {
+                    "id": format!("msg-pad-{i}"),
+                    "model": "claude-far-test",
+                    "comment": &padding_chunk,
+                    "usage": { "input_tokens": 1, "output_tokens": 1 }
+                }
+            })
+        )
+        .unwrap();
+    }
+    far_file.sync_all().unwrap();
+    drop(far_file);
+
+    // Initial scan
+    let _ = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+
+    // Downgrade to legacy cursor
+    let tag_far = ring::digest::digest(
+        &ring::digest::SHA256,
+        jsonl_far.to_string_lossy().as_bytes(),
+    );
+    let tag_far_hex = tag_far
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let conn = usage::open_ledger(&ledger_path).unwrap();
+    conn.execute(
+        "UPDATE files SET parser_version=0, effort='' WHERE file_key=?1",
+        [&tag_far_hex],
+    )
+    .unwrap();
+    drop(conn);
+
+    // Append new turn without effort beyond 70 KiB
+    let mut append_far = fs::OpenOptions::new()
+        .append(true)
+        .open(&jsonl_far)
+        .unwrap();
+    writeln!(
+        append_far,
+        "{}",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-25T07:30:00Z",
+            "requestId": "req-far-new",
+            "message": {
+                "id": "msg-far-new",
+                "model": "claude-far-test",
+                "usage": { "input_tokens": 10, "output_tokens": 10 }
+            }
+        })
+    )
+    .unwrap();
+    append_far.sync_all().unwrap();
+    drop(append_far);
+
+    let snap_far = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+    let far_model = snap_far
+        .models
+        .iter()
+        .find(|m| m.model == "claude-far-test")
+        .unwrap();
+    // The newly appended turn at > 70KB offset is outside the 64KB tail window,
+    // so recover_prefix_effort returns unknown (""), and msg-far-new is NOT forged into "max".
+    // Thus the "max" effort tier stays at 140 tokens (from initial 70 padding lines),
+    // while far_model total reaches 160 tokens (140 max + 20 unassigned).
+    assert_eq!(far_model.totals.requests, 71);
+    assert_eq!(far_model.totals.total_tokens, 160);
+    assert_eq!(far_model.efforts.len(), 1);
+    assert_eq!(far_model.efforts[0].effort, "max");
+    assert_eq!(far_model.efforts[0].totals.total_tokens, 140);
+
+    let conn = usage::open_ledger(&ledger_path).unwrap();
+    let far_event_effort: String = conn
+        .query_row(
+            "SELECT effort FROM events WHERE event_key LIKE '%msg-far-new%' OR message_key IS NOT NULL ORDER BY ts DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        far_event_effort, "",
+        "Appended turn beyond 64KiB tail window must not forge head effort"
+    );
+    let far_cursor: (String, i64) = conn
+        .query_row(
+            "SELECT effort, parser_version FROM files WHERE file_key=?1",
+            [&tag_far_hex],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(far_cursor.0, "");
+    assert_eq!(far_cursor.1, usage::USAGE_PARSER_VERSION);
+    drop(conn);
+
     let _ = fs::remove_dir_all(dir);
 }

@@ -1,6 +1,6 @@
-// [INPUT]: 显式代理地址、ipwho.is/ipapi.co HTTPS 出口信息与真实浏览器上报（含 WebRTC/WebGL/webdriver/时区偏移/Canvas音频/UA-CH 深度防封探针）。
-// [OUTPUT]: 独立目标国家与配置语言核验、共用检测服务目录、出口解析（含 ASN/ISP/机房标识）与 10 项完整闭环检测；无上报或失败保持未核验。
-// [POS]: 环境核验边界；只把出口与浏览器实测观测当证据，配置值不能冒充实际结果。
+// [INPUT]: 显式代理地址、ipwho.is/ipapi.co HTTPS 出口信息与带 schema 版本的浏览器观测。
+// [OUTPUT]: 目标环境核验、出口分类与版本兼容探针检查；缺少/旧版观测保持 pending。
+// [POS]: 环境核验边界；WebRTC 仅为无 STUN 本地候选观察，不证明 DNS 或公网 STUN 状态。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -124,6 +124,8 @@ pub(super) async fn probe_urls(proxy: &str, services: &[&str]) -> Result<Exit, S
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Report {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<u32>,
     pub language: String,
     pub languages: Vec<String>,
     pub timezone: String,
@@ -251,6 +253,7 @@ pub fn is_hosting_exit(exit: &Exit) -> bool {
 }
 #[derive(Serialize)]
 pub struct Check {
+    pub id: &'static str,
     pub title: &'static str,
     pub status: &'static str,
     pub detail: String,
@@ -262,7 +265,8 @@ pub fn checks(
     host: Option<&Exit>,
     version: &str,
 ) -> Vec<Check> {
-    let check = |title, ok: Option<bool>, detail: String| Check {
+    let check = |id, title, ok: Option<bool>, detail: String| Check {
+        id,
         title,
         status: match ok {
             Some(true) => "ok",
@@ -274,6 +278,7 @@ pub fn checks(
     let target = config.region(machine);
     vec![
         check(
+            "exit.target-country",
             "目标地区网络出口",
             target
                 .zip(report.and_then(|r| r.exit.as_ref()))
@@ -293,6 +298,7 @@ pub fn checks(
                 .unwrap_or("需要打开浏览器实测出口。".into()),
         ),
         check(
+            "exit.machine-match",
             "浏览器与机器出口",
             host.zip(report.and_then(|r| r.exit.as_ref()))
                 .map(|(a, b)| a.ip == b.ip),
@@ -300,6 +306,7 @@ pub fn checks(
                 .unwrap_or("点击检测机器出口；配置代理不等于已核验。".into()),
         ),
         check(
+            "environment.timezone",
             "时区一致",
             report
                 .zip(report.and_then(|r| r.exit.as_ref()))
@@ -319,6 +326,7 @@ pub fn checks(
             ),
         ),
         check(
+            "environment.language-region",
             "目标语言与系统区域",
             target.zip(report).and_then(|(target, r)| {
                 let language = config.language(machine);
@@ -342,6 +350,7 @@ pub fn checks(
             ),
         ),
         check(
+            "device.platform-cpu",
             "真实设备与 CPU",
             report.map(|r| {
                 let platform = r.platform.to_lowercase();
@@ -364,6 +373,7 @@ pub fn checks(
             ),
         ),
         check(
+            "browser.version",
             "浏览器版本",
             report.map(|r| r.browser_version == version),
             format!(
@@ -372,6 +382,7 @@ pub fn checks(
             ),
         ),
         check(
+            "privacy.geolocation",
             "地理位置关闭",
             report.map(|r| machine.location_enabled == Some(false) && r.geolocation == "denied"),
             format!(
@@ -385,8 +396,11 @@ pub fn checks(
             ),
         ),
         check(
+            "probe.graphics-webdriver",
             "真实图形与字体",
-            report.and_then(|r| r.graphics_ok.map(|g| g && r.webdriver != Some(true))),
+            report
+                .filter(|r| r.schema_version == Some(1))
+                .and_then(|r| r.graphics_ok.map(|g| g && r.webdriver != Some(true))),
             if let Some(renderer) = report
                 .and_then(|r| r.webgl_renderer.as_deref())
                 .filter(|s| !s.is_empty())
@@ -406,33 +420,60 @@ pub fn checks(
             },
         ),
         check(
-            "DNS / WebRTC 泄漏",
-            report.and_then(|r| r.webrtc_ok),
+            "probe.webrtc-local-candidates",
+            "WebRTC 本地候选观察",
+            report
+                .filter(|r| r.schema_version == Some(1))
+                .and_then(|r| r.webrtc_ok),
             if let Some(detail) = report
                 .and_then(|r| r.webrtc_detail.as_deref())
                 .filter(|s| !s.is_empty())
             {
-                format!("代理 DNS 与 QUIC 隔离已启用；实测：{detail}")
+                format!("无 STUN 的短时本地候选观察；不覆盖 DNS 或公网 STUN：{detail}")
             } else {
-                "已设置代理 DNS、限制未代理 UDP、关闭 QUIC；尚未完成独立泄漏测试。".into()
+                "尚无完整的本地候选观察；此项不测 DNS 或公网 STUN。".into()
             },
         ),
         check(
+            "exit.provider-probes",
             "防封特征与出口纯净度",
             report.and_then(|r| {
                 let exit = r.exit.as_ref()?;
-                let isp_ok = !is_hosting_exit(exit);
-                let probes_ok = r.tz_offset_ok.unwrap_or(true)
-                    && r.media_fingerprint_ok.unwrap_or(true)
-                    && r.client_hints_ok.unwrap_or(true);
-                Some(isp_ok && probes_ok)
+                let isp_ok = if exit.hosting == Some(true) || is_hosting_exit(exit) {
+                    Some(false)
+                } else if exit.hosting == Some(false) {
+                    Some(true)
+                } else {
+                    None
+                };
+                let probes_ok = if r.schema_version != Some(1) {
+                    None
+                } else if [r.tz_offset_ok, r.media_fingerprint_ok, r.client_hints_ok]
+                    .contains(&Some(false))
+                {
+                    Some(false)
+                } else if r.tz_offset_ok == Some(true)
+                    && r.media_fingerprint_ok == Some(true)
+                    && r.client_hints_ok == Some(true)
+                {
+                    Some(true)
+                } else {
+                    None
+                };
+                match (isp_ok, probes_ok) {
+                    (Some(false), _) => Some(false),
+                    (Some(true), Some(true)) => Some(true),
+                    _ => None,
+                }
             }),
             if let Some(r) = report {
                 if let Some(exit) = r.exit.as_ref() {
                     let isp_tag = if is_hosting_exit(exit) {
                         "IDC 机房（高风控）"
+                    } else if exit.hosting == Some(false) {
+                        "运营商标记为非机房"
                     } else {
-                        "ISP 原生特征"
+                        "运营商未知"
                     };
                     let probes_tag = if r.tz_offset_ok == Some(false)
                         || r.media_fingerprint_ok == Some(false)
@@ -440,7 +481,7 @@ pub fn checks(
                     {
                         "部分防封探针异常"
                     } else {
-                        "时区偏移 / Canvas / UA-CH 正常"
+                        "时区偏移 / Canvas / UA-CH 待核验或正常"
                     };
                     format!("出口属性：{isp_tag}；探针：{probes_tag}")
                 } else {
