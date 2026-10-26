@@ -8,29 +8,38 @@
 
 面向 Windows x64 的 Claude 本地管理工具，集中管理身份备份、账号切换、用量分析和可选的隔离浏览器。使用 Tauri、Rust、React、TypeScript 与 Python，独立维护产品和版本。
 
-当前候选版本：**0.1.4**（仓库保持私有；首次公开候选从 0.1.0 开始，既有标签和资产保留）。已整合用量分析模型推理档位（Effort）分布、原生自动续杯周期调度、可开关悬浮监控窗、Windows 隔离浏览器缓存目录 ACL 自愈及连接恢复反馈修复；本版补齐WebRTC初始化计时、同IP机房分类及生产页面网络策略；保留隐私保护和既有资料兼容。支持 Windows 10 / 11 x64；主程序与可选的 Claude-Local Browser 使用独立产品入口。正式安装/降级包验收仍单独进行。
+当前候选版本：**0.1.5**（仓库保持私有；首次公开候选从 0.1.0 开始，既有标签和资产保留）。已整合用量分析、原生自动续杯、悬浮监控窗和可选隔离浏览器；本版精简五页重复说明、整理工具栏与范围信息，延续WebRTC计时、同IP分类及生产页面网络策略修复。支持 Windows 10 / 11 x64；账号资料和隐私保护保持兼容。正式安装/降级包验收仍单独进行。
 
-[0.1.4 浏览器修复](docs/BROWSER_CSP_0.1.4.md) · [0.1.2 存储加固](docs/CRYPTO_HARDENING_0.1.2.md) · [0.1.1 登录修复](docs/AUTH_SYNC_0.1.1.md) · [首次候选版本说明](docs/RELEASE_NOTES_0.1.0.md) · [公开筹备边界](docs/PUBLIC_PREPARATION.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md) · [参与贡献](CONTRIBUTING.md)
+[0.1.5 界面优化](docs/UI_POLISH_0.1.5.md) · [0.1.4 浏览器修复](docs/BROWSER_CSP_0.1.4.md) · [0.1.2 存储加固](docs/CRYPTO_HARDENING_0.1.2.md) · [0.1.1 登录修复](docs/AUTH_SYNC_0.1.1.md) · [首次候选版本说明](docs/RELEASE_NOTES_0.1.0.md) · [公开筹备边界](docs/PUBLIC_PREPARATION.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md) · [参与贡献](CONTRIBUTING.md)
 
-[下载 0.1.4 Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.4/Claude-Local_0.1.4_x64-setup.exe) · [预发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.4) · [打包、上传与本机一致性核验](docs/RELEASE_VERIFICATION_0.1.4_BROWSER.md)。当前仓库保持私有，下载需要仓库访问权限。
+[下载 0.1.5 Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.5/Claude-Local_0.1.5_x64-setup.exe) · [预发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.5) · [打包、上传与本机一致性核验](docs/RELEASE_VERIFICATION_0.1.5_UI.md)。当前仓库保持私有，下载需要仓库访问权限。
 
 遇到网页登录后仍无法查询或唤醒，先看 [网页额度与CLI授权恢复说明](docs/CONNECTION_RECOVERY.md)：两套授权独立，重试会分别显示网页读取失败和CLI唤醒阻断原因。
 
 ## 界面预览
 
-以下图片使用 0.1.1 的实际应用前端和隔离演示数据，未载入个人资料。账号均为虚构，示例邮箱已启用隐私遮罩；图片不含真实账号、代理、IP、本机路径或凭据。开关状态和用量数值仅作演示，不代表本机当前设置或真实账号验证结果。
+以下图片使用 0.1.5 的实际应用前端和隔离演示数据，未载入个人资料。账号均为虚构，示例邮箱已启用隐私遮罩；图片不含真实账号、代理、IP、本机路径或凭据。开关状态和用量数值仅作演示，不代表本机当前设置或真实账号验证结果。
 
 **身份管理**：当前身份、保存账号及独立的 5h / 7d 额度窗口。
 
-![Claude-Local 身份管理：四个虚构账号与已遮罩的示例邮箱](docs/screenshots/identity-management.png)
+![Claude-Local 身份管理：分组工具栏、虚构账号和已遮罩示例邮箱](docs/screenshots/0.1.5/identity-management.png)
 
 **用量分析**：Token、缓存命中率、用量趋势和模型分布。
 
-![Claude-Local 用量分析：虚构 Token 数据、趋势图和模型分布](docs/screenshots/usage-analytics.png)
+![Claude-Local 用量分析：精简范围信息、虚构数据及趋势图](docs/screenshots/0.1.5/usage-analytics.png)
 
-**自动续杯**：生效时段、逐账号状态、暂停和手动唤醒入口。
+**浏览环境**：紧凑绑定信息、实测入口和独立资料管理。
 
-![Claude-Local 自动续杯：演示时段设置及账号计划状态](docs/screenshots/auto-wakeup.png)
+![Claude-Local 浏览环境：精简顶部信息及待测状态演示](docs/screenshots/0.1.5/browser-environment.png)
+
+<details>
+<summary>快速配置与网络环境</summary>
+
+![Claude-Local 快速配置：四个状态卡与设置入口](docs/screenshots/0.1.5/quick-setup.png)
+
+![Claude-Local 网络环境：固定复制操作与手动连通性检测](docs/screenshots/0.1.5/network-environment.png)
+
+</details>
 
 ## 主要功能
 

@@ -54,6 +54,7 @@ docs/BROWSER_VERIFICATION_0.1.3.md - Historical optimistic results, phased no-ST
 docs/BROWSER_CSP_0.1.4.md - Final browser integration patch: exact classification CSP host and regressions using the production network policy; supersedes the 0.1.3 candidate without moving its tag/assets.
 docs/RELEASE_VERIFICATION_0.1.4_BROWSER.md - Current verified source/CI, server installer digest, local payload and preserved identity/browser/CLI metadata; 0.1.3 verification is retained as superseded candidate history.
 docs/UI_POLISH_0.1.5.md - Five-page copy/toolbar/range refinement, preserved actions and analysis semantics, installed-bundle browser verification and private-safe synthetic layout evidence.
+docs/RELEASE_VERIFICATION_0.1.5_UI.md - Current source CI, audited installer/server digest, local payload match, production-bundle20-check isolation proof and preserved identity/CLI/browser metadata.
 docs/screenshots/ - README screenshots of the actual frontend with synthetic data, masked reserved-domain emails, no real identity/network/path information or embedded text/EXIF metadata; see its source and privacy notes.
 
 Action geometry: ordinary application buttons use the shared small 28px height and 10px horizontal padding, with width determined by their labels. Pages use the existing neutral secondary variant; destructive confirmations retain explicit red styling. Account filters fit the selected label instead of a fixed wide column, while popup options retain readable width. No vendored primitives or action semantics are changed.
