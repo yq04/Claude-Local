@@ -8,6 +8,8 @@
 
 Claude-Local is an independently maintained Windows x64 product whose release series starts at 0.1.0. Repository visibility and GitHub release labels are managed by the owner separately from product versioning. Source and binary distribution must respect each bundled component’s terms; changing visibility or removing a prerelease marker does not supply missing permissions.
 
+Claude-Local is based on CCBaga secondary development and retains its original MIT attribution. Independent releases do not imply entirely original code or endorsement by CCBaga or Anthropic. See [Project origin](PROJECT_ORIGIN.md), [LICENSE](../LICENSE) and [NOTICE](../NOTICE.md) for the separate provenance and license layers.
+
 ## Build a share artifact
 
 For a local Windows share build, prepare the locked dependencies and pinned browser engine, then run `bun run build:windows`. This invokes `scripts/build-windows-share.ps1` and requires an existing 7-Zip `7z.exe` on PATH or in a standard Program Files installation. The script does not download or install this tool. A portable tool can be supplied explicitly:

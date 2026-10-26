@@ -1,125 +1,238 @@
 <!--
-[INPUT]: Independent product source, version metadata, verified delivery and synthetic-data screenshots of the application UI.
-[OUTPUT]: Product overview, private-safe interface previews, build/verification entries and retained-data upgrade expectations.
-[POS]: Repository introduction; published artifacts retain their own versioned release notes.
-[PROTOCOL]: Keep private-data, compatibility and distribution boundaries in the linked project documents.
+[INPUT]: Independent Windows x64 product, upstream CCBaga baseline attribution, 0.1.5 verified delivery and synthetic-data previews.
+[OUTPUT]: Comprehensive project presentation, architectural lineage, feature matrix, installation workflow and runtime boundaries.
+[POS]: Repository introduction; published artifacts retain versioned release notes.
+[PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
 -->
 # Claude-Local
 
-面向 Windows x64 的 Claude 本地管理工具，集中管理身份备份、账号切换、用量分析和可选的隔离浏览器。使用 Tauri、Rust、React、TypeScript 与 Python，独立维护产品和版本。
+面向 Windows x64 的 Claude 本地管理与用量分析工具。本项目**基于 [CCBaga](https://github.com/liseami/CCBaga)（由维护者 [@liseami](https://github.com/liseami) 与贡献者开源）二次开发**，在继承其多身份归档与浏览器隔离工作流的基础上，针对 Windows 桌面运行环境进行持续独立维护、工程重构与功能扩展。
 
-Claude-Local 的发行版本从 **0.1.0** 开始，当前版本为 **0.1.5**。支持 Windows 10 / 11 x64，提供身份管理、额度观察、用量分析、自动续杯和可选隔离浏览器；各补丁持续完善可靠性和界面体验。
+Claude-Local 独立维护产品生命周期与版本序列，版本发布从 **0.1.0** 开始，当前版本为 **0.1.5**。应用基于 Tauri、Rust、React、TypeScript 与 Python 构建，支持 Windows 10 / 11 64 位操作系统，提供多身份本地加密存储、受进程检查保护的账号切换、被动额度监测、用量与模型分析、进程内原生自动续杯调度以及可选的专属隔离浏览器环境。
 
-[0.1.5 界面优化](docs/UI_POLISH_0.1.5.md) · [0.1.4 浏览器修复](docs/BROWSER_CSP_0.1.4.md) · [0.1.2 存储加固](docs/CRYPTO_HARDENING_0.1.2.md) · [0.1.1 登录修复](docs/AUTH_SYNC_0.1.1.md) · [0.1.0 首个版本](docs/RELEASE_NOTES_0.1.0.md) · [发布与维护说明](docs/PUBLIC_PREPARATION.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md) · [参与贡献](CONTRIBUTING.md)
+[下载 0.1.5 Windows x64 安装包](https://github.com/yq04/Claude-Local/releases/download/v0.1.5/Claude-Local_0.1.5_x64-setup.exe) · [0.1.5 Release 页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.5) · [0.1.5 界面优化说明](docs/UI_POLISH_0.1.5.md) · [0.1.4 浏览器修复](docs/BROWSER_CSP_0.1.4.md) · [0.1.2 存储加固](docs/CRYPTO_HARDENING_0.1.2.md) · [0.1.1 登录同步](docs/AUTH_SYNC_0.1.1.md) · [0.1.0 首发版本](docs/RELEASE_NOTES_0.1.0.md) · [版本与标签约定](docs/RELEASE_POLICY.md) · [发布与维护说明](docs/PUBLIC_PREPARATION.md) · [项目来源与继承](docs/PROJECT_ORIGIN.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [分发与许可边界](docs/DISTRIBUTION.md)
 
-[下载 0.1.5 Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.5/Claude-Local_0.1.5_x64-setup.exe) · [发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.5) · [打包、上传与本机一致性核验](docs/RELEASE_VERIFICATION_0.1.5_UI.md)。
+---
 
-遇到网页登录后仍无法查询或唤醒，先看 [网页额度与CLI授权恢复说明](docs/CONNECTION_RECOVERY.md)：两套授权独立，重试会分别显示网页读取失败和CLI唤醒阻断原因。
+## 目录
+
+- [与 CCBaga 的来源关系和定位](#与-ccbaga-的来源关系和定位)
+- [界面预览](#界面预览)
+- [主要功能](#主要功能)
+- [获取与安装](#获取与安装)
+- [运行前置条件](#运行前置条件)
+- [从源码构建](#从源码构建)
+- [数据安全与运行时边界](#数据安全与运行时边界)
+- [已知局限与排障](#已知局限与排障)
+- [参与贡献](#参与贡献)
+- [开源许可与致谢](#开源许可与致谢)
+
+---
+
+## 与 CCBaga 的来源关系和定位
+
+本项目脱胎于开源项目 [CCBaga](https://github.com/liseami/CCBaga)，感谢原维护者 [@liseami](https://github.com/liseami) 及社区贡献者的开创性工作。Claude-Local 在吸收上游架构设计的同时，结合 Windows 桌面环境与日常工程需求进行了系统性的独立演进：
+
+### 继承的基线能力
+
+- **存储规范与归档格式兼容**：完整保留原项目的 `BAGAID01` 文件头标识、`.baga` 加密归档结构、SQLite `user_version = 3` 数据库架构、账号 HMAC 生成规则以及持久化浏览器种子域，维持已有资料的读取兼容，避免因品牌或版本介绍调整而重建身份。
+- **身份与浏览器资料关联**：延续了账号与专属运行环境相互绑定的设计原型，以账号绑定和显式切换减少凭据混用；这些目录不是操作系统账号沙箱，也不支持在运行中的CLI上热切号。
+
+### 本地独立工程增强
+
+- **专注 Windows x64 平台工程**：针对 Windows 桌面运行细节进行针对性加固，实现 Chromium AppContainer 缓存目录 ACL 继承修复、保留用户资料与配置的升级流程、系统网络修改前后的快照记录与冲突字段按需恢复。
+- **用量分析与被动额度观察**：建立本地被动额度采集机制，直接读取 CLI 本地会话记录与外部账本，完全避免改写 `.claude.json`；细分 5h / 7d 独立额度窗口，提供精确到 Token 消耗、缓存命中率、模型家族（Opus / Sonnet / Haiku）及推理深度（Effort 档位：low / medium / high / xhigh / max）的统计图表与 TSV 导出。
+- **进程内原生自动续杯调度与 HUD 监控**：由应用进程内的单一调度器管理，基于真实 5h 窗口与错峰预算策略自动执行唤醒，无需向操作系统注册计划任务或开机服务，应用退出即刻停止调度；提供轻量置顶的 HUD 悬浮监控窗，随时展现额度状态。
+- **存储加密加固与灾备救援**：基于口令派生（PBKDF2/AES-GCM）导出整库加密备份，恢复前全面验证清单哈希、SQLite 完整性、记录归档数量及内层清单结构；支持导出隔离救援副本以保留排障证据。
+- **交互体验打磨**：在既有界面基础上持续调整的桌面布局，支持深浅色模式跟随系统、Ctrl+K 命令中心快速检索、待办登录排队恢复通道等功能。
+
+### 维护与边界声明
+
+- **独立演进与独立发行**：Claude-Local 在本地仓库独立演进并手动发布 Windows 安装包，未设置针对 CCBaga 上游的代码库自动同步流程，亦不接入上游的应用自动更新端点或依赖对方的发行流水线。
+- **开源许可边界**：保留原CCBaga贡献者版权与适用MIT声明；本项目贡献沿用顶层LICENSE，其他权利人的组件仍按各自条款处理，并不覆盖所有第三方依赖与美术资产（详见 [NOTICE.md](NOTICE.md)）。
+- **非官方与无背书声明**：本项目不是Anthropic或CCBaga的官方发行，不代表其赞助、认证或支持承诺。
+
+---
 
 ## 界面预览
 
-以下图片使用 0.1.5 的实际应用前端和隔离演示数据，未载入个人资料。账号均为虚构，示例邮箱已启用隐私遮罩；图片不含真实账号、代理、IP、本机路径或凭据。开关状态和用量数值仅作演示，不代表本机当前设置或真实账号验证结果。
+以下五张图片截取自 0.1.5 版本的真实前端界面（视口大小 1280×900）。所有展示数据均为隔离环境下的合成演示数据：账号与组织名称均为虚构，示例邮箱均启用了内置的隐私遮罩；图片中不含任何真实个人账号、代理凭据、本地敏感路径或网络环境隐私。
 
-**身份管理**：当前身份、保存账号及独立的 5h / 7d 额度窗口。
+**身份管理**：展示当前激活身份、已保存账号列表及独立的 5h / 7d 额度窗口。
 
 ![Claude-Local 身份管理：分组工具栏、虚构账号和已遮罩示例邮箱](docs/screenshots/0.1.5/identity-management.png)
 
-**用量分析**：Token、缓存命中率、用量趋势和模型分布。
+**用量分析**：多维度呈现 Token 消耗、缓存命中率、历史趋势图及模型推理档位分布。
 
 ![Claude-Local 用量分析：精简范围信息、虚构数据及趋势图](docs/screenshots/0.1.5/usage-analytics.png)
 
-**浏览环境**：紧凑绑定信息、实测入口和独立资料管理。
+**浏览环境**：查看身份绑定的隔离资料目录、网络出口状态及环境核验项。
 
 ![Claude-Local 浏览环境：精简顶部信息及待测状态演示](docs/screenshots/0.1.5/browser-environment.png)
 
 <details>
-<summary>快速配置与网络环境</summary>
+<summary>点击展开：快速配置与网络环境预览</summary>
+
+**快速配置**：状态概览卡片、诊断项与常用设置入口。
 
 ![Claude-Local 快速配置：四个状态卡与设置入口](docs/screenshots/0.1.5/quick-setup.png)
+
+**网络环境**：官方域名连通性检测与推广参考链接。
 
 ![Claude-Local 网络环境：固定复制操作与手动连通性检测](docs/screenshots/0.1.5/network-environment.png)
 
 </details>
 
+---
+
 ## 主要功能
 
-- **窗口与系统托盘**：关闭主窗口可隐藏到托盘，退出菜单结束应用；保留主窗口尺寸和最大化状态。
-- **原生自动续杯调度**：用户明确开启后，由应用进程内的唯一调度器运行；切页或隐藏到托盘不停止调度，应用退出后不工作。不注册系统服务或计划任务，与手动唤醒共用账号校验、提交复核和错峰预算；未知结果与授权失败有明确等待/恢复状态。主动唤醒发送真实消息并产生用量，不等于增加额度。
-- **额度悬浮监控窗（HUD）**：可开关的置顶窗口，展示本地额度与会话用量遥测，不为监控新增在线查询。
-- **身份管理**：本地加密备份与恢复、账号快速切换和保留策略。当前身份固定显示，其余账号沿用原生记录顺序；采用口令派生（PBKDF2/AES-GCM）导出加密备份，恢复前全面验证清单哈希、SQLite 完整性、记录/归档数量及内层清单结构。
-- **额度同步**：默认被动同步本地额度记录（读取 CLI 的 `/usage` 及外部写入的本地账本，不主动轮询或写入 `.claude.json`）；在线查询需用户显式确认（opt-in），收进右上角菜单独立弹窗，关闭弹窗即停止定时在线轮询；OAuth 授权失效或网络断开时明确标记待重连，不借用或混淆其他账号凭据；Python 外部账本单写者与内存并发锁保护。
-- **用量分析**：查看 Token、缓存命中率、模型家族（Opus、Sonnet、Fable、Haiku）与模型推理档位（Effort：max、xhigh、high、medium、low）细分统计，支持图表/数据、排序分页及当前筛选 TSV 复制下载；按 IANA 时区处理历史夏令时和真实小时区间。未确认归属的记录仅按用户明确的稳定规则聚合，个人选择不随包分发。
-- **快速配置与环境核验**：按需独立读取身份、浏览环境、电脑环境与 CLI 状态，显示具体异常并支持手动刷新；电脑环境记录时区、语言与定位状态，系统修改前自动记录前后快照，支持冲突对比与按字段安全恢复；提供 10 项本机与 20 项浏览器环境检查核验项（ASN/ISP 属性、WebGL 硬件信息、WebRTC 配置、隐身状态等参考诊断）。
-- **网络环境与推广参考**：手动检测固定 Claude 官方域名连通性；仅提供项目所有者授权的固定推广参考链接（iKuuu / Kookeey，仅支持一键复制，不含自动外跳、推广链接编辑器或安装级重定向）。
-- **可选隔离浏览器**：伴侣浏览器 `Claude-Local-Browser` 仅在用户显式操作或 `--browser` 时启动；按身份绑定专属隔离资料目录与稳定种子，切号联动时保持运行状态（运行则重启对应资料，关闭则保持关闭）；包含 Chromium AppContainer 缓存目录 ACL 自动修复机制。
-- **CLI 维护与首次引导**：未安装时展示官方 PowerShell 安装命令复制与重新检查入口；已安装时手动检查更新并原位更新，运行中明确阻断，不强制结束运行中会话。
-- **全库备份与救援**：基于口令派生导出加密备份，恢复前全面验证清单哈希、SQLite 完整性、记录/归档数量及内层清单结构；支持导出隔离救援副本以保留排障证据。
-- **连接与路由修复队列**：统一查询遇到需重登或路由变更的账号集中排队，指引在已绑定的隔离浏览器中登录，支持统一重试待办。
-- **快捷操作与便笺**：Ctrl+K / Cmd+K 搜索页面、刷新或打开现有身份确认；提供六字段手填便笺、Markdown 预览与复制/下载，草稿仅保留在本次运行内存中。
+- **身份管理与多账号切换**：支持本地加密备份与受保护的账号切换；当前身份固定置顶显示，其余账号沿用原生记录顺序；采用 PBKDF2/AES-GCM 口令派生导出加密归档，恢复前严格核验清单哈希、SQLite 完整性与归档记录数量。
+- **被动额度监测与在线同步**：默认被动同步本地额度记录（读取 CLI 的 `/usage` 缓存与外部本地账本，不向 `.claude.json` 写入数据）；在线查询需用户显式确认开启，收纳于右上角独立弹窗中，弹窗关闭即停；外部账本由 Python 作为单写者，受内存并发锁与文件锁保护。
+- **用量分析**：基于已采集的本地记录统计 Token 消耗量、Prompt 缓存命中率，细分模型家族（Opus、Sonnet、Fable、Haiku）与推理档位（Effort：max、xhigh、high、medium、low），支持时区夏令时（IANA/DST）纠偏、图表/明细切换、分页排序与当前筛选数据的 TSV 复制下载。
+- **进程内原生自动续杯调度**：用户显式开启后，由应用进程内的唯一原生调度器运行，按严格的新 5h 周期与预算进行错峰唤醒；切页或最小化到托盘保持运行，应用彻底退出后立即停止工作；不注册任何系统服务或计划任务；唤醒动作会发送真实提示词并产生正常用量。
+- **额度悬浮监控窗（HUD）**：轻量置顶的悬浮小窗，实时展现当前激活账号的本地额度与会话遥测数据，不因监控本身增加任何网络查询负担。
+- **可选隔离浏览器**：伴侣浏览器 `Claude-Local-Browser` 仅在用户主动点击或指定 `--browser` 参数时启动；为每个身份绑定专属资料目录与稳定种子，切号时保持联动；内置 Chromium AppContainer 缓存目录 ACL 自动修复机制。
+- **环境安全检测与快照回滚**：独立读取身份、浏览器、系统网络与 CLI 运行状态；在修改系统配置前自动记录修改前后的完整快照，支持配置冲突比对与按字段恢复；提供本地与浏览器环境的诊断参考。
+- **连接修复队列与快捷操作**：统一查询遇到需重新登录或路由异常的账号集中排队，引导在已绑定的隔离浏览器中完成恢复；支持 Ctrl+K 快捷呼出命令中心进行页面跳转与功能检索；提供六字段便笺草稿箱，仅保留在当前内存中。
+
+---
 
 ## 获取与安装
 
-从 Releases 下载对应版本的 Windows x64 安装包，并按发布说明核对 SHA-256。源码 CI 执行检查，安装包由维护者手动发布；软件不依赖其他应用的发布链，也不提供官方应用自动更新源。
+### 下载安装包
 
-安装包使用当前用户 NSIS 安装，按所有者决定继续保持未签名。构建与解包校验不等于安装、升级和卸载验证；第三方组件的公开分发许可仍以 [分发说明](docs/DISTRIBUTION.md) 为准。
+请前往 Releases 页面下载最新安装程序，并核对安装包的 SHA-256 校验和：
 
-主程序：`claude-local.exe`；应用标识：`ai.local.claude-local`；浏览器注册：`Claude-Local-Browser`。主程序默认进入身份管理，正常启动不会打开浏览器。
+- **当前最新版**：[下载 0.1.5 Windows x64 安装包](https://github.com/yq04/Claude-Local/releases/download/v0.1.5/Claude-Local_0.1.5_x64-setup.exe)
+- **全部版本与更新日志**：[GitHub Releases 列表](https://github.com/yq04/Claude-Local/releases)
 
-### 数据兼容与升级
+### 安装与运行说明
 
-发行序列从0.1.0开始，产品版本与资料格式分别维护。应用标识、用户资料目录、`BAGAID01`、`.baga`、SQLite `user_version=3`、账号HMAC和浏览器种子保持兼容。
+1. 本软件专为 **Windows 10 / 11 64位（x64）** 系统设计。
+2. 安装包采用当前用户模式的 NSIS 安装程序，默认安装至 `%LOCALAPPDATA%\Programs\Claude-Local`，安装包由维护者独立打包发布且未签名。
+3. 主程序可执行文件为 `claude-local.exe`，应用标识为 `ai.local.claude-local`，伴侣浏览器注册名为 `Claude-Local-Browser`。
+4. 安装与升级不得以强制关闭 `claude.exe` 会话为手段；具体已验收范围见交付记录。主程序启动后默认进入身份管理主界面，正常启动不会自动打开伴侣浏览器。
 
-更新前建议创建加密备份。升级不得强制终止运行中的Claude Code；身份切换、清理和恢复仍由用户明确操作。构建和解包校验不替代真实新装、升级、卸载及失败/取消验收，相关测试应在隔离Windows环境进行。
+### 数据兼容与升级策略
+
+- 发行版本从 **0.1.0** 开始持续演进，应用配置与持久化数据存储于当前用户的 `%APPDATA%\ai.local.claude-local` 目录。
+- 升级流程按保留用户资料、数据库、密钥和浏览器资料设计，不要求重建身份；已验证的文件式更新与尚待隔离环境验收的安装器流程须分别看待。
+- **升级前建议**：在“软件设置 → 数据管理”的“身份备份与恢复”中创建加密备份，妥善保存备份文件与口令。
+
+---
+
+## 运行前置条件
+
+为确保 Claude-Local 的各项功能正常运行，运行环境需满足以下条件：
+
+1. **操作系统**：Windows 10 / 11 64-bit (x64)。
+2. **Python 运行环境**：涉及Python额度采集或在线查询时，需要可用的Python与`cryptography`。当前CI使用Python3.13验证；Python和库不随应用自动安装，不对更低版本作未经验证的最低兼容承诺：
+
+   ```powershell
+   python -m pip install cryptography
+   ```
+
+3. **Microsoft Edge WebView2 Runtime**：Tauri 桌面端渲染依赖组件。Windows 10（更新版）和 Windows 11 通常已内置；若系统缺失，需前往微软官网下载安装 Evergreen 独立安装程序。
+4. **可选伴侣浏览器**：完整Windows安装包已包含配套浏览器；是否启动由用户决定。源码构建时需按脚本准备固定版本引擎；仅做不依赖浏览器的本地功能开发可使用独立开发流程。
+
+---
 
 ## 从源码构建
 
-准备 Bun、Rust MSVC、Python、Visual Studio C++ Build Tools 和 WebView2 Runtime，使用现有锁文件：
+如需自行编译或参与开发，请先阅读[开发说明](docs/DEVELOPMENT.md)。在 Windows 环境下准备好开发工具链：Bun、Rust（MSVC 工具链）、Python 3、Visual Studio C++ Build Tools 以及 WebView2 Runtime。
+
+### 1. 安装依赖与基础验证
 
 ```powershell
+# 安装前端依赖（使用锁定文件）
 bun install --frozen-lockfile
+
+# 安装构建与测试所需的 Python 依赖
 python -m pip install -r scripts/requirements-ci.txt
+
+# 运行前端测试与构建
 bun test src
 bun run build
+
+# 运行 Rust 核心单测
 cargo test --locked --manifest-path src-tauri/Cargo.toml usage_tests
 ```
 
-构建完整安装包还需固定版本的浏览器引擎和已有的 7-Zip：
+### 2. 构建 Windows 本地运行产物
+
+本地开发编译可直接执行：
 
 ```powershell
+bun run build:local
+```
+
+### 3. 构建完整 Windows 安装包
+
+构建包含独立浏览器内核的完整发布包需先拉取引擎并安装 7-Zip：
+
+```powershell
+# 获取固定版本的伴侣浏览器引擎
 python scripts/fetch-browser.py
+
+# 执行完整打包脚本（自动在中性临时目录完成编译、打包与校验）
 bun run build:windows
 ```
 
-`build:windows` 在工作区和用户目录之外创建全新的中性 Cargo 构建目录，仅复制 crates.io 索引与归档缓存，保留原有缓存及 Rustup。正式构建启用 `custom-protocol`，完成 NSIS 只读解包、资源路径与 SHA-256 校验后，输出唯一的 `.local/artifacts/<id>/` 目录。可通过 `-BuildRoot` 指定满足相同边界的新目录，通过 `-SevenZipPath` 指定已有 7-Zip，通过 `-PrivateMarkersFile` 提供仓库之外的私密审计标记。
+构建脚本在完成编译后会执行 NSIS 解包、资源相对路径校验与 SHA-256 完整性检查，最终在 `.local/artifacts/<id>/` 目录下生成独立的安装包与校验清单。
 
-开发用本地编译可使用 `bun run build:local`；文件式部署默认写入当前用户的 `LocalAppData/Programs/Claude-Local`。已有安装的更新应先备份、核对进程和文件，再以可回滚方式替换；安装程序和个人资料不应成为构建输入。
+---
 
-## 数据边界
+## 数据安全与运行时边界
 
-- 应用数据按用户存放在 `%APPDATA%/ai.local.claude-local`，包含身份库、密钥、额度／用量账本及浏览器资料，不随安装包或源码分发。
-- 身份切换管理当前用户默认 Claude 工作区；独立应用目录不等于操作系统沙箱。破坏性操作保留明确确认、进程检查和回滚。
-- 额度采集不后台轮询、不写入 `.claude.json`、不自动轮换 CLI 授权。在线读取只使用该账号已有的有效授权，过期时提示重新授权；前台近实时默认关闭且仅在本次运行内保留。Python 是外部额度账本和网页元数据的唯一写入方，用量统计使用独立账本。
-- 账号隔离优先于新鲜度：统一查询冻结所有目标指纹，每个请求分别验证服务端账号/组织，提交前复核身份和授权；目标账号集合改变时撤销前台模式。授权有效性由只读服务验证，不仅凭本地过期日期拦截；不会自动轮换共享授权。缺少身份验证时拒绝更新，不借用其他账号。
-- 开发、测试和本地更新不得中断运行中的 `claude.exe`；自动测试使用虚构数据和隔离环境。
-- 迁移只复制到新的私有目标并校验完整性、哈希与身份数量，保留源资料。兼容现有 `.baga` 格式、账号 HMAC 和浏览器种子。
+- **纯本地单机存储**：所有用户身份库、加密密钥、额度/用量账本及浏览器个人资料均保存在本机的 `%APPDATA%\ai.local.claude-local` 目录中。本项目不提供账号凭据云端托管；明确触发的在线操作会请求目标Claude服务，环境观测会请求列明的出口数据服务。不会把本地身份库作为发行包或演示素材。
+- **被动观察与单写者架构**：额度信息默认通过被动读取 CLI 的本地输出获得，额度采集路径不写 `.claude.json`；Python 脚本作为外部额度账本的唯一写入方，通过跨进程文件锁与原子替换维护写入一致性，减少并发冲突。
+- **续杯与唤醒的合规认知**：自动续杯调度与手动唤醒本质上是向目标账号发送轻量请求以触发服务端的 5h 配额窗口刷新，每次唤醒都会产生真实的 API 请求并消耗少量正常 Token。唤醒操作无法凭空增加额度，亦不提供防封号、免风控或规避官方服务协议的保证。
+- **操作保护与会话边界**：执行身份切换或配置清理时，系统会优先检查当前正在运行的 `claude.exe` 进程状态，阻断不适合在运行会话中执行的操作，不把强制结束CLI作为切号手段；关键配置修改均提供快照记录与回滚机制。
 
-## 验证
+---
 
-```powershell
-python scripts/browser_ui.py dist
-python scripts/test-claude-quota-local.py
-python scripts/test-claude-quota-online.py
-python scripts/test-migrate-local-data.py
-python scripts/test-fetch-browser.py
-python scripts/test-audit-windows-package.py
-node scripts/test-local-shell.mjs
-node scripts/test-usage-statistics.mjs
-```
+## 已知局限与排障
 
-系统修改、安装／升级／卸载测试仅在临时 Windows 环境执行，不能在个人工作机上运行 CI 专用系统测试。
+- **平台支持范围**：当前仅适配并验证 Windows x64 平台，暂不提供 macOS 或 Linux 的打包分发版本。
+- **单身份便携包状态**：单账号便携包导出功能（bagapack）目前尚未完成实现，当前版本已提供完整的全库加密备份、恢复校验与隔离救援副本导出。
+- **代码签名与环境兼容**：安装包由维护者独立构建，当前未进行代码签名，在部分系统上可能触发 SmartScreen 提示；安装与卸载逻辑尚未完成一次性Windows环境中的完整安装/升级/卸载验收；现有构建和解包校验不替代这些实测。
+- **排障指引**：
+  - 遇到网页登录后无法正常读取额度或 CLI 授权异常：请查阅 [网页额度与CLI授权恢复说明](docs/CONNECTION_RECOVERY.md)。
+  - 遇到时区计算或用量统计显示偏差：请查阅 [用量统计说明](docs/USAGE_STATISTICS.md)。
+  - 升级过程与分发范围疑虑：请参阅 [发布与维护说明](docs/PUBLIC_PREPARATION.md) 与 [分发与许可边界](docs/DISTRIBUTION.md)。
 
-## 许可与归属
+---
 
-保留原 CCBaga 贡献者的 MIT 版权及第三方声明，详见 [LICENSE](LICENSE) 与 [NOTICE.md](NOTICE.md)。应用代码的 MIT 声明不替代第三方组件、图标或浏览器的许可。当前 Cromma UI 复制树的独立许可及 Chromium 完整声明清单仍需核实，公开源码或二进制分发必须遵守这些边界。
+## 参与贡献
 
-Claude-Local 独立于 Anthropic，未获官方背书（endorsement），不提供上游同步、官方应用更新端点或自动公开发布流程。
+欢迎在[本项目Issues](https://github.com/yq04/Claude-Local/issues/new/choose)反馈问题或提出需求，或提交Pull Request改进项目。本仓库对自身改动负责，不将本项目问题转交给上游作者。在提交代码前，请参阅 [参与贡献指南](CONTRIBUTING.md) 了解开发规范：
+
+- 自动化测试与验证必须使用虚构数据和隔离环境，严禁在开发测试中影响本地真实的 Claude 凭据与进行中的终端会话。
+- 修改代码后需确保 `bun test src` 与相关定向脚本通过验证。
+
+---
+
+## 开源许可与致谢
+
+Claude-Local 代码仓库遵循 [MIT 许可证](LICENSE)。
+
+### 基础项目致谢与版权归属
+
+- **[CCBaga](https://github.com/liseami/CCBaga)**：感谢项目发起者与维护者 [@liseami](https://github.com/liseami) 及社区贡献者。本项目继承了原项目的 MIT 授权核心代码、身份归档架构与存储协议，原版权声明保留于 [LICENSE](LICENSE) 中。
+
+### 第三方组件与参考项目
+
+- **[Fingerprint Chromium](https://github.com/adryfish/fingerprint-chromium)**：伴侣浏览器内核采用基于 Ungoogled Chromium 构建的定制引擎，保留原 BSD-3-Clause 声明。
+- **vendor/cromma-ui**：本地界面复用组件树，其独立上游授权状态在 [NOTICE.md](NOTICE.md) 中予以客观记录并持续跟进。
+- **[LobeHub lobe-icons](https://github.com/lobehub/lobe-icons)**：AI 工具矢量图标，遵循 MIT 许可证。
+- **[ccusage](https://github.com/ccusage/ccusage) 与 [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor)**：为本地用量账本统计方案提供了设计参考，遵循 MIT 许可证。
+- **[CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus)**：为用量分析界面的视觉层级与交互排布提供了参考。
+- **[Unicode CLDR 48](https://github.com/unicode-org/cldr)**：用于 Windows 与 IANA 时区名称映射，遵循 Unicode License。
+- **Rust Crates**（`chrono`, `chrono-tz`, `phf` 等）：提供时区计算与编译期静态哈希表，遵循 MIT 许可证。
+
+更完整的第三方归属清单与授权边界说明请参阅 [NOTICE.md](NOTICE.md)。
+
+### 免责声明
+
+Claude-Local 为独立开发的开源辅助工具，与 Anthropic 官方及 CCBaga 项目均无商业赞助、官方合作或背书关系。“Claude”、“Anthropic” 及其他相关名称、商标与图形标识均属其各自所有者的财产。

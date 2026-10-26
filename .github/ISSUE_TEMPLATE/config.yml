@@ -1,0 +1,11 @@
+# [INPUT]: Voluntary redacted contributor feedback.
+# [OUTPUT]: Convenient public issue entry links owned by this repository.
+# [POS]: GitHub presentation only; no app runtime or secret collection.
+blank_issues_enabled: true
+contact_links:
+  - name: 网页额度与CLI恢复指南 (Connection Recovery)
+    url: https://github.com/yq04/Claude-Local/blob/main/docs/CONNECTION_RECOVERY.md
+    about: 网页登录后无法查询额度、会话过期或CLI唤醒失败时的排查与恢复方法。
+  - name: 项目说明与开发文档 (Project Docs)
+    url: https://github.com/yq04/Claude-Local#readme
+    about: 查看 Claude-Local 详细功能介绍、Windows x64 发行包与架构设计文档。

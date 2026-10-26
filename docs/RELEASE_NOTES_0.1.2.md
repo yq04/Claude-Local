@@ -9,6 +9,10 @@
 
 保留.baga/BAGAID01/CLBKUP01和既有密码学参数、密钥、账号ID、HMAC及浏览器种子；不要求迁移或重新加密已有资料。成功备份的清理异常独立提示，不冒充认证失败。
 
+## 项目来源
+
+Claude-Local基于[CCBaga](https://github.com/liseami/CCBaga)二次开发并独立维护，保留原贡献者版权和适用许可。感谢上游提供的基础实现；本项目新增改动与发行由本仓库维护者负责，不代表上游或Anthropic的官方版本。详见[来源说明](PROJECT_ORIGIN.md)及[NOTICE](../NOTICE.md)。
+
 ## 资料与验证
 
 应用ID、按用户的数据路径、加密归档与身份格式保持兼容；不通过强制结束运行中的Claude Code执行升级或验证。恢复创建新的私有副本，不覆盖活动身份库。

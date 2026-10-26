@@ -1,6 +1,6 @@
 # Claude-Local
 
-Independent Windows desktop application: Tauri/Rust native operations, React/TypeScript UI, encrypted local identity storage and an optional isolated browser. Project rules live in AGENTS.md. This project evolves from local requirements; no upstream synchronization or official updater exists.
+CCBaga-derived, independently maintained Windows desktop application: Tauri/Rust native operations, React/TypeScript UI, encrypted local identity storage and an optional isolated browser. Preserve the original attribution; independent maintenance does not mean entirely original code. Project rules live in AGENTS.md. No upstream synchronization or official updater exists.
 
 <directory>
 src/ - Main application, browser verification page, shared UI and bilingual catalogs.
@@ -22,11 +22,14 @@ docs/plans/2026-10-23-functional-review/ - Read-only Astra software review: inde
 docs/plans/2026-10-25-functional-audit/ - Redacted runtime evidence, source-backed defects, pinned GitHub comparisons, the Astra scheme and owner-authorized execution receipts; product deployment remains separate.
 docs/CCBAGA_COMPARISON.md - Fixed-revision capability comparison and selective adoption priorities; no upstream sync or copied release workflow.
 docs/PUBLIC_PREPARATION.md - Release series from 0.1.0, owner-managed publication, data compatibility, history/privacy review and applicable third-party obligations.
+docs/PROJECT_ORIGIN.md - Explicit CCBaga secondary-development provenance, retained upstream work, local changes and attribution/maintenance boundaries.
+docs/RELEASE_POLICY.md - Public version/tag/topic conventions, immutable artifacts and backed-up explicit reference cleanup.
 docs/CONNECTION_RECOVERY.md - Website quota recovery versus CLI wakeup authorization, explicit browser fallback failures and truthful admission feedback.
 docs/RELEASE_VERIFICATION_0.1.0.md - Exact versioned release URL/installer SHA, passing CI, neutral 109-file/13-probe package audit and 102-file local NSS-host alignment; no real installer execution.
 docs/RELEASE_NOTES_0.1.0.md - Initial 0.1.0 product release, baseline features, unchanged data formats and explicit verification limits.
 docs/plans/2026-10-21-usage-account-safety/ - Historical development proposal and source evidence; not a separate public release timeline.
 .github/workflows/ - Credential-free Windows checks and explicitly dispatched private build artifacts.
+.github/ISSUE_TEMPLATE/ - Versioned bug and feature forms with privacy guidance and optional blank issues; support is owned by this repository, not upstream CCBaga.
 .github/workflows/share-windows.yml - Private manual artifact build with public original host/frontend inputs and audit evidence, allowing independent workstation re-audit without recompilation or binary reconstruction; no private probes or automatic release.
 The optional explicit `private-draft` transport is only a private build archive fallback for exhausted Actions storage. Its release remains a draft; it does not publish a product release or change repository visibility.
 HANDOFF.md - Current product behavior, verified delivery receipts, outstanding source work and safe next steps; machine-specific receipts stay in ignored .local/.

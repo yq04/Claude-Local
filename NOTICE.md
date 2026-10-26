@@ -1,12 +1,14 @@
 <!--
-[INPUT]: 原创项目MIT授权、Chromium许可、本地UI与AI SVG来源、Token统计参考及本版时区计算依赖许可。
-[OUTPUT]: 英文第三方归属和分发边界；未发现的许可不推断为 MIT。
-[POS]: LICENSE 的第三方补充说明，供 README 和发布包引用。
+[INPUT]: CCBaga 二次开发来源及 MIT 许可、Chromium 许可、本地 UI 与 AI SVG 来源、Token 统计参考及本版时区计算依赖许可。
+[OUTPUT]: 英文第三方归属、上游二次开发溯源和分发边界；未发现的许可不推断为 MIT。
+[POS]: LICENSE 的第三方补充说明，供 README、PROJECT_ORIGIN 和发布包引用。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 -->
 # Third-party notices
 
-Claude-Local independently maintains local application code and includes MIT-licensed code originating in CCBaga (liseami/CCBaga). The original copyright is retained. The top-level MIT license covers that project work and Claude-Local contributions. It does not replace third-party copyright notices or license terms.
+Claude-Local is an independent open-source desktop application originating as a fork and secondary development based on [CCBaga](https://github.com/liseami/CCBaga). The original MIT license and copyright of the CCBaga contributors are retained ([CCBaga License](https://github.com/liseami/CCBaga/blob/main/LICENSE), [CCBaga Contributors](https://github.com/liseami/CCBaga/graphs/contributors)). The top-level MIT license of Claude-Local covers inherited CCBaga work as well as Claude-Local contributions. It does not replace third-party copyright notices or license terms.
+
+Claude-Local is maintained independently and is not affiliated with, endorsed by, or sponsored by the upstream CCBaga project or its authors. Claude-Local does not connect to upstream CCBaga update endpoints, release feeds, or verification keys. For details on provenance, architectural inheritance, format compatibility, and independent enhancements, see [PROJECT_ORIGIN.md](docs/PROJECT_ORIGIN.md).
 
 ## Fingerprint Chromium and Chromium
 

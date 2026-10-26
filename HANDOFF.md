@@ -8,7 +8,17 @@
 
 更新：2026-10-26，America/New_York。先读本文、根AGENTS.md/CLAUDE.md，改模块再读对应目录CLAUDE.md和源码头。
 
-## 当前任务：对外介绍与发行序列
+## 当前任务：公开呈现、二次开发归属与GitHub整理
+
+用户要求README明确说明基于CCBaga二次开发，并完整完善README/About/Topics/Tags，不是末尾简单加一句。已重构首屏、来源/继承与本地改动章节、下载/安装/依赖/排障/贡献/致谢，保留五张合成截图；新增docs/PROJECT_ORIGIN.md与RELEASE_POLICY.md、NOTICE显著来源链接及GitHub问题/需求表单。LICENSE原文及NOTICE所有既有第三方章节未改变，不把归属说明当作授权疑问已解决。
+
+About已显著写CCBaga二开，首页指向本仓库Releases/latest，Topics保留原7项并补相关关键词至14项。六个Release正文添加来源/许可页脚，不修改标签目标、状态、Latest或附件。待推送/远端渲染核验完成后看本轮私有回执.local/tasks/20261026-github-presentation/。
+
+用户已明确确认仅删除两个远端旧开发标签；Git bundle及SHA256核验后atomic删除，0.1.x refs、commit和发布资产不变。两个本地旧refs和bundle保留用于恢复，**不要执行git push --tags**以免重新上传它们；只推明确新版本引用。删标签不清Git历史/历史隐私。本轮不运行程序构建、安装器或本机更新，不动账号、CLI、浏览器会话。用户原AGENTS改动保留。
+
+技术表述踩坑：bdfb90c只是固定比较基线，不是已证实最初fork点；不要声称DPAPI已实现，保险库内部主密钥不是PBKDF派生（口令导出备份才使用PBKDF2）；不宣称已完成真实NSIS安装/卸载验收，不给未经验证的Python最低版本，不把第三方许可状态推断为已获授权/已证明违法。
+
+## 前一轮介绍与发行序列整理
 
 所有者明确：Claude-Local的发行版本从0.1.0开始，已手动清理早期开发发行页面，并在本轮期间手动将仓库设为公开、将0.1.0–0.1.5取消Pre-release。本轮只更新当前文档、0.1.x发布标题/说明及GitHub About；不改flags/Latest/visibility、标签、安装包或校验值，不重建程序、不重启进程或动账号资料。
 
@@ -71,7 +81,7 @@ Astra方案已实施，见docs/plans/2026-10-25-functional-audit/04及05；旧pe
 ## 不要再踩的坑
 
 - 用户原AGENTS.md未提交修改保留且不顺带提交；多会话共享工作区，不stash/reset/restore/clean/强推或递归删worktree。
-- pwsh7；functions.exec严禁notify/yield_control，保持单次最终工具响应。常规子代理Gemini3.8Flash high，复杂Sol6.1 high；不派Claude/Luna/Argon/Astra/旧Sol子代理，最多3子代理。
+- pwsh7；functions.exec严禁notify/yield_control，保持单次最终工具响应。常规子代理Gemini3.8Flash high，复杂Sol6.1 high；不派Claude/Luna/Argon/Astra/旧Sol子代理，遵循当前AGENTS的Lane-A/Lane-B规则和实际工具槽位上限。
 - 不读真实.env/credentials/token/secret/key/.baga/Cookies/会话正文，不输出真实邮箱、IP、指纹、代理秘密。测试用合成资料/独立浏览器，截图不能复制用户原图到GitHub。
 - 不停claude.exe或用户浏览器，不用真实切号/清理/发消息测试。部署精确宿主路径/PID/创建时间与用户SID，先备份/hash、宿主最后更新；有恢复/归档写入则推迟。进程时间跨JSON要转UTC ticks，不能字符串与DateTime直接比较。
 - GUI与Vite构建串行，源码验证通过即止，不无端全库重复或多轮深审；新问题有证据才扩测试。失败不靠Git清场。CSS宽度跟内容容器判断，不能忽略侧栏。
