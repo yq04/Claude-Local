@@ -12,7 +12,7 @@
 
 用户要求README明确说明基于CCBaga二次开发，并完整完善README/About/Topics/Tags，不是末尾简单加一句。已重构首屏、来源/继承与本地改动章节、下载/安装/依赖/排障/贡献/致谢，保留五张合成截图；新增docs/PROJECT_ORIGIN.md与RELEASE_POLICY.md、NOTICE显著来源链接及GitHub问题/需求表单。LICENSE原文及NOTICE所有既有第三方章节未改变，不把归属说明当作授权疑问已解决。
 
-About已显著写CCBaga二开，首页指向本仓库Releases/latest，Topics保留原7项并补相关关键词至14项。六个Release正文添加来源/许可页脚，不修改标签目标、状态、Latest或附件。待推送/远端渲染核验完成后看本轮私有回执.local/tasks/20261026-github-presentation/。
+About已显著写CCBaga二开，首页指向本仓库Releases/latest，Topics保留原7项并补相关关键词至14项。六个Release正文添加来源/许可页脚，不修改标签目标、状态、Latest或附件。已推送并核对GitHub渲染、五图、来源链接、14Topics、三个Issue表单及六Release页脚；发布flags/资产/0.1.x标签目标不变。回执.local/tasks/20261026-github-presentation/validation-final.json，来源文档提交67cde86；后续纯文档不移动产品标签。
 
 用户已明确确认仅删除两个远端旧开发标签；Git bundle及SHA256核验后atomic删除，0.1.x refs、commit和发布资产不变。两个本地旧refs和bundle保留用于恢复，**不要执行git push --tags**以免重新上传它们；只推明确新版本引用。删标签不清Git历史/历史隐私。本轮不运行程序构建、安装器或本机更新，不动账号、CLI、浏览器会话。用户原AGENTS改动保留。
 
