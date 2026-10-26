@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Independent identity/browser/system/CLI reads, shared effective browser target, page icons, locale and local refresh event.
+ * [INPUT]: Independent identity/browser/system/CLI reads, page icons, locale and local refresh event.
  * [OUTPUT]: Progressive environment overview, scoped failure reasons and six consistent configuration destinations.
  * [POS]: Mounted only on the quick page; actions navigate or refresh guarded reads, never rotate fingerprints, start browsers or change system settings.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
@@ -10,7 +10,7 @@ import {useEffect, useState, type Dispatch, type SetStateAction} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {useI18n} from './i18n';
 import {usePageRefresh} from './app-events';
-import {effectiveBrowserTarget, type BrowserState} from './browser-model';
+import type {BrowserState} from './browser-model';
 import type {IdentityState} from './identity-model';
 import type {Page} from './navigation';
 import {pageIcons} from './page-icons';
@@ -52,7 +52,6 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
   const identityStatus = identity.value?.recovery ? t('quick.recovery') : identity.value?.current.unavailable ? t('quick.unavailable') : t(identity.value?.current.present ? 'quick.identityPresent' : 'quick.identityEmpty');
   const browserStatus = t(browser.value?.engine_ready ? browser.value.running ? 'quick.browserRunning' : 'quick.browserReady' : 'quick.browserMissing');
   const cliStatus = t(cli.value?.method ? cli.value.running ? 'quick.cliRunning' : 'quick.cliInstalled' : 'quick.cliMissing');
-  const target = browser.value ? effectiveBrowserTarget(browser.value) : null;
   const linked = browser.value?.identity_linked ?? browser.value?.identity?.linked;
   const snapshots = [
     {key: 'browser', label: t('浏览环境'), state: browser, value: browserStatus, detail: t(linked == null ? 'quick.unknown' : linked ? 'quick.browserLinked' : 'quick.browserIndependent')},
@@ -81,7 +80,6 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
             {state.error && <small className="quick-read-error">{t(state.error)}</small>}
           </div>)}
         </div>
-        <div className="quick-target"><span>{t('quick.browserTarget')}</span><strong>{browser.pending ? t('quick.checking') : target ? `${target.timezone} · ${target.language}` : t('quick.unavailable')}</strong>{target && browser.value?.config.follow_machine && <span className="settings-meta-pill">{t('quick.followsMachine')}</span>}<small>{t('quick.targetNote')}</small></div>
         {failed.length > 0 && <div role="alert" className="system-feedback error quick-feedback"><strong>{t('quick.failedChecks', {sections: failed.map(item => item.label).join(' · ')})}</strong><p>{t('quick.partialFailure')}</p></div>}
       </section>
       <div className="settings-group-heading"><span className="settings-group-bar" aria-hidden="true" /><h2>{t('推荐设置流程')}</h2></div>

@@ -1,5 +1,5 @@
 /* [INPUT]: Existing theme, spacing and typography tokens.
- * [OUTPUT]: Independently readable overview tiles, scoped feedback and six consistent configuration cards.
+ * [OUTPUT]: Independently readable overview tiles without duplicate target copy, scoped feedback and seven configuration cards.
  * [POS]: Quick page only; shared themes, compact sidebar and reduced-motion preferences remain authoritative.
  * [PROTOCOL]: Update src/CLAUDE.md with changes. */
 .quick-header { justify-content: space-between; gap: 12px; }
@@ -13,10 +13,6 @@
 .quick-state-grid strong { font-size: 13px; line-height: 1.6; font-weight: 600; overflow-wrap: anywhere; }
 .quick-state-grid [data-read-state="pending"] > strong { color: var(--muted-foreground); }
 .quick-state-grid [data-read-state="failed"] > strong, .quick-state-grid .quick-read-error { color: var(--error-foreground); }
-.quick-target { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--landing-line); display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
-.quick-target > span { font-size: 12px; color: var(--muted-foreground); }
-.quick-target > strong { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
-.quick-target > small { width: 100%; font-size: 12px; color: var(--muted-foreground); line-height: 1.6; }
 .quick-feedback.system-feedback { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--landing-line); }
 .quick-feedback > strong { font-weight: 600; }
 .quick-content > .settings-group-heading { margin: 2px 0 -4px; }

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生身份命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
- * [OUTPUT]: 身份工牌、本地/云端授权分层状态、可换行的单账号唤醒计划与一次验证、独立网页修复及严格指纹绑定批次。
+ * [OUTPUT]: 身份工牌、本地/云端授权分层状态、紧凑28px响应式主从工具栏操作组、可换行的单账号唤醒计划与一次验证、独立网页修复及严格指纹绑定批次。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -1166,65 +1166,74 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               ✓ {t('identityCard.localQuotaSynced')}
             </span>
           )}
-          <div className="wakeup-header-pill">
+          <div className="identity-header-group identity-header-primary">
+            <div className="wakeup-header-pill">
+              <Button
+                variant="secondary"
+                size="small"
+                className={`monitor-toggle-btn wakeup-toggle-btn${autoWakeConfig.enabled ? ' is-enabled' : ''}`}
+                title={t('wakeup.toggleHint')}
+                disabled={autoWakeSaving || nativeWakeup.status === 'loading' || nativeWakeup.status === 'storage_error'}
+                onClick={() => void updateAutoWakeConfig({enabled: !autoWakeConfig.enabled})}
+              >
+                <span className={`monitor-toggle-dot${autoWakeConfig.enabled ? ' is-open' : ''}`} aria-hidden="true" />
+                {t(autoWakeConfig.enabled ? 'wakeup.toggleOn' : 'wakeup.toggleOff')}
+              </Button>
+              <button
+                type="button"
+                className="wakeup-config-trigger"
+                title={t('wakeup.configureWindow')}
+                aria-label={t('wakeup.configureWindow')}
+                onClick={() => setOnlinePanelOpen(true)}
+              >
+                {autoWakeConfig.useTimeWindow
+                  ? `${formatMinuteOfDay(autoWakeConfig.startMinute)}-${formatMinuteOfDay(autoWakeConfig.endMinute)}`
+                  : t('wakeup.presetAllDay')}
+              </button>
+            </div>
+          </div>
+          <div className="identity-header-group identity-header-secondary">
             <Button
               variant="secondary"
               size="small"
-              className={`monitor-toggle-btn wakeup-toggle-btn${autoWakeConfig.enabled ? ' is-enabled' : ''}`}
-              title={t('wakeup.toggleHint')}
-              disabled={autoWakeSaving || nativeWakeup.status === 'loading' || nativeWakeup.status === 'storage_error'}
-              onClick={() => void updateAutoWakeConfig({enabled: !autoWakeConfig.enabled})}
+              className="monitor-toggle-btn"
+              title={t('monitor.toggleHint')}
+              onClick={() => void toggleMonitorWindow()}
             >
-              <span className={`monitor-toggle-dot${autoWakeConfig.enabled ? ' is-open' : ''}`} aria-hidden="true" />
-              {t(autoWakeConfig.enabled ? 'wakeup.toggleOn' : 'wakeup.toggleOff')}
+              <span className={`monitor-toggle-dot${monitorOpen ? ' is-open' : ''}`} aria-hidden="true" />
+              {t(monitorOpen ? 'monitor.toggleButtonOpen' : 'monitor.toggleButton')}
             </Button>
-            <button
-              type="button"
-              className="wakeup-config-trigger"
-              title={t('wakeup.configureWindow')}
-              aria-label={t('wakeup.configureWindow')}
-              onClick={() => setOnlinePanelOpen(true)}
+            <Button
+              variant="secondary"
+              size="small"
+              disabled={actionLocked || loading}
+              loading={loading}
+              leftIcon={<Refresh aria-hidden size={16} className={loading ? 'spin' : ''} />}
+              title={t('identityCard.localQuotaSync')}
+              onClick={() => void manualSyncLocalQuota()}
             >
-              {autoWakeConfig.useTimeWindow
-                ? `${formatMinuteOfDay(autoWakeConfig.startMinute)}-${formatMinuteOfDay(autoWakeConfig.endMinute)}`
-                : t('wakeup.presetAllDay')}
-            </button>
+              {t('identityCard.localQuotaSync')}
+            </Button>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  className="identity-menu-trigger identity-header-menu-trigger"
+                  aria-label={t('identityCard.quotaMoreActions')}
+                  title={t('identityCard.quotaMoreActions')}
+                >
+                  ⋯
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
+                  <DropdownMenu.Item className="identity-menu-item" onSelect={() => setOnlinePanelOpen(true)}>
+                    {t('identityCard.onlineQuery')}
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           </div>
-          <Button
-            variant="secondary"
-            size="small"
-            className="monitor-toggle-btn"
-            title={t('monitor.toggleHint')}
-            onClick={() => void toggleMonitorWindow()}
-          >
-            <span className={`monitor-toggle-dot${monitorOpen ? ' is-open' : ''}`} aria-hidden="true" />
-            {t(monitorOpen ? 'monitor.toggleButtonOpen' : 'monitor.toggleButton')}
-          </Button>
-          <Button
-            variant="secondary"
-            size="small"
-            disabled={actionLocked || loading}
-            loading={loading}
-            leftIcon={<Refresh aria-hidden size={16} className={loading ? 'spin' : ''} />}
-            title={t('identityCard.localQuotaSync')}
-            onClick={() => void manualSyncLocalQuota()}
-          >
-            {t('identityCard.localQuotaSync')}
-          </Button>
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button type="button" className="identity-menu-trigger" aria-label={t('identityCard.quotaMoreActions')} title={t('identityCard.quotaMoreActions')}>
-                ⋯
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
-                <DropdownMenu.Item className="identity-menu-item" onSelect={() => setOnlinePanelOpen(true)}>
-                  {t('identityCard.onlineQuery')}
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
         </div>
       </header>
 

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Native numeric usage aggregates, shared locale and display/privacy preferences.
- * [OUTPUT]: Label-sized account filters, fallback-attributed metrics, responsive trend/model panels and sortable time-bucket views; period and chart/data switches use Cromma Tabs, the method note uses Disclosure.
+ * [OUTPUT]: Label-sized account filters, fallback-attributed metrics, responsive trend/model panels, sortable time-bucket views, muted header update indicators with compact TSV/refresh actions, concise IANA timezone tooltips and non-intrusive method coverage disclosures; period and chart/data switches use Cromma Tabs, the method note uses Disclosure.
  * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh, no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -97,7 +97,21 @@ export function UsageStatisticsPanel() {
   const selectedAccount = account === 'all' ? t('usage.allAccounts') : prefs.privacyMask ? t('usage.account') : snapshot?.accounts.find(item => item.id === account)?.name ?? t('usage.allAccounts');
   const offsetMinutes = -new Date().getTimezoneOffset();
   const offsetZone = `UTC${offsetMinutes >= 0 ? '+' : '-'}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0')}:${String(Math.abs(offsetMinutes) % 60).padStart(2, '0')}`;
-  const timezoneContext = formatTimezoneContext(snapshot?.timezone || timezone);
+  const activeTz = snapshot?.timezone || timezone;
+  const timezoneContext = formatTimezoneContext(activeTz);
+  const conciseTimezone = (() => {
+    if (!activeTz) return offsetZone;
+    try {
+      const shortName = new Intl.DateTimeFormat('en-US', {
+        timeZone: activeTz,
+        timeZoneName: 'short',
+      }).formatToParts(new Date()).find(p => p.type === 'timeZoneName')?.value;
+      if (shortName && shortName !== activeTz) return shortName;
+      return offsetZone;
+    } catch {
+      return offsetZone;
+    }
+  })();
   const dstType = isHourly ? getDstDayType(days) : null;
 
   const makeExport = () => snapshot ? buildUsageTsv({snapshot, period, periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'), accountLabel: selectedAccount, accountIsAll: account === 'all', timezone: snapshot.timezone || timezone || offsetZone, privacy: prefs.privacyMask, days, generatedLabel: new Date(snapshot.generated_at * 1000).toISOString(), coverageLabel: snapshot.tracking_since == null ? t('usage.exportCoverageUnknown') : `${new Date(snapshot.tracking_since * 1000).toISOString()} – ${new Date(snapshot.generated_at * 1000).toISOString()}`, productLabel: 'Claude-Local', labels: {metadata: t('usage.exportTitle'), summary: t('usage.exportSummary'), daily: t('usage.exportBuckets'), time: t('usage.exportTime'), total: t('usage.total'), input: t('usage.input'), output: t('usage.output'), cacheWrite: t('usage.cacheWrite'), cacheRead: t('usage.cacheRead'), requests: t('usage.requests'), account: t('usage.account'), period: t('usage.periodFilter'), timezone: t('usage.exportTimezone'), generated: t('usage.exportGenerated'), coverage: t('usage.exportCoverage')}}) : '';
@@ -120,10 +134,15 @@ export function UsageStatisticsPanel() {
       <header className="cleanup-title usage-header">
         <h1>{t('usage.title')}</h1>
         <div className="usage-header-actions">
-          <span role="status">{busy ? t('usage.loading') : stamp ? t('usage.updated', {time: stamp}) : t('usage.localOnly')}</span>
-          <Button variant="secondary" size="small" disabled={busy || !snapshot} onClick={() => void exportTsv(false)}>{t('usage.copyTsv')}</Button>
-          <Button variant="secondary" size="small" disabled={busy || !snapshot} onClick={() => void exportTsv(true)}>{t('usage.downloadTsv')}</Button>
-          <Button variant="secondary" size="small" disabled={busy} leftIcon={<Refresh size={15} aria-hidden="true" className={busy ? 'spin' : ''} />} onClick={() => setRevision(value => value + 1)}>{t('usage.refresh')}</Button>
+          <span className="usage-update-indicator" role="status">
+            <span className={`usage-update-dot${busy ? ' is-busy' : ''}`} aria-hidden="true" />
+            {busy ? t('usage.loading') : stamp ? t('usage.updated', {time: stamp}) : t('usage.localOnly')}
+          </span>
+          <div className="usage-action-group">
+            <Button variant="secondary" size="small" disabled={busy || !snapshot} onClick={() => void exportTsv(false)}>{t('usage.copyTsv')}</Button>
+            <Button variant="secondary" size="small" disabled={busy || !snapshot} onClick={() => void exportTsv(true)}>{t('usage.downloadTsv')}</Button>
+            <Button variant="secondary" size="small" disabled={busy} leftIcon={<Refresh size={15} aria-hidden="true" className={busy ? 'spin' : ''} />} onClick={() => setRevision(value => value + 1)}>{t('usage.refresh')}</Button>
+          </div>
         </div>
       </header>
       {exportStatus && <p className="usage-export-status" role="status">{exportStatus}</p>}
@@ -137,10 +156,9 @@ export function UsageStatisticsPanel() {
         </div>
         <div className="usage-filter-footer">
           <div className="usage-context">
-            <strong>{range}</strong>
-            <span className="usage-section-caption" title={t('usage.activeTimezoneTitle')}>{timezoneContext}</span>
+            <strong title={snapshot?.tracking_since != null ? `${t('usage.coverageHint')}: ${t('usage.trackingSince', {date: dateLabel(new Date(snapshot.tracking_since * 1000).toISOString())})}` : undefined}>{range}</strong>
+            <span className="usage-section-caption usage-tz-caption" title={`${t('usage.activeTimezoneTitle')}: ${timezoneContext} (${offsetZone})`}>{conciseTimezone}</span>
             {dstType && <span className="usage-section-caption" title={t(dstType === '23h' ? 'usage.dst23Hint' : 'usage.dst25Hint')}>{t(dstType === '23h' ? 'usage.dst23' : 'usage.dst25')}</span>}
-            {snapshot?.tracking_since != null && <span className="usage-section-caption" title={t('usage.coverageHint')}>{t('usage.trackingSince', {date: dateLabel(new Date(snapshot.tracking_since * 1000).toISOString())})}</span>}
           </div>
           {(period !== 'all' || account !== 'all') && <Button variant="ghost" size="small" onClick={() => {setPeriod('all'); setAccount('all');}}>{t('usage.resetFilters')}</Button>}
         </div>
@@ -242,7 +260,7 @@ export function UsageStatisticsPanel() {
             </div>
           </section>
         </>}
-        <Disclosure className="usage-method settings-card" triggerClassName="usage-method-trigger" summary={t('usage.method')}><div className="usage-method-body"><p>{t('usage.logCounters')}</p><p>{t('usage.totalFormula')}</p><p>{t('usage.cacheFormula')}</p><p>{t('usage.timezoneNote')}</p></div></Disclosure>
+        <Disclosure className="usage-method settings-card" triggerClassName="usage-method-trigger" summary={t('usage.method')}><div className="usage-method-body"><p>{t('usage.logCounters')}</p><p>{t('usage.totalFormula')}</p><p>{t('usage.cacheFormula')}</p><p>{t('usage.timezoneNote')}</p>{snapshot?.tracking_since != null && <p>{t('usage.trackingSince', {date: dateLabel(new Date(snapshot.tracking_since * 1000).toISOString())})}</p>}</div></Disclosure>
       </div>
     </section>
   );

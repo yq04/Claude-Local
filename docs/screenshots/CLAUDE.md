@@ -1,5 +1,6 @@
 # docs/screenshots/
 > L2 | 父级: ../../CLAUDE.md
+0.1.5/: 当前五页精简界面预览与来源说明；全部合成数据，旧0.1.1图片保留历史。
 README.md: 0.1.1实际前端与合成数据的来源、隐私检查和演示边界。
 identity-management.png: 1360×900身份管理界面，虚构账号与已遮罩示例邮箱。
 usage-analytics.png: 1360×900用量趋势和模型分布，全部合成数值。

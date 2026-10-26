@@ -1162,11 +1162,17 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   gap: 6px 12px;
 }
 .browser-toggle { display: flex !important; gap: 10px; align-items: center; margin: 4px 0 !important; font-size: 12.5px; }
+.browser-page { container: browser-settings / inline-size; }
 .browser-data-scenarios {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 2px;
+}
+@container browser-settings (max-width: 680px) {
+  .browser-data-scenarios {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .browser-scenario-card {
   display: grid;
@@ -1295,7 +1301,8 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 }
 .system-card-number, .local-badge { font-size: 11px; color: var(--local-accent); font-weight: 600; font-family: var(--font-mono); padding-right: 4px; }
 .browser-check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 4px 18px 8px; gap: 0 20px; }
-.browser-check { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.browser-check { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.browser-check > div { min-width: 0; }
 .browser-check:nth-last-child(-n+2) { border-bottom: 0; }
 .browser-check > span { font-size: 15px; min-width: 18px; font-weight: 600; }
 .browser-check.check-ok > span { color: #059669; }
@@ -1339,6 +1346,11 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+@container browser-settings (max-width: 580px) {
+  .browser-advanced-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .browser-advanced-grid label {
   display: block;
@@ -1481,6 +1493,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   background: var(--panel);
   box-shadow: var(--card-shadow);
   transition: border-color 150ms ease;
+  min-width: 0;
 }
 .network-action-card:hover {
   border-color: color-mix(in srgb, var(--local-accent) 40%, var(--landing-line));
@@ -1585,11 +1598,8 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   background: var(--panel);
   box-shadow: var(--card-shadow);
 }
-.domain-diagnostics > .system-hint {
-  margin: 0;
-}
-.domain-diagnostics-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.domain-diagnostics-header h2 { font-size: 14px; font-weight: 650; letter-spacing: -0.15px; }
+.domain-diagnostics-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.domain-diagnostics-header h2 { font-size: 14px; font-weight: 650; letter-spacing: -0.15px; margin: 0; }
 .domain-outcome {
   display: flex;
   align-items: center;
@@ -1635,6 +1645,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   border-radius: 10px;
   background: var(--card-elevated);
   transition: background-color 140ms ease, border-color 140ms ease;
+  min-width: 0;
 }
 .domain-diagnostics-item:hover {
   background: var(--muted);

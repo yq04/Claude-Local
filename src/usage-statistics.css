@@ -1,13 +1,18 @@
 /*
  * [INPUT]: Shared application theme variables and Usage analytics components.
- * [OUTPUT]: Account selector sized to its selected label, compact filter console, uniform metrics, responsive analysis panels and sortable period tables; control skins remain shared with Cromma UI.
+ * [OUTPUT]: Account selector sized to its selected label, compact filter console, uniform metrics, responsive analysis panels, muted header update indicators with compact TSV/refresh groups, concise timezone captions, and sortable period tables; control skins remain shared with Cromma UI.
  * [POS]: Usage page styles; respects accent, dark theme, compact sidebar and shared margins.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
 .usage-page { --usage-total: var(--local-accent); --usage-secondary: color-mix(in srgb, var(--foreground) 76%, var(--panel)); }
-.usage-header, .usage-header-actions, .usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.usage-header { flex-shrink: 0; }
-.usage-header-actions { font-size: 12px; color: var(--usage-secondary); }
+.usage-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; flex-shrink: 0; }
+.usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.usage-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--usage-secondary); min-width: 0; }
+.usage-update-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-update-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--muted-foreground); opacity: 0.55; flex-shrink: 0; }
+.usage-update-dot.is-busy { background: var(--local-accent); opacity: 1; animation: usage-pulse 1.2s ease-in-out infinite; }
+@keyframes usage-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.usage-action-group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .usage-export-status { margin: -8px 0 0 auto; color: var(--usage-secondary); font-size: 11px; }
 .usage-content { container: usage / inline-size; display: grid; align-content: start; gap: 14px; padding: 0 0 4px; min-width: 0; }
 .usage-filter-card { padding: 14px 16px 11px; }
@@ -22,8 +27,9 @@
 .usage-filter-footer { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--landing-line); }
 .usage-filter-note { margin-top: 6px; font-size: 11px; line-height: 1.6; color: var(--usage-secondary); }
 .usage-context { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 11px; line-height: 1.6; color: var(--usage-secondary); min-width: 0; }
-.usage-context strong { color: var(--foreground); font-size: 12px; font-weight: 550; }
+.usage-context strong { color: var(--foreground); font-size: 12px; font-weight: 550; font-variant-numeric: tabular-nums; }
 .usage-context > span { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-tz-caption { font-family: var(--font-mono); font-weight: 500; font-size: 10.5px; cursor: default; }
 .usage-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .usage-metric { display: flex; flex-direction: column; gap: 10px; padding: 15px 16px; min-width: 0; }
 .usage-metric-heading { display: flex; align-items: center; gap: 9px; color: var(--usage-secondary); font-size: 13px; font-weight: 600; }
@@ -156,5 +162,8 @@
   .usage-table th, .usage-table td { padding: 11px; }
 }
 @media (max-width: 760px) {
-  .usage-header-actions > span { display: none; }
+  .usage-header-actions { gap: 8px; }
+}
+@media (max-width: 600px) {
+  .usage-header-actions { justify-content: flex-start; width: 100%; }
 }

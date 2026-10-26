@@ -199,11 +199,8 @@ export function VpsPanel() {
         {/* Claude 服务连通性检测 */}
         <section className="domain-diagnostics" aria-labelledby="diagnostics-title" data-status={phase} aria-busy={diagnosing}>
           <div className="domain-diagnostics-header">
-            <div className="domain-diagnostics-title-group">
-              <div className="network-action-head">
-                <h2 id="diagnostics-title">{t('Claude 服务连通性')}</h2>
-              </div>
-              <p className="system-hint">{t('仅在点击后检测服务连通性；结果不代表账号可用或已验证公网出口。')}</p>
+            <div className="network-action-head">
+              <h2 id="diagnostics-title">{t('Claude 服务连通性')}</h2>
             </div>
             <Button
               variant="secondary"

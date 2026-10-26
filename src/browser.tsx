@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Cromma UI、原生浏览器命令、带回报时间的真实观测事件、共用地区契约、共享活动日志、本地刷新事件和 YAML 文案。
- * [OUTPUT]: 使用统一中性操作按钮的浏览器环境控制台（启动与默认浏览器授权、目标地区核验与对齐、缓存释放与排障重置）及默认折叠的高级设置；危险确认保留警告色。
+ * [OUTPUT]: 使用统一中性操作按钮的浏览器环境控制台（启动与默认浏览器授权、紧凑身份与引擎信息、目标地区核验与对齐、缓存释放与排障重置）及默认折叠的高级设置；危险确认保留警告色。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -134,6 +134,8 @@ export function BrowserPanel({ onBusy }: {
     const allChecksOk = checks.length > 0 && checks.every(x => x.status === 'ok');
     const hasMismatch = checks.some(x => x.status === 'mismatch');
     const isStale = !!state?.report_received_at && (clock - state.report_received_at > 10 * 60 * 1000);
+    const hasObservation = Boolean(state?.report_received_at || state?.report);
+    const showSummary = isStale || allChecksOk || hasMismatch || hasObservation;
     function edit<K extends keyof BrowserConfig>(key: K, value: BrowserConfig[K]) { setDraft(old => old ? { ...old, [key]: value } : old); }
     return <section className="system-page browser-page">
         <div className="cleanup-title">
@@ -152,6 +154,16 @@ export function BrowserPanel({ onBusy }: {
                         <span className={`identity-policy-mode ${state?.running ? 'ok' : ''}`}>
                             {state?.running ? t("运行中") : t("未运行")}
                         </span>
+                        {state?.identity?.name && (
+                            <span className="identity-policy-mode">
+                                {t("browserSafety.boundIdentity", { name: maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask) }) || `绑定本地身份：${maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask)}`}{state.identity.email ? ` (${maskEmailAddress(state.identity.email, prefs.privacyMask)})` : ''}
+                            </span>
+                        )}
+                        {state?.engine_version && (
+                            <span className="identity-policy-mode">
+                                Chromium {state.engine_version}
+                            </span>
+                        )}
                     </div>
                     <div className="network-action-buttons">
                         <Button variant="secondary" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
@@ -167,34 +179,22 @@ export function BrowserPanel({ onBusy }: {
                         </Button>
                     </div>
                 </div>
-                <div className="browser-hero-body">
-                    <p className="network-action-desc">
-                        {t("browserSafety.heroDescription")}
-                    </p>
-                    <div className="browser-hero-meta">
-                        {state?.identity?.name && (
-                            <span className="identity-policy-mode">
-                                {t("browserSafety.boundIdentity", { name: maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask) }) || `绑定本地身份：${maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask)}`}{state.identity.email ? ` (${maskEmailAddress(state.identity.email, prefs.privacyMask)})` : ''}
-                            </span>
+                {((state?.identity?.status && !['linked', 'draft'].includes(state.identity.status)) ||
+                  (state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim())) && (
+                    <div className="browser-hero-body">
+                        {state?.identity?.status && !['linked', 'draft'].includes(state.identity.status) && (
+                            <p className="identity-policy-hint">
+                                {t(`browserSafety.status_${state.identity.status}`)}
+                            </p>
                         )}
-                        {state?.engine_version && (
-                            <span className="identity-policy-mode">
-                                Chromium {state.engine_version}
-                            </span>
+                        {state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim() && (
+                            <p className="identity-policy-hint">
+                                {t("browserSafety.cliProxyMismatch", { cliProxy: state.identity.cli_proxy, browserProxy: (draft?.proxy || '').trim() || t("browserSafety.proxyManaged") })}{' '}
+                                <Button variant="secondary" size="small" disabled={disabled} onClick={() => { edit('proxy', state?.identity?.cli_proxy || ''); setAdvancedOpen(true); }}>{t("browserSafety.syncCliProxy")}</Button>
+                            </p>
                         )}
                     </div>
-                    {state?.identity?.status && !['linked', 'draft'].includes(state.identity.status) && (
-                        <p className="identity-policy-hint">
-                            {t(`browserSafety.status_${state.identity.status}`)}
-                        </p>
-                    )}
-                    {state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim() && (
-                        <p className="identity-policy-hint">
-                            {t("browserSafety.cliProxyMismatch", { cliProxy: state.identity.cli_proxy, browserProxy: (draft?.proxy || '').trim() || t("browserSafety.proxyManaged") })}{' '}
-                            <Button variant="secondary" size="small" disabled={disabled} onClick={() => { edit('proxy', state?.identity?.cli_proxy || ''); setAdvancedOpen(true); }}>{t("browserSafety.syncCliProxy")}</Button>
-                        </p>
-                    )}
-                </div>
+                )}
             </div>
 
             <div className="browser-checks">
@@ -216,17 +216,17 @@ export function BrowserPanel({ onBusy }: {
                         <Button variant="secondary" size="small" disabled={disabled || state?.running || !!changed} onClick={() => setConfirm('align')}>{t("对齐美国系统环境")}</Button>
                     </div>
                 </div>
-                <div className={`browser-check-summary ${allChecksOk && !isStale ? 'ok' : (hasMismatch || isStale) ? 'warn' : ''}`}>
-                    <span>
-                        {isStale
-                            ? t("browserSafety.staleSummary")
-                            : allChecksOk
-                                ? t("全部验证已通过：出口 IP、时区与语言均已对齐目标地区，可直接在内置浏览器登录已充值的 Claude 网页版账号。")
-                                : hasMismatch
-                                    ? t("检测到环境项未对齐：建议点击右上角「对齐美国系统环境」一键同步本机时区与语言，或检查代理路由。")
-                                    : t("browserSafety.checkInstruction")}
-                    </span>
-                </div>
+                {showSummary && (
+                    <div className={`browser-check-summary ${allChecksOk && !isStale ? 'ok' : 'warn'}`}>
+                        <span>
+                            {isStale
+                                ? t("browserSafety.staleSummary")
+                                : allChecksOk
+                                    ? t("检测通过")
+                                    : t(hasMismatch ? "检测未通过" : "检测未完成")}
+                        </span>
+                    </div>
+                )}
                 <div className="browser-check-grid">
                     {checks.map(x => (
                         <div className={`browser-check check-${x.status}`} key={x.id}>

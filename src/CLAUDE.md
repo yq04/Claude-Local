@@ -1,5 +1,6 @@
 # src/
 > L2 | 父级: ../CLAUDE.md
+0.1.5界面精简：Quick四个状态卡之后不再重复浏览器目标配置；浏览器绑定/引擎合入顶部，未检测时省略指引条，实际未完成/冲突/过时仍明确提示；网络页只保留一处检测范围说明。身份工具栏按主次操作分组且标准28px/窄屏换行；用量更新指示与导出/刷新分组，日期范围和简写时区常驻，IANA/跟踪起点保留提示及方法说明，查询和TSV语义不变。browser-page以实际内容宽度容器响应数据/高级设置单列，避免侧栏挤压。
 原生自动续杯接线：main.tsx常驻bridge只初始化一次旧localStorage迁移和native快照订阅；identity-online-quota.ts保留旧纯模型兼容但不调度请求，快照由Rust独占；identities.tsx只显示native计划/能力/最近尝试/等待原因、逐账号暂停和一次授权恢复。原身份页15秒唤醒timer和localStorage运行writer已删除，切页不取消原生工作；配置保存确认前不更新开关，普通fixture不触发后台scheduler IPC。
 wakeup-presentation.ts / wakeup-presentation.test.ts: 本地授权与服务端历史错误分开展示；每账号一条状态和说明，人类可读等待时间，手动与一次验证准入保留429/共享间隔/未知请求保护。
 授权恢复：网页额度查询队列与CLI/messages唤醒结果分开；网页登录不修复CLI授权。浏览器补充查询保留独立失败原因，scheduler门禁展示具体原因与最大重试时间，等待/未知/授权阻断禁用唤醒按钮；统一查询结束保留可见批次回执。

@@ -1,5 +1,5 @@
 /* [INPUT]: Identity workbench online quota dialog, 5h auto-wakeup panel, observation age, weekly pace tick, sync feedback and recovery queue.
- * [OUTPUT]: Accessible ⋯ dropdown menu, header auto-wakeup pill, auto-wakeup time-window & status panel with compact wrap-safe 4-zone account blocks, quota estimation track with 7d pace tick, sync confirmation pill, result ages and centralized connection recovery styling without changing card geometry.
+ * [OUTPUT]: Accessible ⋯ dropdown menu, compact primary auto-wake and secondary HUD/sync/menu header action groups with uniform 28px controls, header auto-wakeup pill, auto-wakeup time-window & status panel with compact wrap-safe 4-zone account blocks, quota estimation track with 7d pace tick, sync confirmation pill, result ages and centralized connection recovery styling without changing card geometry.
  * [POS]: Identity productivity presentation; the 180×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
  */
@@ -226,10 +226,33 @@
 .identity-header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 8px 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
   min-width: 0;
+}
+.identity-header-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.identity-header-primary,
+.identity-header-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.identity-header-menu-trigger,
+.identity-header-actions .identity-menu-trigger {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  margin-left: 0;
+  border-radius: 6px;
+  font-size: 14px;
 }
 .identity-card-status {
   display: block;
@@ -262,6 +285,9 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+.wakeup-toggle-btn.is-enabled {
+  border-color: color-mix(in srgb, var(--hud-ok) 40%, var(--border));
 }
 .wakeup-config-trigger {
   display: inline-flex;
@@ -577,5 +603,17 @@
 @media (max-width: 620px) {
   .identity-wakeup-account-name {
     max-width: 150px;
+  }
+}
+
+@media (max-width: 760px) {
+  .identity-header-actions {
+    gap: 6px 8px;
+  }
+}
+@media (max-width: 640px) {
+  .identity-header-actions {
+    justify-content: flex-start;
+    width: 100%;
   }
 }
