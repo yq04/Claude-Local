@@ -1,14 +1,50 @@
 <!--
-[INPUT]: Compatible storage hardening, prior auth/readiness fixes, owner constraints, synthetic tests and verified versioned delivery receipts.
+[INPUT]: Browser timing/classification repair, compatible storage hardening, owner constraints and checked versioned delivery receipts.
 [OUTPUT]: Context-free status, remaining work, next actions and non-negotiable pitfalls.
 [POS]: Repository-root handoff; personal identities, paths, process records and probes remain ignored in .local/.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only edits never rebuild a package or move product tags.
 -->
-# Claude-Local 新会话交接（0.1.2）
+# Claude-Local 新会话交接（0.1.4）
 
 更新：2026-10-26，America/New_York。先读本文、根 AGENTS.md / CLAUDE.md，改模块前读对应目录 CLAUDE.md 和源码头。本文取代此前交接的当前状态描述，历史发行事实仍保留。
 
-## 当前任务：兼容加密存储加固（0.1.2已交付）
+## 当前任务：浏览器核验回归修复（0.1.4已交付）
+
+最终集成发现0.1.3生产server CSP漏新服务域名，原dev页面未带该策略；加入生产connect-src回归后先复现失败，再精确加IPQuery HTTPS域后通过。0.1.4为完整交付，0.1.3只保留历史候选，不覆盖其标签/附件，发行说明已注明取代。其他CSP、脚本/帧保护和UDP隐私参数不变。
+
+用户反馈以前浏览器可通过，后来两项未知。已追到9b89502（2026-10-25 22:34 UTC-4）收紧了旧乐观兜底：旧RTC超时无地址即通过、旧ISP未命中关键词默认通过；不能以旧绿色证明当时完成实测。0.1.1延至1000ms仍早于实际构造完成，0.1.2没有修改浏览器链路。
+
+- 固定源码/产品标签：`v0.1.4` → `4c97bef00c1a9b2fa6407eeaae63ee73a66dde5d`，[Windows CI 40304595882](https://github.com/yq04/Claude-Local/actions/runs/40304595882) success。文档提交不移动标签。
+- [0.1.4私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.1.4)，draft=false、prerelease=true；安装器`Claude-Local_0.1.4_x64-setup.exe`，140,563,164字节，SHA256`64af650e065c45a34e2d10403ab567cda940b92dacc5b130d447781ba387a6ed`。服务端size/digest匹配。
+- 新中性custom-protocol构建，解包审计109文件/13外部探针/0发现；本机102项应用文件核验、1项实际变化。NSS/本机宿主SHA256`5efed3ff1a6374412574e19ada2d1431ec9364876a08b38f5dc72d96d4deb224`，原始UNK宿主`a0322649f8ec34133764a458903096cd6b379c329059d25d98856925c4967711`，仅3字节经审计包标记差异。
+- 本机已运行0.1.4，CLI进程全部保留，未关闭用户浏览器。更新前后只读投影一致：3身份的索引/归档引用及大小mtime、3浏览器绑定、活动指针和SQLite v3均保持；测试/交付工具未直接读取真实归档/密钥/凭据/会话内容，未改代理/隐私参数/自动开关。
+- 定向Bun36、Rust3、真实页面GUI10通过；固定148.0.7778.215引擎在独立临时资料中默认/隐私/隐私+演示指纹3组均complete（约3.6–3.7秒）。公共DNS样例验证IPQuery HTTP200/CORS*及布尔字段，没有用用户IP/身份作第三方查询。完整CI另见私有ci-result.md。
+
+实现：WebRTC同步构造不消耗ICE预算，构造后5秒协商/描述成功后2秒收集，只有完整结束证据才通过；晚到Promise不能复活探针，回传受控reason/耗时。地理仍用原ipwho.is/ipapi.co；缺hosting时沿原浏览器路由或冻结原生proxy client，仅向固定IPQuery补查同一个IP，严验IPv4/IPv6与布尔，3秒/32KiB、无凭据/Referrer/重定向。分类失败保留原geo和未知，显示限流/超时/错配等原因；不按ASN猜住宅，不以分类保证账号安全。20稳定ID/schema1不变，可选诊断兼容旧报告。
+
+**用户下一步**：主软件“浏览环境”点击“重新打开实测页”，再重新实测。旧标签仍用旧脚本，宿主重启后旧端口/票据也可能失效；不要只反复点击旧页按钮。无需退出Claude网页、清Cookie、重登CLI、换代理或关闭隐私保护。没有对真实用户页面承诺必定20/20，真实机房标记或服务失败须如实显示。用户原截图含个人信息，未复制或上传到GitHub。
+
+入口：src/browser-webrtc.ts/test、browser-network.ts/test、browser-model.ts、browser-verification.ts、browser-start.tsx；src-tauri/src/browser/network.rs/mod.rs/tests.rs及server.rs。说明docs/BROWSER_CSP_0.1.4.md，交付核验docs/RELEASE_VERIFICATION_0.1.4_BROWSER.md。当前计划/基线/HANDOFF hash及回执.local/tasks/20261026-browser-csp/；0.1.3逻辑/引擎证据在browser-repair，只读诊断在browser-unknown-diagnosis。旧版本标签/资产和.baga/加密/账号标识全部保持。
+
+新增踩坑：页面GUI不能只用Vite默认策略，必须带生产connect-src，否则新服务会在真实页被CSP拦截却测试通过。进程创建时间跨JSON读取时，PowerShell会自动解析ISO日期，必须转UTC ticks比较，不能直接把字符串与DateTime比较；此前误报已核对PID/UTC创建时间纠正，原浏览器窗口一直保留。更新还检查宿主属于当前用户及没有未完成恢复/归档暂存操作。
+
+## 0.1.3候选历史（生产CSP遗漏，已由0.1.4修正）
+
+用户反馈以前浏览器可通过，后来两项未知。已追到9b89502（2026-10-25 22:34 UTC-4）收紧了旧乐观兜底：旧RTC超时无地址即通过、旧ISP未命中关键词默认通过；不能以旧绿色证明当时完成实测。0.1.1延至1000ms仍早于实际构造完成，0.1.2没有修改浏览器链路。
+
+- 固定源码/产品标签：`v0.1.3` → `50bf4120aacb175804b35db037a4226546080330`，[Windows CI 40300936001](https://github.com/yq04/Claude-Local/actions/runs/40300936001) success。文档提交不移动标签。
+- [0.1.3私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.1.3)，draft=false、prerelease=true；安装器`Claude-Local_0.1.3_x64-setup.exe`，140,555,118字节，SHA256`e5f64ac534798f40be64c6657f4b68e8fd8f45a4dac3311cbbf79bfc3e96d37e`。服务端size/digest匹配。
+- 新中性custom-protocol构建，解包审计109文件/13外部探针/0发现；本机102项应用文件核验、8项实际变化。NSS/本机宿主SHA256`07db1150702b36c97cc38ba3d209ec39e918e3bd39f07d3e06f47cd0c43b99ba`，原始UNK宿主`6bc15436d2365e36cf47b13c7de0f03331f48a105d35cfa6e21efbfd07a6cc5c`，仅3字节经审计包标记差异。
+- 本机已运行0.1.3，CLI进程全部保留，未关闭用户浏览器。更新前后只读投影一致：3身份的索引/归档引用及大小mtime、3浏览器绑定、活动指针和SQLite v3均保持；测试/交付工具未直接读取真实归档/密钥/凭据/会话内容，未改代理/隐私参数/自动开关。
+- 定向Bun36、Rust3、真实页面GUI10通过；固定148.0.7778.215引擎在独立临时资料中默认/隐私/隐私+演示指纹3组均complete（约3.6–3.7秒）。公共DNS样例验证IPQuery HTTP200/CORS*及布尔字段，没有用用户IP/身份作第三方查询。完整CI另见私有ci-result.md。
+
+实现：WebRTC同步构造不消耗ICE预算，构造后5秒协商/描述成功后2秒收集，只有完整结束证据才通过；晚到Promise不能复活探针，回传受控reason/耗时。地理仍用原ipwho.is/ipapi.co；缺hosting时沿原浏览器路由或冻结原生proxy client，仅向固定IPQuery补查同一个IP，严验IPv4/IPv6与布尔，3秒/32KiB、无凭据/Referrer/重定向。分类失败保留原geo和未知，显示限流/超时/错配等原因；不按ASN猜住宅，不以分类保证账号安全。20稳定ID/schema1不变，可选诊断兼容旧报告。
+
+**用户下一步**：主软件“浏览环境”点击“重新打开实测页”，再重新实测。旧标签仍用旧脚本，宿主重启后旧端口/票据也可能失效；不要只反复点击旧页按钮。无需退出Claude网页、清Cookie、重登CLI、换代理或关闭隐私保护。没有对真实用户页面承诺必定20/20，真实机房标记或服务失败须如实显示。用户原截图含个人信息，未复制或上传到GitHub。
+
+入口：src/browser-webrtc.ts/test、browser-network.ts/test、browser-model.ts、browser-verification.ts、browser-start.tsx；src-tauri/src/browser/network.rs/mod.rs/tests.rs。说明docs/BROWSER_VERIFICATION_0.1.3.md，交付核验docs/RELEASE_VERIFICATION_0.1.3_BROWSER.md。私有计划/基线/HANDOFF hash及回执.local/tasks/20261026-browser-repair/；只读诊断旧证据另在20261026-browser-unknown-diagnosis。旧版本标签/资产和.baga/加密/账号标识全部保持。
+
+## 前一轮加密存储加固（0.1.2历史）
 
 用户明确决定保留.baga后缀，随后要求落实安全、可靠、正确、便捷且不影响本机及其他用户的改进。已完成暂存目录生命周期、归档解包限额、敏感缓冲和主密钥有界读取；没有引入新协议或资料迁移。
 
@@ -77,7 +113,7 @@ Claude-Local 是独立维护的 Windows 10/11 x64 桌面工具，React/TypeScrip
 4. 43历史文档删除尚未获具体确认，旧清理清单/hash已漂移，不执行删除。用户全权负责打包上传未扩大成改史、强推、移标签、删Release或改变可见性。旧精简副本已落后于修复，不用于公开。
 5. 若后续继续功能增强，按需规划Windows单身份便携导入导出/安装排障，不重新做已完成Astra方案。文档更新不重建产品。
 
-当前无技术阻塞。下一会话先核对用户新反馈及只读状态；若只是补文档，不重建/覆盖0.1.2。已打开的浏览器核验页需刷新或由用户重新打开以加载新前端，不能为更新杀浏览器。
+当前无技术阻塞。下一会话先核对用户新反馈及只读状态；若只是补文档，不重建/覆盖0.1.4。已打开的浏览器核验页需刷新或由用户重新打开以加载新前端，不能为更新杀浏览器。
 
 ## 绝对不要再踩的坑
 
