@@ -1,6 +1,6 @@
 <!--
-[INPUT]: Independent product source, version metadata and initial public candidate requirements.
-[OUTPUT]: Product overview, build/verification entries and retained-data upgrade expectations.
+[INPUT]: Independent product source, version metadata, verified delivery and synthetic-data screenshots of the application UI.
+[OUTPUT]: Product overview, private-safe interface previews, build/verification entries and retained-data upgrade expectations.
 [POS]: Repository introduction; published artifacts retain their own versioned release notes.
 [PROTOCOL]: Keep private-data, compatibility and distribution boundaries in the linked project documents.
 -->
@@ -15,6 +15,22 @@
 [下载 0.1.1 Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.1/Claude-Local_0.1.1_x64-setup.exe) · [预发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.1) · [打包、上传与本机一致性核验](docs/RELEASE_VERIFICATION_0.1.1_SYNC.md)。当前仓库保持私有，下载需要仓库访问权限。
 
 遇到网页登录后仍无法查询或唤醒，先看 [网页额度与CLI授权恢复说明](docs/CONNECTION_RECOVERY.md)：两套授权独立，重试会分别显示网页读取失败和CLI唤醒阻断原因。
+
+## 界面预览
+
+以下图片使用 0.1.1 的实际应用前端和隔离演示数据，未载入个人资料。账号均为虚构，示例邮箱已启用隐私遮罩；图片不含真实账号、代理、IP、本机路径或凭据。开关状态和用量数值仅作演示，不代表本机当前设置或真实账号验证结果。
+
+**身份管理**：当前身份、保存账号及独立的 5h / 7d 额度窗口。
+
+![Claude-Local 身份管理：四个虚构账号与已遮罩的示例邮箱](docs/screenshots/identity-management.png)
+
+**用量分析**：Token、缓存命中率、用量趋势和模型分布。
+
+![Claude-Local 用量分析：虚构 Token 数据、趋势图和模型分布](docs/screenshots/usage-analytics.png)
+
+**自动续杯**：生效时段、逐账号状态、暂停和手动唤醒入口。
+
+![Claude-Local 自动续杯：演示时段设置及账号计划状态](docs/screenshots/auto-wakeup.png)
 
 ## 主要功能
 

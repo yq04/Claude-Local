@@ -18,6 +18,8 @@ Claude-Local 是独立维护的 Windows 10/11 x64 桌面工具，React/TypeScrip
 
 **0.1.1 已完成源码修复、本机文件式更新、custom-protocol NSIS 打包、隐私审计及私有 GitHub 预发布上传。没有构建/CI/上传阻塞；真实账号消息权限仍未代用户验收。**
 
+用户随后询问更新、安装、打包、上传及README，并要求加入隐私安全的界面图。本次已再次只读核对：本机正在运行0.1.1，宿主/安装包hash及GitHub服务端digest与回执一致，远端README已是0.1.1。此次采用文件式更新，未在用户机运行NSIS安装向导；安装/卸载/降级验收仍属下文遗留项。README新增身份管理、用量分析、自动续杯三张实际前端截图，全部使用隔离的合成账号/用量，邮箱遮罩且仅example.invalid；无真实资料、IP、代理、路径或PNG文本/EXIF。图片出处与边界见docs/screenshots/README.md；文档更新不重打包、不移动v0.1.1。此段更新前的HANDOFF备份/hash在.local/tasks/20261026-readme-screenshots/。
+
 - 源码/固定产品标签：`v0.1.1` → `a558efd29b0b46bf85edee4eb8f8b24e2545989a`，工作分支 `feature/functional-reliability-20261023`，普通快进推送到 origin/main 与远端工作分支；后续仅文档提交不移动产品标签。
 - [0.1.1 预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.1.1)，draft=false、prerelease=true，仓库仍私有。附件仅 `Claude-Local_0.1.1_x64-setup.exe`，140,490,055 字节，SHA256 `4f53501f52852cc447700bb97ad0573933824af38aff33ef288aae01d9327a2b`，GitHub服务端digest及大小精确匹配。
 - 中性构建的109个解包文件、13项外部隐私探针，0发现。本机102项应用文件校验一致，实际替换9项，宿主最后更新；宿主NSS SHA256 `103c59c62e563ab7fca1ed4f11f9560db5cf91c1576b8c1aee1c851e44fcef88`。原始UNK宿主SHA256 `31bf44c6192b45a2adc805d5c2f8f7d07b040aebce51477f64c2259379cc4115`，仅既有经审计3字节Tauri包标记差异。

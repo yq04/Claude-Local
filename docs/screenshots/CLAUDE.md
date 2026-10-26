@@ -1,0 +1,7 @@
+# docs/screenshots/
+> L2 | 父级: ../../CLAUDE.md
+README.md: 0.1.1实际前端与合成数据的来源、隐私检查和演示边界。
+identity-management.png: 1360×900身份管理界面，虚构账号与已遮罩示例邮箱。
+usage-analytics.png: 1360×900用量趋势和模型分布，全部合成数值。
+auto-wakeup.png: 1360×900自动续杯弹窗，演示时段和逐账号计划。
+[PROTOCOL]: 图片变更需重新逐张视觉检查、检查元数据并核对README相对路径；不使用真实账号/机器数据，不因文档图片重建软件。
