@@ -9,6 +9,7 @@ profile.rs: 当前绑定的独立资料目录、进程占用检查、偏好窄�
 network.rs: macOS/Linux/Windows 原生平台与浏览器观测分别核验，Windows 识别 Win32 并要求真实版本/CPU；共用 ipwho.is/ipapi.co 服务目录并提取 ASN/机房标识；经同一指定代理检测出口，服务故障/限流按顺序备援；报告 schema 版本控制深探针，缺少时保持 pending；出口分类未知不视为 ISP 宽带，WebRTC 标题明确为无 STUN 本地候选观察且不覆盖 DNS/公网 STUN；浏览器项目保留原生三态。
 机房补充沿同一冻结代理client，仅缺标识时请求固定IPQuery的相同IP；3秒/32KiB、严验IPv4/IPv6地址及布尔值，来源/失败代码受控，地理成功不因分类失败被抹去。Context/State提供可选exit_classification_service，旧Report继续可用；新增WebRTC reason白名单/耗时上限和分类字段边界，未知保持pending，不把分类数据称为住宅或账号安全保证。
 server.rs: 仅向带随机令牌的回环 context 提供脱敏身份/环境状态，排除凭据/账号 UUID/匹配摘要；共用请求头解析器校验唯一 Host、Content-Length 和传输编码，quota-sync 仅接受固定 MV3 扩展 Origin、短期单次 nonce 和当前 active/quota_identity 双绑定快照，正文、请求时限及并发边界不放宽；静态资源限制在打包目录。
+核验页CSP的connect-src仅self及ipwho.is/ipapi.co/api.ipquery.io三个HTTPS数据域，其他脚本/帧/来源限制保持；实际HTTP头单元回归断言精确名单，GUI从生产源提取同一connect-src，避免dev环境漏测CSP。
 quota_bridge.rs: 用户显式命令打开当前绑定隔离浏览器，创建 90 秒一次性桥票；仅将现有 quota_identity SHA256 指纹放在 loopback 配对 fragment，扩展内用账号 UUID/email 与有界组织 UUID 候选进行唯一哈希匹配后回传，原生侧再复核 active/quota_identity 并只调用 Python 额度元数据入口；next_charge_date 标为 next_renewal，正余额要求完整有效 grants，零值缺少活动字段时仅给6小时有效边界，所有权益有效期最长限24小时；无后台轮询或 Cookie 读取。
 windows.rs: Windows 引擎和共同资料/回环会话编排；运行中打开外部链接时沿用当前会话不重复追加实测页；用户点击后仅注册 Claude-Local-Browser、.URL/.HTML 独立名称空间，不改写默认关联；本地 B 启动项进入同一宿主，CI 启动阶段只记录固定字符串；纯内存回归拒绝把官方协议认作本地默认并核对安装钩子，CI 实际核验本地注册命令/两个协议，前后默认关联必须不变。
 tests.rs: 模块共用临时目录样本，验证代理/资料边界、Windows 固定额度扩展参数、缓存隔离与地区核验；合成 HTTP 样本验证 Host/framing 拒绝及 429 备援解析，Windows 使用真实 junction 样本验证拒绝跨资料目录；不触碰现有账号数据。

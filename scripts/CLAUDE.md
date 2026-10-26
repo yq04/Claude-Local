@@ -49,3 +49,4 @@ Usage GUI checks also require the concise All selector and absence of history/li
 
 Focused sync regressions: `test-identities-ui.ts --wakeup-only` covers local-login/history separation, one recovery grant, human-readable waits and narrow dialog layout using fake native IPC. `--verification-only` runs the real browser verification page with fictional context and blocked external requests; unknown-only reports stay incomplete rather than failed or passed.
 Browser verification fixtures also intercept the fixed supplementary classifier: same-IP successful evidence can complete20 checks, while429 or mismatched IP preserves unknown/base geography; cold Vite navigation uses DOMContentLoaded before releasing the intentional context gate.
+The verification fixture applies the production server's exact connect-src to browser.html before testing the supplementary HTTPS request; a missing production permission must fail the same-IP success case.

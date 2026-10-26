@@ -57,7 +57,7 @@ fn current_session(session: &Option<super::Session>, token: &str) -> bool {
     session.as_ref().is_some_and(|s| s.token == token)
 }
 fn answer(stream: &mut TcpStream, status: &str, kind: &str, body: &[u8]) {
-    let header = format!("HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; frame-ancestors 'none'; connect-src 'self' https://ipwho.is https://ipapi.co; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'\r\n\r\n", body.len());
+    let header = format!("HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; frame-ancestors 'none'; connect-src 'self' https://ipwho.is https://ipapi.co https://api.ipquery.io; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'\r\n\r\n", body.len());
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body);
 }
@@ -362,7 +362,10 @@ fn handle(
                 .map_err(|_| "quotaOnline.unavailable")?
                 .as_millis() as u64;
             let snapshot = super::quota_bridge::snapshot(incoming, observed_ms)?;
-            if snapshot.billing_date.is_none() && snapshot.manual_resets_remaining.is_none() && snapshot.usage.is_none() {
+            if snapshot.billing_date.is_none()
+                && snapshot.manual_resets_remaining.is_none()
+                && snapshot.usage.is_none()
+            {
                 return Err("quotaOnline.bridgeUnavailable".into());
             }
             let value = crate::identities::online::import_browser_snapshot(
@@ -645,6 +648,11 @@ mod tests {
         assert!(header.contains("Referrer-Policy: no-referrer"));
         assert!(header.contains("X-Frame-Options: DENY"));
         assert!(header.contains("frame-ancestors 'none'"));
+        assert!(header.contains(
+            "connect-src 'self' https://ipwho.is https://ipapi.co https://api.ipquery.io;"
+        ));
+        assert!(!header.contains("connect-src *"));
+        assert!(!header.contains("unsafe-eval"));
         assert_eq!(&response[split..], logo);
         assert!(resource(&root, "../outside").is_none());
         assert_eq!(media_type(Path::new("unknown.bin")), None);

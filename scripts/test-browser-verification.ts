@@ -5,6 +5,7 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {strict as assert} from 'node:assert';
+import {readFileSync} from 'node:fs';
 import type {Browser} from 'playwright-core';
 export async function testBrowserVerification(browser:Browser,base:string) {
  const context=await browser.newContext({locale:'en-US',timezoneId:'America/Los_Angeles'});
@@ -21,11 +22,17 @@ export async function testBrowserVerification(browser:Browser,base:string) {
   };
  });
  const page=await context.newPage();page.setDefaultTimeout(10000);
+ const nativePolicy=readFileSync(new URL('../src-tauri/src/browser/server.rs',import.meta.url),'utf8').match(/connect-src ([^;]+);/);
+ assert(nativePolicy,'Production browser network policy must exist.');
  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
  let first=true, failure=false, unknown=false, partial=false, mismatch=false, language='zh', reports=0, classifications=0;
  let identity={linked:true,status:'linked',name:'Fixture identity',email:'fixture@example.invalid' as string|null,organization:'Fixture team' as string|null};
  await context.route('**/*',async route=>{
   const url=route.request().url();
+  if(url===base+'/browser.html'){
+   const response=await route.fetch();
+   return route.fulfill({response,headers:{...response.headers(),'Content-Security-Policy':`connect-src ${nativePolicy[1]};`}});
+  }
   if(url==='https://api.ipquery.io/203.0.113.1?format=json'){
    classifications++;
    return route.fulfill({status:partial?429:200,headers:{'Access-Control-Allow-Origin':'*'},json:partial?{}:{ip:mismatch?'203.0.113.2':'203.0.113.1',risk:{is_datacenter:false}}});
