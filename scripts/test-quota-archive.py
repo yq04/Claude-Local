@@ -1,5 +1,5 @@
 # [INPUT]: Synthetic encrypted gzip/Zstd tar streams and temporary fixture vaults.
-# [OUTPUT]: Strict frame, minimal projection, unsafe-member and resource-bound regressions.
+# [OUTPUT]: Strict frame/projection/resource regressions and synthetic-only Zstd failure diagnostics.
 # [POS]: No real account, network, extraction or machine mutation.
 # [PROTOCOL]: Keep scripts/CLAUDE.md aligned with the archive reader.
 import gzip
@@ -184,7 +184,21 @@ class QuotaArchiveTests(unittest.TestCase):
                 m = tarfile.TarInfo(name)
                 m.size, m.uname, m.gname = 4, "", ""
                 dst.addfile(m, io.BytesIO(b"test"))
-        cj_many, cred_many, _ = self.read(encrypt(zstd(out.getvalue())))
+        compressed_many = zstd(out.getvalue())
+        try:
+            cj_many, cred_many, _ = self.read(encrypt(compressed_many))
+        except ValueError as exc:
+            # CI Windows tar versions differ; report only this synthetic fixture's
+            # conversion diagnostics, never archive-reader inputs from real vaults.
+            tar = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "tar.exe"
+            version = subprocess.run([str(tar), "--version"], capture_output=True, timeout=5,
+                                     creationflags=subprocess.CREATE_NO_WINDOW)
+            diagnostic = subprocess.run([str(tar), "-cf", "-", "@-"], input=compressed_many,
+                                        capture_output=True, timeout=archive.TIME_LIMIT,
+                                        creationflags=subprocess.CREATE_NO_WINDOW)
+            self.fail(f"{exc}; synthetic tar version={version.stdout[:1024]!r}; "
+                      f"exit={diagnostic.returncode}; "
+                      f"stderr={diagnostic.stderr[:16384]!r}")
         self.assertEqual(cj_many["oauthAccount"]["accountUuid"], "fixture-account")
         self.assertEqual(cred_many["claudeAiOauth"]["accessToken"], "synthetic-only")
 
