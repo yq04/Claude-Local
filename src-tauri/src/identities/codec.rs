@@ -1,5 +1,5 @@
 // [INPUT]: ring 的 AES-256-GCM/系统随机数、保险库主密钥和标准流。
-// [OUTPUT]: 独立归档密钥的有界认证帧；验证结尾、序号、帧长度与截断。
+// [OUTPUT]: 独立归档密钥的有界认证帧；持有明文的自有缓冲预分配并清零，格式与旧归档一致。
 // [POS]: 压缩流的加密边界；每个归档重新生成数据密钥，不自实现密码算法。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use ring::{
@@ -42,12 +42,15 @@ impl<W: Write> Seal<W> {
     pub fn new(mut out: W, master: &[u8]) -> io::Result<Self> {
         let secret = Zeroizing::new(random::<32>().map_err(|_| err())?);
         let n = random::<12>().map_err(|_| err())?;
-        let mut wrapped = secret.to_vec();
+        // Reserve tag space before copying plaintext so append_tag does not
+        // reallocate and leave an unzeroized plaintext allocation behind.
+        let mut wrapped = Zeroizing::new(Vec::with_capacity(secret.len() + 16));
+        wrapped.extend_from_slice(secret.as_ref());
         key(master)?
             .seal_in_place_append_tag(
                 Nonce::assume_unique_for_key(n),
                 Aad::from(MAGIC),
-                &mut wrapped,
+                &mut *wrapped,
             )
             .map_err(|_| err())?;
         out.write_all(MAGIC)?;
@@ -61,9 +64,10 @@ impl<W: Write> Seal<W> {
     }
     fn frame(&mut self, plain: &[u8]) -> io::Result<()> {
         let length = ((plain.len() + 16) as u32).to_be_bytes();
-        let mut buffer = plain.to_vec();
+        let mut buffer = Zeroizing::new(Vec::with_capacity(plain.len() + 16));
+        buffer.extend_from_slice(plain);
         self.key
-            .seal_in_place_append_tag(nonce(self.counter), Aad::from(length), &mut buffer)
+            .seal_in_place_append_tag(nonce(self.counter), Aad::from(length), &mut *buffer)
             .map_err(|_| err())?;
         self.counter = self.counter.checked_add(1).ok_or_else(err)?;
         self.out.write_all(&length)?;

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Backup inspection state, reviewed file path, explicit confirmation and an injected native-command caller.
- * [OUTPUT]: Path-bound inspection/restore actions and truthful verified-vs-rescue presentation keys.
+ * [OUTPUT]: Path-bound inspection/restore actions, optional cleanup diagnostics and truthful verified-vs-rescue presentation keys.
  * [POS]: Pure workflow boundary shared by the backup settings UI and fake-IPC tests; performs no filesystem access.
  * [PROTOCOL]: Keep path invalidation and native command arguments aligned with backup-panel.tsx.
  */
@@ -22,6 +22,7 @@ export type BackupReceipt = {
   verified?: boolean;
   rescue_copy?: boolean;
   active_vault_changed?: boolean;
+  diagnostics?: string[];
 };
 
 export type BackupInvoke = <T>(command: string, args: Record<string, unknown>) => Promise<T>;

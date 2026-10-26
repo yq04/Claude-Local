@@ -1,3 +1,7 @@
+// [INPUT]: Synthetic private vaults, encrypted backup streams and owned scratch directories.
+// [OUTPUT]: Backup compatibility, source preservation and stage lifecycle regression checks.
+// [POS]: Isolated backup tests; never reads live identities or changes the active vault.
+// [PROTOCOL]: Update this header and check CLAUDE.md when behavior changes.
 use super::*;
 use crate::identities::{database::Record, Policy};
 use std::{fs, io::Cursor, path::PathBuf};
@@ -148,7 +152,7 @@ fn encrypted_package_round_trip_checks_counts_and_preserves_sources() {
     let archive_before = digest(&fixture.vault.join(&fixture.archive_name)).unwrap();
     let path = fixture.package_path();
     fixture.package(&path, b"synthetic passphrase", 1, false);
-    let (stage, manifest, recovery) = stage_archive(
+    let (mut stage, manifest, recovery) = stage_archive(
         &path,
         &fixture.stage_parent(),
         b"synthetic passphrase",
@@ -169,7 +173,11 @@ fn encrypted_package_round_trip_checks_counts_and_preserves_sources() {
         digest(&fixture.vault.join(&fixture.archive_name)).unwrap(),
         archive_before
     );
-    fs::remove_dir_all(stage).unwrap();
+    let stage_path = stage.to_path_buf();
+    stage.cleanup().unwrap();
+    stage.cleanup().unwrap();
+    assert!(!stage_path.exists());
+    assert_eq!(fs::read_dir(fixture.stage_parent()).unwrap().count(), 0);
 }
 
 #[test]
@@ -178,6 +186,7 @@ fn wrong_password_tamper_and_truncation_are_refused() {
     let path = fixture.package_path();
     fixture.package(&path, b"synthetic passphrase", 1, false);
     assert!(stage_archive(&path, &fixture.stage_parent(), b"wrong passphrase", true).is_err());
+    assert_eq!(fs::read_dir(fixture.stage_parent()).unwrap().count(), 0);
     let original = fs::read(&path).unwrap();
     let mut damaged = original.clone();
     damaged[40] ^= 1;
@@ -189,6 +198,7 @@ fn wrong_password_tamper_and_truncation_are_refused() {
         true
     )
     .is_err());
+    assert_eq!(fs::read_dir(fixture.stage_parent()).unwrap().count(), 0);
     fs::write(&path, &original[..original.len() - 7]).unwrap();
     assert!(stage_archive(
         &path,
@@ -197,6 +207,103 @@ fn wrong_password_tamper_and_truncation_are_refused() {
         true
     )
     .is_err());
+    assert_eq!(fs::read_dir(fixture.stage_parent()).unwrap().count(), 0);
+}
+
+#[test]
+fn failed_final_authentication_removes_already_extracted_members() {
+    let fixture = Fixture::new();
+    let original_path = fixture.package_path();
+    fixture.package(&original_path, b"synthetic passphrase", 1, false);
+    let original = fs::read(&original_path).unwrap();
+    let source_hashes: Vec<_> = ["identities.sqlite", "key.bin", &fixture.archive_name]
+        .iter()
+        .map(|name| digest(&fixture.vault.join(name)).unwrap())
+        .collect();
+    let mut damaged = original.clone();
+    *damaged.last_mut().unwrap() ^= 1;
+    for (index, bytes) in [damaged.as_slice(), &original[..original.len() - 7]]
+        .into_iter()
+        .enumerate()
+    {
+        let path = fixture.root.join(format!("damaged-{index}.clbak"));
+        private::create(&path).unwrap().write_all(bytes).unwrap();
+        // The complete tar, including synthetic key material, is readable before
+        // the terminal authentication failure. This exercises post-extraction cleanup.
+        let mut reader =
+            open_envelope(fs::File::open(&path).unwrap(), b"synthetic passphrase").unwrap();
+        let mut archive = tar::Archive::new(&mut reader);
+        let mut key_was_read = false;
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            key_was_read |= entry.path().unwrap() == Path::new("identity-vault/key.bin");
+            io::copy(&mut entry, &mut io::sink()).unwrap();
+        }
+        assert!(key_was_read);
+        drop(archive);
+        assert!(io::copy(&mut reader, &mut io::sink()).is_err());
+        assert!(stage_archive(
+            &path,
+            &fixture.stage_parent(),
+            b"synthetic passphrase",
+            false,
+        )
+        .is_err());
+        assert_eq!(fs::read_dir(fixture.stage_parent()).unwrap().count(), 0);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+    assert_eq!(fs::read(&original_path).unwrap(), original);
+    for (name, expected) in ["identities.sqlite", "key.bin", &fixture.archive_name]
+        .iter()
+        .zip(source_hashes)
+    {
+        assert_eq!(digest(&fixture.vault.join(name)).unwrap(), expected);
+    }
+}
+
+#[test]
+fn owned_scratch_is_removed_on_unwind_without_sweeping_existing_siblings() {
+    let fixture = Fixture::new();
+    let parent = fixture.stage_parent();
+    let existing = parent.join("verify-existing");
+    private::directory(&existing).unwrap();
+    let sentinel = existing.join("keep.txt");
+    private::create(&sentinel)
+        .unwrap()
+        .write_all(b"keep")
+        .unwrap();
+    let stage = ScratchGuard::create(&parent, "verify").unwrap();
+    let stage_path = stage.to_path_buf();
+    private::create(&stage.join("synthetic-material")).unwrap();
+    let result = std::panic::catch_unwind(move || {
+        let _stage = stage;
+        panic!("synthetic unwind");
+    });
+    assert!(result.is_err());
+    assert!(!stage_path.exists());
+    assert_eq!(fs::read(&sentinel).unwrap(), b"keep");
+}
+
+#[test]
+fn cleanup_refuses_replaced_path_and_reports_a_path_free_diagnostic() {
+    let fixture = Fixture::new();
+    let mut stage = ScratchGuard::create(&fixture.stage_parent(), "verify").unwrap();
+    let path = stage.to_path_buf();
+    fs::remove_dir(&path).unwrap();
+    private::create(&path).unwrap().write_all(b"keep").unwrap();
+    let mut diagnostics = Vec::new();
+    stage.cleanup_diagnostic(&mut diagnostics);
+    stage.cleanup_diagnostic(&mut diagnostics);
+    assert_eq!(diagnostics, ["staging_cleanup_failed"]);
+    assert_eq!(
+        stage.cleanup_error(error()),
+        format!("{} {CLEANUP_FAILED}", error())
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"keep");
+    // Restore only this synthetic test path so Drop can finish its owned cleanup.
+    fs::remove_file(&path).unwrap();
+    private::directory(&path).unwrap();
+    stage.cleanup().unwrap();
 }
 
 #[test]
@@ -211,6 +318,7 @@ fn unsafe_members_and_catalog_count_mismatch_are_refused() {
         true
     )
     .is_err());
+    assert_eq!(fs::read_dir(fixture.stage_parent()).unwrap().count(), 0);
     fs::remove_file(&path).unwrap();
     fixture.package(&path, b"synthetic passphrase", 1, true);
     assert!(stage_archive(
@@ -331,7 +439,7 @@ fn corrupt_database_and_missing_key_can_be_preserved_as_unverified_encrypted_res
         .unwrap()
         .sync_all()
         .unwrap();
-    let (stage, inspected, _) = stage_archive(
+    let (mut stage, inspected, _) = stage_archive(
         &path,
         &fixture.stage_parent(),
         b"synthetic passphrase",
@@ -341,7 +449,7 @@ fn corrupt_database_and_missing_key_can_be_preserved_as_unverified_encrypted_res
     assert_eq!(inspected.mode, "rescue");
     assert!(verify_staged(&stage, None).is_err());
     assert_eq!(verify_rescue_staged(&stage).unwrap().mode, "rescue");
-    fs::remove_dir_all(stage).unwrap();
+    stage.cleanup().unwrap();
 
     fs::remove_file(&fixture.vault.join("key.bin")).unwrap();
     let (files, diagnostics) = rescue_files(&fixture.vault, true).unwrap();

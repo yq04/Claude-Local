@@ -1,8 +1,9 @@
 // [INPUT]: 白名单身份源、SQLite 账号目录、Zstandard/旧 gzip 与认证加密流。
-// [OUTPUT]: 不可变归档代次与短期解包区，原始会话源不经隐式改写，逐源完成/压缩落盘/完整归档验收的真实局部进度；首身份复用空浏览器编号。
-// [POS]: 保险库的数据格式边界，与 store 的工作区切换事务分离，旧 gzip 归档保持可读。
+// [OUTPUT]: 不可变归档代次与有界短期解包区，原始会话源不经隐式改写，逐源完成/压缩落盘/完整归档验收的真实局部进度；首身份复用空浏览器编号。
+// [POS]: 保险库的数据格式与资源边界，与 store 的工作区切换事务分离，旧 gzip 归档保持可读，认证尾部仍完整验收。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
+    archive_limits::{self, Limits},
     codec, compression,
     database::Record,
     private,
@@ -80,26 +81,44 @@ fn append<W: Write>(
 }
 impl Store {
     pub(super) fn load(&self, record: &Record) -> Result<Stage, String> {
+        self.load_with_limits(record, Limits::default())
+    }
+    pub(super) fn load_with_limits(
+        &self,
+        record: &Record,
+        limits: Limits,
+    ) -> Result<Stage, String> {
         if !super::valid_id(&record.id) || !super::catalog::archive_name(&record.archive) {
             return Err("身份归档编号无效。".into());
         }
         let archive = self.vault.join(&record.archive);
         private::parents(&self.vault)?;
         private::safe(&archive)?;
+        let file = fs::File::open(archive).map_err(problem)?;
+        if file.metadata().map_err(problem)?.len() > limits.stream_bytes {
+            return Err(archive_limits::ERROR.into());
+        }
         let folder = self.vault.join(format!(".stage-{}", super::new_id()?));
         private::directory(&folder)?;
         let result = (|| {
-            let mut input = compression::decode(
-                codec::Open::new(fs::File::open(archive).map_err(problem)?, &self.key)
-                    .map_err(problem)?,
-            )
-            .map_err(problem)?;
+            let input = compression::decode(codec::Open::new(file, &self.key).map_err(problem)?)
+                .map_err(problem)?;
+            let mut input = archive_limits::TarRead::new(input, limits);
             let mut files = std::collections::HashSet::new();
             {
                 let mut tar = tar::Archive::new(&mut input);
-                for entry in tar.entries().map_err(problem)? {
-                    let mut entry = entry.map_err(problem)?;
+                for entry in tar.entries().map_err(archive_limits::problem)? {
+                    let mut entry = entry.map_err(archive_limits::problem)?;
+                    if files.len() >= limits.members
+                        || entry.path_bytes().len() > limits.path_bytes
+                        || entry.size() > limits.member_bytes
+                    {
+                        return Err(archive_limits::ERROR.into());
+                    }
                     let path = entry.path().map_err(problem)?.into_owned();
+                    if path == Path::new("manifest.json") && entry.size() > limits.manifest_bytes {
+                        return Err(archive_limits::ERROR.into());
+                    }
                     if path.as_os_str().is_empty()
                         || path
                             .components()
@@ -118,16 +137,23 @@ impl Store {
                     } else {
                         private::directory(destination.parent().unwrap())?;
                         let mut output = private::create(&destination)?;
-                        io::copy(&mut entry, &mut output).map_err(problem)?;
+                        io::copy(&mut entry, &mut output).map_err(archive_limits::problem)?;
                         // 工作区是可丢弃的；恢复依据是已 fsync 的完整认证归档。
                     }
                 }
             }
             // tar 结束不能替代认证结尾；排空压缩和加密流，拒绝截断或附加内容。
-            io::copy(&mut input, &mut io::sink()).map_err(problem)?;
-            let manifest: Manifest =
-                serde_json::from_slice(&fs::read(folder.join("manifest.json")).map_err(problem)?)
-                    .map_err(problem)?;
+            io::copy(&mut input, &mut io::sink()).map_err(archive_limits::problem)?;
+            let manifest: Manifest = serde_json::from_slice(&archive_limits::read_file(
+                &folder.join("manifest.json"),
+                limits.manifest_bytes,
+            )?)
+            .map_err(problem)?;
+            if manifest.sources.len() > limits.members
+                || manifest.fingerprints.len() > limits.members
+            {
+                return Err(archive_limits::ERROR.into());
+            }
             if manifest.version != 1
                 || manifest.id != record.id
                 || manifest.home != self.home
@@ -169,9 +195,10 @@ impl Store {
                     return Err("身份归档不完整。".into());
                 }
                 if !source.keys.is_empty() {
-                    let value: serde_json::Value =
-                        serde_json::from_slice(&fs::read(data).map_err(problem)?)
-                            .map_err(problem)?;
+                    let value: serde_json::Value = serde_json::from_slice(
+                        &archive_limits::read_file(&data, limits.config_bytes)?,
+                    )
+                    .map_err(problem)?;
                     if !value.is_object() {
                         return Err("身份配置不是对象。".into());
                     }

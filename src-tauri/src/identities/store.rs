@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 目录、用户策略、白名单源、已验收归档代次、认证加密与平台凭据桥。
-// [OUTPUT]: 已验证身份归档、先暂存后切换、旧归档写回前的设备/客户端状态保护投影、显式切换/恢复后的窄账号缓存维护、原始历史保留、持久恢复与真实阶段进度。
+// [OUTPUT]: 有界主密钥读取、已验证身份归档、先暂存后切换、显式切换/恢复后的窄账号缓存维护、原始历史保留、持久恢复与真实阶段进度。
 // [POS]: 身份的文件事务；SQLite 与文件系统由恢复日志协调，不能假装是同一原子事务。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -15,7 +15,7 @@ use crate::{
 };
 use std::{
     fs,
-    io::{self},
+    io::{self, Read},
     path::{Path, PathBuf},
 };
 use zeroize::Zeroizing;
@@ -47,7 +47,12 @@ impl Store {
             private::write(&key_path, &codec::random::<32>()?)?;
         }
         private::protect(&key_path)?;
-        let key = Zeroizing::new(fs::read(&key_path).map_err(problem)?);
+        let mut key = Zeroizing::new(Vec::with_capacity(33));
+        fs::File::open(&key_path)
+            .map_err(problem)?
+            .take(33)
+            .read_to_end(&mut *key)
+            .map_err(problem)?;
         if key.len() != 32 {
             return Err("身份密钥无效。".into());
         }

@@ -506,6 +506,27 @@ fn missing_master_key_never_replaces_a_retired_registered_archive() {
 }
 
 #[test]
+fn master_key_length_boundaries_preserve_existing_key_bytes() {
+    let folder = canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("baga-key-boundary-{}", new_id().unwrap()));
+    let home = folder.join("home");
+    let vault = folder.join("vault");
+    private::directory(&home).unwrap();
+    private::directory(&vault).unwrap();
+    let key_path = vault.join("key.bin");
+    for length in [31, 32, 33] {
+        let synthetic_key = vec![0xa5; length];
+        private::write(&key_path, &synthetic_key).unwrap();
+        let opened = store::Store::open(&vault, &home);
+        assert_eq!(opened.is_ok(), length == 32);
+        drop(opened);
+        assert_eq!(std::fs::read(&key_path).unwrap(), synthetic_key);
+    }
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
 fn standard_fs_written_files_are_accepted_by_profile_catalog_and_switch() {
     let folder = canonicalize(std::env::temp_dir())
         .unwrap()

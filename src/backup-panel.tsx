@@ -1,13 +1,13 @@
 /**
  * [INPUT]: 固定 app_data_dir 预览、用户显式输入的备份文件路径/口令与原生加密备份命令。
- * [OUTPUT]: 身份保险库加密导出、备份检查与新私有恢复副本回执；每次操作结束清除口令输入。
+ * [OUTPUT]: 身份保险库加密导出、备份检查与新私有恢复副本回执及清理待办提示；每次操作结束清除口令输入。
  * [POS]: 软件设置的数据管理区；只处理身份索引、主密钥和引用归档，不自动导出或接管当前身份。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect, useRef, useState} from 'react';
 import {Button, Switch} from 'cromma-ui';
 import {invoke} from '@tauri-apps/api/core';
-import type {Locale} from './i18n';
+import {translate, type Locale} from './i18n';
 import {canRestoreInspection, inspectionPresentation, inspectBackupRequest, restoreBackupRequest, type BackupInspection as Inspection, type BackupReceipt as Receipt} from './backup-panel-workflow';
 import './backup-panel.css';
 
@@ -79,6 +79,7 @@ function flagLabel(flag: string, locale: Locale) {
     no_readable_evidence: ['没有可读证据文件', 'No readable evidence files'],
     recovery_pending: ['存在未完成恢复标记', 'Unfinished recovery marker is present'],
     database_sidecar_present: ['存在 SQLite sidecar；常规快照会使用 SQLite backup API', 'SQLite sidecars are present; regular snapshots use SQLite’s backup API'],
+    staging_cleanup_failed: ['临时备份资料未能完全清理；源保险库未修改。', 'Temporary backup data could not be fully removed; the source vault was not changed.'],
   };
   const label = labels[flag];
   return label ? label[locale === 'en' ? 1 : 0] : (locale === 'en' ? 'Additional integrity issue' : '其他完整性问题');
@@ -112,7 +113,7 @@ export function BackupPanel({locale}: {locale: Locale}) {
       setLocation(found);
       if (found.vault_available) setPreview(await invoke<Preview>('identities_backup_preview'));
       else setPreview(null);
-    } catch (cause) { setError(String(cause)); }
+    } catch (cause) { setError(translate(String(cause), {}, locale)); }
   }
   useEffect(() => { void refresh(); }, []);
 
@@ -122,7 +123,7 @@ export function BackupPanel({locale}: {locale: Locale}) {
     try {
       const saved = await invoke<Receipt>('identities_backup_export', {path: exportPath.trim(), passphrase: exportPass, confirmation: confirmPass, rescueMode});
       setReceipt(saved); setNotice(text('result')); await refresh();
-    } catch (cause) { setError(`${text('error')} ${String(cause)}`); }
+    } catch (cause) { setError(`${text('error')} ${translate(String(cause), {}, locale)}`); }
     finally { setExportPass(''); setConfirmPass(''); setBusy(false); }
   }
   async function inspectBackup() {
@@ -136,7 +137,7 @@ export function BackupPanel({locale}: {locale: Locale}) {
       if (!result) return;
       setInspection(result.inspection); setInspectionPath(result.path); setNotice(text(inspectionPresentation(result.inspection).noticeKey));
     } catch (cause) {
-      if (revision === inspectionRevision.current) setError(`${text('error')} ${String(cause)}`);
+      if (revision === inspectionRevision.current) setError(`${text('error')} ${translate(String(cause), {}, locale)}`);
     } finally {
       if (revision === inspectionRevision.current) {setInspectPass('');setBusy(false);}
     }
@@ -148,7 +149,7 @@ export function BackupPanel({locale}: {locale: Locale}) {
       const restored = await restoreBackupRequest(inspection, inspectionPath, inputPath, restoreConfirmed, restorePass, invoke);
       if (!restored) return;
       setReceipt(restored); setNotice(text('result'));
-    } catch (cause) { setError(`${text('error')} ${String(cause)}`); }
+    } catch (cause) { setError(`${text('error')} ${translate(String(cause), {}, locale)}`); }
     finally { setRestorePass(''); setBusy(false); }
   }
   const presentation = inspectionPresentation(inspection);
@@ -162,7 +163,7 @@ export function BackupPanel({locale}: {locale: Locale}) {
           <strong>{text('location')}</strong>
           {location ? <code>{location.app_data_dir}</code> : <span>—</span>}
           {location?.vault_available ? null : <span>{text('noVault')}</span>}
-          {location && <div className="backup-location-actions"><Button size="small" variant="secondary" disabled={busy} onClick={() => void invoke('identities_backup_open_location').catch(cause => setError(String(cause)))}>{text('openLocation')}</Button><Button size="small" variant="secondary" disabled={busy} onClick={() => void invoke('copy_result', {text: location.app_data_dir}).then(() => setNotice(text('copied'))).catch(cause => setError(String(cause)))}>{text('copyLocation')}</Button></div>}
+          {location && <div className="backup-location-actions"><Button size="small" variant="secondary" disabled={busy} onClick={() => void invoke('identities_backup_open_location').catch(cause => setError(translate(String(cause), {}, locale)))}>{text('openLocation')}</Button><Button size="small" variant="secondary" disabled={busy} onClick={() => void invoke('copy_result', {text: location.app_data_dir}).then(() => setNotice(text('copied'))).catch(cause => setError(translate(String(cause), {}, locale)))}>{text('copyLocation')}</Button></div>}
         </div>
         <Button size="small" variant="secondary" disabled={busy} onClick={() => void refresh()}>{text('preview')}</Button>
         {preview && <div className="backup-preview" aria-live="polite">
@@ -190,7 +191,7 @@ export function BackupPanel({locale}: {locale: Locale}) {
             <strong>{inspection.rescue_copy ? text('rescueVerified') : text('verified')}</strong>
             <span>{inspection.saved_identities} {text('identities')} · {inspection.archives} {text('archives')} · {formatBytes(inspection.bytes, locale)}</span>
             {inspection.recovery_pending && <span>{text('recoveryFlag')}</span>}
-            {inspection.rescue_copy && <span>{inspection.diagnostics.map(flag => flagLabel(flag, locale)).join(' · ')}</span>}
+            {inspection.diagnostics.length > 0 && <span>{inspection.diagnostics.map(flag => flagLabel(flag, locale)).join(' · ')}</span>}
             <label className="backup-rescue-toggle"><Switch aria-label={text(presentation.confirmationKey)} checked={restoreConfirmed} onCheckedChange={setRestoreConfirmed} /><span>{text(presentation.confirmationKey)}</span></label>
             <label>{text('restorePass')}<input type="password" value={restorePass} onChange={event => setRestorePass(event.target.value)} autoComplete="new-password" /></label>
             <Button variant="secondary" disabled={busy || !canRestoreInspection(inspection, inspectionPath, inputPath, restoreConfirmed, restorePass)} onClick={() => void restoreCopy()}>{text(presentation.actionKey)}</Button>
@@ -200,6 +201,7 @@ export function BackupPanel({locale}: {locale: Locale}) {
         {error && <p className="system-feedback error" role="alert">{error}</p>}
         {notice && <p className="system-feedback" role="status">{notice}</p>}
         {receipt && <div className="backup-receipt"><strong>{text('targetResult')}</strong><code>{receipt.path}</code>{receipt.bytes !== undefined && <span>{text('bytes')}: {formatBytes(receipt.bytes, locale)}</span>}{receipt.active_vault_changed === false && !receipt.rescue_copy && <strong>{locale === 'en' ? 'Verified copy created; active vault was not changed.' : '已创建已验证副本；当前身份库未更改。'}</strong>}</div>}
+        {!!receipt?.diagnostics?.length && <div className="backup-diagnostics" role="status">{receipt.diagnostics.map(flag => <span key={flag}>{flagLabel(flag, locale)}</span>)}</div>}
         {(receipt?.rescue_copy || inspection?.rescue_copy) && <div className="backup-note">{text('evidenceOnly')}</div>}
       </div>
     </section>

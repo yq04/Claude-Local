@@ -1,5 +1,5 @@
 // [INPUT]: 固定 app_data_dir 下的身份保险库、SQLite online backup、ring PBKDF2/AES-GCM 与用户明确选择的备份文件。
-// [OUTPUT]: 口令认证加密备份、脱敏预览/验收及保留源的全新私有恢复副本。
+// [OUTPUT]: 口令认证加密备份、脱敏预览/验收及保留源的全新私有恢复副本；独占暂存目录在失败/展开时回收，成功清理异常显式诊断。
 // [POS]: 身份数据管理边界；只封装 identities.sqlite、key.bin 和数据库引用的 .baga 归档，不触碰工作区/浏览器/Claude 配置。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{codec, private};
@@ -57,6 +57,8 @@ pub struct BackupReceipt {
     pub verified: bool,
     pub rescue_copy: bool,
     pub source_preserved: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<String>,
 }
 #[derive(Serialize)]
 pub struct BackupInspection {
@@ -77,6 +79,8 @@ pub struct RestoreReceipt {
     pub active_vault_changed: bool,
     pub rescue_copy: bool,
     pub source_preserved: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -109,10 +113,67 @@ impl Drop for CleanerGuard {
         self.0.state::<crate::cleaner::Cleaner>().leave();
     }
 }
-struct ScratchGuard(PathBuf);
+const CLEANUP_FAILED: &str = "临时备份资料未能完全清理；源保险库未修改。";
+
+// Only exclusive directory creation constructs this owner. Never adopt an existing
+// path: all recursive cleanup must remain scoped to this operation's own directory.
+struct ScratchGuard {
+    path: PathBuf,
+    armed: bool,
+}
+impl ScratchGuard {
+    fn create(parent: &Path, stem: &str) -> Result<Self, String> {
+        Ok(Self {
+            path: new_private_dir(parent, stem)?,
+            armed: true,
+        })
+    }
+    fn cleanup(&mut self) -> Result<(), String> {
+        if !self.armed {
+            return Ok(());
+        }
+        private::parents(self.path.parent().ok_or(CLEANUP_FAILED)?)
+            .map_err(|_| CLEANUP_FAILED.to_string())?;
+        match fs::symlink_metadata(&self.path) {
+            Err(failure) if failure.kind() == io::ErrorKind::NotFound => {}
+            Ok(metadata) if metadata.is_dir() && !crate::cleaner::linked(&metadata) => {
+                private::safe(&self.path).map_err(|_| CLEANUP_FAILED.to_string())?;
+                fs::remove_dir_all(&self.path).map_err(|_| CLEANUP_FAILED.to_string())?;
+            }
+            _ => return Err(CLEANUP_FAILED.into()),
+        }
+        self.armed = false;
+        Ok(())
+    }
+    fn cleanup_diagnostic(&mut self, diagnostics: &mut Vec<String>) {
+        if self.cleanup().is_err()
+            && !diagnostics
+                .iter()
+                .any(|code| code == "staging_cleanup_failed")
+        {
+            diagnostics.push("staging_cleanup_failed".into());
+        }
+    }
+    fn cleanup_error(&mut self, failure: String) -> String {
+        match self.cleanup() {
+            Ok(()) => failure,
+            Err(cleanup) => format!("{failure} {cleanup}"),
+        }
+    }
+}
+impl std::ops::Deref for ScratchGuard {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
 impl Drop for ScratchGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        if self.cleanup().is_err() {
+            // A destructor cannot amend a returned receipt or unwind error.
+            // Keep the fallback diagnostic fixed and free of paths or file data.
+            eprintln!("{CLEANUP_FAILED}");
+        }
     }
 }
 fn bounded_path(raw: &str) -> Result<PathBuf, String> {
@@ -917,9 +978,9 @@ fn stage_archive(
     parent: &Path,
     password: &[u8],
     rescue_mode: bool,
-) -> Result<(PathBuf, Manifest, bool), String> {
+) -> Result<(ScratchGuard, Manifest, bool), String> {
     checked_file(path)?;
-    let stage = new_private_dir(parent, "verify")?;
+    let mut stage = ScratchGuard::create(parent, "verify")?;
     let result = (|| {
         let mut reader = open_envelope(fs::File::open(path).map_err(|_| error())?, password)?;
         let mut archive = tar::Archive::new(&mut reader);
@@ -964,7 +1025,7 @@ fn stage_archive(
                 .ancestors()
                 .take_while(|p| *p != stage.parent().unwrap())
             {
-                if parent != stage {
+                if parent != &*stage {
                     create_private_dir(parent)?;
                 }
             }
@@ -1014,7 +1075,7 @@ fn stage_archive(
     })();
     match result {
         Ok((manifest, recovery)) => Ok((stage, manifest, recovery)),
-        Err(error) => Err(error),
+        Err(failure) => Err(stage.cleanup_error(failure)),
     }
 }
 
@@ -1146,7 +1207,7 @@ pub async fn identities_backup_export(
             .app_data_dir()
             .map_err(|_| "产品资料目录无法定位。")?
             .join("backup-staging");
-        let (files, manifest, _scratch) = if rescue_mode {
+        let (files, manifest, mut scratch) = if rescue_mode {
             let (files, mut diagnostics) = rescue_files(&vault, true)?;
             if files.is_empty() {
                 return Err("没有可读的身份保险库证据，无法创建救援副本。".into());
@@ -1167,39 +1228,59 @@ pub async fn identities_backup_export(
             )
         } else {
             let catalog = source_catalog(&vault, true)?;
-            let stage = new_private_dir(&parent, "snapshot")?;
-            let scratch = ScratchGuard(stage.clone());
-            let snapshot = stage.join("identities.sqlite");
-            backup_snapshot(&vault.join("identities.sqlite"), &snapshot)?;
-            let files = collect_files(&vault, &catalog, &snapshot)?;
-            let manifest = make_manifest(&catalog, &files)?;
+            let mut scratch = ScratchGuard::create(&parent, "snapshot")?;
+            let snapshot_result = (|| {
+                let snapshot = scratch.join("identities.sqlite");
+                backup_snapshot(&vault.join("identities.sqlite"), &snapshot)?;
+                let files = collect_files(&vault, &catalog, &snapshot)?;
+                let manifest = make_manifest(&catalog, &files)?;
+                Ok((files, manifest))
+            })();
+            let (files, manifest) =
+                snapshot_result.map_err(|failure| scratch.cleanup_error(failure))?;
             (files, manifest, Some(scratch))
         };
-        let output = private::create(&path)?;
-        let sealed = write_envelope(output, password.as_slice())?;
-        let sealed = write_tar(sealed, &manifest, &files)?;
-        let output = sealed.finish().map_err(|_| error())?;
-        output.sync_all().map_err(|_| error())?;
-        drop(output);
-        let stage_parent = app
-            .path()
-            .app_data_dir()
-            .map_err(|_| "产品资料目录无法定位。")?
-            .join("backup-staging");
-        let (verified_stage, verified_manifest, _) =
-            stage_archive(&path, &stage_parent, password.as_slice(), rescue_mode)?;
-        let _ = fs::remove_dir_all(verified_stage);
-        let length = fs::metadata(&path).map_err(|_| error())?.len();
-        Ok(BackupReceipt {
-            path: path.to_string_lossy().into_owned(),
-            saved_identities: verified_manifest.saved_identities,
-            archives: verified_manifest.archives,
-            bytes: length,
-            encrypted: true,
-            verified: !rescue_mode,
-            rescue_copy: rescue_mode,
-            source_preserved: true,
-        })
+        let result = (|| {
+            let output = private::create(&path)?;
+            let sealed = write_envelope(output, password.as_slice())?;
+            let sealed = write_tar(sealed, &manifest, &files)?;
+            let output = sealed.finish().map_err(|_| error())?;
+            output.sync_all().map_err(|_| error())?;
+            drop(output);
+            let stage_parent = app
+                .path()
+                .app_data_dir()
+                .map_err(|_| "产品资料目录无法定位。")?
+                .join("backup-staging");
+            let (mut verified_stage, verified_manifest, _) =
+                stage_archive(&path, &stage_parent, password.as_slice(), rescue_mode)?;
+            let mut diagnostics = Vec::new();
+            verified_stage.cleanup_diagnostic(&mut diagnostics);
+            let length = fs::metadata(&path).map_err(|_| error())?.len();
+            Ok(BackupReceipt {
+                path: path.to_string_lossy().into_owned(),
+                saved_identities: verified_manifest.saved_identities,
+                archives: verified_manifest.archives,
+                bytes: length,
+                encrypted: true,
+                verified: !rescue_mode,
+                rescue_copy: rescue_mode,
+                source_preserved: true,
+                diagnostics,
+            })
+        })();
+        match result {
+            Ok(mut receipt) => {
+                if let Some(scratch) = &mut scratch {
+                    scratch.cleanup_diagnostic(&mut receipt.diagnostics);
+                }
+                Ok(receipt)
+            }
+            Err(failure) => Err(match &mut scratch {
+                Some(scratch) => scratch.cleanup_error(failure),
+                None => failure,
+            }),
+        }
     })
     .await
     .map_err(|_| "加密备份任务中断；源保险库未修改。".to_string())?
@@ -1219,13 +1300,13 @@ pub async fn identities_backup_inspect(
         .path()
         .app_data_dir()
         .map_err(|_| "产品资料目录无法定位。")?;
-    let (stage, manifest, recovery_pending) = stage_archive(
+    let (mut stage, mut manifest, recovery_pending) = stage_archive(
         &path,
         &root.join("backup-staging"),
         password.as_slice(),
         true,
     )?;
-    let _ = fs::remove_dir_all(stage);
+    stage.cleanup_diagnostic(&mut manifest.diagnostics);
     Ok(BackupInspection {
         saved_identities: manifest.saved_identities,
         archives: manifest.archives,
@@ -1251,101 +1332,108 @@ pub async fn identities_backup_restore_new(
         .path()
         .app_data_dir()
         .map_err(|_| "产品资料目录无法定位。")?;
-    let (stage, manifest, _) = stage_archive(
+    let (mut stage, manifest, _) = stage_archive(
         &path,
         &root.join("backup-staging"),
         password.as_slice(),
         true,
     )?;
-    let target_parent = root.join("restored-vaults");
-    let destination = new_private_dir(&target_parent, "verified-copy")?;
-    if manifest.mode == "rescue" {
-        let evidence_root = destination.join("rescue-evidence");
-        private::directory(&evidence_root)?;
-        for file in &manifest.files {
-            let relative = Path::new(&file.path);
-            let target = evidence_root.join(relative);
-            for parent in target
-                .parent()
-                .ok_or_else(error)?
-                .ancestors()
-                .take_while(|parent| *parent != evidence_root.parent().unwrap())
-            {
-                if parent != evidence_root {
-                    private::directory(parent)?;
+    let result = (|| {
+        let target_parent = root.join("restored-vaults");
+        let destination = new_private_dir(&target_parent, "verified-copy")?;
+        if manifest.mode == "rescue" {
+            let evidence_root = destination.join("rescue-evidence");
+            private::directory(&evidence_root)?;
+            for file in &manifest.files {
+                let relative = Path::new(&file.path);
+                let target = evidence_root.join(relative);
+                for parent in target
+                    .parent()
+                    .ok_or_else(error)?
+                    .ancestors()
+                    .take_while(|parent| *parent != evidence_root.parent().unwrap())
+                {
+                    if parent != evidence_root {
+                        private::directory(parent)?;
+                    }
                 }
+                copy_private(&stage.join(relative), &target)?;
             }
-            copy_private(&stage.join(relative), &target)?;
+            let mut diagnostics = Vec::new();
+            stage.cleanup_diagnostic(&mut diagnostics);
+            return Ok(RestoreReceipt {
+                path: evidence_root.to_string_lossy().into_owned(),
+                saved_identities: manifest.saved_identities,
+                archives: manifest.archives,
+                verified: false,
+                active_vault_changed: false,
+                rescue_copy: true,
+                source_preserved: true,
+                diagnostics,
+            });
         }
-        let _ = fs::remove_dir_all(stage);
-        return Ok(RestoreReceipt {
-            path: evidence_root.to_string_lossy().into_owned(),
+        let copy_vault = destination.join("identity-vault");
+        private::directory(&copy_vault)?;
+        for name in ["identities.sqlite", "key.bin"] {
+            copy_private(
+                &stage.join("identity-vault").join(name),
+                &copy_vault.join(name),
+            )?;
+        }
+        for file in &manifest.files {
+            let rel = Path::new(&file.path);
+            if let Some(name) = rel
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| name.ends_with(".baga"))
+            {
+                copy_private(&stage.join(rel), &copy_vault.join(name))?;
+            }
+        }
+        let (catalog, _) = verify_staged(&stage, None)?;
+        if catalog.identities != manifest.saved_identities
+            || catalog.archives.len() as u64 != manifest.archives
+        {
+            return Err(error());
+        }
+        let copied_catalog = source_catalog(&copy_vault, false)?;
+        if copied_catalog.identities != manifest.saved_identities
+            || copied_catalog.archives.len() as u64 != manifest.archives
+        {
+            return Err("新恢复副本校验失败；原文件与备份均保留。".into());
+        }
+        let expected_hashes: std::collections::HashMap<_, _> = manifest
+            .files
+            .iter()
+            .map(|f| (f.path.as_str(), (f.bytes, f.sha256.as_str())))
+            .collect();
+        for name in std::iter::once("identities.sqlite".to_string())
+            .chain(std::iter::once("key.bin".to_string()))
+            .chain(copied_catalog.archives.iter().cloned())
+        {
+            let relative = format!("identity-vault/{name}");
+            let (bytes, hash) = digest(&copy_vault.join(&name))?;
+            if expected_hashes
+                .get(relative.as_str())
+                .is_none_or(|expected| expected.0 != bytes || expected.1 != hash)
+            {
+                return Err("新恢复副本的哈希校验失败；原文件与备份均保留。".into());
+            }
+        }
+        let mut diagnostics = Vec::new();
+        stage.cleanup_diagnostic(&mut diagnostics);
+        Ok(RestoreReceipt {
+            path: destination.to_string_lossy().into_owned(),
             saved_identities: manifest.saved_identities,
             archives: manifest.archives,
-            verified: false,
+            verified: true,
             active_vault_changed: false,
-            rescue_copy: true,
+            rescue_copy: false,
             source_preserved: true,
-        });
-    }
-    let copy_vault = destination.join("identity-vault");
-    private::directory(&copy_vault)?;
-    for name in ["identities.sqlite", "key.bin"] {
-        copy_private(
-            &stage.join("identity-vault").join(name),
-            &copy_vault.join(name),
-        )?;
-    }
-    for file in &manifest.files {
-        let rel = Path::new(&file.path);
-        if let Some(name) = rel
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| name.ends_with(".baga"))
-        {
-            copy_private(&stage.join(rel), &copy_vault.join(name))?;
-        }
-    }
-    let (catalog, _) = verify_staged(&stage, None)?;
-    if catalog.identities != manifest.saved_identities
-        || catalog.archives.len() as u64 != manifest.archives
-    {
-        return Err(error());
-    }
-    let copied_catalog = source_catalog(&copy_vault, false)?;
-    if copied_catalog.identities != manifest.saved_identities
-        || copied_catalog.archives.len() as u64 != manifest.archives
-    {
-        return Err("新恢复副本校验失败；原文件与备份均保留。".into());
-    }
-    let expected_hashes: std::collections::HashMap<_, _> = manifest
-        .files
-        .iter()
-        .map(|f| (f.path.as_str(), (f.bytes, f.sha256.as_str())))
-        .collect();
-    for name in std::iter::once("identities.sqlite".to_string())
-        .chain(std::iter::once("key.bin".to_string()))
-        .chain(copied_catalog.archives.iter().cloned())
-    {
-        let relative = format!("identity-vault/{name}");
-        let (bytes, hash) = digest(&copy_vault.join(&name))?;
-        if expected_hashes
-            .get(relative.as_str())
-            .is_none_or(|expected| expected.0 != bytes || expected.1 != hash)
-        {
-            return Err("新恢复副本的哈希校验失败；原文件与备份均保留。".into());
-        }
-    }
-    let _ = fs::remove_dir_all(stage);
-    Ok(RestoreReceipt {
-        path: destination.to_string_lossy().into_owned(),
-        saved_identities: manifest.saved_identities,
-        archives: manifest.archives,
-        verified: true,
-        active_vault_changed: false,
-        rescue_copy: false,
-        source_preserved: true,
-    })
+            diagnostics,
+        })
+    })();
+    result.map_err(|failure| stage.cleanup_error(failure))
 }
 fn copy_private(source: &Path, target: &Path) -> Result<(), String> {
     private::safe(source)?;

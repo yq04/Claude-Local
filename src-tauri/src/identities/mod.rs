@@ -1,8 +1,9 @@
 // [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务门与显式身份写入代次、Tauri 进度通道。
-// [OUTPUT]: 身份/网页摘要与管理命令、跳过活动session扫描的原生调度摘要入口及唯一进程级唤醒owner。
+// [OUTPUT]: 有界归档加载、身份/网页摘要与管理命令、跳过活动session扫描的原生调度摘要入口及唯一进程级唤醒owner。
 // [POS]: GUI 身份管理的原生入口；在线子模块仅允许固定额度端点和白名单回执，不提供凭据读取或任意文件/网络接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 mod archive;
+mod archive_limits;
 pub mod backup;
 pub(crate) mod browser_link;
 #[cfg(test)]
