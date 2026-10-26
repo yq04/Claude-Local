@@ -1,220 +1,204 @@
 <!--
-[INPUT]: Verified 0.3.1 installed baseline, owner-authorized Astra source implementation, scoped synthetic verification, and prior release receipts.
-[OUTPUT]: Context-free task/status/next-step/pitfalls guide with exact delivery evidence for a brand-new session.
-[POS]: Repository root handoff; machine paths, PIDs, credentials and private probes stay in ignored .local/.
-[PROTOCOL]: Archive this file and verify SHA256 before rewriting. Documentation-only updates never rebuild or move product tags.
+[INPUT]: Verified v0.1.0 private prerelease, matching local NSIS payload, passing Windows CI, owner requests and retained private evidence.
+[OUTPUT]: Context-free project/task status, completed work, remaining gates, next steps and non-negotiable pitfalls.
+[POS]: Repository-root handoff; credentials, account identifiers, machine paths and process receipts remain in ignored .local/.
+[PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only changes never rebuild binaries, replace released assets or move product tags.
 -->
-# Claude-Local 会话交接（v0.3.1）
+# Claude-Local 新会话交接（0.1.0）
 
-## 2026-10-26 最新交付：0.1.0 已打包、上传并与本机对齐
+更新：2026-10-26，America/New_York。本文是本会话结束时的统一状态，取代旧交接中相互叠加的历史描述。新会话先读本文、根 `AGENTS.md` / `CLAUDE.md`，改模块前再读对应目录 `CLAUDE.md` 和源码头部。
 
-用户全权授权补齐打包上传，现已完成。`v0.1.0` 固定源码 `ff6bc8128de0732ca893afbdb76b1d7156f76a8a`，[GitHub 预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.1.0) 已发布到当前私有仓库（非草稿、prerelease），仅附 `Claude-Local_0.1.0_x64-setup.exe`。140,504,677 字节，SHA256 `37bfd3cbe1653dfaff9412fb4e2324304db44841c606d5fae480268d11bba1ec`，远端大小和digest一致。仓库可见性、旧标签/Release和43份文档待确认清理均未改变。
-
-最终CI [40270529041](https://github.com/yq04/Claude-Local/actions/runs/40270529041) 全部通过；其中发现的 Windows bsdtar 3.8.9 空属主警告措辞兼容已精确修复，未放宽未知警告、非零退出或归档认证/路径/大小边界。最终包已重新封入新helper，并通过109个解包文件hash/路径及13原始隐私探针（0发现）。中性构建custom-protocol、NSIS真实模板三语编译和保留数据守卫验证完成，未执行安装器或用户机系统修改测试。
-
-本机已采用最终安装包审计后的102项应用payload进行逐项核对，仅2项变更（host与quota_archive.py）先备份/hash后更新并重新打开。宿主与setup内NSS宿主完全一致，SHA256 `d509366aa0080b38da28fcad78774dc1cc55c56cdc0f19cb8436d8bb434aac4e`；原始UNK宿主为 `b0e04d5fdba5f9f685256b644fc18a582eab1c85a4dabb1ea15799500d59daa8`，仅Tauri格式标记3字节转换已审计。NSIS插件/卸载器不参与文件式更新，未执行；CLI进程及创建时间保持，missingClaudeCount=0，未终止浏览器、清理账号或进行真实唤醒请求。
-
-具体公开回执见 [0.1.0交付核验](docs/RELEASE_VERIFICATION_0.1.0.md)。私有完整任务、CI日志、备份/事务计划、最终receipt在 `.local/tasks/20261026-release-0.1.0/`，最终产物目录 `.local/artifacts/20261026T045011Z-8d9bc21614c648988167f04d686fcfe7/`；这些不得入Git。先前预修复安装器10959...保留但未上传，不能误发。后续文档提交不移动v0.1.0产品tag；下文“未打包/未上传”均属此前阶段历史。
-
-遗留仅为真实NSIS装卸/降级、真实账号权限验收及独立的公开分发许可/历史整理事项；不应因为已在私有仓库上传就宣称这些已完成。无新增更新源、自动公开发布、签名密钥或上游同步。
-
-## 最新本机状态：连接恢复与唤醒反馈修复已安装（0.1.0 候选）
-
-用户随后报告：绑定浏览器登录后仍显示网页授权提醒、统一重试没有解释、手动唤醒无反馈。核查实机仍运行早前 `0.3.1`，所以本轮完成源码修复、定向验证、custom-protocol release 构建，并已成套更新本机至 **0.1.0 候选版**。旧标签/Release和仓库私有可见性保持；本轮未打包NSIS或发布。
-
-根因及修正：CLI/messages唤醒失败不再写入网页查询连接修复队列；浏览器补充查询的具体失败不再被吞掉，保留独立白名单状态与原OAuth事实；手动scheduler门禁返回具体原因和最大重试时间，界面展示等待并禁用受阻按钮；显式恢复只释放已确认授权失败的账号退避，保留429、共用错峰和未知POST保护。网页登录只恢复网页会话，不能更新归档CLI凭据，不能以网页额度成功宣称唤醒授权恢复。用户说明见 [连接恢复](docs/CONNECTION_RECOVERY.md)。
-
-验证：Rust online 21、scheduler 15、browser receiver 3、browser bridge 6（共45）通过；Bun相关模型/字典29项、真实组件GUI `--wakeup-only` 11项通过；真实MV3合成集成和桥接脚本通过。前端production build与release宿主构建通过；纯JSON额度核心冒烟通过。所有请求验证使用合成数据，没有触发真实账号重试/唤醒、读取Cookie或刷新共享OAuth。
-
-安装回执：22个固定公共产品文件核对，11个变更文件备份并替换，宿主最后发布并重新打开；新host SHA256 `ca5dca85c6026ea31ed2506bca19df21e732da7f1180eac9563f9015d9c3c192`。安装后22项hash一致，`missingClaudeCount=0`，原CLI进程及创建时间保持。私有备份/事务计划/回执在忽略的 `.local/tasks/20261025-auth-repair/` 和对应 `.local/deploy-backups/auth-repair-*`，不纳入Git。原开关按已保存状态迁移，本轮没有主动启用或发送网络验收请求。
-
-遗留：真实账号的具体网页/CLI授权情况须由用户按新反馈处理；本轮不能证明服务端已接受真实唤醒。已运行浏览器资料保留，未终止浏览器/Claude Code。公开清理43份文档的确认仍未收到，本轮没有删除这些文件、改历史或改仓库可见性。下文“未安装/未部署”属于之前阶段历史，以本段为最新交付状态。
-
-## 2026-10-25 公开准备：源码版本重置为 0.1.0 候选
-
-用户要求比较 CCBaga 并准备公开首版，已核对本地/远端不存在 `v0.1.0` 标签；源码产品版本元数据同步为 `0.1.0`，尚未打 tag、构建安装包、更新本机安装、推送或改变仓库可见性。已有 `v0.3.0` / `v0.3.1` 标签与 Release 保持原样，旧 0.3.x 安装到新编号属于版本倒退，须在隔离 Windows 环境验收保留资料升级。应用 ID、用户资料目录及 BAGAID01/`.baga`/SQLite3/HMAC/浏览器种子不变。
-
-当前功能仍基于 `9b89502` 的 Astra 优化。面向读者的入口见 [公开准备](docs/PUBLIC_PREPARATION.md)、[CCBaga 对比](docs/CCBAGA_COMPARISON.md) 和 [0.1.0 候选说明](docs/RELEASE_NOTES_0.1.0.md)。Cromma/Pika 具体授权与实际 Chromium notices 尚需核实；源码可读或编译成二进制都不能替代分发许可依据。
-
-内部资料已复制归档并核对 SHA256，完整 Git bundle 备份已验证；另准备不含旧 HANDOFF/内部计划/旧私测说明的过滤源码副本。所有原件保留，43 份历史文档的实际移除须等用户确认；不改写历史、不强推、不删除旧标签或发行资产。私有清单和备份位于忽略的 `.local/tasks/20261025-public-preparation/` 及对应归档目录。旧未跟踪规划/agent临时资料加入 `.gitignore`，文件本身未删除。
-
-后续先解决公开分发依据与历史公开面，再选择原仓审查整理或干净快照建立公开仓。以下版本/安装回执为此前内部交付历史，不能覆盖本段最新源码状态。
-
-## 2026-10-25 后续源码状态：Astra 优化已实施，尚未部署
-
-用户随后要求更新 Agent Reach、核查续杯差异并执行 [Astra 方案](docs/plans/2026-10-25-functional-audit/04-ASTRA-OPTIMIZATION-PLAN.md)。Agent Reach 已实际升级至 1.6.0，保留原配置；这是开发工具升级，不是产品更新。
-
-**当前源码已完成第一至第五批优化，并通过定向验证。** 主要变化：严格确认新 5h 窗口并直接返回新 reset；有限匿名自动/手动审计及阶段诊断；应用进程级唯一原生调度器替代身份页 timer；私有配置迁移、共享尝试预算、逐账号暂停及一次受控授权恢复；未知结果只由合格的新鲜服务端被动锚点解除；浏览器固定指标/报告版本与未知三态；实际 WebRTC 异常/超时返回未知；Effort 上下文与文件游标同事务保存，旧游标仅在追加时进行紧邻尾部 64KiB 有界恢复。保持 Python 单写额度账本、账号冻结/提交复核、身份格式和既有用户数据兼容。
-
-验证回执：Python 在线 35 项、Bun 定向 40 项、前端 production build、Rust online 14 / audit 1 / scheduler 14 / browser 18，以及 GUI wakeup 7 / quota-reset 8 均通过。Usage 首轮 27 项通过、1 项新增断言失败，按既有未知档位聚合契约修正后该项单独重跑通过；不把两轮混写成一次 28/28。只验证合成数据与隔离环境，未执行真实账号请求或系统修改。详见 [执行记录](docs/plans/2026-10-25-functional-audit/05-EXECUTION-RESULTS.md) 与 [源码候选](docs/plans/2026-10-25-functional-audit/06-SOURCE-CANDIDATE.json)。
-
-**安装和发布边界：** 版本元数据仍为 0.3.1；本次未构建 release 宿主、热更新已安装程序、重打 NSIS、推送或发布。下文的本机 exe 哈希、`5d78c00` 和 v0.3.1 安装器是此前交付基线，不代表新优化已部署。以后需要本机更新时，再按现有备份/隐私审计流程执行；不中断 `claude.exe`。新增字段要求宿主/前端/helper成套更新，不能混装新旧文件。
-
-已知取舍：未证实独立出口的账号统一采用每次尝试一次性抽样的 6–13 分钟错峰；系统睡眠/退出及真实账号验收仍待隔离验证，授权失败不能靠程序自动续凭据解决。可选通知与成本估算未增加。当前源码以本分支最新 Git 提交及上述执行回执为准。
-
-以下保留此前 v0.3.1 实机交付历史。
-
-更新日期：2026-10-25。本文件面向完全没有本会话上下文的新会话。先读本文、根目录 `AGENTS.md`、`CLAUDE.md`，修改具体模块前再读相应目录的 `CLAUDE.md` 和源码头部。
-
-**当前事实：本会话在完成 `0.3.1` 界面排版美化与 GitHub Release 发布后，继续完成了第 7 项核心演进——「5h 额度窗口到期自动续杯 / 轻指令唤醒（含防风控阶梯退避、跨账号错峰、自定义生效时段与一键持久化开关）」。最新代码已通过全量自动化测试（Python 33 项、Bun 112 项、Rust Online 19 项、Playwright 额度重置与在线唤醒 18 项），无感热更新至本机 `D:\1_app\Claude-Local\claude-local.exe`（全程未中断任何正在运行的 `claude.exe`），并已按用户要求提交至本地 Git 仓库（暂不重新打包 NSIS 安装器或上传 GitHub Release）。当前没有任何技术阻塞。**
-
----
+**当前结论：0.1.0 已完成源码修复、本机更新、Windows NSIS 打包、审计和 GitHub 上传。仓库仍私有，Release 是非草稿预发布。当前没有未解决的构建、CI 或上传阻塞；真实账号权限、真实安装/降级验收，以及对外公开准备仍有明确未完成项。**
 
 ## 1. 我们在做什么任务
 
-Claude-Local 是本仓库独立维护的 Windows x64 桌面产品，React/TypeScript 提供界面，Tauri/Rust 管理本机能力，Python 采集并写入额度账本。主程序 `claude-local.exe`，标识 `ai.local.claude-local`；伴生浏览器为 Claude-Local Browser。数据按用户保存在 `%APPDATA%/ai.local.claude-local`，普通启动不启动浏览器，只有用户动作或 `--browser` 才启动。
+Claude-Local 是基于 CCBaga 的 MIT 项目代码演进、独立维护的 Windows 10/11 x64 桌面工具。React/TypeScript 负责界面，Tauri/Rust 管理原生事务与浏览器，Python 负责额度账本采集/写入。主程序 `claude-local.exe`，应用标识 `ai.local.claude-local`，伴生浏览器注册名 `Claude-Local-Browser`。资料按用户保存在 `%APPDATA%/ai.local.claude-local`；这不是操作系统账号沙箱。
 
-在 `0.3.0` 基线之上，2026-10-25 先后完成了 **前四阶段底层视觉/防封/HUD 升级** 与 **本会话（v0.3.1 及后续本地演进）针对用户实机截图与连续使用习惯的 7 项细节打磨与功能增强**：
+产品硬边界：默认被动额度同步，不能新增默认 OAuth usage 轮询、自动刷新共享授权或由额度助手写 `.claude.json`；Python 账本单写，跨进程锁、原子替换和新锚点优先保持。浏览器只由明确用户操作或 `--browser` 启动，普通启动不拉起。兼容 `BAGAID01`、`.baga`、身份库 `user_version=3`、账号 HMAC 和 legacy CCBaga/browser seed-domain，不能重生成身份/密钥/种子。迁移仅复制到新私有目标并验证，保留源资料。固定 iKuuu/Kookeey 推广链接获用户授权但仅复制，不提供收件人编辑器或自动外跳；不加 upstream、官方应用更新源或自动公开发行流程。
 
-### 1.1 本会话完成的 7 项核心任务
-1. **图 1 优化（「浏览环境」按钮整合进顶部栏）**：
-   - 修改 `src/browser.tsx`、`src/style.css`：移除原本带虚线分隔的独立底部按钮栏，将 **「打开浏览器并实测」**、**「正常退出浏览器」** 与 **「设为默认浏览器」** 直接整合进「启动内置浏览器与 CLI 授权联动」卡片的顶部标题行右侧，下方紧接说明文案与 CLI OAuth 授权提示，消除割裂感。
-2. **图 1 优化（「浏览器数据」字体样式统一 + 根治「无法枚举缓存。」）**：
-   - 前端排版（`src/browser.tsx`、`src/style.css`）：为清理范围说明（`.browser-scenario-desc`）、缓存异常提示（`.browser-cache-error`）与空状态（`.browser-cache-empty`）补充统一的 `11.5px–12px` 次级字号与 `var(--muted-foreground)` 颜色，消除原先未设类名导致的 `16px` 突兀黑字。
-   - 后端 Windows ACL 自愈（`src-tauri/src/identities/private.rs`、`src-tauri/src/browser/profile.rs`）：定位到 Chromium AppContainer 沙箱创建 `Default\Cache` 子目录时会写入沙箱专属 ACL，若父目录 `Default` 缺失继承标记会导致主程序调用 `fs::read_dir` 报 `PermissionDenied`（界面显示「无法枚举缓存。」）。新增 `ensure_owner_dacl(path)`（通过 `GetNamedSecurityInfoW` + `SetEntriesInAclW` + `SetNamedSecurityInfoW` 将当前登录用户的 `SUB_CONTAINERS_AND_OBJECTS_INHERIT` 全权限合并进既有 DACL，保留 Chromium AppContainer SID），并在 `write_json`、`read_cache_dir`（`size`）与 `reset` 中遇到 `PermissionDenied` 时自动修复权限并重试。
-3. **图 2 优化（「电脑环境」目标时区与目标语言单行紧凑布局）**：
-   - 修改 `src/system.tsx`、`src/style.css`：重构 `.system-inline-controls` 与 `.system-inline-field`，将 **小标题（`目标时区` / `目标语言`）+ `<Select>` 下拉框 + 两个操作按钮（`系统设置`、`应用时区` / `应用语言`）** 放置在单行水平布局内，大幅压缩纵向空间占用。
-4. **图 3 优化（「用量分析」模型家族胶囊与推理档位 Effort 分布）**：
-   - 针对用户主力使用 `Opus`、少量使用 `Fable` 与 `Sonnet` 且关注不同推理强度（Effort）消耗的真实场景，打通前后端 Effort 统计链路：
-     - Rust 后端（`src-tauri/src/identities/usage.rs`、`usage_tests.rs`）：新增 `UsageEffort { effort, totals }` 与 `UsageModel.efforts`；在 `clean_effort(obj, msg)` 中解析 Claude Code JSONL 会话中的 `perTurnEffort` / `effort` 字段；在 `usage.sqlite` 的 `events` 表新增 `effort TEXT NOT NULL DEFAULT ''` 列，并在检测到旧表升级时自动将 `files.guard` 置空以触发历史 JSONL 会话一次性重新扫描回填 `effort`（保留 `files.offset` 与已归属的 `account_key`）。
-     - 前端展示（`src/usage-model.ts`、`src/usage-statistics.tsx`、`src/usage-trend.tsx`、`src/usage-statistics.css`）：新增 `detectModelFamily` 识别 `Opus`、`Sonnet`、`Fable`、`Haiku` 家族胶囊标签；在每个模型条目下方渲染 **推理档位（Effort：`max`、`xhigh`、`high`、`medium`、`low`）请求次数、占比进度条与 Token 明细**；在「模型分布」卡片底部新增与左侧「用量趋势」底部对齐的效率汇总栏（**单次请求均值** + **缓存命中率**），彻底解决只有 1–2 个模型时卡片下半部分空旷的问题；「用量趋势」同步增加活跃小时/活跃天数统计，并在柱状图悬停 Tooltip 中显示请求数与输出 Token。
-5. **额度显示、账号隔离与会话接力功能增强（参考 `cc-switch`、`claude-swap`、`ccusage`）**：
-   - `src/identities.tsx`：在「额度详情」弹窗与「确认切换账号」弹窗中新增 **「账号隔离状态」**（直接展示当前账号独立浏览器配置目录绑定状态与专属代理状态），并在「确认切换账号」弹窗中并排展示 **「当前剩余额度 vs 目标账号额度」**，切换前即可直观对比。
-   - `src/task-handoff.tsx`：在「会话接力」面板顶部操作栏新增 **「清空草稿」** 按钮及状态反馈。
-6. **全应用文案去浮夸化、实用化**：
-   - `src/locales/zh.yaml`、`src/locales/en.yaml`、`scripts/test-local-shell.mjs`：遵循用户“不要用太过高级或啰嗦的话语，尽可能实用”的要求，将侧栏副标题从「本地身份座舱」改为「多账号与环境管理」，将主题/风格名称从「月之亮面 / 月之暗面 / 座舱蓝 / 座舱卡片 / 浅色羊皮纸」改为直观的「浅色 / 深色 / 经典蓝 / 简洁卡片」，并精简防封核验、悬浮监控窗与外观设置说明。
-7. **5h 额度到期自动续杯 / 轻指令唤醒（含深度防风控保护）**：
-   - **逆向与协议对齐**（`scripts/quota_archive.py`、`scripts/claude_quota_online.py`）：逆向本机官方 `claude.exe v2.1.310` 的 `probeQuotaStatus` 与 `GWe()`，在内存只读解包 `.baga` 时额外投影每个账号真实的 64 位 `.claude.json` `userID`（`device_id`），在 `run_wakeup` 中经该账号绑定的专属代理向 `https://api.anthropic.com/v1/messages?beta=true` 发送带完整 `X-Claude-Code-Session-Id`、`x-client-request-id`、`X-Stainless-*` 请求头、多态自然 CLI 短指令池（随机 `max_tokens: 16/24/32`）与 `metadata.user_id`（`device_id` + `account_uuid` + `session_id`）的极轻请求，并直接从响应头 `anthropic-ratelimit-unified-5h/7d-utilization` 与 `reset` 解析最新 5h 倒计时写入 `quota_ledger.json`（无需切号或中断正在运行的 `claude.exe`）。
-   - **原生 Tauri 门禁与命令**（`src-tauri/src/identities/online.rs`、`src-tauri/src/main.rs`）：新增 `identities_wakeup_quota_window`，复用双阶段提交锁与冻结 `expected_identity` 校验，接受 `source: "wakeup_messages"`。
-   - **四重防风控状态机与前端交互**（`src/identity-online-quota.ts`、`src/identities.tsx`、`src/identity-productivity.css`）：
-     1. **顶栏一键持久化开关（`自动续杯` + 时段胶囊）**：未启用时 100% 保持现有被动行为；启用后跨重启自动持久化，后台自动检测已重置账号并触发续杯。
-     2. **自定义生效时间段**：支持任意 `HH:mm – HH:mm`（含跨午夜时段如 `21:00 – 02:00`）及快捷预设（`08:00-23:00`、`09:00-19:00`、`全天`）。
-     3. **同一账号等待时间自动加长（阶梯退避）**：刚用过的账号重置后延迟 `3–10 分钟` 唤醒；若连续 1 轮（5h）未使用，下次自动拉长至 `25–60 分钟`；若连续 `>= 2` 轮（10h+）未使用，自动转入 **「按需待命」**，仅当主力号 5h 剩余低于阈值（默认 `40%`，可选 `30%/40%/50%`）时才联动唤醒。
-     4. **不同账号之间强制错峰间隔**：独立代理账号间至少间隔 `2.5–5.5 分钟`，共用系统代理账号间自动加倍至 `6–13 分钟`，杜绝并发脉冲。
-     5. **单账号 / 批量手动一键唤醒**：在「额度详情」弹窗底部与「在线查询」面板均提供 **「唤醒 5h 计时」** 按钮。
+本会话依次完成了这些用户请求：
 
-### 1.2 同日早些时候完成的四项底层架构基线（已包含在 `0.3.1` 中）
-- **实时额度悬浮监控窗（HUD）**：统一 `340×278`（展开）/ `340×152`（精简）并在 `monitor_window_resize` 中同步锁定 `min_size` / `max_size`，禁用双击最大化，采用 `token-monitor` 风格双列 5h/7d 看板。
-- **原生 10/20 项防封环境核验**：内置 `Ping0.cc`、`CheckCC.org`、`BrowserScan`、`IPHey` 核心判据（ASN/ISP 宽带 vs IDC 机房识别、硬件 WebGL、WebRTC 零泄漏、`webdriver` 隐身、语言列表纯净度），主界面满格展示 10 项（`5×2`），隔离浏览器实测页展示 20 项（`5×4`）。
-- **单层工作区光学毛玻璃渲染引擎**：仅在 `.workspace` 与 `.app-sidebar` 执行 1 次 `backdrop-filter: blur(...)`，内部卡片采用零模糊半透明抬升层，解耦 `--glass-card-border` 与 `--landing-line`，浅色/深色自适应柔光或暗幕遮罩。
-- **身份卡片 `5h`/`7d` 时间规范统一**：到期等待激活时在 5h 进度条右下角显示静态 `<时钟图标> 5h`，具体重置时间统一为 `MM-DD HH:mm`。
+1. 阅读原 HANDOFF，核查已启用的自动续杯有没有实际效果。
+2. 使用 `astra-plan` 调研现存功能问题，并参考 GitHub 项目形成优化方案；用户随后授权实施。
+3. 将 Agent Reach 从 1.5.0 升级到 1.6.0，保留原配置和密钥，刷新技能；这是开发工具升级，不是产品依赖。
+4. 比较 CCBaga，准备未来公开仓库；用户希望公开首版从 0.1.0 开始，已同步产品版本并准备精简副本/清理清单。
+5. 修复“网页登录后仍要求授权、统一重试没解释、手动唤醒无反应”的问题，并实际更新本机程序。
+6. 按用户“全权负责”的要求，补齐安装包审计、源码/标签推送和 GitHub Release 上传。
+7. 最后重写本文，使完全没有上下文的新会话能够接手。
 
----
+交接整理期间用户又补充：一个账号网页可进入，但 CLI 显示未登录，浏览器实测 18/20。只读诊断已确认当前默认 CLI 本地状态 `loggedIn=false`、`authMethod=none`；该账号的当前保存摘要缺少授权元数据。**这不证明加密归档一定为空，也不证明被封禁。** 此新增问题的下一步是账号持有人完成真正的 CLI 登录；没有自动发起授权或改账号。环境两项未知及展示误导另见第3节，尚未改源码。
 
-## 2. 已经完成了什么
+下一会话不应从“还没更新本机/还没打包上传”重新开始，也不应把“准备公开”当作已授权立即改变仓库可见性或删除历史。
 
-### 2.1 `0.3.1` 发布回执与后续本地「5h 自动续杯」热更新（2026-10-25）
-- **版本号**：`0.3.1`（已同步 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/CLAUDE.md`、`README.md`、`CLAUDE.md`、`docs/RELEASE_NOTES_0.3.1.md`）。
-- **源码分支与提交记录**：
-  - 当前本地分支：`feature/functional-reliability-20261023`
-  - 最新本地提交（5h 自动续杯与防风控）：Commit `5d78c00`（`feat(quota): add CLI-aligned 5h reset auto-wakeup with anti-ban progressive delay and custom time window`）。
-  - 已推送的 `v0.3.1` 发布提交与标签：Commit `f11276f` & `371dd1b`，Tag `v0.3.1`（已推送至 `origin/main` 与 `origin/v0.3.1`，并发布 GitHub Release `https://github.com/yq04/Claude-Local/releases/tag/v0.3.1`）。
-- **本机安装路径**：`D:\1_app\Claude-Local\claude-local.exe`
-  - 已无感热更新包含「5h 到期自动续杯」的最新 Release 构建，最新本机 `claude-local.exe` SHA256 为 `b0bf467886f886438a30034828385a276fa6440b3ab471ae58dc8222a87bd263`；
-  - `D:\1_app\Claude-Local\scripts\claude_quota_online.py`、`D:\1_app\Claude-Local\scripts\quota_archive.py` 与 `D:\1_app\Claude-Local\browser-ui\` 已同步更新；
-  - 全程未中断任何正在运行的 `claude.exe`（`MissingClaudeProcesses: 0`）。
-- **已发布的 `v0.3.1` 归档产物与安装器回执**：
-  - 产物目录：`.local/artifacts/20261025T151849Z-ee8ffc4e85e046aca90f24f45db8a95b`（状态记录于 `.local/last-local-update.json`）。
-  - 归档宿主 `claude-local.exe` SHA256：`06dfb613b8de7225b6ba1c5eb18f15a926eb94f4fb5bd750ff5011c72ecc8a11`。
-  - 安装器 `Claude-Local_0.3.1_x64-setup.exe` SHA256：`0bdcceed1bd2939a6efee50e4044656b31c3b9635947c50db6dd62ed15777f38`。
-  - 独立资源审计 109 项、私密探针 13 项，零发现（`findings: 0`）；`--quota-core` 管道冒烟测试 `pass`。
+## 2. 已完成了什么
 
-### 2.2 已执行的验证
-- **Python 在线查询与 1-Token 唤醒单测**：`python scripts/test-claude-quota-online.py` **33 项测试全部通过**（含 CLI 请求头/设备指纹对齐、响应头 `anthropic-ratelimit-unified-5h/7d-*` 解析、Haiku->Sonnet 模型回退与 `/api/oauth/usage` 兜底）。
-- **前端与双语字典单测**：`bun test` **21 个测试文件、112 项测试（9,852 断言）全部通过**（含跨午夜生效时段判定、同账号阶梯退避 `3-10m -> 25-60m -> 按需待命`、跨账号错峰与主力号 `<40%` 联动预热）；`bun run build`（`tsc --noEmit && vite build`）零错误通过。
-- **Rust 原生测试**：`cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol` **全量通过**（其中 `identities::online` 19 项、全库 223+ 项）。
-- **Playwright UI 全套回归**：
-  - `bun scripts/test-identities-ui.ts --quota-reset-only`（**8/8 通过**，含到期账号一键「唤醒 5h 计时」、顶栏「自动续杯」开关、生效时段切换与配置面板）。
-  - `bun scripts/test-identities-ui.ts --online-only`（**10/10 通过**）。
-  - `node scripts/test-local-shell.mjs .local/preview-shell`、`node --experimental-strip-types scripts/test-identities-ui.ts`、`node --experimental-strip-types scripts/test-handoff-ui.ts`、`node scripts/test-usage-statistics.mjs .local/preview-usage`（含 `--layout-only` 与 `--quick-only`）：全部通过。
+### 2.1 唯一有效的发布与本机回执
 
----
+- 开发分支：`feature/functional-reliability-20261023`。
+- 产品标签：`v0.1.0`，固定源码提交 `ff6bc8128de0732ca893afbdb76b1d7156f76a8a`。
+- 本次交接重写前，最新已推送的交付文档提交为 `5ffeb33`；之后纯文档提交使 HEAD 前进属于正常情况，不能移动产品标签。
+- `origin/main` 和远端工作分支已快进更新；本地 `main` 不一定同步，不要为了接手随便切分支、reset 或 restore。
+- [0.1.0 预发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.0)。Release 已发布，`draft=false`、`prerelease=true`；仓库 `yq04/Claude-Local` 仍是 private。
+- [下载 Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.0/Claude-Local_0.1.0_x64-setup.exe)，需要仓库访问权限。附件只有一个安装器，未上传私有探针、用户资料或工作站备份。
+- 文件 `Claude-Local_0.1.0_x64-setup.exe`，**140,504,677 字节**，SHA256：`37bfd3cbe1653dfaff9412fb4e2324304db44841c606d5fae480268d11bba1ec`。GitHub 资产大小和服务端 digest 已精确核对。
+- 最终中性构建启用 `custom-protocol`，只读解包审计 **109 文件、13 项原始外部隐私探针、0 发现**。NSIS 真实生成模板的英/简/繁三语编译和保留资料守卫验证通过。
+- 本机已与安装器内的 **102 项应用文件**核对一致；最终只需替换宿主和归档脚本两项，先备份/hash，再将宿主最后替换并重新打开。其余 7 项是 NSIS 自用插件/卸载器，不用于文件式应用更新。
+- 本机版本 **0.1.0**，宿主与安装器内 NSS 宿主字节一致，SHA256：`d509366aa0080b38da28fcad78774dc1cc55c56cdc0f19cb8436d8bb434aac4e`。
+- 中性构建原始 UNK 宿主 SHA256：`b0e04d5fdba5f9f685256b644fc18a582eab1c85a4dabb1ea15799500d59daa8`。Tauri 包格式标记有经审计的 **3 字节 UNK→NSS 转换**，不能把两个 hash 的正常差异当成代码不一致，也不要自行改造二进制。
+- 本机更新前后的 Claude Code 进程及创建时间保持，`missingClaudeCount=0`。未终止浏览器、未清理登录资料、未真实切号；包内宿主的 `--quota-core` 纯 JSON 离线冒烟通过。
 
-## 3. 当前卡在哪、遗留什么、工作树状态
+完整回执：[RELEASE_VERIFICATION_0.1.0.md](docs/RELEASE_VERIFICATION_0.1.0.md)。本机实际安装路径、PID、备份目录和完整机器日志只在私有回执中保存，不再写入本交接。
 
-**没有任何技术或测试阻塞。**
+### 2.2 Astra 优化已实施，不是待执行方案
 
-新会话需要注意以下当前状态与边界：
-1. **发布状态说明**：
-   - `v0.3.1`（含前 6 项界面与功能优化）已完成 NSIS 安装器打包并发布至 GitHub Release。
-   - 第 7 项 **「5h 额度到期自动续杯 / 轻指令唤醒」**（Commit `5d78c00`）已按用户“目前只考虑本地，暂时不打包和上传，注意做好项目版本的管理（git）”的指令，**完成了本机 `D:\1_app\Claude-Local` 热更新与本地 Git 提交，尚未重新打包 NSIS 安装器或推送到远端 GitHub**。若用户在下一会话要求打包上传（如 `0.3.2` 或更新发布包），再执行完整 NSIS 审计打包与推送流程。
-2. **工作树保留项（切勿删除）**：
-   - 工作树中用户原有的 `AGENTS.md` 修改以及未跟踪的 `--help/`、`.planning/`、`.rivet/`、`docs/superpowers/`、`docs/plans/2026-10-22-identity-quota.md`、`p6b-i18n.json`、`TOKEN_MONITOR_RESEARCH_AND_PLAN.md` 均属于故意保留的规划/规则文件，**切勿删除或运行 `git clean` / `git checkout -- .`**。
+方案在 [04-ASTRA-OPTIMIZATION-PLAN.md](docs/plans/2026-10-25-functional-audit/04-ASTRA-OPTIMIZATION-PLAN.md)，实际实施见 [05-EXECUTION-RESULTS.md](docs/plans/2026-10-25-functional-audit/05-EXECUTION-RESULTS.md)。04 中的 pending 是规划时历史；早期 06 源码候选 hash 也不是当前发行 hash。
 
----
+已完成：
 
-## 4. 下一步计划是什么与代码入口
+- **应用进程内唯一原生调度器**：移除身份页 React 自动唤醒 timer。切页或隐藏到托盘继续工作，真正退出应用后停止；不添加 Windows 服务或计划任务。前端只迁移配置、订阅快照和提交显式设置。
+- **严格成功语义**：只有冻结账号下已提交的新鲜未来 5h reset，且晚于目标过期 reset，才确认 `new_5h_confirmed`。直接使用返回的新 reset，避免 `setState` 后立即读旧 ref；普通 updated、cached、7d-only 不算新 5h 成功。
+- **失败和未知保护**：所有真实尝试纳入共享节奏；派发前持久化未知状态，崩溃后不立即重放 POST。只有同账号、独立 5h 观测时钟足够新且 reset 有效的服务端被动锚点可以解除未知；本地估算/旧观测不能解除。
+- **明确 opt-in 和持久化反馈**：旧 localStorage 白名单迁移到原生私有设置，原键保留；保存失败不假装启用。生效时段支持跨午夜，保留逐账号暂停、周额度门禁、运行中 CLI 保护和主力号预热阈值。
+- **退避取舍**：同账号保留 3–10 分钟、25–60 分钟、连续空转后按需待命；未证实独立出口的账号统一按共用路由 **6–13 分钟**错峰，每次尝试只抽样一次并保存。旧状态无法恢复原随机值时保守迁移，不能把“填了代理字符串”当作独立出口证明。
+- **有限匿名审计**：原生 `wakeup-audit.json` 记录触发类型、阶段、结果、时间、匿名槽及 reset；最多 200 项/30 天，白名单且读取前限长。审计失败与网络结果分开，不抹掉已确认成功；Python 仍是额度账本唯一写入者。
+- **浏览器核验真实性**：报告 schema=1、固定必需指标 ID，旧报告/缺项/未知不整体通过。ISP 未识别不推定住宅。真实入口调用的 WebRTC 采集器不使用 STUN，仅短时本地候选观察，异常/超时为未知；音频项只说明接口能力。
+- **Effort 增量一致性**：usage ledger 的 `files.effort/parser_version` 与 offset/guard 同事务保存。截断、改写、跨文件时重置；静止旧文件不全量重扫，旧游标追加时仅恢复紧邻 cursor 的尾部 64KiB，缺证据保持未知。
+- 已有用量分析、模型胶囊、HUD、Windows 浏览器缓存 DACL 继承自愈、单层工作区毛玻璃、系统修改恢复、加密全库备份/救援、手工会话交接和双语界面继续保留。
 
-1. **新会话启动检查**：
-   - 先只读查看 `git status --short`、`git log -n 5 --oneline` 和用户最新指令。
-2. **按用户后续指令行动**：
-   - **若用户在实机使用「自动续杯」后提出微调需求**（例如调整默认时间段、延迟区间或 UI 细节）：直接修改下述核心入口，运行单测与 `cargo build --release --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol` 后热更新至 `D:\1_app\Claude-Local`。
-   - **若用户要求将「自动续杯」正式打包并上传发布（如 `0.3.2`）**：同步递增版本号，运行 `.local/tools/complete-local-update-0.3.1.ps1`（或对应新版本脚本）完成 13 项隐私探针审计打包，再推送 Git 标签与上传 GitHub Release。
+### 2.3 用户截图中的连接/唤醒问题已修复并交付
 
-核心源码入口：
-- `scripts/claude_quota_online.py`、`scripts/quota_archive.py`、`src-tauri/src/identities/online.rs`、`src/identity-online-quota.ts`：5h 到期自动续杯 / 轻指令唤醒引擎（`/v1/messages?beta=true` CLI 指纹对齐、`anthropic-ratelimit-unified-5h/7d-*` 响应头解析、同账号阶梯退避、跨账号错峰与自定义时间段状态机）。
-- `src/identities.tsx`、`src/identity-productivity.css`、`src/identity-quota.ts`、`src/task-handoff.tsx`：身份管理顶栏「自动续杯」胶囊、在线查询弹窗内的自动续杯配置面板、额度详情一键「唤醒 5h 计时」、切换前额度对比与隔离状态展示、会话接力草稿清空。
-- `src-tauri/src/identities/usage.rs`、`src/usage-model.ts`、`src/usage-statistics.tsx`、`src/usage-trend.tsx`、`src/usage-statistics.css`：用量分析、SQLite `events.effort` 增量迁移与历史回填、模型家族胶囊及推理档位（Effort）分布。
-- `src-tauri/src/identities/private.rs`、`src-tauri/src/browser/profile.rs`、`src/browser.tsx`：隔离浏览器配置目录 Windows DACL 继承修复（`ensure_owner_dacl`）、缓存大小实时枚举与浏览环境紧凑顶栏。
-- `src/system.tsx`、`src/vps.tsx`、`src/style.css`：电脑环境单行内联控制条、网络环境 `2×2` 连通性诊断网格与单层工作区光学毛玻璃系统。
+用户曾报告：打开账号绑定浏览器完成网站登录后仍提示授权，统一重试无用，手动唤醒没有反应。调查确认当时实际运行的是旧 0.3.1，后续源码尚未安装；本轮已完成成套更新。
 
-常用针对性验证命令：
+根因与修正：
+
+1. **网页登录不是 CLI 授权。** 网站会话可用于网页额度读取，不能更新归档中的 Claude Code OAuth/messages 凭据。
+2. **队列污染。** 手动唤醒失败曾写入网页查询的 `connectionHistory`，网页查询成功后又被 CLI 错误推回“去网站登录”。现在两条结果链分开。
+3. **浏览器错误被吞。** 原生补充查询失败曾只返回原 OAuth 错误；现在 `browser_fallback_status` 保留受限的具体网页失败，OAuth 事实仍独立保存。只有有效 5h/7d 更新成功提交才清查询失败。
+4. **手动门禁反馈模糊。** `stage=scheduler` 配合受控 `reason/retry_at_ms` 展示具体阻断及最大等待时间；冷却/未知/授权受阻按钮不会假忙或无解释。
+5. **恢复仍被旧退避挡住。** “允许一次恢复尝试”仅释放已确认 auth_required 的账号授权退避；不清全局错峰、429 或未知 POST 保护，也不自动更新凭据。
+
+真实 MV3→worker→回环以及 native→实际 Python 单写账本的合成链已验证。**没有代用户重新登录，没有发送真实账号查询/唤醒来验收，所以不能宣称真实账号授权已恢复。** 新反馈需由账号持有人操作后确认。用户说明：[CONNECTION_RECOVERY.md](docs/CONNECTION_RECOVERY.md)。
+
+### 2.4 发布 CI 兼容问题也已修复
+
+Windows CI 使用 bsdtar/libarchive 3.8.9，成功转换（exit=0）时的空 uname/gname 警告从 `to UTF-8` 改成 `to current locale`，被旧严格白名单误拒绝。先用 test-only 诊断拿到实际工具版本/exit/有限 stderr，再精确兼容这两种措辞；真实属主、未知警告、非零退出、认证尾帧、路径和大小限制仍拒绝。
+
+最终 [CI 40270529041](https://github.com/yq04/Claude-Local/actions/runs/40270529041) 对 `ff6bc81` 全部成功：Bun 122 项、Rust 主测试 243 项及一项子进程检查，所有离线 Python/运行资源/迁移/Windows CLI 套件通过。此前连接修复的定向 Rust 45、Bun 29、GUI `--wakeup-only` 11 项及真实 MV3 合成检查也通过；不要把局部测试记录当成新的真实账号或安装验收。
+
+### 2.5 版本、CCBaga 对比与公开准备
+
+- 用户希望公开首版重新从 **0.1.0** 开始，四处产品版本已同步；现已发布此新标签。旧 `v0.3.0/v0.3.1` 保留，不因版本编号重置改变应用 ID、资料路径、归档/数据库格式或已有身份。
+- [CCBaga 对比](docs/CCBAGA_COMPARISON.md) 基于外部固定提交 `bdfb90c` / v0.2.49。Claude-Local 主要优势在额度/用量与 Windows 工作流；CCBaga 优势在多平台发行、单账号密码便携包。最值得后续借鉴的是 Windows→Windows 单身份 `.bagapack` 导入导出和安装排障体验；**尚未实现，不要写成现有功能**。不加 upstream、不自动同步、不套用对方更新源或发布链。
+- Agent Reach 已升级到 **1.6.0（uv 隔离安装）**，原配置保留。它不成为产品运行依赖，不因新会话开始而重新安装。
+- 已准备旧资料归档和精确清理清单，但**43 份历史文档的实际移除尚未获确认**。用户后续“全权完成打包上传”没有被扩大成删除历史或转公开授权。
+- 精简源码预览曾生成 322 个文件、排除 69 个内部资料/目录图文件，原件保留。**该副本产生于后续连接修复/归档修复之前，已不是当前发行源，也未获公开分发放行。**
+
+## 3. 当前卡在哪、遗留什么
+
+**没有构建、测试或上传阻塞。** 以下是明确未完成/未授权事项，不是悄悄跳过的技术失败：
+
+1. **当前新增的 CLI 未登录问题**：已执行官方本地只读 `claude auth status --json`，退出码1，白名单投影为 `loggedIn=false`、`authMethod=none`、`apiProvider=firstParty`；未输出邮箱/组织/凭据。当前绑定身份的摘要没有 CLI 授权元数据；文件存在性不代表内容有效，也没有检查真实凭据正文或加密归档。CLI 登录尚需本人执行，不能凭网页登录推定已恢复，也不能仅凭此判断封禁。已验证安装版本支持 `claude auth login --claudeai`；用户在正确账号的授权页完成登录、用 `claude auth status` 确认后，还应通过应用现有保存身份流程更新快照，避免默认CLI目录已更新、归档仍旧。禁止后台代登录、读Cookie或轮换共享授权。
+2. **18/20 环境结果是两项未知，不是登录检查**：截图未确认出口属性和 WebRTC 本地候选。分类器要求明确 `hosting=false` 才给非机房结果；ASN/运营商名称存在本身不够。RTC 当前无STUN、300ms，接口失败或未完成统一未知，不能从截图分清具体哪条路径。总体阶段把未知也归入 failed 并显示红叉，有误导空间；可考虑单列“检测未完成”和完善采集完成事件/期限，但必须先合成验证，不能把未知改绿、白名单真实ASN，或臆称已发现泄漏。它们与 CLI `Not logged in` 是独立问题。本轮只读诊断，未改浏览器源码、重新打包或发真实探测。
+3. **真实 Windows 运行验收**：没有在个人机器执行 NSIS 安装、卸载、0.3.x→0.1.0 降级、系统修改或睡眠/恢复实验。三语编译、解包及文件式更新不替代这些验收；只能在一次性 Windows 环境做。
+4. **对外公开许可依据**：Cromma UI 复制子集的适用授权未充分确认，15 个 Pika 图标的 Free/Paid/取得范围未逐个核实，完整 Chromium 二进制 notices/credits 仍需专门核对。顶层 MIT、压缩 JS、移除图标 export 名称或“对方仓库已公开”都不能替代实际依据；也不要把未核实直接写成已证明违法。见 [NOTICE](NOTICE.md)、[分发说明](docs/DISTRIBUTION.md)。
+5. **公开历史与清理审批**：仓库仍私有；删除当前文件不会删除历史 blob、其他分支/标签和 Release 附件。此前受控普通 Markdown 历史检查发现旧 HANDOFF 中有机器路径，不是完整秘密审计。需要单独选择“审查整理现有仓库”还是“保留私有开发档案，另建审核后公开快照”。不得擅自强推、改史、移标签或删 Release。
+6. **43 文件清单已发生时间漂移**：HANDOFF、版本说明和交付文档之后又有更新，旧清单/备份 hash 不能不复核就用于删除。即使以后获得具体确认，执行前也要重新核对范围与备份，保留当前必要交接。旧 Git Bundle 只覆盖创建时的历史，不包含后来全部修复/发布提交；改史前必须补齐最新备份。
+
+工作树本次重写前仅有用户原 `AGENTS.md` 未提交修改（固定授权推广链接政策等）。这是用户资料，不要还原、删除、顺带提交或用 stash 暂藏。先前的 `.planning/`、`.rivet/`、`--help/`、`docs/superpowers/`、早期 quota 计划与编码辅助资料已忽略/私下保留，并未被当垃圾清空。
+
+## 4. 下一步计划与代码入口
+
+### 新会话第一步
+
+只读执行 `git status --short`、`git log -n 5 --oneline`，核对用户新指令及本机/远端当前状态。产品 `v0.1.0` 已交付，不要因旧计划或文档提交在 tag 之后而重新打包。实际安装路径从私有 deployment receipt 获取，不能硬编码个人路径到 tracked 文件。
+
+### 按用户后续需求推进
+
+- **若用户仍反馈授权/唤醒问题**：先看 `browser_fallback_status`、`stage/reason/retry_at_ms` 和 native snapshot，确认是否新 0.1.0、是否绑定正确账号/组织、是否全局冷却/未知保护，再用合成场景复现。需要用户官方登录时说明是哪套授权，不无限引导网页登录。
+- **新增问题优先顺序**：先由持有人完成当前账号的 CLI 登录并确认本地状态，再更新应用身份快照；若登录后发送消息仍失败，依据新错误判断权限/网络，而不是把网页登录等同可用。环境18/20的未知展示与RTC采集可独立排期，先验证再改，不能以“账号可能有问题”为理由自动切号或清理。
+- **若继续公开准备**：先处理许可依据/替换方案和历史公开面，更新当前精简副本；对已备份文件的实际移除仍按具体清单确认。不把“全权负责发布”解释成“可以公开所有历史/覆盖已有文件/删除用户规划”。
+- **若补安装验收**：在一次性 Windows runner/虚拟机验证新装、取消/失败、保留资料升级和版本倒退，不在用户机运行 CI-only 系统测试。
+- **若做功能增强**：优先考虑单身份便携包与首次接入/排障体验。可选通知、成本估算、多平台正式支持尚未做，先按需求定范围，不一次重写整个 UI。
+- **若发布后续修复**：按新版本递增，成套宿主/前端/helper/扩展交付；新包重新审计。不得覆盖现有 v0.1.0 标签/资产，不给文档更新重建安装包。
+
+核心入口：
+
+- `src-tauri/src/identities/wakeup.rs` / `wakeup_tests.rs`：唯一原生调度、私有持久计划、手动/自动共享预算、未知对账和一次恢复。
+- `src-tauri/src/identities/online.rs` / `online_native_chain_tests.rs`：冻结目标、Python 探针/子进程、提交复核、批次、scheduler 受限回执和 browser fallback 编排。
+- `scripts/claude_quota_online.py`、`quota_archive.py`：实际请求、最小认证归档投影、额度提交与新版 tar 兼容；`quota_runtime.py` 为无账号能力探针。
+- `src/identities.tsx`、`identity-connections.tsx`、`identity-online-quota.ts`：网页查询队列与唤醒反馈分开、门禁倒计时、native 配置/快照桥、双语契约。
+- `browser-runtime/quota-bridge/{content,background}.js`、`src-tauri/src/browser/quota_existing.rs` / `quota_bridge.rs`：已有绑定网页资料、一次性票据/回环、受限失败和有效额度导入。
+- `src-tauri/src/identities/usage.rs` / `usage_tests.rs`：独立用量账本、增量游标/Effort、去重/归属/IANA 时区。
+- `src/browser-verification.ts`、`browser-webrtc.ts`、`src-tauri/src/browser/network.rs`：版本化指标、实际采集器与前后端未知语义。
+- `src-tauri/src/identities/private.rs`、`src-tauri/src/browser/profile.rs`：私有路径/ACL 和保留 AppContainer SID 的继承自愈。
+- `scripts/build-windows-share.ps1` / `audit-windows-package.py`、`src-tauri/windows/installer-hooks.nsh`：中性构建、只读包审计与保留资料的安装守卫。
+
+按改动选最小验证，不把下面全部当成每次固定大回归：
 
 ```powershell
-python scripts/test-claude-quota-online.py
-bun test
+bun test src/identity-connections.test.ts src/identity-online-quota.test.ts src/i18n.test.ts
+bun scripts/test-identities-ui.ts --wakeup-only
+python scripts/test-quota-archive.py
+cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol identities::online::
+cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol identities::wakeup::
 bun run build
-cargo test --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol
-bun scripts/test-identities-ui.ts --quota-reset-only
-bun scripts/test-identities-ui.ts --online-only
-node scripts/test-usage-statistics.mjs .local/preview-usage --layout-only
 ```
 
----
+UI/Vite 脚本必须串行；真实宿主 release 要 `--features custom-protocol`。已有绿色测试不因接手、改文档或换模型而重跑。CI 若需完整系统相关测试，只用隔离 hosted runner。
 
-## 5. 踩过的坑：绝对不要再踩
+## 5. 绝对不要再踩的坑
 
-### 5.1 本会话新踩过的 8 个关键深坑
-1. **`anthropic-ratelimit-unified-5h-reset` 响应头返回的是纯数字 Unix 秒字符串（如 `"1761426000"`），解析时必须先转为 `int` 再交给 `_reset_seconds`。**
-   - `scripts/claude_quota_online.py` 原有的 `_reset_seconds(raw)` 只接受 `int`/`float` 或 ISO-8601 日期字符串；若直接把 HTTP 响应头里的纯数字字符串传进去会被当作非法格式返回 `None`。`parse_ratelimit_headers` 中必须先判断 `raw_reset.strip().isdigit()` 并转为 `int(raw_reset.strip())`。
-2. **向 `/v1/messages?beta=true` 发送 1-Token 唤醒请求时，绝不能发送死板的 `"hi"` + `max_tokens: 1` 或缺失 `metadata.user_id`（风控/反蒸馏红线）。**
-   - 逆向本机官方 `claude.exe v2.1.310`（`probeQuotaStatus` 与 `GWe()`）证实：真实 CLI 请求必然携带 `X-Claude-Code-Session-Id: <uuid4>`、`x-client-request-id: <uuid4>`、`X-Stainless-*` 请求头以及 `metadata.user_id: JSON.stringify({device_id: <64-hex .claude.json userID>, account_uuid, session_id})`。必须从 `.baga` 归档中的 `.claude.json` 投影出每个账号真实的 `userID`，并使用多态自然短指令池与随机 `max_tokens`（`16/24/32`）。
-3. **身份页及在线查询弹窗（`onlinePanelOpen`）严禁使用 `role="combobox"` 的 `<Select>` 控件，且后台自动续杯定时器在合成测试环境（`'identityFixture' in window`）下默认静默。**
-   - `scripts/test-identity-batch.ts` 第 68 行有严格断言 `assert.equal(await page.getByRole('combobox').count(), 0)`，第 219 行通过 `page.clock.runFor(360001)` 验证无隐藏后台请求。因此生效时段选择器必须使用 `<input type="time">` + 预设胶囊按钮，且后台自动续杯 `useEffect` 在 `'identityFixture' in window && !window.__enableAutoWakeupTest` 时不自动发起后台网络请求。
-4. **本地估算到期（`local_estimate` 且 `expired5h === true`）的账号，`evaluateQuota` 返回的 `inferredReset5h` 与 `r5` 均为 `null`，唤醒状态机必须回退读取 `summary?.quota_5h_reset_at`。**
-   - 若只传 `q?.inferredReset5h ?? q?.r5 ?? null`，本地估算刚过期的账号在唤醒面板中会被误判为 `not_expired`（显示未知或计时中），导致状态标签与「唤醒 5h 计时」按钮不一致。
-5. **Windows 下隔离浏览器缓存报「无法枚举缓存。」（`PermissionDenied`）是 Chromium AppContainer 沙箱改写子目录 ACL 所致，必须保留 `ensure_owner_dacl` 继承权修复。**
-   - `private.rs` 的 `lock(path)` 默认创建的是 `NO_INHERITANCE` 的 DACL；当 Chromium 启动并创建 `profile\Default\Cache` 时，Chromium 会给 `Cache` 注入 AppContainer SID，导致如果父目录 `Default` 没有当前用户的 `SUB_CONTAINERS_AND_OBJECTS_INHERIT` 权限，主程序枚举缓存就会被系统拒绝。
-   - **铁律**：绝不能在 `Default` 或 `Cache` 上粗暴调用 `private::lock`（会清掉 Chromium 的 AppContainer SID 导致浏览器崩溃），必须使用 `private::ensure_owner_dacl`（将当前用户的继承权限**合并**进既有 DACL）。
-6. **`detectModelFamily` 对非特定家族（`other`）的模型必须返回 `label: null`，不要返回 `'Claude'`。**
-   - `src/usage-model.ts` 中若给未知 `claude-*` 测试模型返回 `'Claude'` 胶囊标签，既无信息增量，又会在窄窗口测试中挤占模型名空间；仅对明确的 `Opus`、`Sonnet`、`Fable`、`Haiku` 返回胶囊标签。
-7. **切勿同时并发启动多个带 Vite Server 的 Playwright 测试脚本（如 `test-identities-ui.ts` 与 `test-usage-statistics.mjs`）。**
-   - 多个 Vite 实例同时读写 `node_modules/.vite` 依赖缓存会触发 `Re-optimizing dependencies` 并导致页面在断言中途自动 reload 报错；Playwright 界面测试必须串行执行。
-8. **修改 `src/locales/zh.yaml` 中的主题/按钮显示名称时，必须同步检查 `scripts/test-local-shell.mjs` 等 Playwright 脚本中的 `getByRole(..., { name })` 定位器。**
-   - 例如将 `"月之暗面"` 的中文译文改为更实用的 `"深色"` 后，`scripts/test-local-shell.mjs` 第 105 行的 `getByRole('radio', { name: '深色', exact: true })` 必须同步更新。
+### 授权、额度与调度
 
-### 5.2 既有工程铁律（持续有效）
-9. **自定义壁纸毛玻璃切忌「双重 `backdrop-filter`」或「全透明 `.workspace` + 独立模糊 `.card`（百叶窗效应）」。**
-   - 只在 `.workspace` 和 `.app-sidebar` 上做 **1 次** 全局 `backdrop-filter: blur(var(--glass-blur))`；内部所有 `.card` 必须设置 `backdrop-filter: none !important`。
-10. **切勿把全局表格/分割线变量 `--landing-line` 改成高不透明度白色，也切勿在浅色模式下用纯黑遮罩压暗壁纸或给全局文字加 `text-shadow`。**
-11. **Cromma UI 组件库自带不透明 `--card` / `--input` / `--segment-thumb` 变量，开启壁纸时必须在 `html[data-has-wallpaper='true']` 下同步覆盖为半透明。**
-12. **Tauri v2 悬浮监控窗切换精简/展开高度时，必须在 `monitor_window_resize` 中依次更新 `set_min_size` -> `set_max_size` -> `set_size`，且宽度严格统一为 `340.0`。**
-13. **`Claude Code CLI` 报 `Auto mode is unavailable` / `powershell denied by auto mode` 是云端 ATIS 分类器熔断所致，需在 `settings.json` 中保持 `"defaultMode": "bypassPermissions"` 与 `"disableAutoMode": "disable"`。**
-14. **主界面环境验证扩展为 10 项（`5×2`）后，前后端与布局测试断言必须同步对齐 `10`。**
-15. **Tauri v2 在 Windows (WebView2) 下创建/操控子窗口的命令必须是 `pub async fn`，且必须在 `capabilities/main.json` 注册窗口名 `["main", "monitor"]`。**
-16. **`usage_statistics_read` 绝不能与 `identities_read` 共用同一个全局长锁（必须保持独立 `USAGE_LOCK`）。**
-17. **静态 `5h` 重置显示（`inferred === true`）绝不能使用 `<time>` 标签，且必须保持 `180×286` 卡片几何。**
-18. **双语 YAML 字典与源码 `t('...')` 调用受 `src/i18n.test.ts` 严格门禁保护（中英键集合与插槽必须 100% 一致，`en.yaml` 与 JSX 中严禁混入裸中文字符）。**
-19. **部分源码文件（如 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src/locales/*.yaml`、`src/system.tsx`）采用 CRLF 行尾，编辑时注意匹配。**
-20. **GitHub Release 保持干净，只上传单个 `Claude-Local_<ver>_x64-setup.exe` 安装包文件。**
-21. **不终止 `claude.exe`，不清理共享工作树，敏感探针不入对话或 Git；每次改写 `HANDOFF.md` 前先归档至 `.local/handoff-backups/` 并校验 SHA256。**
+- 网页 Cookie/session 与 CLI OAuth/messages 凭据独立；浏览器更新额度不证明 CLI 唤醒授权已恢复。
+- 唤醒失败不能重新塞入网页查询恢复队列；失败细节不能被吞成一条泛“重新授权”。保持 `browser_fallback_status` 与 OAuth 状态分开。
+- `updated`/cached/7d-only 不等于确认新 5h。`source` 目前仍是 **oauth/browser**；不要照旧文档捏造 `source=wakeup_messages`，唤醒效果看 `wakeup_effect` 和新 reset。
+- `await read()` / `setState(next)` 后立即读取旧 React ref 不是新数据，会破坏空转轮数。使用已提交结果/直接返回值，不加固定 sleep 或 `flushSync` 掩盖。
+- 不把 scheduler 交回页面 timer；不在每个 tick 重抽随机延迟；失败也计共享尝试预算。进程存在不代表用户实际用了额度。
+- 不清 429、全局冷却或未知 POST 来“让按钮生效”。一次恢复只清已证授权退避，未知结果不自动重发。跨崩溃不承诺网络 exactly-once。
+- 用户原开关状态要保存；不得为验收擅自启用、真实查询、唤醒、切号或结束 CLI。本次迁移最后可见开关为 false，只是当时状态，新会话需只读核对，不能永久假设。
+- HTTP header 的 reset 可能是 Unix 秒的数字字符串，先按数字解析；缺少新鲜独立 5h 证据不能借 7d/global observed 时间冒充。
 
----
+### 统计、浏览器和界面
 
-## 6. 需要历史细节时再读这些文件
+- Effort 上下文与游标同事务，失效/跨文件清空；64KiB 尾部没有声明就未知，不能读文件头跨空隙猜档位，不能为了修上下文删账本/改原归属。
+- 未知 Effort 事件仍计模型总量，当前模型档位列表省略空桶。测试直接断言 SQLite 事实/总量，不强行 `find(empty).unwrap()` 或改变 UI 造空桶。
+- 固定必需指标/报告版本缺失为未知，不能对现有数组 `every(true)` 就通过。无 STUN 本地候选观察不证明 DNS/公网零泄漏；默认采样率不证明音频真实性。
+- Chromium 缓存 PermissionDenied 需合并继承权限，保留 AppContainer SID；不要对 Default/Cache 粗暴调用独占 `private::lock`。
+- 壁纸模糊只在 workspace/sidebar 一层，内部卡片不重复 blur；保留 HUD 固定宽度和原生 min/max/size 更新顺序。
+- 双语 YAML 同键同插槽，JSX 不夹裸中文；改译文同步无障碍定位器。身份页不新增 combobox，普通 fixture 不得偷偷启用真实/native 后台请求。
+- 多个 Vite GUI 脚本并发会争用依赖缓存引发 reload，测试必须串行；冷启动等待与产品逻辑失败分开诊断。
 
-- [0.3.1更新说明](docs/RELEASE_NOTES_0.3.1.md)、[0.3.0更新说明](docs/RELEASE_NOTES_0.3.0.md)、[0.2.4更新说明](docs/RELEASE_NOTES_0.2.4.md)、[0.2.3更新说明](docs/RELEASE_NOTES_0.2.3.md)、[0.2.2更新说明](docs/RELEASE_NOTES_0.2.2.md)、[0.2.1额度恢复](docs/QUOTA_RECOVERY_0.2.1.md)：用户可见行为与历次升级原因。
-- [0.2.0更新说明](docs/RELEASE_NOTES_0.2.0.md)、[0.2.0交付核验](docs/RELEASE_VERIFICATION_0.2.0.md)：早期功能实施和分发边界。
-- [开发说明](docs/DEVELOPMENT.md)、[分发与许可](docs/DISTRIBUTION.md)、`LICENSE`、`NOTICE.md`：独立产品、构建和第三方许可约束。不存在上游同步、自动公开发布或官方更新源。
+### 构建、交付与协作
 
-本次交接整理只修改 `HANDOFF.md` 文档，不重新触发构建或移动产品标签。下一会话可直接基于本文档无缝承接。
+- 新 Windows bsdtar 的 `current locale` 空属主警告属于已知精确兼容；未知警告或非零退出仍拒绝，不能一概忽略 stderr。
+- 测试遇环境差异先抓有限、只含合成数据的工具版本/exit/stderr；不要输出归档明文/真实凭据，连续同方向失败要换调查方法。
+- 中性构建只能准备公共 Cargo index/archive cache，不能带用户 Cargo 根配置/凭据/src 或 live 安装/浏览器资料作为包输入。原13隐私探针只通过私有路径传入审计，原文不入对话/Git。
+- NSIS 解包 109 文件不等于本机要复制 109 文件；7 项安装器自身组件排除。采用既有 `Get-DeploymentPlan` 白名单，不把插件/卸载器复制到应用目录。Windows 相对路径先规范为 `/`，不要放宽路径边界去绕错误。
+- 采用审计后的 NSS 宿主可精确匹配 setup；不能把 raw UNK 的正常三字节差异当损坏，也不能发送旧预修复安装器。最终安装器只认上述 `37bfd...` hash。
+- 备份/阶段文件先验 hash，宿主最后替换，进程终止只允许复核 PID/路径/创建时间后的本产品；**维护不得停止 `claude.exe` 或浏览器，不清用户资料**。最好复用已有已验证事务工具，不在临时脚本上反复扩白名单。
+- `.local/tools/` 是机器级私有工具，不是可随意复用的通用发布入口；旧“完整更新”脚本可能默认构建/探针/安装路径不同，先读参数。需要旧函数时只用 `-FunctionsOnly`，不直接执行旧版本整套流程。
+- 简单/常规子任务默认 `gemini-3.8-flash high`，复杂跨模块升级 `gpt-6.1-sol high`，极难规划才按需 ultra；均 `fork_turns=none`。**不要再派 gpt-6-luna、gpt-6-astra、gpt-6-sol、gemini-4-argon 或任何 claude-* 子代理**。全局最新用户规则优先，不能从旧计划恢复被禁模型。
+- `functions.exec` 禁止 `notify()` / `yield_control()`，进展用工具外 commentary；不可在子代理未结束时纯文本结束任务。按比例验证，通过即止，不发起无请求的多轮深审。
+- 禁止 stash/reset/restore/clean 或强推清场；删除已有文档/改历史等先给具体范围并等待明确确认。原用户修改/未跟踪规划保留。
+- **每次重写 HANDOFF 必须先归档到 `.local/handoff-backups/` 并校验 SHA256**。文档提交不重建产物、不移动标签；新版本发行不能覆盖已发布安装器。
+
+## 6. 接手时按需读取的文件
+
+- 产品与当前交付：[README](README.md)、[0.1.0说明](docs/RELEASE_NOTES_0.1.0.md)、[0.1.0核验](docs/RELEASE_VERIFICATION_0.1.0.md)、[连接恢复](docs/CONNECTION_RECOVERY.md)。
+- 公开/借鉴：[PUBLIC_PREPARATION](docs/PUBLIC_PREPARATION.md)、[CCBAGA_COMPARISON](docs/CCBAGA_COMPARISON.md)、[NOTICE](NOTICE.md)、[DISTRIBUTION](docs/DISTRIBUTION.md)。
+- 工程：[DEVELOPMENT](docs/DEVELOPMENT.md)、[USAGE_STATISTICS](docs/USAGE_STATISTICS.md)、相关目录 `CLAUDE.md`。
+- Astra 本轮历史：[方案](docs/plans/2026-10-25-functional-audit/04-ASTRA-OPTIMIZATION-PLAN.md)、[实施](docs/plans/2026-10-25-functional-audit/05-EXECUTION-RESULTS.md)。旧记录只能作历史证据，不覆盖当前发布事实。
+
+私有定位索引（文件可能含工作站路径或匿名运行数据，只投影必要字段）：
+
+- `.local/tasks/20261026-release-0.1.0/`：`receipt-final.json`、`release-published.json`、`remote-draft-verified.json`、`deployment-receipt.json`、`ci-final.json`、`documentation-commit.json`；完整最新打包/发布/本机证据。
+- 最终产物 `.local/artifacts/20261026T045011Z-8d9bc21614c648988167f04d686fcfe7/`；此前 `20261026T042807Z-a7a5349827f446eb94756bbdd3f76789` 是预修复包，未上传，勿误发。
+- `.local/tasks/20261025-auth-repair/`：用户截图问题定位、原始0.1.0本机更新、定向测试与部署备份回执；其旧 ca5d... host hash 已被最终 d509... 取代。
+- `.local/tasks/20261025-astra-execution/`：Astra 分批实现/验证、Agent Reach 原样安装报告及升级回执。
+- `.local/tasks/20261025-public-preparation/`：`CLEANUP_APPROVAL.md`、`cleanup-removal-scope.json`、`cleanup-manifest.json`、旧 Git bundle 和候选 manifest。**43 文件没有删除确认，旧副本/hash/bundle需更新后再用。**
+- `.local/tasks/20261025-functional-audit/` 与 `.local/research/`：早期只读调查/合成复现历史。
+- `.local/tasks/` 下本次 CLI 登录诊断记录：只读状态白名单投影与浏览器源码诊断；子代理报告中的浏览器具体时序推测仍需实验验证，不能当真实网络证据，实际账号关联仅留私有目录。
+- `.local/handoff-backups/`：每次交接改写前的完整备份；本次旧长文已校验归档，不再在 tracked 当前文档中堆叠相反的历史状态。
+
+本次交接整理及其间新增问题诊断仅更新说明、读取受限摘要与官方CLI本地状态；不改变产品设计、凭据、用户资料、开关或发布包，不重启/替换应用及已有会话。
