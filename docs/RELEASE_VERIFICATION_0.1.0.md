@@ -1,20 +1,20 @@
 <!--
 [INPUT]: Source ff6bc81, passing Windows CI, neutral custom-protocol NSIS build, extracted payload audit, local alignment and GitHub asset metadata.
-[OUTPUT]: Exact 0.1.0 private prerelease delivery receipt and explicit acceptance limits.
+[OUTPUT]: Exact 0.1.0 delivery receipt and explicit acceptance limits.
 [POS]: Release verification; private probes, machine paths and backup plans remain in ignored .local/.
 -->
 # Claude-Local 0.1.0 交付核验
 
-日期：2026-10-26。本版已完成本机更新、安装器打包和当前私有仓库的预发布上传；没有更改仓库可见性，也没有删除旧标签、历史发行或待确认的内部文档。
+日期：2026-10-26。本版已完成本机更新、安装器打包和发布资产上传。交付文档的后续维护不影响产品标签。
 
 ## 发布与校验
 
-- [0.1.0 预发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.0)
-- [Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.0/Claude-Local_0.1.0_x64-setup.exe)，需要现有仓库访问权限。
+- [0.1.0 发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.0)
+- [Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.0/Claude-Local_0.1.0_x64-setup.exe)
 - 附件仅 `Claude-Local_0.1.0_x64-setup.exe`，140,504,677 字节，保持未签名。
 - 安装器 SHA-256：`37bfd3cbe1653dfaff9412fb4e2324304db44841c606d5fae480268d11bba1ec`。
-- 远端资产状态为 uploaded，大小及 GitHub 返回的 SHA-256 digest 均与本地一致；Release 已取消草稿状态，保留 prerelease 标记。
-- `v0.1.0` 固定指向源码 `ff6bc8128de0732ca893afbdb76b1d7156f76a8a`；既有 `v0.3.0` / `v0.3.1` 不变。交付文档的后续提交不移动产品标签。
+- 远端资产状态为 uploaded，大小及 GitHub 返回的 SHA-256 digest 均与本地一致；Release 已取消草稿状态。
+- `v0.1.0` 固定指向源码 `ff6bc8128de0732ca893afbdb76b1d7156f76a8a`。交付文档的后续提交不移动产品标签。
 
 ## 源码与构建
 
@@ -34,6 +34,6 @@ CI 发现并修复了新版 Windows bsdtar 3.8.9 的兼容问题：空 uname/gna
 
 ## 遗留与边界
 
-未执行真实 NSIS 安装、卸载、0.3.x→0.1.0 降级或全机型验收；三语编译与解包审计不替代这些运行验收。网页会话与 CLI 授权仍独立，真实账号权限需要持有人按 [恢复说明](CONNECTION_RECOVERY.md) 处理。
+未执行真实 NSIS 安装、卸载、版本降级或全机型验收；三语编译与解包审计不替代这些运行验收。网页会话与 CLI 授权仍独立，真实账号权限需要持有人按 [恢复说明](CONNECTION_RECOVERY.md) 处理。
 
-本版为当前私有仓库的审阅预发布。公开源码/二进制所需的第三方许可与历史公开面工作仍按 [NOTICE](../NOTICE.md)、[分发说明](DISTRIBUTION.md) 和 [公开准备](PUBLIC_PREPARATION.md) 处理；本次没有宣称已完成这些独立事项。
+公开源码/二进制所需的第三方许可与分发前置工作仍按 [NOTICE](../NOTICE.md)、[分发说明](DISTRIBUTION.md) 和 [公开准备](PUBLIC_PREPARATION.md) 处理；本次没有宣称已完成这些独立事项。

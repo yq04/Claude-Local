@@ -1,10 +1,12 @@
 <!--
-[INPUT]: Verified 0.3.1 reasoning effort analytics, Windows browser cache DACL self-healing, compact browser/system layouts, single-layer workspace glassmorphism, 10/20-item native anti-ban probes, and practical copywriting.
-[OUTPUT]: Version 0.3.1 release notes with actual source changes and verification boundaries.
-[POS]: Immutable versioned release description; delivery receipts are recorded separately.
+[INPUT]: Verified feature-development reasoning effort analytics, Windows browser cache DACL self-healing, compact browser/system layouts, single-layer workspace glassmorphism, 10/20-item native anti-ban probes, and practical copywriting.
+[OUTPUT]: Feature-development notes with source changes and verification boundaries.
+[POS]: Engineering feature record, not a separate public release number.
 [PROTOCOL]: Do not claim synthetic checks establish live account authorization or installer acceptance.
 -->
-# Claude-Local 0.3.1
+# 用量分析与浏览器环境开发记录
+
+本文为功能开发记录，不属于对外发行编号。Claude-Local的发行序列从0.1.0开始；下载和版本说明以README及Releases为准。
 
 围绕「用量分析」模型与推理档位（Effort）分布、Windows 隔离浏览器缓存目录 ACL 自愈、「浏览环境」与「电脑环境」紧凑排版、单层工作区光学毛玻璃渲染引擎、原生 10/20 项防封环境核验、切换前额度/隔离对比以及全应用实用化文案进行全面升级，同时保持既有身份保险库、账本与本地额度同步边界不变。
 

@@ -8,11 +8,11 @@
 
 面向 Windows x64 的 Claude 本地管理工具，集中管理身份备份、账号切换、用量分析和可选的隔离浏览器。使用 Tauri、Rust、React、TypeScript 与 Python，独立维护产品和版本。
 
-当前候选版本：**0.1.5**（仓库保持私有；首次公开候选从 0.1.0 开始，既有标签和资产保留）。已整合用量分析、原生自动续杯、悬浮监控窗和可选隔离浏览器；本版精简五页重复说明、整理工具栏与范围信息，延续WebRTC计时、同IP分类及生产页面网络策略修复。支持 Windows 10 / 11 x64；账号资料和隐私保护保持兼容。正式安装/降级包验收仍单独进行。
+Claude-Local 的发行版本从 **0.1.0** 开始，当前版本为 **0.1.5**。支持 Windows 10 / 11 x64，提供身份管理、额度观察、用量分析、自动续杯和可选隔离浏览器；各补丁持续完善可靠性和界面体验。
 
-[0.1.5 界面优化](docs/UI_POLISH_0.1.5.md) · [0.1.4 浏览器修复](docs/BROWSER_CSP_0.1.4.md) · [0.1.2 存储加固](docs/CRYPTO_HARDENING_0.1.2.md) · [0.1.1 登录修复](docs/AUTH_SYNC_0.1.1.md) · [首次候选版本说明](docs/RELEASE_NOTES_0.1.0.md) · [公开筹备边界](docs/PUBLIC_PREPARATION.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md) · [参与贡献](CONTRIBUTING.md)
+[0.1.5 界面优化](docs/UI_POLISH_0.1.5.md) · [0.1.4 浏览器修复](docs/BROWSER_CSP_0.1.4.md) · [0.1.2 存储加固](docs/CRYPTO_HARDENING_0.1.2.md) · [0.1.1 登录修复](docs/AUTH_SYNC_0.1.1.md) · [0.1.0 首个版本](docs/RELEASE_NOTES_0.1.0.md) · [发布与维护说明](docs/PUBLIC_PREPARATION.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md) · [参与贡献](CONTRIBUTING.md)
 
-[下载 0.1.5 Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.5/Claude-Local_0.1.5_x64-setup.exe) · [预发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.5) · [打包、上传与本机一致性核验](docs/RELEASE_VERIFICATION_0.1.5_UI.md)。当前仓库保持私有，下载需要仓库访问权限。
+[下载 0.1.5 Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.5/Claude-Local_0.1.5_x64-setup.exe) · [发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.5) · [打包、上传与本机一致性核验](docs/RELEASE_VERIFICATION_0.1.5_UI.md)。
 
 遇到网页登录后仍无法查询或唤醒，先看 [网页额度与CLI授权恢复说明](docs/CONNECTION_RECOVERY.md)：两套授权独立，重试会分别显示网页读取失败和CLI唤醒阻断原因。
 
@@ -59,17 +59,17 @@
 
 ## 获取与安装
 
-本仓库按公开筹备与私有审阅范围维护。手动发布的测试包附带 SHA-256、隐私审计报告、资源清单及更新说明；CI 仅执行非破坏性检查和可选的私有构建产物，不自动创建 GitHub Release 或官方更新源。
+从 Releases 下载对应版本的 Windows x64 安装包，并按发布说明核对 SHA-256。源码 CI 执行检查，安装包由维护者手动发布；软件不依赖其他应用的发布链，也不提供官方应用自动更新源。
 
 安装包使用当前用户 NSIS 安装，按所有者决定继续保持未签名。构建与解包校验不等于安装、升级和卸载验证；第三方组件的公开分发许可仍以 [分发说明](docs/DISTRIBUTION.md) 为准。
 
 主程序：`claude-local.exe`；应用标识：`ai.local.claude-local`；浏览器注册：`Claude-Local-Browser`。主程序默认进入身份管理，正常启动不会打开浏览器。
 
-### 版本回退与数据兼容提示（私测用户必读）
+### 数据兼容与升级
 
-本次 `0.1.0` 属于首次公开候选版本编号重置。对于此前已安装内部私测版 `0.3.1` 的用户，切换或安装 `0.1.0` 在语义版本上属于版本号倒退（Downgrade）：
-- **资料标识保持**：应用标识、资料目录以及 `BAGAID01`、`.baga`、身份库 `user_version=3`、HMAC 和浏览器种子未因版本编号重置而改变。
-- **安装与降级行为**：Tauri 配置 schema 默认允许降级，现有安装钩子设计为先确认、保留资料卸载旧版再安装；0.3.1→0.1.0 的实际安装尚未验证，应先在隔离 Windows 环境完成备份、取消/失败及资料保留验收。
+发行序列从0.1.0开始，产品版本与资料格式分别维护。应用标识、用户资料目录、`BAGAID01`、`.baga`、SQLite `user_version=3`、账号HMAC和浏览器种子保持兼容。
+
+更新前建议创建加密备份。升级不得强制终止运行中的Claude Code；身份切换、清理和恢复仍由用户明确操作。构建和解包校验不替代真实新装、升级、卸载及失败/取消验收，相关测试应在隔离Windows环境进行。
 
 ## 从源码构建
 

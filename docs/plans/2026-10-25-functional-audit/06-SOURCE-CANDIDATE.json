@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "base_commit": "66ffd00a8dbd14d0bd20581d151c9f6b35eb4c03",
-  "version_metadata": "0.3.1",
   "status": "verified_local_source_candidate_not_deployed",
   "hash_basis": "working-tree bytes; Git may normalize line endings",
   "scope": "owner-authorized Astra batches 1-5; synthetic verification and frontend production build",
@@ -154,5 +153,7 @@
       "path": "tests/identities-fixture.tsx",
       "sha256": "0a1062299df87c628d05558837537cae50454ab250890efde743ab04cd7f0f40"
     }
-  ]
+  ],
+  "release_series_start": "0.1.0",
+  "version_scope": "development_snapshot_not_a_product_release"
 }

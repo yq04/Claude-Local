@@ -8,14 +8,24 @@
 
 更新：2026-10-26，America/New_York。先读本文、根AGENTS.md/CLAUDE.md，改模块再读对应目录CLAUDE.md和源码头。
 
-## 当前任务与交付结果
+## 当前任务：对外介绍与发行序列
+
+所有者明确：Claude-Local的发行版本从0.1.0开始，已手动清理早期开发发行页面，并在本轮期间手动将仓库设为公开、将0.1.0–0.1.5取消Pre-release。本轮只更新当前文档、0.1.x发布标题/说明及GitHub About；不改flags/Latest/visibility、标签、安装包或校验值，不重建程序、不重启进程或动账号资料。
+
+已完成GitHub About和六个Release标题/body更新，用户自行修改的状态保留；校验了安装包ID/名称/字节/digest、源码目标和现有产品标签不变。当前MD/JSON介绍扫描无旧开发编号，既有Git历史与两个远端开发标签仍原样，需要所有者另行处理；不自动删除或强推。
+
+README及规范版本说明按0.1.0–0.1.5对应真实资产；两个误导性的旧版本说明文件改为FEATURE_NOTES_APPEARANCE_MONITOR/FEATURE_NOTES_USAGE_BROWSER功能记录，内容备份保留。历史计划去除开发编号作为产品版本的叙述，源候选manifest只移除非必要版本字段，文件哈希与base commit保持。原始文档/发布metadata/hash备份在.local/tasks/20261026-public-docs/。
+
+注意：当前文件和Release介绍清理不改变旧Git提交或标签中的原文，未宣称已完成全历史隐私审查。保留CCBaga MIT归属及第三方许可/安装验收的真实边界。Optional share工作流仍private-only，公开后会跳过，本轮没有顺带放开自动构建发布。
+
+## 最近应用任务与交付结果
 
 用户要求：修好浏览器检测，并按五张截图红框精简快速配置、浏览环境、网络环境、身份页和用量页的说明与工具栏，全权交付且不影响账号、浏览器登录或运行中的Claude Code。
 
-**0.1.5已完成源码、隔离验证、本机文件更新、Windows NSIS打包审计和私有GitHub预发布上传。没有构建/CI/上传阻塞；真实账号消息权限和真实安装/卸载仍未验收。**
+**0.1.5已完成源码、隔离验证、本机文件更新、Windows NSIS打包审计和GitHub发布上传。没有构建/CI/上传阻塞；真实账号消息权限和真实安装/卸载仍未验收。**
 
 - 固定源码/标签：`v0.1.5` → `2ce460b9c059d002926d82fe2ca91e8d56c89aca`，[CI40311799063](https://github.com/yq04/Claude-Local/actions/runs/40311799063) success。工作分支feature/functional-reliability-20261023，普通快进推送main及远端工作分支，后续纯文档不移动产品标签。
-- [私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.1.5)，draft=false、prerelease=true。附件仅`Claude-Local_0.1.5_x64-setup.exe`，140,494,613字节，SHA256`7752c5cee71d206dc57c99f5433bb4dded182d47a99ed11f1f8ce34b9753d0b1`，GitHub服务端size/digest精确匹配。
+- [发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.5)，发布标记及可见性由所有者单独管理（最终核对时0.1.0–0.1.5均已取消Pre-release）。附件仅`Claude-Local_0.1.5_x64-setup.exe`，140,494,613字节，SHA256`7752c5cee71d206dc57c99f5433bb4dded182d47a99ed11f1f8ce34b9753d0b1`，GitHub服务端size/digest精确匹配。
 - 中性custom-protocol构建，解包审计109文件/13外部隐私探针/0发现。本机102项应用文件校验一致，8项实际变化，先备份/hash/stage、宿主最后替换并验证启动；NSS/本机宿主SHA256`232b44cc3a9bf54c5eb35ef5a8f126003d2ba806c880fc1ee5f191f9a0bb56e2`，原始UNK`8bb41524c5dad5a14f0d95190c2b41562d6195e63238bd4d155d5b7cdca52f03`，仅审计确认的3字节包标记差异。
 - CLI进程缺失0，原浏览器根PID及UTC创建时间保持；更新前后3个身份的索引/归档引用/大小/mtime、3个浏览器绑定、活动指针和SQLite v3一致。交付工具未直接读真实归档、密钥、凭据、Cookie或会话正文，未切号、清理、改代理/隐私参数/自动开关。
 
@@ -54,9 +64,9 @@ Astra方案已实施，见docs/plans/2026-10-25-functional-audit/04及05；旧pe
 没有当前交付技术阻塞。按用户新反馈核对版本与具体controlled reason，先区分真实账号、环境测量和旧页面，不为文档重打包。
 
 1. 真实messages权限未代发消息验收；本地登录/环境通过不保证授权恢复，保存快照需对应正确账号并按需一次验证，不自动切号/refresh。
-2. NSIS真实安装/卸载、0.3.x→0.1.x降级及睡眠恢复仍未在一次性Windows环境验收，文件式更新与解包不替代它们，不在用户电脑跑CI-only系统测试。
-3. 仓库仍私有。Cromma复制子集、15个Pika图标取得范围、Chromium完整notices仍需核对，见NOTICE和DISTRIBUTION；顶层MIT/对方已公开不能替代授权依据，也不把未核实写成已证明违法。
-4. 43历史文档删除仍无具体批准，旧清单/hash漂移，旧精简副本已落后。不改史/强推/移标签/删Release/转公开。旧v0.3.0/v0.3.1及v0.1.0–0.1.4保留，0.1.3仅历史候选。
+2. NSIS真实安装/卸载、保留资料的升级/回退及睡眠恢复仍未在一次性Windows环境验收，文件式更新与解包不替代它们，不在用户电脑跑CI-only系统测试。
+3. 仓库可见性由所有者决定；本轮未代为切换；所有者已将仓库公开。Cromma复制子集、15个Pika图标取得范围、Chromium完整notices仍需核对，见NOTICE和DISTRIBUTION；顶层MIT/对方已公开不能替代授权依据，也不把未核实写成已证明违法。
+4. 43历史文档删除仍无具体批准，旧清单/hash漂移，旧精简副本已落后。不改史/强推/移标签/删Release/转公开。发行序列从0.1.0起；本轮不触碰已有产品标签/资产，0.1.3仍保留已知CSP问题提示。
 
 ## 不要再踩的坑
 

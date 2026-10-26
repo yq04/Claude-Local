@@ -3,7 +3,7 @@
 
 日期2026-10-26；早期内部同版本说明不作为本次回执。
 
-- 固定源码/标签`2ce460b9c059d002926d82fe2ca91e8d56c89aca` / `v0.1.5`，[私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.1.5) draft=false/prerelease=true。
+- 固定源码/标签`2ce460b9c059d002926d82fe2ca91e8d56c89aca` / `v0.1.5`，[发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.5)。
 - 安装器`Claude-Local_0.1.5_x64-setup.exe`，140,494,613字节，SHA256`7752c5cee71d206dc57c99f5433bb4dded182d47a99ed11f1f8ce34b9753d0b1`；服务端digest/size精确匹配，附件仅安装器。
 - 中性custom-protocol构建，审计109解包文件/13外部隐私标记/0发现。本机102文件一致、8项变化，备份/hash/stage后宿主最后更新并启动验证，quota-core纯JSON通过。
 - 本机NSS SHA256`232b44cc3a9bf54c5eb35ef5a8f126003d2ba806c880fc1ee5f191f9a0bb56e2`，原始UNK`8bb41524c5dad5a14f0d95190c2b41562d6195e63238bd4d155d5b7cdca52f03`，仅合法3字节Tauri包标记差异。

@@ -5,10 +5,10 @@
 -->
 # 0.1.2 加密存储加固交付核验
 
-日期：2026-10-26。此为公开候选版本重置后的0.1.2补丁；早期同版本内部说明属于历史。
+日期：2026-10-26。此为 0.1.2 补丁交付核验；早期内部草案不代替本次发布回执。
 
 - 固定源码/产品标签：`9d642ea50425b716f94075aea517c3293127fee9` / `v0.1.2`。
-- [预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.1.2)：私有仓库，draft=false、prerelease=true；附件仅安装器，不含用户资料、探针或内部日志。
+- [发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.2)：附件仅安装器，不含用户资料、探针或内部日志。
 - `Claude-Local_0.1.2_x64-setup.exe`，140,582,806字节；SHA256`7ec212d4f1a46c708eeb629008a9c0c0708c7e20f8694408120af9e54f0b3858`。服务端digest及size已核对。
 - 发布启用custom-protocol、新中性Cargo home/target，原始缓存保留。只读解包审计109文件/13外部探针/0发现。
 - 本机0.1.2，102项应用文件核对一致，实际变更7项；备份/hash/stage后宿主最后更新，启动与纯JSON quota-core冒烟通过，missingClaudeCount=0。浏览器未停止。

@@ -5,7 +5,7 @@
 -->
 # Development
 
-Claude-Local is a Windows-first desktop product (currently preparing for the 0.1.0 public release candidate under private development boundaries). The host is `claude-local.exe`, the product is `Claude-Local`, and its application identifier is `ai.local.claude-local`. Its companion browser is registered as `Claude-Local-Browser`. One current-user NSIS installer contains the host, frontend and companion browser engine.
+Claude-Local is an independently maintained Windows x64 desktop product. Its release series starts at 0.1.0; the current version is listed in the repository README. The host is `claude-local.exe`, the product is `Claude-Local`, and its application identifier is `ai.local.claude-local`. Its companion browser is registered as `Claude-Local-Browser`. One current-user NSIS installer contains the host, frontend and companion browser engine.
 
 ## Tools
 
@@ -87,7 +87,7 @@ The refined Usage analytics/compact-sidebar/computer/CLI controls are covered by
 
 Windows Known Folder APIs can use the runner's actual account even when environment variables point to fixtures. Run this workflow only on a disposable GitHub-hosted runner. Under `GITHUB_ACTIONS=true`, the existing Windows native tests change and restore timezone, and the Windows Python test changes and restores regional settings. Do not set that flag on a personal workstation to force those tests.
 
-`Build private Windows share artifact` is manual. It first reuses the source checks, then downloads the pinned engine and builds an unsigned NSIS installer. It only uploads an Actions artifact; see [Distribution](DISTRIBUTION.md) for its scope and licensing limits. It does not run the installer, alter a developer installation or configure an updater.
+The optional `Build private Windows share artifact` workflow is manual and currently gated to private repositories. It is skipped after a repository becomes public; public-repository maintainers can use the documented local build command. Changing workflow eligibility requires a separate reviewed change. It first reuses the source checks, then downloads the pinned engine and builds an unsigned NSIS installer. It only uploads an Actions artifact; see [Distribution](DISTRIBUTION.md) for its scope and licensing limits. It does not run the installer, alter a developer installation or configure an updater.
 
 ## Data and product boundaries
 

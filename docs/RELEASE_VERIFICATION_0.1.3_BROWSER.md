@@ -7,10 +7,10 @@
 
 > 本候选生产CSP存在遗漏，不能作为补充分类已完成的最终验收；0.1.4已修正，旧标签及资产保留追溯。
 
-日期2026-10-26。本次为公开候选重置后的0.1.3，不使用早期内部同版本回执。
+日期2026-10-26。本次记录 0.1.3 交付核验；早期内部草案不作为本次回执。
 
 - 固定源码/标签：`50bf4120aacb175804b35db037a4226546080330` / `v0.1.3`。
-- [私有预发布](https://github.com/yq04/Claude-Local/releases/tag/v0.1.3)：draft=false、prerelease=true；仅安装器附件。
+- [发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.3)：仅安装器附件。
 - `Claude-Local_0.1.3_x64-setup.exe`，140,555,118字节，SHA256`e5f64ac534798f40be64c6657f4b68e8fd8f45a4dac3311cbbf79bfc3e96d37e`，GitHub服务端digest和size匹配。
 - custom-protocol/新中性Cargo构建，解包审计109文件、13隐私探针、0发现；无真实资料/截图/探针/工作站备份进入附件。
 - 本机已运行0.1.3，102项文件校验一致，8项变化先备份/hash、宿主最后更新。启动及quota-core纯JSON冒烟通过，missingClaudeCount=0，未终止用户浏览器。

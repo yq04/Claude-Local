@@ -1,53 +1,30 @@
 <!--
-[INPUT]: Local/remote tag and release metadata, versioned installer configuration, pinned third-party notices and a reviewed source-export policy.
-[OUTPUT]: Public 0.1.0 candidate policy, archival boundaries and remaining publication gates.
-[POS]: Public preparation record; no visibility change, remote history rewrite or release action is performed by this document.
+[INPUT]: Claude-Local release series from0.1.0, owner-managed GitHub publication, data compatibility and third-party notices.
+[OUTPUT]: Publication and maintenance guidance independent of repository visibility or prerelease flags.
+[POS]: User-facing publication policy; no history rewrite, visibility change or release-state change is performed by this document.
 -->
-# 公开首版 0.1.0 的准备边界
+# 发布与维护说明
 
-## 版本可以重新从 0.1.0 开始
+Claude-Local 的发行版本从 **0.1.0** 开始，当前版本见[README](../README.md)及[GitHub Releases](https://github.com/yq04/Claude-Local/releases)。后续0.1.x版本在该基线上迭代；开发过程中的实验记录不构成另一条对外发行序列。
 
-可以将 0.1.0 定义为 Claude-Local 的首次公开候选版本。核查时本地与远端只有 `v0.3.0`、`v0.3.1` 标签，GitHub 发行记录也为这两个版本，没有 `v0.1.0` 冲突。它是产品版本编号重置，不是删除过去的事实；现有标签、发布附件和旧记录保持原样。
+## 版本与资料兼容
 
-源码候选同步修改 `package.json`、Tauri 配置、Cargo 包版本及 Cargo.lock 中本应用条目，依赖版本不变。`ai.local.claude-local`、二进制名、用户资料路径、BAGAID01/`.baga`、身份库 `user_version=3`、账号 HMAC 和浏览器种子不变。公开版本 0.1.0 与这些数据格式版本没有递增或重置关系。
+产品版本同步维护package.json、Tauri配置、Cargo.toml及Cargo.lock中的本应用条目，不随意修改依赖版本。应用标识ai.local.claude-local、主程序claude-local.exe、按用户的数据目录，以及BAGAID01/.baga、SQLite v3、HMAC和浏览器种子保持兼容。升级不要求重建身份、重新加密归档或重设浏览器资料。
 
-对已有 0.3.x 私测安装，0.1.0 在版本比较中属于倒退。当前 Tauri schema 的 `allowDowngrades` 默认 true，既有 NSIS 钩子按产品注册检测并在用户确认后执行保留数据的 `/UPDATE` 路径；这些静态事实不能代替实际安装验收。正式安装包前需在一次性 Windows 环境验证同标识 0.3.1→0.1.0、取消/失败、资料保留和新用户安装，不在个人机器执行卸载实验。
+GitHub的Pre-release、Latest和仓库可见性由所有者分别管理，不由版本数字自动决定。更新介绍不会改变发布标记、仓库可见性、产品标签、安装包或校验值。版本说明应列出实际功能、已知限制和验证范围，不把文档调整当作重新构建。
 
-如果希望继续保留现有发行页和不下降的版本顺序，0.4.0 是更简单的选择；本轮按用户希望准备 0.1.0 候选，不自动创建标签、部署安装或发布。
+## 源码与隐私边界
 
-## 清理不等于删除全部旧代码
+公开源码应保留应用代码、测试、构建脚本、锁文件、许可证及必要notices；不得加入账号库、密钥、归档、用量账本、代理凭据、真实账号截图、安装器、浏览器资料或机器专用回执。演示截图只用隔离合成数据并检查元数据。
 
-已准备精确归档策略：把内部 HANDOFF、历史审计/方案和旧私测发布记录作为私有历史保存；公开源码候选不包含这些内容及 agent 会话目录图。它们不是都“无用”，只是与公开用户文档目的不同。清理清单和 SHA256 备份回执保存在忽略的本地任务目录，不把内部归档重新提交到公开树。
+公开现有仓库也会公开其可达提交、分支、标签及发布附件。清理当前文件不会清除旧Git历史；既有历史中曾出现机器路径，因此不能把本次文案清理解释为完成全历史隐私审查。历史清理需单独备份、确定范围并执行；本次不改史、不强推、不删除发布资产。
 
-源文件、测试、构建脚本、锁文件、安装钩子、运行资源、许可证和 notices 保留。没有发现足以证明某早期运行脚本或资产可以安全删除的引用证据，因此不按文件年龄批量删除。已有用户未跟踪规划和规则改动不作为垃圾处理。
+## 构建和安装验证
 
-本轮采用“新建过滤副本”的方式准备整洁源码候选，原工作树和原 Git 历史不丢弃。对原工作树真正删除历史文档、删除远端附件或改写 Git 历史，都需要另行明确确认。候选副本仅用于本地检查，不表示已经允许公开分发。
+本地安装包按[分发说明](DISTRIBUTION.md)从锁定源码及固定浏览器引擎构建，启用custom-protocol；审计资源边界、SHA256和隐私标记。构建/解包不替代实际新装、升级、卸载和取消/失败验收，这些应在一次性Windows环境进行，不干扰用户运行中的CLI。
 
-## 当前目录之外的公开面
+源码检查适用于公开或私有仓库。现有可选分享工作流有私有仓库条件，仓库公开后会跳过；公开仓库仍可使用本地构建流程。若调整工作流，应明确资源/审计边界，不顺带加入自动发布、外部更新源或发布秘密。
 
-把现有私有仓库切为公开，会同时让可访问分支/标签历史及既有 Release 等仓库内容进入新的可见范围。工作树删除一份文档，不会移除旧提交中的相同内容。本轮已在受控非敏感 Markdown 历史中发现机器路径；没有把匹配值写入公开文档，也没有读取敏感命名文件或声称已经完成全历史秘密审计。
+## 归属和许可
 
-可选择两条发布路径：
-
-1. **保留原仓库并审查历史。** 在可验证完整备份后，单独审查所有可达分支/标签、历史 blob、发行附件和其他仓库公开面。需要改写或移除的内容先列具体清单，再明确确认；不直接强推、移动旧标签或删除 Release。
-2. **把原仓库留作私有开发档案，以审核后的干净快照建立公开仓库。** 不重写现有开发历史，但要处理公开仓库名称/地址、首次提交、归属和之后的维护方式。仅本地无 `.git` 副本不会自动改变现有仓库，也不能代替第三方许可审查。
-
-不预先承诺“清理后切公开即可安全”，实际采用哪条路径由所有者决定，执行前给出目标和影响。
-
-## 公开前仍需解决的事项
-
-**Cromma UI 来源与许可。** 本地包缺少独立 license 字段和许可文件，CCBaga 自己的 NOTICE 也明确要求确认。能确认的是许可依据尚未补齐，不能从缺少文件直接认定所有代码违法，也不能因作者同名或顶层 MIT 推定全部第三方权利。取得适用于实际子集的许可/权利确认，或用许可明确的实现替代。压缩为 JS 仍是分发，不会自动消除义务。
-
-**Pika 图标的具体来源。** [当前条款](https://pikaicons.com/license) 允许 Free Icons 用于开源最终产品，但限制把图标作为包/合集再分发，并禁止在公开仓库发布 Paid Icons。本地 15 个图标尚未逐个确定所属包、取得时间与授权。删除 `./pika` 导出名称并不能让公开 Git 文件不再可提取，因此不能作为已解决的结论。优先确认子集，或在明确范围内替换为许可清楚的图标并保留新许可。
-
-**Chromium 完整 notices。** 引擎二进制不在源码树，现有 BSD notice 需要保留；正式二进制包仍需核对实际内含的 Chromium/第三方版权材料与 credits 可获取性，不能只凭脚本允许文件名就认定实际安装包完整。本轮没有下载或执行浏览器作此验收。
-
-**面向公开的发行与说明。** 当前手动分享工作流含私有仓库条件，改公开后该任务会跳过；先决定公开手动构建的资源/审计方式，再精确调整，不顺带开放自动发布、更新源或 secrets。保留 checks 和独立产品流程，补充支持范围、Python 能力要求、隐私边界、已知限制和问题反馈方式。
-
-以上是具体组件与现有公开准备的待办，并非已经发现私钥泄漏或已经完成法律审定。源码公开和二进制发行应分别验收，原 CCBaga MIT 版权及所有适用第三方 notices 继续保留。
-
-## 本轮交付与遗留
-
-交付包括固定版本对比、0.1.0 元数据候选、面向用户的 README/发布说明、精确归档清单、校验后的私有备份，以及新建的过滤源码副本。未执行原文件删除、历史改写、仓库可见性变更、标签创建、安装、推送或发布。原有私测安装版继续保持此前状态。
-
-设计取舍是先保留完整私有历史、验证公开快照，再决定如何清理现有仓库；不以版本重置换取数据不兼容，不把许可疑问隐藏到内部文件里。
+保留原CCBaga及Claude-Local贡献者的MIT声明，不因品牌或版本介绍调整而删除来源。Cromma复制子集、15个Pika图标取得范围及Chromium完整credits仍有待核对的分发依据，详见[NOTICE](../NOTICE.md)及[分发说明](DISTRIBUTION.md)。仓库公开和取消Pre-release本身不能替代这些依据；未核实也不直接等于已证明侵权。

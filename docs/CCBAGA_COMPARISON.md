@@ -44,6 +44,6 @@ CCBaga 的 [cleaner_identity.rs:299](https://github.com/liseami/CCBaga/blob/bdfb
 
 ## 公开和许可
 
-[CCBaga LICENSE](https://github.com/liseami/CCBaga/blob/bdfb90ceadfc5fae6772ffff597bddecb0b73cc3/LICENSE) 是 MIT，本项目保留其版权及许可。对方的 [NOTICE](https://github.com/liseami/CCBaga/blob/bdfb90ceadfc5fae6772ffff597bddecb0b73cc3/NOTICE.md) 同样提醒 Cromma UI/Pika 子集的独立许可需要核实，因此不能以对方已公开推定每个第三方资产都已取得足够分发权。版本重置、改名或删除声明都不会解决这个问题。
+[CCBaga LICENSE](https://github.com/liseami/CCBaga/blob/bdfb90ceadfc5fae6772ffff597bddecb0b73cc3/LICENSE) 是 MIT，本项目保留其版权及许可。对方的 [NOTICE](https://github.com/liseami/CCBaga/blob/bdfb90ceadfc5fae6772ffff597bddecb0b73cc3/NOTICE.md) 同样提醒 Cromma UI/Pika 子集的独立许可需要核实，因此不能以对方已公开推定每个第三方资产都已取得足够分发权。版本介绍调整、改名或删除声明都不会解决这个问题。
 
-本项目应公开说明“源自 CCBaga 并独立维护”，保留必要归属；持久格式、HMAC、SQLite 身份版本及 legacy seed 字符串继续兼容。公开准备与目录整理见 [PUBLIC_PREPARATION.md](PUBLIC_PREPARATION.md)。
+本项目应公开说明“源自 CCBaga 并独立维护”，保留必要归属；持久格式、HMAC、SQLite 身份版本及 legacy seed 字符串继续兼容。发布与维护说明见 [PUBLIC_PREPARATION.md](PUBLIC_PREPARATION.md)。

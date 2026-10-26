@@ -1,10 +1,12 @@
 <!--
-[INPUT]: Verified 0.3.0 custom wallpaper & 5-layer optical glassmorphism, floating Token/Quota HUD monitor window, 4-dimensional anti-ban security hardening, and open-source UX enhancements.
-[OUTPUT]: Version 0.3.0 release notes with actual source changes and verification boundaries.
-[POS]: Immutable versioned release description; delivery receipts are recorded separately.
+[INPUT]: Verified feature-development custom wallpaper & 5-layer optical glassmorphism, floating Token/Quota HUD monitor window, 4-dimensional anti-ban security hardening, and open-source UX enhancements.
+[OUTPUT]: Feature-development notes with source changes and verification boundaries.
+[POS]: Engineering feature record, not a separate public release number.
 [PROTOCOL]: Do not claim synthetic checks establish live account authorization or installer acceptance.
 -->
-# Claude-Local 0.3.0
+# 外观、悬浮监控与安全边界开发记录
+
+本文为功能开发记录，不属于对外发行编号。Claude-Local的发行序列从0.1.0开始；下载和版本说明以README及Releases为准。
 
 围绕自定义壁纸与 5 层光学级毛玻璃视觉引擎、当前活跃账号实时 Token/额度悬浮监控窗（Floating Monitor HUD）、四维防封号/防风控安全加固以及开源竞品生产力交互体验进行全面升级，同时保持既有身份保险库、账本与本地额度同步边界不变。
 
