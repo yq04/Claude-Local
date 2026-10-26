@@ -61,3 +61,14 @@ quota_cache.json
 *.zip
 *.7z
 !.github/
+
+# Private agent workspace and one-off planning inputs (preserve locally)
+/.claude/
+/.planning/
+/.rivet/
+/.temp/
+/--help/
+/p6b-i18n.json
+/TOKEN_MONITOR_RESEARCH_AND_PLAN.md
+/docs/superpowers/
+/docs/plans/2026-10-22-identity-quota.md

@@ -6,6 +6,16 @@
 -->
 # Claude-Local 会话交接（v0.3.1）
 
+## 2026-10-25 公开准备：源码版本重置为 0.1.0 候选
+
+用户要求比较 CCBaga 并准备公开首版，已核对本地/远端不存在 `v0.1.0` 标签；源码产品版本元数据同步为 `0.1.0`，尚未打 tag、构建安装包、更新本机安装、推送或改变仓库可见性。已有 `v0.3.0` / `v0.3.1` 标签与 Release 保持原样，旧 0.3.x 安装到新编号属于版本倒退，须在隔离 Windows 环境验收保留资料升级。应用 ID、用户资料目录及 BAGAID01/`.baga`/SQLite3/HMAC/浏览器种子不变。
+
+当前功能仍基于 `9b89502` 的 Astra 优化。面向读者的入口见 [公开准备](docs/PUBLIC_PREPARATION.md)、[CCBaga 对比](docs/CCBAGA_COMPARISON.md) 和 [0.1.0 候选说明](docs/RELEASE_NOTES_0.1.0.md)。Cromma/Pika 具体授权与实际 Chromium notices 尚需核实；源码可读或编译成二进制都不能替代分发许可依据。
+
+内部资料已复制归档并核对 SHA256，完整 Git bundle 备份已验证；另准备不含旧 HANDOFF/内部计划/旧私测说明的过滤源码副本。所有原件保留，43 份历史文档的实际移除须等用户确认；不改写历史、不强推、不删除旧标签或发行资产。私有清单和备份位于忽略的 `.local/tasks/20261025-public-preparation/` 及对应归档目录。旧未跟踪规划/agent临时资料加入 `.gitignore`，文件本身未删除。
+
+后续先解决公开分发依据与历史公开面，再选择原仓审查整理或干净快照建立公开仓。以下版本/安装回执为此前内部交付历史，不能覆盖本段最新源码状态。
+
 ## 2026-10-25 后续源码状态：Astra 优化已实施，尚未部署
 
 用户随后要求更新 Agent Reach、核查续杯差异并执行 [Astra 方案](docs/plans/2026-10-25-functional-audit/04-ASTRA-OPTIMIZATION-PLAN.md)。Agent Reach 已实际升级至 1.6.0，保留原配置；这是开发工具升级，不是产品更新。

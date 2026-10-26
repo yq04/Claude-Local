@@ -5,7 +5,7 @@
 -->
 # Development
 
-Claude-Local is a Windows-first private desktop product. The host is `claude-local.exe`, the product is `Claude-Local`, and its application identifier is `ai.local.claude-local`. Its companion browser is registered as `Claude-Local-Browser`. One current-user NSIS installer contains the host, frontend and companion browser engine.
+Claude-Local is a Windows-first desktop product (currently preparing for the 0.1.0 public release candidate under private development boundaries). The host is `claude-local.exe`, the product is `Claude-Local`, and its application identifier is `ai.local.claude-local`. Its companion browser is registered as `Claude-Local-Browser`. One current-user NSIS installer contains the host, frontend and companion browser engine.
 
 ## Tools
 

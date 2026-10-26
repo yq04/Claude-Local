@@ -20,6 +20,9 @@ docs/ - Local development, data boundaries and distribution documentation.
 docs/plans/2026-10-22-identity-quota.md - Owner-requested online quota/card implementation scope, foreground refresh opt-in and synthetic verification boundaries; no installed/released update claim.
 docs/plans/2026-10-23-functional-review/ - Read-only Astra software review: independent quota and product evidence, public-source constraints, and a phased functional reliability/improvement plan; no implementation or release performed by the review.
 docs/plans/2026-10-25-functional-audit/ - Redacted runtime evidence, source-backed defects, pinned GitHub comparisons, the Astra scheme and owner-authorized execution receipts; product deployment remains separate.
+docs/CCBAGA_COMPARISON.md - Fixed-revision capability comparison and selective adoption priorities; no upstream sync or copied release workflow.
+docs/PUBLIC_PREPARATION.md - Public 0.1.0 candidate, retained private history, source-export policy and unresolved publication evidence.
+docs/RELEASE_NOTES_0.1.0.md - Product-version reset candidate with unchanged data formats, prior tags retained and no installed/public release claim.
 docs/plans/2026-10-21-usage-account-safety/ - Historical proposal, source evidence and phased account-safety plan implemented in 0.1.4; 0.1.5 fixes quota evidence compatibility and shares Rust window-state rules.
 .github/workflows/ - Credential-free Windows checks and explicitly dispatched private build artifacts.
 .github/workflows/share-windows.yml - Private manual artifact build with public original host/frontend inputs and audit evidence, allowing independent workstation re-audit without recompilation or binary reconstruction; no private probes or automatic release.
