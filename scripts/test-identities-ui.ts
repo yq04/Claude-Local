@@ -1,7 +1,7 @@
 /**
  * [INPUT]: Node.js 标准管道、已锁定 playwright-core、固定引擎、Vite 与 tests/ 的虚构 Tauri IPC。
  * [OUTPUT]: 单行本地保存名与长名称重命名、隐私提示、工牌/离线额度、浏览器/网络与清理确认、真实阶段动画及额度重置推定恢复的双语 DOM 验收。
- * [POS]: 发布前无头行为回归；无截图、无真实账号/文件修改，不加载原生宿主，不允许外网请求。支持 --quota-reset-only 与 --passive-only 聚焦验证。
+ * [POS]: 发布前无头行为回归；无截图、无真实账号/文件修改，不加载原生宿主，不允许外网请求。支持 --quota-reset-only、--passive-only、--wakeup-only 与 --verification-only 聚焦验证。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {strict as assert} from 'node:assert';
@@ -21,6 +21,7 @@ import {testIdentityOnline} from './test-identity-online.ts';
 import {testIdentityPassive} from './test-identity-passive.ts';
 import {testNativeWakeup} from './test-native-wakeup.ts';
 const wakeupOnly=process.argv.includes('--wakeup-only');
+const verificationOnly=process.argv.includes('--verification-only');
 const quotaResetOnly=process.argv.includes('--quota-reset-only');
 const onlineOnly=process.argv.includes('--online-only');
 const passiveOnly=process.argv.includes('--passive-only');
@@ -44,7 +45,10 @@ try{browser=await chromium.launch({executablePath:resolve('browser-runtime',engi
 catch(error){await server.close();await rm(temporary,{recursive:true,force:true});throw error;}
 let checks=0;
 try{
- if(wakeupOnly){
+ if(verificationOnly){
+  checks+=await testBrowserVerification(browser,base);
+  console.log(`${checks} browser verification UI checks passed; synthetic context only.`);
+ }else if(wakeupOnly){
   checks+=await testNativeWakeup(browser,base);
   console.log(`${checks} native wakeup bridge UI checks passed; synthetic IPC only.`);
  }else if(passiveOnly){

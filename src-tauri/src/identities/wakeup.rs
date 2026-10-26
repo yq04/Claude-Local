@@ -1,5 +1,5 @@
 // [INPUT]: Explicit versioned settings, restricted local quota summaries and the shared audited collector.
-// [OUTPUT]: One process-owned scheduler, private durable plans, precise no-dispatch results and bounded status-only events.
+// [OUTPUT]: Independent local readiness synchronization, one process-owned scheduler, private durable plans and precise no-dispatch results.
 // [POS]: No HTTP or quota-ledger writer; survives page unmount, stops with the application.
 // [PROTOCOL]: Keep identities/CLAUDE.md and frontend IPC types aligned.
 use super::online::{OnlineQuotaResult, OnlineStatus, WakeupEffect};
@@ -316,7 +316,10 @@ fn candidates(app: &tauri::AppHandle) -> Result<(Vec<Candidate>, Option<u8>), St
             if result.iter().any(|c: &Candidate| c.identity == id) {
                 return;
             }
-            let capability = if summary.auth_status.as_deref() == Some("expired") {
+            let capability = if matches!(
+                summary.auth_status.as_deref(),
+                Some("expired" | "refresh_needed")
+            ) {
                 "auth_required"
             } else if let Some(proxy) = summary.proxy.as_deref().filter(|v| !v.trim().is_empty()) {
                 route_capability(proxy, false)
@@ -422,19 +425,20 @@ fn plan(
             }
         }
     }
-    if !state.config.enabled {
-        state.status = "disabled".into();
-        return None;
+    // Readiness is local metadata, independent of automatic-dispatch consent.
+    // In particular, disabled owners must still expose newly saved identities.
+    let automatic =
+        state.config.enabled && state.targets == target_set(items) && state.config.within(minute);
+    state.status = if !state.config.enabled {
+        "disabled"
+    } else if state.targets != target_set(items) {
+        "scope_changed"
+    } else if !state.config.within(minute) {
+        "outside_window"
+    } else {
+        "waiting"
     }
-    if state.targets != target_set(items) {
-        state.status = "scope_changed".into();
-        return None;
-    }
-    if !state.config.within(minute) {
-        state.status = "outside_window".into();
-        return None;
-    }
-    state.status = "waiting".into();
+    .into();
     for item in items {
         let a = state.accounts.entry(item.identity.clone()).or_default();
         a.capability = item.capability.clone();
@@ -450,6 +454,8 @@ fn plan(
             }
             a.decision = if a.unknown {
                 "outcome_unknown"
+            } else if a.auth_blocked && !a.recovery_allowed {
+                "auth_blocked"
             } else {
                 "active_window_running"
             }
@@ -480,7 +486,7 @@ fn plan(
             "scheduled"
         }
         .into();
-        if a.decision != "scheduled" {
+        if a.decision != "scheduled" || !automatic {
             continue;
         }
         if a.woken_window_reset_sec == item.reset {
@@ -619,10 +625,7 @@ impl WakeupOwner {
                     if guard.stopped {
                         break;
                     }
-                    let enabled = (guard.snapshot.config.enabled
-                        || guard.snapshot.accounts.values().any(|a| a.unknown))
-                        && guard.writable
-                        && !guard.active;
+                    let enabled = guard.writable && !guard.active;
                     drop(guard);
                     if !enabled {
                         continue;
@@ -693,6 +696,27 @@ impl WakeupOwner {
             let _ = app.emit("wakeup-scheduler-state", inner.snapshot.clone());
         }
     }
+    fn refresh_local(&self, app: &tauri::AppHandle) -> Result<(), String> {
+        let (items, active) = candidates(app)?;
+        let mut guard = self.inner.0.lock().map_err(|_| "wakeup.stateSaveFailed")?;
+        if !guard.writable || guard.active || guard.stopped {
+            return Ok(());
+        }
+        let before = serde_json::to_vec(&guard.snapshot).ok();
+        let now = now_ms();
+        let _ = plan(
+            &mut guard.snapshot,
+            &items,
+            active,
+            now,
+            local_minute(now),
+            random(),
+        );
+        if before != serde_json::to_vec(&guard.snapshot).ok() {
+            self.save_locked(&mut guard)?;
+        }
+        Ok(())
+    }
     fn prepare_dispatch(
         &self,
         candidate: &Candidate,
@@ -702,10 +726,15 @@ impl WakeupOwner {
         now: u64,
         minute: u16,
         jitter: u64,
-    ) -> Result<(), OnlineQuotaResult> {
+    ) -> Result<bool, OnlineQuotaResult> {
         let identity = candidate.identity.as_str();
-        let mut guard = self.inner.0.lock().map_err(|_| OnlineQuotaResult::scheduler_blocked(
-            OnlineStatus::Unavailable, "scheduler_unavailable", None))?;
+        let mut guard = self.inner.0.lock().map_err(|_| {
+            OnlineQuotaResult::scheduler_blocked(
+                OnlineStatus::Unavailable,
+                "scheduler_unavailable",
+                None,
+            )
+        })?;
         if guard.stopped || guard.active || !guard.writable || !guard.snapshot.migrated {
             return Err(OnlineQuotaResult::scheduler_blocked(
                 OnlineStatus::Unavailable,
@@ -715,6 +744,7 @@ impl WakeupOwner {
             return Err(blocked);
         }
         let a = guard.snapshot.accounts.entry(identity.into()).or_default();
+        let recovery_used = a.recovery_allowed;
         a.recovery_allowed = false;
         a.unknown = true;
         a.last_attempt_at_ms = Some(now);
@@ -729,7 +759,7 @@ impl WakeupOwner {
         }
         guard.active = true;
         drop(guard);
-        Ok(())
+        Ok(recovery_used)
     }
     fn attempt(
         &self,
@@ -755,9 +785,10 @@ impl WakeupOwner {
             random(),
         );
         self.emit(app);
-        if let Err(blocked) = admission {
-            return Ok(blocked);
-        }
+        let recovery_used = match admission {
+            Ok(recovery_used) => recovery_used,
+            Err(blocked) => return Ok(blocked),
+        };
         let result = super::online::collect_wakeup_audited(
             app,
             account_id.to_owned(),
@@ -768,6 +799,17 @@ impl WakeupOwner {
         let mut guard = self.inner.0.lock().map_err(|_| "wakeup.stateSaveFailed")?;
         guard.active = false;
         finish(&mut guard.snapshot, identity, expired, now_ms(), &result);
+        // A missing helper/runtime or unsupported local proxy never started
+        // authorization verification. Keep its explicit permit, retaining all
+        // attempt spacing/backoff. Profile 401/429 consumes the permit normally.
+        if recovery_used && result.as_ref().is_ok_and(local_preparation_failed) {
+            guard
+                .snapshot
+                .accounts
+                .entry(identity.into())
+                .or_default()
+                .recovery_allowed = true;
+        }
         if let Err(error) = self.save_locked(&mut guard) {
             drop(guard);
             self.emit(app);
@@ -777,6 +819,14 @@ impl WakeupOwner {
         self.emit(app);
         result
     }
+}
+fn local_preparation_failed(result: &OnlineQuotaResult) -> bool {
+    result.wakeup_effect.is_none()
+        && (result.runtime_stage.as_deref() == Some("probe")
+            || (result.runtime_stage.as_deref() == Some("execute")
+                && result.runtime_reason.as_deref() == Some("probe_failed"))
+            || (result.stage.as_deref() == Some("route")
+                && result.reason.as_deref() == Some("unsupported_proxy")))
 }
 fn finish(
     state: &mut Snapshot,
@@ -795,7 +845,8 @@ fn finish(
                     .and_then(|s| s.as_str().map(str::to_string))
                     .unwrap_or_else(|| "error".into()),
             );
-            a.unknown = r.wakeup_effect == Some(WakeupEffect::OutcomeUnknown);
+            a.unknown = r.wakeup_effect == Some(WakeupEffect::OutcomeUnknown)
+                || (r.runtime_stage.as_deref() == Some("execute") && !local_preparation_failed(r));
             a.auth_blocked |= r.status == OnlineStatus::AuthRequired;
             a.backoff_until_ms = Some(r.retry_at_ms.unwrap_or(0).max(
                 now + if r.status == OnlineStatus::RateLimited {
@@ -860,15 +911,21 @@ fn local_minute(_now: u64) -> u16 {
 }
 
 #[tauri::command]
-pub fn identities_wakeup_state(app: tauri::AppHandle) -> Result<Snapshot, String> {
-    Ok(app
-        .state::<WakeupOwner>()
-        .inner
-        .0
-        .lock()
-        .map_err(|_| "wakeup.stateSaveFailed")?
-        .snapshot
-        .clone())
+pub async fn identities_wakeup_state(app: tauri::AppHandle) -> Result<Snapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<WakeupOwner>().refresh_local(&app)?;
+        let result = app
+            .state::<WakeupOwner>()
+            .inner
+            .0
+            .lock()
+            .map_err(|_| "wakeup.stateSaveFailed")?
+            .snapshot
+            .clone();
+        Ok(result)
+    })
+    .await
+    .map_err(|_| "wakeup.stateSaveFailed".to_string())?
 }
 #[tauri::command]
 pub async fn identities_wakeup_configure(
@@ -879,11 +936,7 @@ pub async fn identities_wakeup_configure(
         return Err("wakeup.configSaveFailed".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let items = if config.enabled {
-            Some(candidates(&app)?.0)
-        } else {
-            None
-        };
+        let (items, active) = candidates(&app)?;
         // The probe imports Python/cryptography only and never selects an account.
         let runtime = if config.enabled {
             super::online::wakeup_runtime_capability(&app)
@@ -905,18 +958,22 @@ pub async fn identities_wakeup_configure(
             "disabled"
         }
         .into();
-        if let Some(items) = &items {
-            guard.snapshot.targets = target_set(items);
+        if guard.snapshot.config.enabled {
+            guard.snapshot.targets = target_set(&items);
         }
         guard.snapshot.migrated = true;
         if guard.snapshot.config.enabled {
             guard.snapshot.runtime = "available".into();
         }
-        for item in items.into_iter().flatten() {
-            let account = guard.snapshot.accounts.entry(item.identity).or_default();
-            account.auth_blocked |= item.capability == "auth_required";
-            account.capability = item.capability;
-        }
+        let now = now_ms();
+        let _ = plan(
+            &mut guard.snapshot,
+            &items,
+            active,
+            now,
+            local_minute(now),
+            random(),
+        );
         if let Err(e) = owner.save_locked(&mut guard) {
             guard.snapshot = before;
             guard.snapshot.status = "storage_error".into();
@@ -965,8 +1022,9 @@ pub async fn identities_wakeup_migrate(
     {
         return Err("wakeup.configSaveFailed".into());
     }
-    if identities_wakeup_state(app.clone())?.migrated {
-        return identities_wakeup_state(app);
+    let existing = identities_wakeup_state(app.clone()).await?;
+    if existing.migrated {
+        return Ok(existing);
     }
     // Ignore historical success/idle counters: old code could seal the wrong reset.
     {
@@ -1007,27 +1065,57 @@ pub async fn identities_wakeup_migrate(
     identities_wakeup_configure(app, migration.config).await
 }
 #[tauri::command]
-pub fn identities_wakeup_resume(
+pub async fn identities_wakeup_resume(
     app: tauri::AppHandle,
     expected_identity: String,
 ) -> Result<Snapshot, String> {
     if !identity_valid(&expected_identity) {
         return Err("wakeup.notReady".into());
     }
-    let owner = app.state::<WakeupOwner>();
-    let mut guard = owner.inner.0.lock().map_err(|_| "wakeup.stateSaveFailed")?;
-    let a = guard
-        .snapshot
-        .accounts
-        .get_mut(&expected_identity)
-        .ok_or("wakeup.notReady")?;
-    grant_recovery(a)?;
-    owner.save_locked(&mut guard)?;
-    let result = guard.snapshot.clone();
-    drop(guard);
-    owner.inner.1.notify_all();
-    owner.emit(&app);
-    Ok(result)
+    tauri::async_runtime::spawn_blocking(move || {
+        let owner = app.state::<WakeupOwner>();
+        // Re-read bound local targets rather than relying on an enabled owner having
+        // happened to create the account. Never grant recovery to a stale identity.
+        let (items, active) = candidates(&app)?;
+        if !items.iter().any(|item| item.identity == expected_identity) {
+            return Err("wakeup.notReady".into());
+        }
+        let mut guard = owner.inner.0.lock().map_err(|_| "wakeup.stateSaveFailed")?;
+        if guard.active || guard.stopped || !guard.writable {
+            return Err("wakeup.notReady".into());
+        }
+        let now = now_ms();
+        let _ = plan(
+            &mut guard.snapshot,
+            &items,
+            active,
+            now,
+            local_minute(now),
+            random(),
+        );
+        let a = guard
+            .snapshot
+            .accounts
+            .get_mut(&expected_identity)
+            .ok_or("wakeup.notReady")?;
+        grant_recovery(a)?;
+        let _ = plan(
+            &mut guard.snapshot,
+            &items,
+            active,
+            now,
+            local_minute(now),
+            random(),
+        );
+        owner.save_locked(&mut guard)?;
+        let result = guard.snapshot.clone();
+        drop(guard);
+        owner.inner.1.notify_all();
+        owner.emit(&app);
+        Ok(result)
+    })
+    .await
+    .map_err(|_| "wakeup.stateSaveFailed".to_string())?
 }
 
 fn grant_recovery(account: &mut Account) -> Result<(), String> {

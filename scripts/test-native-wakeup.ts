@@ -61,6 +61,7 @@ export async function testNativeWakeup(browser:Browser,base:string):Promise<numb
   await row.getByRole('button',{name:'允许一次恢复尝试',exact:true}).click();
   await page.waitForFunction(()=>{const f=(window as any).identityFixture;return f.wakeup.accounts[f.state.current.quota_identity].recoveryAllowed;});
   assert.equal(await page.evaluate(()=>{const f=(window as any).identityFixture;return f.wakeup.accounts[f.state.current.quota_identity].recoveryAllowed;}),true);
+  await row.getByRole('button',{name:'已允许一次验证',exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>(window as any).identityFixture.commands.filter((r:any)=>r.command==='identities_wakeup_quota_window').length),0);checks++;
   await dialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();
   await page.getByRole('button',{name:'自动续杯 · 已开',exact:true}).click();await toggle().waitFor();checks++;
@@ -84,7 +85,11 @@ export async function testNativeWakeup(browser:Browser,base:string):Promise<numb
   await page.waitForFunction(()=>!document.querySelector('.identity-connection-queue'));
   assert.equal(await page.evaluate(()=>{
    const f=(window as any).identityFixture;return f.commands.filter((r:any)=>r.command==='identities_refresh_all_quotas').at(-1).args.allowBrowserFallback;
-  }),true);checks++;
+  }),true);
+  // Web query resolution updates web quota only; fixture evidence must preserve CLI auth block and permit without false promises
+  assert.equal(await page.evaluate(()=>(window as any).identityFixture.wakeup.accounts[(window as any).identityFixture.state.current.quota_identity].authBlocked),true);
+  assert.equal(await page.evaluate(()=>(window as any).identityFixture.wakeup.accounts[(window as any).identityFixture.state.current.quota_identity].recoveryAllowed),true);
+  checks++;
   await page.evaluate(()=>{
    const f=(window as any).identityFixture;const identity=f.state.current.quota_identity;
    Object.assign(f.state.current,{quota_5h_source:'reset_inferred',quota_5h_reset_at:Math.floor(Date.now()/1000)-100});
@@ -107,7 +112,7 @@ export async function testNativeWakeup(browser:Browser,base:string):Promise<numb
    accounts[identity]={...accounts[identity],authBlocked:false,decision:'backoff_cooldown',backoffUntilMs:Date.now()+120000};
    f.publishWakeup({accounts,nextGlobalAtMs:Date.now()+180000});
   });
-  await currentRow.locator('[data-wakeup-gate="backoff_cooldown"]').getByText(/仍需等待 \d+ 秒/).waitFor();
+  await currentRow.locator('[data-wakeup-gate="backoff_cooldown"]').getByText(/仍需等待 \d+ 分 \d+ 秒/).waitFor();
   assert.equal(await currentRow.getByRole('button',{name:'唤醒 5h 计时',exact:true}).isEnabled(),false);
   assert.notEqual(await currentRow.getByRole('button',{name:'唤醒 5h 计时',exact:true}).getAttribute('aria-busy'),'true');checks++;
   await page.evaluate(()=>{
@@ -117,13 +122,66 @@ export async function testNativeWakeup(browser:Browser,base:string):Promise<numb
   const resumesBefore=await page.evaluate(()=>(window as any).identityFixture.commands.filter((r:any)=>r.command==='identities_wakeup_resume').length);
   await currentRow.getByRole('button',{name:'允许一次恢复尝试',exact:true}).click();
   await dialog.locator('.identity-online-feedback').getByText(/未更新凭据/).waitFor();
-  assert.equal(await currentRow.getByRole('button',{name:'允许一次恢复尝试',exact:true}).isEnabled(),false);
+  await currentRow.getByRole('button',{name:'已允许一次验证',exact:true}).waitFor();
+  assert.equal(await currentRow.getByRole('button',{name:'已允许一次验证',exact:true}).isEnabled(),false);
   assert.equal(await currentRow.getByRole('button',{name:'唤醒 5h 计时',exact:true}).isEnabled(),false,'recovery preserves shared cooldown');
   await page.evaluate(()=>{const f=(window as any).identityFixture;const accounts=f.wakeup.accounts;accounts[f.state.current.quota_identity].backoffUntilMs=null;f.publishWakeup({accounts,nextGlobalAtMs:0});});
   await currentRow.getByRole('button',{name:'唤醒 5h 计时',exact:true}).click();
   await page.waitForFunction(()=>{const f=(window as any).identityFixture;return !f.wakeup.accounts[f.state.current.quota_identity].recoveryAllowed;});
   assert.equal(await page.evaluate(()=>(window as any).identityFixture.commands.filter((r:any)=>r.command==='identities_wakeup_resume').length),resumesBefore+1);
   assert.equal(await queue.count(),0);checks++;
+
+  // Viewport 760 check: verify that long localized auth reasons with local valid + old authblocked fit without horizontal overflow
+  await page.setViewportSize({width:760,height:820});
+  await page.evaluate(()=>{
+   const f=(window as any).identityFixture;const identity=f.state.current.quota_identity;
+   f.state.running=false;f.state.current.auth_status='valid';
+   Object.assign(f.state.current,{quota_5h_source:'reset_inferred',quota_5h_reset_at:Math.floor(Date.now()/1000)-100});
+   const accounts=f.wakeup.accounts;
+   accounts[identity]={...accounts[identity],authBlocked:true,lastStatus:'auth_required',decision:'auth_blocked',recoveryAllowed:false,backoffUntilMs:null};
+   f.publishWakeup({accounts,nextGlobalAtMs:0});
+  });
+  await currentRow.getByText('待验证',{exact:true}).waitFor();
+  await currentRow.getByText('本地已登录',{exact:true}).waitFor();
+  await currentRow.getByText(/本地已登录，但保留着上次 CLI 授权失败；允许一次验证后再确认消息权限。/).waitFor();
+  const overflowZh=await dialog.evaluate(dialogEl=>{
+   const panel=dialogEl.querySelector('.identity-wakeup-panel') as HTMLElement|null;
+   const rowEl=dialogEl.querySelector('.identity-wakeup-account-row') as HTMLElement|null;
+   const detailsEl=dialogEl.querySelector('.identity-wakeup-account-details') as HTMLElement|null;
+   return {
+    dialogOverflow:dialogEl.scrollWidth>dialogEl.clientWidth+1,
+    panelOverflow:panel?panel.scrollWidth>panel.clientWidth+1:false,
+    rowOverflow:rowEl?rowEl.scrollWidth>rowEl.clientWidth+1:false,
+    detailsOverflow:detailsEl?detailsEl.scrollWidth>detailsEl.clientWidth+1:false,
+   };
+  });
+  assert.equal(overflowZh.dialogOverflow,false,'Dialog must not overflow horizontally at viewport 760');
+  assert.equal(overflowZh.panelOverflow,false,'Panel must not overflow horizontally at viewport 760');
+  assert.equal(overflowZh.rowOverflow,false,'Row must not overflow horizontally at viewport 760');
+  assert.equal(overflowZh.detailsOverflow,false,'Details must not overflow horizontally at viewport 760');checks++;
+
+  // Switch to English and verify no horizontal overflow with English long auth reason
+  await page.evaluate(()=>(window as any).identityFixture.language('en'));
+  await currentRow.getByText('Verification needed',{exact:true}).waitFor();
+  await currentRow.getByText('Local login available',{exact:true}).waitFor();
+  await currentRow.getByText(/Local login is available, but the previous CLI authorization failure remains/).waitFor();
+  const overflowEn=await dialog.evaluate(dialogEl=>{
+   const panel=dialogEl.querySelector('.identity-wakeup-panel') as HTMLElement|null;
+   const rowEl=dialogEl.querySelector('.identity-wakeup-account-row') as HTMLElement|null;
+   const detailsEl=dialogEl.querySelector('.identity-wakeup-account-details') as HTMLElement|null;
+   return {
+    dialogOverflow:dialogEl.scrollWidth>dialogEl.clientWidth+1,
+    panelOverflow:panel?panel.scrollWidth>panel.clientWidth+1:false,
+    rowOverflow:rowEl?rowEl.scrollWidth>rowEl.clientWidth+1:false,
+    detailsOverflow:detailsEl?detailsEl.scrollWidth>detailsEl.clientWidth+1:false,
+   };
+  });
+  assert.equal(overflowEn.dialogOverflow,false,'Dialog must not overflow horizontally in English at viewport 760');
+  assert.equal(overflowEn.panelOverflow,false,'Panel must not overflow horizontally in English at viewport 760');
+  assert.equal(overflowEn.rowOverflow,false,'Row must not overflow horizontally in English at viewport 760');
+  assert.equal(overflowEn.detailsOverflow,false,'Details must not overflow horizontally in English at viewport 760');checks++;
+  await page.evaluate(()=>(window as any).identityFixture.language('zh'));
+
   assert.deepEqual(errors,[]);return checks;
  }finally{await context.close();}
 }

@@ -46,6 +46,8 @@ User-requested Claude Code CLI maintenance is separate from application releases
 
 [PROTOCOL]: Update source headers and directory maps with changes. Preserve both locale catalogs and run scoped tests.
 
+docs/AUTH_SYNC_0.1.1.md - Login/readiness synchronization, compact per-account status, explicit recovery evidence and incomplete browser-check semantics; patch after the public-version reset, independent of historical pre-reset 0.1.1 notes.
+
 Action geometry: ordinary application buttons use the shared small 28px height and 10px horizontal padding, with width determined by their labels. Pages use the existing neutral secondary variant; destructive confirmations retain explicit red styling. Account filters fit the selected label instead of a fixed wide column, while popup options retain readable width. No vendored primitives or action semantics are changed.
 
 docs/RELEASE_NOTES_0.1.1.md - Owner-requested manual private prerelease notes; shared packages exclude personal usage-attribution seeds.

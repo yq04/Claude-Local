@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 随机令牌回环服务上下文、浏览器原生 navigator/Intl/Permissions/WebRTC/WebGL/Canvas/Audio/UA-CH 与实际 HTTPS 出口与服务备援目录与宿主界面语言。
- * [OUTPUT]: 单项未知黄色待测与已知冲突红叉；顶部身份工牌、紧凑 20 项防封实测页（内建 Ping0/CheckCC/BrowserScan/IPHey 核心检测算法：ISP/ASN 纯净度、时区偏移、Canvas/音频指纹与客户端提示），同步宿主双语及通讯/回报时间。
+ * [OUTPUT]: 单项未知与整体未完成保持黄色待测，已知冲突红叉；顶部身份工牌、紧凑 20 项防封实测页（内建 Ping0/CheckCC/BrowserScan/IPHey 核心检测算法：ISP/ASN 纯净度、时区偏移、Canvas/音频指纹与客户端提示），同步宿主双语及通讯/回报时间。
  * [POS]: 独立 Chromium 入口，复用工具箱控件；成功状态只由真实观测决定，不接入 Tauri 权限，不伪造地理位置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -218,7 +218,7 @@ function Start() {
     const isStale = !!reportedAt && (Date.now() - reportedAt > 10 * 60 * 1000);
     const result=verifyBrowser(context,report,linked,error,busy,reportedAt);
     const {phase,checks,problems}=result;
-    const title=phase==='checking'?'检测中':phase==='passed'?'检测通过':'检测未通过';
+    const title=phase==='checking'?'检测中':phase==='passed'?'检测通过':phase==='incomplete'?'检测未完成':'检测未通过';
     const identity=context?.identity;
     const identityName=identity?.name||t(identity?.status==='empty'?'空身份':identity?.status==='unlinked'?'通用浏览器资料':'当前身份');
     const identityStatus=!context&&busy?'正在读取身份':!linked?'主应用未连接':!identity?'身份待核对':identity.status==='unlinked'?'未联动':identity.status==='mismatch'?'身份待同步':identity.status==='unknown'?'身份待核对':'身份已联动';

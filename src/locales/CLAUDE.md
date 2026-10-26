@@ -1,5 +1,6 @@
 # locales/
 
+wakeup.view.* / wakeup.localAuth.* / wakeup.wait*: 简短主状态、本地授权与服务端验证的区别和可读时分秒等待；两语同键同插槽。
 quotaOnline.browserFallback.* / wakeup.gate.* / wakeup.retryIn：区分网页额度读取失败与CLI唤醒授权，受控原因、冷却倒计时和明确单次恢复；不得承诺网页登录会更新CLI凭据。
 > L2 | 父级: ../CLAUDE.md
 wakeup.*: 应用运行/托盘隐藏/真正退出边界、scope变化暂停、HTTP CONNECT类型支持（不代表网络可达）、无账号探针失败、逐账号暂停/一次受控授权恢复、最近尝试与审计写入失败；两语同键同插槽，不暴露代理值或身份指纹。

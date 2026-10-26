@@ -1,5 +1,5 @@
 // [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话账单增量、本地 settings.json 代理环境变量、只读外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据；当前无可信订阅到期来源。
-// [OUTPUT]: 当前本地身份与已保存身份的脱敏摘要（用户名/邮箱/组织/套餐档位/OAuth有效状态/可选网页权益/专属代理/逐窗5h与7d额度、含 reset_inferred 来源、真实观测时间及重置时间戳）及有界活动会话列表；百分比锚点先验证，不输出令牌，本模块不联网验证账号。
+// [OUTPUT]: 当前/保存身份的脱敏摘要与一致的OAuth有效期/刷新存在性投影、逐窗额度和有界活动会话；不输出令牌、不联网验证账号。
 // [POS]: 身份卡片的只读展示边界；账号匹配与旧格式适配留在此处，逐窗合并/过期/推定恢复/聚合复用 quota_core；归档时间不代表额度新鲜度，账本只读且不匹配项不污染摘要。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -49,6 +49,10 @@ pub struct Current {
     pub plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_expires_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_has_refresh: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -173,9 +177,9 @@ impl Summary {
             quota_7d_reset_at: cur.quota_7d_reset_at,
             quota_checked: Some(true),
             quota_version: Some(CURRENT_QUOTA_VERSION),
-            auth_expires_at: None,
+            auth_expires_at: cur.auth_expires_at,
             subscription_expires_at: cur.subscription_expires_at,
-            auth_has_refresh: None,
+            auth_has_refresh: cur.auth_has_refresh,
         }
     }
 }
@@ -1589,6 +1593,8 @@ fn parse(bytes: &[u8]) -> Result<Current, serde_json::Error> {
             unavailable: false,
             plan: format_plan(None, None, account.billing_type.as_deref()),
             auth_status: None,
+            auth_expires_at: None,
+            auth_has_refresh: None,
             proxy: None,
             quota_5h_used: None,
             quota_5h_reset_at: None,
@@ -1650,11 +1656,13 @@ fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
         let mut tier = None;
         if let Some(cred) = read_bounded_json(&home.join(".claude/.credentials.json"), 1024 * 1024)
         {
-            let (s, t, status, _, _) = extract_credentials_meta(&cred);
+            let (s, t, status, expires_at, has_refresh) = extract_credentials_meta(&cred);
             sub = s;
             tier = t;
             if status.is_some() {
                 current.auth_status = status;
+                current.auth_expires_at = expires_at;
+                current.auth_has_refresh = has_refresh;
                 current.present = true;
             }
         }
@@ -1963,9 +1971,14 @@ mod tests {
         let (_, _, _, oauth_expires_at, _) = extract_credentials_meta(&credentials);
         assert_eq!(oauth_expires_at, Some(1_900_000_000_000));
 
-        let current = parse(br#"{"oauthAccount":{"displayName":"Fixture"}}"#).unwrap();
+        let mut current = parse(br#"{"oauthAccount":{"displayName":"Fixture"}}"#).unwrap();
+        current.auth_status = Some("valid".into());
+        current.auth_expires_at = oauth_expires_at;
+        current.auth_has_refresh = Some(true);
         assert_eq!(current.subscription_expires_at, None);
         let summary = Summary::from_current(&current);
+        assert_eq!(summary.auth_expires_at, oauth_expires_at);
+        assert_eq!(summary.auth_has_refresh, Some(true));
         assert_eq!(summary.subscription_expires_at, None);
 
         let legacy: Summary = serde_json::from_value(serde_json::json!({

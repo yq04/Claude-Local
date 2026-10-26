@@ -1,6 +1,6 @@
 /**
  * [INPUT]: index.css 的系统字体、Cromma UI 控件、Cockpit Tools / CC Switch 座舱卡片与胶囊导航几何、settings-model 主题/强调色/布局/动效属性。
- * [OUTPUT]: 双主题/四色强调色、192px经典与72px紧凑自适应侧栏、窄身份库内完整换行的账号引导、统一28px操作按钮、固定身份卡额度排版、按文字自适应的网络复制按钮、并排电脑设置卡与下方定位横条；用量专属样式由 usage-statistics.css 提供。控件皮肤归 Cromma UI 原语，本文件统一应用布局和尺寸。
+ * [OUTPUT]: 双主题/四色强调色、192px经典与72px紧凑自适应侧栏、窄身份库内完整换行的账号引导、浏览器未知项整体未完成的中性黄色、统一28px操作按钮、固定身份卡额度排版、按文字自适应的网络复制按钮、并排电脑设置卡与下方定位横条；用量专属样式由 usage-statistics.css 提供。控件皮肤归 Cromma UI 原语，本文件统一应用布局和尺寸。
  * [POS]: 应用布局与视觉渲染层；保持 180×286（54:85.6 标准工牌比例）身份工牌几何、#43e484 顶部绿光与 #ac3025 错误色等自动化测试契约。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -1371,7 +1371,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 
 /* ----- 实测页沿用主窗口斜纹与点阵；状态由真实核验统一着色 ----- */
 .browser-verification-page { --verification-bg: #fff1f0; --verification-color: #b42318; min-height: 100vh; padding: 16px; background-color: var(--verification-bg); background-image: var(--landing-hatch); transition: background-color 300ms ease; }
-.browser-verification-page.is-checking { --verification-bg: #fff8df; --verification-color: #986400; }
+.browser-verification-page.is-checking, .browser-verification-page.is-incomplete { --verification-bg: #fff8df; --verification-color: #986400; }
 .browser-verification-page.is-passed { --verification-bg: #e4f5e9; --verification-color: #16703c; }
 .browser-start { width: 100%; border: 1px solid var(--landing-line); border-radius: 14px; overflow: hidden; background: var(--panel); }
 .verification-brand { min-height: 52px; padding: 10px 20px; border-bottom: 1px solid var(--landing-line); display: flex; align-items: center; justify-content: space-between; gap: 20px; }

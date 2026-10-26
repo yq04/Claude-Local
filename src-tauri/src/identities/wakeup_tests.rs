@@ -1,5 +1,5 @@
 // [INPUT]: Synthetic summaries, fixed clock values, fake collector outcomes and private temporary files.
-// [OUTPUT]: Scheduler scope, plan, restart, structured admission, unknown-result and recovery regression tests.
+// [OUTPUT]: Disabled local readiness, scheduler scope, durable admission, preparation failure and recovery regressions.
 // [POS]: No live identity, Python process, HTTP request or system mutation.
 use super::*;
 fn item() -> Candidate {
@@ -127,6 +127,84 @@ fn storage_failure_and_disabled_schedule_never_dispatch() {
         .prepare_dispatch(&c, &[c.clone()], true, c.reset, 200_000, 0, 0)
         .is_err());
     assert!(!owner.path.exists());
+}
+#[test]
+fn disabled_owner_refreshes_local_readiness_without_authorizing_dispatch() {
+    let mut state = Snapshot::default();
+    let mut c = item();
+    assert!(plan(&mut state, &[c.clone()], Some(80), 200_000, 0, 0).is_none());
+    assert_eq!(state.status, "disabled");
+    assert_eq!(state.accounts[&c.identity].capability, "http_connect");
+    assert_eq!(state.accounts[&c.identity].decision, "scheduled");
+    assert_eq!(state.accounts[&c.identity].scheduled_at_ms, None);
+    assert_eq!(state.accounts[&c.identity].last_attempt_at_ms, None);
+    assert!(state.targets.is_empty()); // Local discovery never opts in a scope.
+    c.capability = "auth_required".into();
+    plan(&mut state, &[c.clone()], Some(80), 200_001, 0, 0);
+    assert_eq!(state.accounts[&c.identity].decision, "auth_blocked");
+    grant_recovery(state.accounts.get_mut(&c.identity).unwrap()).unwrap();
+    plan(&mut state, &[c.clone()], Some(80), 200_002, 0, 0);
+    assert!(state.accounts[&c.identity].recovery_allowed);
+    assert_eq!(state.accounts[&c.identity].decision, "scheduled");
+    assert!(dispatch_blocker(&state, &c, &[c.clone()], true, c.reset, 200_002, 0).is_some());
+    assert!(state.accounts[&c.identity].recovery_allowed);
+    assert_eq!(state.next_global_at_ms, 0);
+}
+
+#[test]
+fn local_resynchronization_keeps_auth_history_and_other_account_guards() {
+    let mut state = Snapshot::default();
+    let c = item();
+    let mut other = c.clone();
+    other.identity = "b".repeat(64);
+    let blocked = Account {
+        auth_blocked: true,
+        last_status: Some("auth_required".into()),
+        backoff_until_ms: Some(9_000_000),
+        ..Account::default()
+    };
+    state.accounts.insert(c.identity.clone(), blocked.clone());
+    state.accounts.insert(
+        other.identity.clone(),
+        Account {
+            auth_blocked: true,
+            last_status: Some("rate_limited".into()),
+            backoff_until_ms: Some(8_000_000),
+            ..Account::default()
+        },
+    );
+    state.next_global_at_ms = 7_000_000;
+    plan(&mut state, &[c.clone(), other.clone()], None, 200_000, 0, 0);
+    assert_eq!(state.accounts[&c.identity].last_status, blocked.last_status);
+    assert_eq!(
+        state.accounts[&c.identity].backoff_until_ms,
+        blocked.backoff_until_ms
+    );
+    grant_recovery(state.accounts.get_mut(&c.identity).unwrap()).unwrap();
+    assert_eq!(state.accounts[&c.identity].backoff_until_ms, None);
+    assert!(!state.accounts[&other.identity].recovery_allowed);
+    assert_eq!(
+        state.accounts[&other.identity].backoff_until_ms,
+        Some(8_000_000)
+    );
+    assert_eq!(state.next_global_at_ms, 7_000_000);
+}
+
+#[test]
+fn preparation_evidence_does_not_confuse_auth_validation_or_uncertain_transport() {
+    let probe = result(serde_json::json!({"status":"unavailable","runtime_stage":"probe","runtime_reason":"missing_dependency"})).unwrap();
+    assert!(local_preparation_failed(&probe));
+    let denied = result(serde_json::json!({"status":"auth_required","stage":"profile"})).unwrap();
+    assert!(!local_preparation_failed(&denied));
+    let ambiguous = result(
+        serde_json::json!({"status":"unavailable","runtime_stage":"execute","runtime_reason":"timeout"}),
+    );
+    assert!(!local_preparation_failed(ambiguous.as_ref().unwrap()));
+    let mut state = enabled();
+    let c = item();
+    finish(&mut state, &c.identity, c.reset, 200_000, &ambiguous);
+    assert!(state.accounts[&c.identity].unknown);
+    assert!(grant_recovery(state.accounts.get_mut(&c.identity).unwrap()).is_err());
 }
 fn result(value: serde_json::Value) -> Result<OnlineQuotaResult, String> {
     Ok(serde_json::from_value(value).unwrap())

@@ -1,11 +1,11 @@
 /**
  * [INPUT]: 宿主上下文、共用有效时区/语言、版本化浏览器观测与回报状态。
- * [OUTPUT]: 固定指标目录中的通过/失败/未知检查；缺失或旧版报告不能通过。
+ * [OUTPUT]: 固定指标目录中的通过/失败/未完成检查；仅未知时为中性未完成，存在错误/失败时为未通过。
  * [POS]: 起始页纯核验模型，与 DOM/网络分离；结果只描述已完成的有限测量。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {classifyExitIsp, effectiveBrowserTarget, matchesDevice, type BrowserContext, type Report} from './browser-model';
-export type VerificationPhase='checking'|'failed'|'passed';
+export type VerificationPhase='checking'|'failed'|'passed'|'incomplete';
 export type VerificationCheck={id:string;label:string;actual:string;expected:string;ok:boolean|null;applicable:boolean};
 export const REPORT_SCHEMA_VERSION = 1;
 export const REQUIRED_CHECK_IDS = [
@@ -35,7 +35,7 @@ export function verifyBrowser(context:BrowserContext|null,report:Report|null,lin
   if(!exit)problems.push('无法验证网络出口，请检查连接后重测。');
   add('exit.country','出口国家',exit?.country,region?.country,region&&exit?exit.country===region.country:null);
   const ispKind=classifyExitIsp(exit);
-  add('exit.provider','出口 IP 属性',ispKind==='hosting'?'已识别机房特征':ispKind==='isp'?'运营商标记为非机房':'运营商未知', '机房特征识别结果', ispKind==='hosting'?false:ispKind==='isp'?true:null);
+  add('exit.provider','出口 IP 属性',ispKind==='hosting'?'已识别机房特征':ispKind==='isp'?'运营商标记为非机房':'运营商信息或机房分类不足，结果未知', '机房特征识别结果', ispKind==='hosting'?false:ispKind==='isp'?true:null);
   add('page.timezone','网页时区',report.timezone,target.timezone,!!report.timezone&&report.timezone===target.timezone);
   add('exit.timezone','出口时区',exit?.timezone,report.timezone,!!exit?.timezone&&exit.timezone===report.timezone);
   add('machine.timezone','本机时区',machine.timezone,report.timezone,!!machine.timezone&&machine.timezone===report.timezone);
@@ -58,7 +58,14 @@ export function verifyBrowser(context:BrowserContext|null,report:Report|null,lin
   add('probe.client-hints','客户端提示与屏幕',current?report.client_hints_detail:undefined,'桌面端 UA-CH 与有效屏幕信息',observed(report.client_hints_ok));
   if(!current)problems.push('检测报告版本过旧或无法识别，请重新实测。');
  }
+ const hasRealFailure=checks.some(check=>check.ok===false);
  const complete=checks.length===REQUIRED_CHECK_IDS.length&&REQUIRED_CHECK_IDS.every(id=>checks.some(check=>check.id===id&&check.applicable&&check.ok!==null));
- const phase:VerificationPhase=busy?'checking':!problems.length&&complete&&checks.every(check=>check.ok===true)?'passed':'failed';
+ const phase:VerificationPhase=busy
+  ?'checking'
+  :problems.length>0||hasRealFailure
+   ?'failed'
+   :complete&&checks.every(check=>check.ok===true)
+    ?'passed'
+    :'incomplete';
  return {phase,checks,problems:[...new Set(problems)],failures:checks.filter(check=>check.ok!==true)};
 }

@@ -46,3 +46,5 @@ Private share workflow: manually dispatched Windows artifacts also retain the pu
 When Actions artifact storage is full, an explicit workflow_dispatch `private-draft` transport can upload the same public-input archive to a private draft build release. It remains draft/prerelease, uses a unique run tag and never overwrites existing releases; final product publication still requires independent local private-probe audit and the separate owner-authorized publication step.
 
 Usage GUI checks also require the concise All selector and absence of history/live/scope clutter.
+
+Focused sync regressions: `test-identities-ui.ts --wakeup-only` covers local-login/history separation, one recovery grant, human-readable waits and narrow dialog layout using fake native IPC. `--verification-only` runs the real browser verification page with fictional context and blocked external requests; unknown-only reports stay incomplete rather than failed or passed.

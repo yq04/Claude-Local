@@ -45,7 +45,14 @@ fn invalid_cached_percentages_are_rejected_per_window() {
     let extracted = extract_quota(&cj, None, Some("Pro"), now, 0);
     assert_eq!(extracted.used_7d, None);
     assert_eq!(
-        window_source(&cj, "seven_day", extracted.used_7d, extracted.reset_7d, false, now),
+        window_source(
+            &cj,
+            "seven_day",
+            extracted.used_7d,
+            extracted.reset_7d,
+            false,
+            now
+        ),
         Some(QuotaSource::Unknown)
     );
 }
@@ -66,7 +73,17 @@ fn cached_percentages_preserve_bounds_rounding_tolerance() {
     let extracted = extract_quota(&cj, None, Some("Pro"), now, 0);
     assert_eq!(extracted.used_5h, Some(100));
     assert_eq!(extracted.used_7d, Some(0));
-    assert_eq!(window_source(&cj, "five_hour", extracted.used_5h, extracted.reset_5h, false, now), Some(QuotaSource::ServerAnchor));
+    assert_eq!(
+        window_source(
+            &cj,
+            "five_hour",
+            extracted.used_5h,
+            extracted.reset_5h,
+            false,
+            now
+        ),
+        Some(QuotaSource::ServerAnchor)
+    );
 }
 
 #[test]
@@ -88,7 +105,12 @@ fn ledger_anchor_and_reset_inference_reject_invalid_percentages_per_window() {
     assert_eq!(ledger_window_value(&entry, "five_hour", now), None);
     assert_eq!(
         ledger_window_value(&entry, "seven_day", now),
-        Some((42, now + 86400, 1_799_999_000_000, QuotaSource::ServerAnchor))
+        Some((
+            42,
+            now + 86400,
+            1_799_999_000_000,
+            QuotaSource::ServerAnchor
+        ))
     );
 
     let inferred = serde_json::json!({
@@ -99,7 +121,10 @@ fn ledger_anchor_and_reset_inference_reject_invalid_percentages_per_window() {
             }
         }
     });
-    assert_eq!(ledger_reset_inferred_value(&inferred, "five_hour", now), None);
+    assert_eq!(
+        ledger_reset_inferred_value(&inferred, "five_hour", now),
+        None
+    );
 }
 
 fn identity(uuid: &str, org: &str) -> String {
@@ -339,7 +364,10 @@ fn erased_expired_anchor_is_recovered_only_for_matching_identity_and_never_repla
     apply_ledger_to_summary(&root.join("identity-vault"), &mut writer_summary, 0, now);
     assert_eq!(writer_summary.quota_5h_used, Some(0));
     assert_eq!(writer_summary.quota_5h_reset_at, Some(now - 1));
-    assert_eq!(writer_summary.quota_5h_source, Some(QuotaSource::ResetInferred));
+    assert_eq!(
+        writer_summary.quota_5h_source,
+        Some(QuotaSource::ResetInferred)
+    );
 
     let mut foreign = Summary {
         email: Some("fixture@example.invalid".into()),

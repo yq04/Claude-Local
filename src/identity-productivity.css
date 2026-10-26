@@ -1,5 +1,5 @@
 /* [INPUT]: Identity workbench online quota dialog, 5h auto-wakeup panel, observation age, weekly pace tick, sync feedback and recovery queue.
- * [OUTPUT]: Accessible ⋯ dropdown menu, header auto-wakeup pill, auto-wakeup time-window & status panel, quota estimation track with 7d pace tick, sync confirmation pill, result ages and centralized connection recovery styling without changing card geometry.
+ * [OUTPUT]: Accessible ⋯ dropdown menu, header auto-wakeup pill, auto-wakeup time-window & status panel with compact wrap-safe 4-zone account blocks, quota estimation track with 7d pace tick, sync confirmation pill, result ages and centralized connection recovery styling without changing card geometry.
  * [POS]: Identity productivity presentation; the 180×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
  */
@@ -220,7 +220,7 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.identity-online-query-dialog { display: grid; gap: 12px; }
+.identity-online-query-dialog { display: grid; gap: 12px; min-width: 0; max-width: 100%; }
 .identity-online-query-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 .identity-header-actions {
@@ -295,6 +295,9 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--card);
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
 }
 .identity-wakeup-head {
   display: flex;
@@ -317,6 +320,7 @@
   margin: 2px 0 0;
   font-size: 11.5px;
   color: var(--muted-foreground);
+  overflow-wrap: anywhere;
 }
 .identity-wakeup-head-actions {
   display: flex;
@@ -412,33 +416,57 @@
   font-size: 11px;
   line-height: 1.45;
   color: var(--muted-foreground);
+  overflow-wrap: anywhere;
 }
 .identity-wakeup-account-list {
   display: grid;
-  gap: 5px;
-  max-height: 168px;
+  gap: 8px;
+  max-height: 240px;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-top: 8px;
   border-top: 1px solid var(--border);
+  min-width: 0;
 }
+
+/* 账号卡片容器：明确使用 grid 单列块布局，min-width: 0 保证自适应收缩 */
 .identity-wakeup-account-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  font-size: 11.5px;
+  box-sizing: border-box;
+}
+
+/* 段落全局零外边距，防止撑大卡片高度 */
+.identity-wakeup-account-row p {
+  margin: 0;
+}
+
+/* 1. 头部区域：name + 简短主状态 + 本地登录短标签 */
+.identity-wakeup-account-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
+  flex-wrap: wrap;
   min-width: 0;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--muted);
-  font-size: 11.5px;
 }
+
 .identity-wakeup-account-name {
   font-weight: 600;
   color: var(--foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 190px;
+  max-width: 220px;
+  min-width: 0;
 }
+
 .identity-wakeup-streak-pill {
   padding: 1px 6px;
   border-radius: 999px;
@@ -447,18 +475,82 @@
   color: #b45309;
   border: 1px solid rgba(245, 158, 11, 0.28);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 :root.dark .identity-wakeup-streak-pill {
   background: rgba(251, 191, 36, 0.16);
   color: #fbbf24;
   border-color: rgba(251, 191, 36, 0.32);
 }
-.identity-wakeup-status-pill {
-  margin-left: auto;
+
+/* header 短 badge：保持轻巧视觉与稳定布局，取消全局 margin-left: auto 避免折行错位 */
+.identity-wakeup-status-pill,
+.identity-wakeup-local-auth {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  flex-shrink: 0;
 }
+.identity-wakeup-local-auth {
+  color: var(--muted-foreground);
+}
+
+/* 2. 元信息小字区域：传输能力 / 最近尝试 / 空转次数 */
+.identity-wakeup-account-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+  margin: 0;
+}
+.identity-wakeup-account-meta > span {
+  display: inline-block;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* 3. 详细原因区域：单条原因 + 人类可读等待时间，强制 white-space: normal 自适应折行 */
+.identity-wakeup-account-details {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  margin: 0;
+}
+.identity-wakeup-account-details > p,
+.identity-wakeup-detail-reason {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  margin: 0;
+}
+
+/* 4. 操作按钮区域：独立一行，支持 flex-wrap 紧凑换行 */
+.identity-wakeup-account-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-top: 2px;
+}
+.identity-wakeup-account-actions > button,
+.identity-wakeup-account-actions .isolate {
+  flex-shrink: 0;
+}
+
+/* 状态色系保持 */
 .identity-wakeup-status-pill.tone-ok {
   color: #059669;
 }
@@ -474,4 +566,16 @@
 }
 .identity-wakeup-status-pill.tone-muted {
   color: var(--muted-foreground);
+}
+
+/* 响应式微调：当视口较窄（如 <= 620px 或对话框紧凑模式）时收紧名称宽度 */
+@container (max-width: 520px) {
+  .identity-wakeup-account-name {
+    max-width: 150px;
+  }
+}
+@media (max-width: 620px) {
+  .identity-wakeup-account-name {
+    max-width: 150px;
+  }
 }

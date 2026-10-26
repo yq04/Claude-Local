@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生身份命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
- * [OUTPUT]: 180×286 身份工牌、本地额度同步、独立CLI唤醒与网页额度修复反馈、可见门禁/冷却及一次恢复，以及严格指纹绑定的在线额度批次。
+ * [OUTPUT]: 身份工牌、本地/云端授权分层状态、可换行的单账号唤醒计划与一次验证、独立网页修复及严格指纹绑定批次。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -8,8 +8,9 @@ import {useEffect, useRef, useState, useSyncExternalStore, type ReactNode} from 
 import {Button, Checkbox, Disclosure, Input, Switch, useReducedMotionConfig, useSpring} from 'cromma-ui';
 import {DropdownMenu} from 'radix-ui';
 import {listen} from '@tauri-apps/api/event';
-import {formatOnlineQuotaStatus, formatSubscriptionAndResets, ForegroundQuotaScheduler, isExpectedCurrentTarget, isExpectedSavedTarget, buildBatchTargets, generateBatchRequestId, formatBatchProgress, isSuccessfulOnlineResult, aggregateBatchProgress, summarizeBatchResult, isTerminalBatchState, isMatchingBatchTarget, readNativeWakeupSnapshot, subscribeNativeWakeup, configureNativeWakeup, resumeNativeWakeup, formatMinuteOfDay, parseMinuteOfDay, isWithinWakeupTimeWindow, defaultAccountWakeupRuntime, isConfirmedNewWakeup5h, type OnlineQuotaResult, type OnlineQuotaStatus, type BatchQuotaResult, type QuotaBatchProgress, type BatchProgressSummary, type QuotaBatchTarget, type AutoWakeupConfig} from './identity-online-quota';
+import {formatOnlineQuotaStatus, formatSubscriptionAndResets, ForegroundQuotaScheduler, isExpectedCurrentTarget, isExpectedSavedTarget, buildBatchTargets, generateBatchRequestId, formatBatchProgress, isSuccessfulOnlineResult, aggregateBatchProgress, summarizeBatchResult, isTerminalBatchState, isMatchingBatchTarget, readNativeWakeupSnapshot, subscribeNativeWakeup, configureNativeWakeup, resumeNativeWakeup, formatMinuteOfDay, parseMinuteOfDay, isConfirmedNewWakeup5h, type OnlineQuotaResult, type OnlineQuotaStatus, type BatchQuotaResult, type QuotaBatchProgress, type BatchProgressSummary, type QuotaBatchTarget, type AutoWakeupConfig} from './identity-online-quota';
 import type {IdentitySubscriptionMetadata} from './identity-model';
+import {formatWakeupWait, presentWakeupAccount} from './wakeup-presentation';
 import {ShieldCheck, Refresh} from 'cromma-ui/pika';
 import {invoke} from '@tauri-apps/api/core';
 import {getVersion} from '@tauri-apps/api/app';
@@ -1131,30 +1132,29 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   );
 
   const nowMs = nowSec * 1000;
-  const inWakeupWindow = isWithinWakeupTimeWindow(autoWakeConfig, new Date(nowMs));
   const wakeupAccountRows = quotaTargets.map(target => {
     const row = state?.records.find(record => record.id === target.account_id);
     const summary = target.account_id === 'current' ? current : state?.summaries?.[target.account_id];
     const label = target.account_id === 'current' ? currentName : row?.name ?? t('quotaOnline.unknownAccount');
     const q = evaluateQuota(summary, nowSec);
     const runtime = autoWakeState.accounts[target.expected_identity];
-    const evalRes = {
-      decision: runtime?.decision ?? 'not_expired', unusedStreak: runtime?.unusedStreak ?? 0,
-      scheduledAtMs: runtime?.scheduledAtMs ?? null,
-      updatedRuntime: runtime ?? defaultAccountWakeupRuntime(),
-    };
-    return {
-      target,
-      label: maskDisplayName(label, summary?.email, prefs.privacyMask),
-      canWakeManual: Boolean(q?.inferred5h || q?.expired5h),
-      manualBlock: runtime?.unknown ? 'outcome_unknown' :
-        ((runtime?.authBlocked || summary?.auth_status === 'expired') && !runtime?.recoveryAllowed) ? 'auth_required' :
-        Math.max(runtime?.backoffUntilMs ?? 0, nativeWakeup.nextGlobalAtMs) > nowMs ? 'backoff_cooldown' : null,
-      retryAtMs: Math.max(runtime?.backoffUntilMs ?? 0, nativeWakeup.nextGlobalAtMs),
-      evalRes,
-    };
+    const view = presentWakeupAccount({
+      runtime,
+      authStatus: summary?.auth_status,
+      expired: Boolean(q?.inferred5h || q?.expired5h),
+      activeWindow: Boolean(q?.r5 && q.r5 > nowSec),
+      runningCli: target.account_id === 'current' && Boolean(state?.running),
+      excluded: autoWakeConfig.excludedIdentities.includes(target.expected_identity),
+      weeklyBlocked: Boolean(q?.known7d && q.rem7d <= 5),
+      snapshotReady: nativeWakeup.migrated && nativeWakeup.status !== 'loading',
+      storageError: nativeWakeup.status === 'storage_error',
+      nextGlobalAtMs: nativeWakeup.nextGlobalAtMs,
+      nowMs,
+    });
+    return {target, label: maskDisplayName(label, summary?.email, prefs.privacyMask), runtime, view,
+      canWakeManual: Boolean(q?.inferred5h || q?.expired5h)};
   });
-  const wakeableCount = wakeupAccountRows.filter(item => item.canWakeManual).length;
+  const wakeableCount = wakeupAccountRows.filter(item => item.view.canWake).length;
 
   return (
     <section className="identity-page">
@@ -1377,75 +1377,37 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
           {wakeupAccountRows.length > 0 && (
             <div className="identity-wakeup-account-list">
-              {wakeupAccountRows.map(({target, label, canWakeManual, manualBlock, retryAtMs, evalRes}) => {
-                const d = evalRes.decision;
-                let statusText = t('identityCard.unknown');
-                let statusTone = 'muted';
-                if (d === 'active_window_running') {
-                  statusText = t('wakeup.statusActive');
-                  statusTone = 'ok';
-                } else if (d === 'ready_to_wake') {
-                  statusText = inWakeupWindow
-                    ? t('wakeup.statusReady')
-                    : t('wakeup.statusOutsideWindow', {start: formatMinuteOfDay(autoWakeConfig.startMinute)});
-                  statusTone = inWakeupWindow ? 'warn' : 'muted';
-                } else if (d === 'scheduled' && evalRes.scheduledAtMs) {
-                  const clock = formatResetClock(Math.floor(evalRes.scheduledAtMs / 1000), false);
-                  statusText = inWakeupWindow
-                    ? t('wakeup.statusScheduled', {time: clock})
-                    : t('wakeup.statusOutsideWindow', {start: formatMinuteOfDay(autoWakeConfig.startMinute)});
-                  statusTone = 'warn';
-                } else if (d === 'outcome_unknown') {
-                  statusText = t('wakeup.outcomeUnknown');
-                } else if (d === 'disabled_by_user') {
-                  statusText = t('wakeup.paused');
-                } else if (d === 'standby_idle') {
-                  statusText = t('wakeup.statusStandby', {pct: autoWakeConfig.prewarmThresholdPct});
-                  statusTone = 'muted';
-                } else if (d === 'cli_active') {
-                  statusText = t('wakeup.statusCliActive');
-                  statusTone = 'ok';
-                } else if (d === 'low_7d_quota') {
-                  statusText = t('wakeup.statusLow7d');
-                  statusTone = 'muted';
-                } else if (d === 'already_woken') {
-                  statusText = t('wakeup.statusWoken');
-                  statusTone = 'ok';
-                } else if (d === 'backoff_cooldown' || d === 'auth_blocked') {
-                  statusText = d === 'auth_blocked' ? t('wakeup.authBlocked') : t('wakeup.statusBackoff');
-                  statusTone = 'muted';
-                }
-                return (
-                  <div className="identity-wakeup-account-row" key={target.account_id}>
+              {wakeupAccountRows.map(({target, label, canWakeManual, runtime, view}) => (
+                <div className="identity-wakeup-account-row" key={target.account_id} data-wakeup-state={view.stateKey}>
+                  <div className="identity-wakeup-account-head">
                     <span className="identity-wakeup-account-name">{label}</span>
-                    {evalRes.unusedStreak > 0 && (
-                      <span className="identity-wakeup-streak-pill">
-                        {t('wakeup.streakBadge', {count: evalRes.unusedStreak})}
-                      </span>
-                    )}
-                    <span className={`identity-wakeup-status-pill tone-${statusTone}`}>{statusText}</span>
-                    {manualBlock && <span data-wakeup-gate={manualBlock} className="identity-wakeup-status-pill tone-muted">{formatOnlineQuotaStatus({status: 'unavailable', stage: 'scheduler', reason: manualBlock as OnlineQuotaResult['reason'], retry_at_ms: retryAtMs}, nowMs, t).message}</span>}
-                    {evalRes.updatedRuntime.lastStatus === 'outcome_unknown' && <span className="identity-wakeup-status-pill tone-warn">{t('wakeup.outcomeUnknown')}</span>}
-                    {evalRes.updatedRuntime.lastStatus === 'auth_required' && <span className="identity-wakeup-status-pill tone-warn">{t('wakeup.authBlocked')}</span>}
-                    {evalRes.updatedRuntime.lastStatus && evalRes.updatedRuntime.lastStatus !== 'auth_required' && evalRes.updatedRuntime.lastStatus !== 'outcome_unknown' && evalRes.updatedRuntime.lastStatus !== 'updated' && <span className="identity-wakeup-status-pill tone-muted">{t('wakeup.lastAttemptFailed')}</span>}
-                    <span className="identity-wakeup-status-pill tone-muted">{t(`wakeup.capability.${nativeWakeup.accounts[target.expected_identity]?.capability || 'unknown'}`)}</span>
-                    {nativeWakeup.accounts[target.expected_identity]?.lastAttemptAtMs && <span className="identity-wakeup-status-pill tone-muted">{t('wakeup.lastAttemptAt', {time: formatResetClock(Math.floor(nativeWakeup.accounts[target.expected_identity].lastAttemptAtMs! / 1000), false)})}</span>}
-                    <Button variant="secondary" size="small" disabled={autoWakeSaving || actionLocked || batchBusy} onClick={() => void updateAutoWakeConfig({excludedIdentities: autoWakeConfig.excludedIdentities.includes(target.expected_identity) ? autoWakeConfig.excludedIdentities.filter(id => id !== target.expected_identity) : [...autoWakeConfig.excludedIdentities, target.expected_identity]})}>{t(autoWakeConfig.excludedIdentities.includes(target.expected_identity) ? 'wakeup.resume' : 'wakeup.pause')}</Button>
-                    {(manualBlock === 'auth_required' || nativeWakeup.accounts[target.expected_identity]?.authBlocked || nativeWakeup.accounts[target.expected_identity]?.capability === 'auth_required') && <Button variant="secondary" size="small" disabled={actionLocked || batchBusy || nativeWakeup.accounts[target.expected_identity]?.unknown || nativeWakeup.accounts[target.expected_identity]?.recoveryAllowed} onClick={() => void resumeWakeup(target.expected_identity)}>{t('wakeup.recoverOnce')}</Button>}
-                    {canWakeManual && (
-                      <Button
-                        variant="secondary"
-                        size="small"
-                        disabled={actionLocked || batchBusy || loading || wakingAccountId !== null || autoWakeSaving || manualBlock !== null}
-                        loading={wakingAccountId === target.account_id}
-                        onClick={() => void wakeupSingleAccount(target.account_id, target.expected_identity, false)}
-                      >
-                        {t('wakeup.wakeNow')}
-                      </Button>
-                    )}
+                    <span className={`identity-wakeup-status-pill tone-${view.tone}`}>{t(view.stateKey)}</span>
+                    <span className="identity-wakeup-local-auth">{t(view.localAuthKey)}</span>
                   </div>
-                );
-              })}
+                  <div className="identity-wakeup-account-actions">
+                    <Button variant="secondary" size="small" disabled={autoWakeSaving || actionLocked || batchBusy}
+                      onClick={() => void updateAutoWakeConfig({excludedIdentities: autoWakeConfig.excludedIdentities.includes(target.expected_identity) ? autoWakeConfig.excludedIdentities.filter(id => id !== target.expected_identity) : [...autoWakeConfig.excludedIdentities, target.expected_identity]})}>
+                      {t(autoWakeConfig.excludedIdentities.includes(target.expected_identity) ? 'wakeup.resume' : 'wakeup.pause')}
+                    </Button>
+                    {view.showRecovery && <Button variant="secondary" size="small" disabled={actionLocked || batchBusy || !view.canRecover}
+                      onClick={() => void resumeWakeup(target.expected_identity)}>{t(view.recoveryGranted ? 'wakeup.recoveryReadyLabel' : 'wakeup.recoverOnce')}</Button>}
+                    {canWakeManual && <Button variant="secondary" size="small"
+                      disabled={actionLocked || batchBusy || loading || wakingAccountId !== null || autoWakeSaving || !view.canWake}
+                      loading={wakingAccountId === target.account_id}
+                      onClick={() => void wakeupSingleAccount(target.account_id, target.expected_identity, false)}>{t('wakeup.wakeNow')}</Button>}
+                  </div>
+                  <div className="identity-wakeup-account-details" data-wakeup-gate={view.block ?? undefined}>
+                    <p>{t(view.detailKey)}{view.waitUntilMs && <> {formatWakeupWait((view.waitUntilMs - nowMs) / 1000, t)}</>}
+                      {view.scheduledAtMs && !view.waitUntilMs && <> {t('wakeup.nextPlanAt', {time: formatResetClock(Math.floor(view.scheduledAtMs / 1000), false)})}</>}
+                    </p>
+                    <div className="identity-wakeup-account-meta">
+                      <span>{t(`wakeup.capability.${runtime?.capability || 'unknown'}`)}</span>
+                      {runtime?.lastAttemptAtMs && <span>{t('wakeup.lastAttemptAt', {time: formatResetClock(Math.floor(runtime.lastAttemptAtMs / 1000), false)})}</span>}
+                      {(runtime?.unusedStreak ?? 0) > 0 && <span>{t('wakeup.streakBadge', {count: runtime!.unusedStreak})}</span>}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </section>

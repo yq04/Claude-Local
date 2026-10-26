@@ -113,15 +113,39 @@ test('fixed required IDs block missing, legacy, and unknown results while full c
  expect(full.phase).toBe('passed');
  expect(full.checks).toHaveLength(REQUIRED_CHECK_IDS.length);
  const missing=verifyBrowser(context,{...report,client_hints_ok:undefined,client_hints_detail:undefined},true,'',false);
- expect(missing.phase).toBe('failed');
+ expect(missing.phase).toBe('incomplete');
  expect(missing.checks.find(x=>x.id==='probe.client-hints')?.ok).toBeNull();
  const old=verifyBrowser(context,{...report,schema_version:undefined},true,'',false);
  expect(old.phase).toBe('failed');
  expect(old.checks.find(x=>x.id==='probe.webrtc')?.ok).toBeNull();
  const unknownIsp=verifyBrowser(context,{...report,exit:{...report.exit!,hosting:undefined,isp:'Unlisted carrier'}},true,'',false);
- expect(unknownIsp.phase).toBe('failed');
+ expect(unknownIsp.phase).toBe('incomplete');
  expect(unknownIsp.checks.find(x=>x.id==='exit.provider')?.ok).toBeNull();
  const noProbes=verifyBrowser(context,{...report,webrtc_ok:undefined,webdriver:undefined,graphics_ok:undefined,tz_offset_ok:undefined,media_fingerprint_ok:undefined,client_hints_ok:undefined},true,'',false);
- expect(noProbes.phase).toBe('failed');
+ expect(noProbes.phase).toBe('incomplete');
  expect(noProbes.checks.filter(x=>x.id.startsWith('probe.')).every(x=>x.ok===null)).toBe(true);
+});
+
+test('20 checks with 18 passed and 2 unknown produces incomplete neutral phase without turning green or red', () => {
+ const userScenario = verifyBrowser(context, {
+  ...report,
+  exit: {...report.exit!, hosting: undefined, isp: 'Unknown ISP'},
+  webrtc_ok: null,
+  webrtc_detail: '候选收集未完成或接口失败，结果未知',
+ }, true, '', false);
+ expect(userScenario.phase).toBe('incomplete');
+ expect(userScenario.problems).toHaveLength(0);
+ expect(userScenario.checks).toHaveLength(20);
+ expect(userScenario.checks.filter(c => c.ok === true)).toHaveLength(18);
+ expect(userScenario.checks.filter(c => c.ok === null)).toHaveLength(2);
+ expect(userScenario.checks.filter(c => c.ok === false)).toHaveLength(0);
+ const realFail = verifyBrowser(context, {
+  ...report,
+  cores: 4,
+  exit: {...report.exit!, hosting: undefined, isp: 'Unknown ISP'},
+  webrtc_ok: null,
+  webrtc_detail: '候选收集未完成或接口失败，结果未知',
+ }, true, '', false);
+ expect(realFail.phase).toBe('failed');
+ expect(realFail.checks.filter(c => c.ok === false)).toHaveLength(1);
 });
