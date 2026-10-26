@@ -8,11 +8,11 @@
 
 面向 Windows x64 的 Claude 本地管理工具，集中管理身份备份、账号切换、用量分析和可选的隔离浏览器。使用 Tauri、Rust、React、TypeScript 与 Python，独立维护产品和版本。
 
-当前候选版本：**0.1.0**（首次公开候选版本编号重置，尚未公开发布；既有 v0.3.0/v0.3.1 标签保持）。已整合用量分析模型推理档位（Effort）分布、原生自动续杯周期调度、可开关悬浮监控窗、Windows 隔离浏览器缓存目录 ACL 自愈及连接恢复反馈修复。支持 Windows 10 / 11 x64；主程序与可选的 Claude-Local Browser 使用独立产品入口。候选已完成本机文件式更新，正式安装/降级包验收仍单独进行。
+当前候选版本：**0.1.1**（仓库保持私有；首次公开候选从 0.1.0 开始，既有标签和资产保留）。已整合用量分析模型推理档位（Effort）分布、原生自动续杯周期调度、可开关悬浮监控窗、Windows 隔离浏览器缓存目录 ACL 自愈及连接恢复反馈修复；本补丁完善重新登录后的状态同步、续杯面板与浏览器未知项展示。支持 Windows 10 / 11 x64；主程序与可选的 Claude-Local Browser 使用独立产品入口。正式安装/降级包验收仍单独进行。
 
-[版本说明](docs/RELEASE_NOTES_0.1.0.md) · [公开筹备边界](docs/PUBLIC_PREPARATION.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md) · [参与贡献](CONTRIBUTING.md)
+[0.1.1 修复说明](docs/AUTH_SYNC_0.1.1.md) · [首次候选版本说明](docs/RELEASE_NOTES_0.1.0.md) · [公开筹备边界](docs/PUBLIC_PREPARATION.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md) · [参与贡献](CONTRIBUTING.md)
 
-[下载 0.1.0 Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.0/Claude-Local_0.1.0_x64-setup.exe) · [预发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.0) · [打包、上传与本机一致性核验](docs/RELEASE_VERIFICATION_0.1.0.md)。当前仓库保持私有，下载需要仓库访问权限。
+[下载 0.1.1 Windows x64 安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.1/Claude-Local_0.1.1_x64-setup.exe) · [预发布页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.1) · [打包、上传与本机一致性核验](docs/RELEASE_VERIFICATION_0.1.1_SYNC.md)。当前仓库保持私有，下载需要仓库访问权限。
 
 遇到网页登录后仍无法查询或唤醒，先看 [网页额度与CLI授权恢复说明](docs/CONNECTION_RECOVERY.md)：两套授权独立，重试会分别显示网页读取失败和CLI唤醒阻断原因。
 
