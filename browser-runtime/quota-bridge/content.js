@@ -1,5 +1,5 @@
 // [INPUT]: Explicit loopback fragment and same-origin Claude account/organization API responses.
-// [OUTPUT]: Fingerprint candidates to the extension worker and allowlisted metadata for the local callback.
+// [OUTPUT]: Fingerprint candidates, allowlisted metadata and bounded failure reasons for the local callback.
 // [POS]: Fixed MV3 page bridge; account identity is selected by the local quota_identity fingerprint.
 "use strict";
 let quotaRequestDeadlineMs = 0;
@@ -26,6 +26,7 @@ let quotaRequestDeadlineMs = 0;
   sessionStorage.setItem(`claude-local-quota:${nonce}`, "started");
   history.replaceState(null, "", url.pathname + url.search);
   quotaRequestDeadlineMs = Date.now() + 20_000;
+  let failure = "identity_unavailable";
   try {
     const identity = await readIdentity();
     const { accountUuids, emails, organizationUuids } = identity;
@@ -39,14 +40,16 @@ let quotaRequestDeadlineMs = 0;
     }
 
     const encoded = encodeURIComponent(organizationUuid);
+    failure = "usage_unavailable";
     const [subscriptionDetails, usage] = await Promise.all([
       getJsonOptional(`/api/organizations/${encoded}/subscription_details`),
       getJson(`/api/organizations/${encoded}/usage?at_wall=1&skip_spend=1`)
     ]);
+    failure = "identity_unavailable";
     const identityAfter = await readIdentity();
     if (!sameIdentity(identity, identityAfter) ||
         !identityAfter.organizationUuids.includes(organizationUuid)) {
-      return await sendFailure(nonce);
+      return await sendFailure(nonce, "identity_changed");
     }
     const cedar = usage?.cedar_ember;
     const grants = Array.isArray(cedar?.grants) ? cedar.grants.slice(0, 101).map((grant) => ({
@@ -71,8 +74,8 @@ let quotaRequestDeadlineMs = 0;
       nonce,
       snapshot
     });
-  } catch (_) {
-    await sendFailure(nonce);
+  } catch (error) {
+    await sendFailure(nonce, error?.quotaFailure || failure);
   }
 })();
 
@@ -82,7 +85,7 @@ async function getJson(path) {
   }
   const controller = new AbortController();
   const remaining = Math.min(5000, quotaRequestDeadlineMs - Date.now());
-  if (remaining <= 0) throw new Error("Quota request deadline exceeded");
+  if (remaining <= 0) throw bridgeError("request_timeout");
   const timer = setTimeout(() => controller.abort(), remaining);
   try {
     const response = await fetch(path, {
@@ -93,17 +96,24 @@ async function getJson(path) {
       signal: controller.signal,
       headers: { "Accept": "application/json" }
     });
-    if (!response.ok) throw new Error("Claude endpoint unavailable");
-    if (response.url && new URL(response.url).origin !== location.origin) throw new Error("Unexpected response origin");
+    if (!response.ok) {
+      if (response.status === 401) throw bridgeError("web_auth_required");
+      if (response.status === 403) throw bridgeError("web_access_denied");
+      throw new Error("Claude endpoint unavailable");
+    }
+    if (response.url && new URL(response.url).origin !== location.origin) throw bridgeError("invalid_response");
     const contentType = response.headers?.get?.("content-type") || "application/json";
-    if (!contentType.toLowerCase().includes("application/json")) throw new Error("Unexpected response type");
+    if (!contentType.toLowerCase().includes("application/json")) throw bridgeError("invalid_response");
     const declaredLength = Number(response.headers?.get?.("content-length") || 0);
-    if (declaredLength > 512 * 1024) throw new Error("Quota response too large");
+    if (declaredLength > 512 * 1024) throw bridgeError("invalid_response");
     const text = typeof response.text === "function"
       ? await readTextLimited(response, 512 * 1024)
       : JSON.stringify(await response.json());
-    if (text.length > 512 * 1024) throw new Error("Quota response too large");
-    return JSON.parse(text);
+    if (text.length > 512 * 1024) throw bridgeError("invalid_response");
+    try { return JSON.parse(text); } catch (_) { throw bridgeError("invalid_response"); }
+  } catch (error) {
+    if (error?.name === "AbortError") throw bridgeError("request_timeout");
+    throw error;
   } finally { clearTimeout(timer); }
 }
 
@@ -118,7 +128,7 @@ async function readTextLimited(response, maximum) {
     size += value.byteLength;
     if (size > maximum) {
       await reader.cancel();
-      throw new Error("Quota response too large");
+      throw bridgeError("invalid_response");
     }
     chunks.push(value);
   }
@@ -171,10 +181,16 @@ function uniqueStrings(values, limit) {
     .map((value) => value.trim()))].slice(0, limit);
 }
 
-async function sendFailure(nonce) {
+function bridgeError(reason) {
+  const error = new Error("Quota bridge request failed");
+  error.quotaFailure = reason;
+  return error;
+}
+
+async function sendFailure(nonce, failure = "identity_unavailable") {
   await chrome.runtime.sendMessage({
     kind: "claude-local-quota-snapshot",
     nonce,
-    snapshot: { nonce, failure: "identity_unavailable" }
+    snapshot: { nonce, failure }
   });
 }

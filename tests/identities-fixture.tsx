@@ -1,7 +1,7 @@
 /**
  * [INPUT]: Tauri 官方 mockIPC、真实身份/浏览器组件与虚构的内存状态。
  * [OUTPUT]: 显式开启的原生调度快照mock、40 个虚构身份、可控在线结果、被动额度 revision/read 故障注入、持久批次快照/取消/恢复、残留清单与可释放 IPC，供无头浏览器验证任务恢复和身份隔离。
- * [POS]: 独立测试入口；没有原生命令、真实目录、账号或网络，生产 rollup 不包含此入口。
+ * [POS]: 独立测试入口；保留browser结果来源与一次CLI恢复许可，无原生命令/真实目录/账号/网络，生产包不含此入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {createRoot} from 'react-dom/client';
@@ -136,7 +136,7 @@ function execute(command:string,args:any){
   if(result.status==='updated'){
    Object.assign(summary,{quota_5h_used:25,quota_5h_reset_at:Math.floor(Date.now()/1000)+7200,quota_5h_source:'server_anchor',quota_5h_observed_at_ms:Date.now(),quota_7d_used:45,quota_7d_reset_at:Math.floor(Date.now()/1000)+86400,quota_7d_source:'server_anchor',quota_7d_observed_at_ms:Date.now()});
   }
-  return {...result,source:'oauth',observed_at_ms:result.status==='updated'?Date.now():undefined,retry_at_ms:result.retry_at_ms||Date.now()+60000};
+  return {...result,source:result.source??'oauth',observed_at_ms:result.status==='updated'?Date.now():undefined,retry_at_ms:result.retry_at_ms||Date.now()+60000};
  }
  if(command==='identities_wakeup_state')return structuredClone(wakeupNative);
  if(command==='identities_wakeup_configure'||command==='identities_wakeup_migrate'){
@@ -146,12 +146,17 @@ function execute(command:string,args:any){
  }
  if(command==='identities_wakeup_resume'){
   const account=wakeupNative.accounts[args.expectedIdentity];if(account?.unknown)throw 'wakeup.outcomeUnknown';
-  if(account)account.recoveryAllowed=true;emitFixtureEvent('wakeup-scheduler-state',structuredClone(wakeupNative));return structuredClone(wakeupNative);
+  if(account){account.recoveryAllowed=true;if(account.authBlocked&&account.lastStatus==='auth_required')account.backoffUntilMs=null;}emitFixtureEvent('wakeup-scheduler-state',structuredClone(wakeupNative));return structuredClone(wakeupNative);
  }
  if(command==='identities_wakeup_quota_window'){
   const summary=args.accountId==='current'?state.current:state.summaries[args.accountId];
   if(!summary||!args.expectedIdentity||summary.quota_identity!==args.expectedIdentity)return {status:'account_mismatch'};
   const result=fixture.onlineResultsById[args.accountId]??fixture.onlineResult;
+  if(nativeWakeupMode&&result.stage!=='scheduler'){
+   const account=wakeupNative.accounts[args.expectedIdentity];
+   if(account){account.recoveryAllowed=false;account.lastStatus=result.status;if(result.status==='auth_required'){account.authBlocked=true;account.decision='auth_blocked';}}
+   emitFixtureEvent('wakeup-scheduler-state',structuredClone(wakeupNative));
+  }
   if(result.status==='updated'){
    Object.assign(summary,{quota_5h_used:1,quota_5h_reset_at:Math.floor(Date.now()/1000)+18000,quota_5h_source:'server_anchor',quota_5h_observed_at_ms:Date.now(),quota_7d_used:Math.min(100,Math.max(1,summary.quota_7d_used??10)),quota_7d_reset_at:Math.floor(Date.now()/1000)+604800,quota_7d_source:'server_anchor',quota_7d_observed_at_ms:Date.now()});
    fixture.quotaRevision++;

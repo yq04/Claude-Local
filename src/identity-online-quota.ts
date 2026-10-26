@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 在线额度状态/原因白名单、持久批次结果契约、前台轮询设置与订阅重置元数据。
- * [OUTPUT]: 批次/额度纯模型、前台串行读取、严格新5h确认，以及单例原生调度快照订阅、白名单旧状态迁移和显式设置IPC。
+ * [OUTPUT]: 批次/额度纯模型、独立浏览器失败与原生调度门禁倒计时、严格新5h确认、单例快照订阅、受限迁移和显式设置IPC。
  * [POS]: 仅原生owner调度唤醒；前端桥不设唤醒timer、不读取凭据或发HTTP，不写额度账本。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -21,8 +21,13 @@ export type OnlineQuotaStatus =
   | 'not_run'
   | 'deadline_exceeded';
 
-export type OnlineQuotaReason = 'unsupported_proxy' | 'route_changed' | 'auth_required' | 'rate_limited';
-export type OnlineQuotaStage = 'route' | 'commit';
+export type OnlineQuotaReason = 'unsupported_proxy' | 'route_changed' | 'auth_required' | 'rate_limited'
+  | 'outcome_unknown' | 'cli_active' | 'low_7d_quota' | 'disabled_by_user' | 'capability_blocked'
+  | 'not_expired' | 'already_woken' | 'scheduler_busy' | 'scheduler_unavailable' | 'backoff_cooldown';
+export type OnlineQuotaStage = 'route' | 'commit' | 'profile' | 'usage' | 'messages' | 'exit_check' | 'scheduler';
+export type BrowserFallbackStatus = 'profile_not_running' | 'unavailable' | 'deadline_exceeded' | 'cancelled'
+  | 'account_mismatch' | 'identity_unavailable' | 'invalid_response' | 'no_quota_update'
+  | 'usage_unavailable' | 'web_auth_required' | 'web_access_denied' | 'request_timeout';
 export type OnlineQuotaRouteMode = 'account_proxy' | 'host_system';
 export type OnlineQuotaRetryScope = 'oauth' | 'all';
 
@@ -37,6 +42,7 @@ export interface OnlineQuotaResult {
   stage?: OnlineQuotaStage;
   route_mode?: OnlineQuotaRouteMode;
   retry_scope?: OnlineQuotaRetryScope;
+  browser_fallback_status?: BrowserFallbackStatus;
   verified_at_ms?: number;
   runtime_stage?: 'probe' | 'execute';
   runtime_reason?: 'missing_resource' | 'no_compatible_runtime' | 'missing_dependency' | 'probe_failed' | 'timeout' | 'invalid_response';
@@ -52,6 +58,15 @@ export function formatOnlineQuotaStatus(
 ): { message: string; isError: boolean } {
   if (!result) return { message: '', isError: false };
 
+  if (result.browser_fallback_status) {
+    return {message: t(`quotaOnline.browserFallback.${result.browser_fallback_status}`), isError: true};
+  }
+  if (result.stage === 'scheduler') {
+    const seconds = result.retry_at_ms && result.retry_at_ms > nowMs
+      ? Math.ceil((result.retry_at_ms - nowMs) / 1000) : 0;
+    return {message: `${t(`wakeup.gate.${result.reason || 'scheduler_unavailable'}`)}${seconds > 0 ? ` ${t('wakeup.retryIn', {seconds})}` : ''}`, isError: true};
+  }
+
   if (result.runtime_reason) {
     const runtimeReasonKeys: Record<NonNullable<OnlineQuotaResult['runtime_reason']>, string> = {
       missing_resource: 'missingResource',
@@ -65,13 +80,13 @@ export function formatOnlineQuotaStatus(
     return {message: t(`quotaOnline.runtime.${stage}.${runtimeReasonKeys[result.runtime_reason]}`), isError: true};
   }
   if (result.reason && result.status !== 'cooldown' && result.status !== 'rate_limited') {
-    const reasonKeys: Record<OnlineQuotaReason, string> = {
+    const reasonKeys: Partial<Record<OnlineQuotaReason, string>> = {
       unsupported_proxy: 'unsupportedProxy',
       route_changed: 'routeChanged',
       auth_required: 'authRequired',
       rate_limited: 'rateLimited',
     };
-    return {message: t(`quotaOnline.reason.${reasonKeys[result.reason]}`), isError: result.reason !== 'rate_limited' || result.retry_scope !== 'oauth'};
+    if (reasonKeys[result.reason]) return {message: t(`quotaOnline.reason.${reasonKeys[result.reason]}`), isError: result.reason !== 'rate_limited' || result.retry_scope !== 'oauth'};
   }
   if (result.status === 'updated' && (!Array.isArray(result.updated_windows) || result.updated_windows.length === 0)) {
     return {message: t('quotaOnline.status.invalidResponse'), isError: true};

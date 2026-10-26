@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生身份命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
- * [OUTPUT]: 180×286 身份工牌（含 7d 步调锚点）、失败后重试与显式反馈的本地额度同步、严格确认新5h reset的按需唤醒、原生进程级调度快照/持久化失败/未知结果/授权恢复反馈，以及严格指纹绑定的在线额度批次。
+ * [OUTPUT]: 180×286 身份工牌、本地额度同步、独立CLI唤醒与网页额度修复反馈、可见门禁/冷却及一次恢复，以及严格指纹绑定的在线额度批次。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -535,21 +535,16 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         expiredResetAt: expiredResetSec,
       });
       const nowMs = Date.now();
-      connectionHistory.merge(
-        [{account_id: accountId, expected_identity: expectedIdentity}],
-        [{target: {account_id: accountId, expected_identity: expectedIdentity}, result: res}],
-        buildBatchTargets(stateRef.current).targets
-      );
       if (isConfirmedNewWakeup5h(res) && res.wakeup_5h_reset_at > Math.floor(nowMs / 1000) && expiredResetSec !== null && res.wakeup_5h_reset_at > expiredResetSec) {
         if (mountedRef.current) { await read(false); setQuotaFeedback(tRef.current(res.wakeup_audit_status === 'unavailable' ? 'wakeup.auditUnavailable' : 'wakeup.wokenSuccess')); }
         return true;
       }
-      if (mountedRef.current) setQuotaFeedback(res.wakeup_effect === 'outcome_unknown'
+      if (mountedRef.current) setQuotaFeedback(res.stage === 'scheduler' ? formatOnlineQuotaStatus(res, nowMs, tRef.current).message : res.wakeup_effect === 'outcome_unknown'
         ? tRef.current('wakeup.outcomeUnknown') : res.status === 'auth_required' ? tRef.current('wakeup.authBlocked')
         : res.wakeup_effect ? tRef.current('wakeup.notConfirmed') : formatOnlineQuotaStatus(res, nowMs, tRef.current).message);
       return false;
     } catch (error) {
-      if (mountedRef.current) setQuotaFeedback(tRef.current(String(error) === 'wakeup.notReady' ? 'wakeup.notReady' : String(error) === 'wakeup.stateSaveFailed' ? 'wakeup.stateSaveFailed' : 'wakeup.outcomeUnknown'));
+      if (mountedRef.current) setQuotaFeedback(tRef.current(String(error) === 'wakeup.notReady' ? 'wakeup.notReady' : String(error) === 'wakeup.stateSaveFailed' ? 'wakeup.stateSaveFailed' : 'wakeup.requestFailed'));
       return false;
     } finally {
       wakingRef.current = false;
@@ -793,7 +788,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       if (currentBatchRequestIdRef.current !== reqId) return;
       adoptBatchSnapshot(res, false);
       if (mountedRef.current) await read(false);
-      setQuotaFeedback('');
+      setQuotaFeedback(formatBatchProgress(summarizeBatchResult(res), tRef.current));
     } catch (e) {
       setQuotaFeedback(tRef.current(String(e)));
     } finally {
@@ -1151,7 +1146,11 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     return {
       target,
       label: maskDisplayName(label, summary?.email, prefs.privacyMask),
-      canWakeManual: Boolean(q?.inferred5h || q?.expired5h) && (summary?.auth_status !== 'expired' || runtime?.recoveryAllowed),
+      canWakeManual: Boolean(q?.inferred5h || q?.expired5h),
+      manualBlock: runtime?.unknown ? 'outcome_unknown' :
+        ((runtime?.authBlocked || summary?.auth_status === 'expired') && !runtime?.recoveryAllowed) ? 'auth_required' :
+        Math.max(runtime?.backoffUntilMs ?? 0, nativeWakeup.nextGlobalAtMs) > nowMs ? 'backoff_cooldown' : null,
+      retryAtMs: Math.max(runtime?.backoffUntilMs ?? 0, nativeWakeup.nextGlobalAtMs),
       evalRes,
     };
   });
@@ -1378,7 +1377,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
           {wakeupAccountRows.length > 0 && (
             <div className="identity-wakeup-account-list">
-              {wakeupAccountRows.map(({target, label, canWakeManual, evalRes}) => {
+              {wakeupAccountRows.map(({target, label, canWakeManual, manualBlock, retryAtMs, evalRes}) => {
                 const d = evalRes.decision;
                 let statusText = t('identityCard.unknown');
                 let statusTone = 'muted';
@@ -1425,18 +1424,19 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                       </span>
                     )}
                     <span className={`identity-wakeup-status-pill tone-${statusTone}`}>{statusText}</span>
+                    {manualBlock && <span data-wakeup-gate={manualBlock} className="identity-wakeup-status-pill tone-muted">{formatOnlineQuotaStatus({status: 'unavailable', stage: 'scheduler', reason: manualBlock as OnlineQuotaResult['reason'], retry_at_ms: retryAtMs}, nowMs, t).message}</span>}
                     {evalRes.updatedRuntime.lastStatus === 'outcome_unknown' && <span className="identity-wakeup-status-pill tone-warn">{t('wakeup.outcomeUnknown')}</span>}
                     {evalRes.updatedRuntime.lastStatus === 'auth_required' && <span className="identity-wakeup-status-pill tone-warn">{t('wakeup.authBlocked')}</span>}
                     {evalRes.updatedRuntime.lastStatus && evalRes.updatedRuntime.lastStatus !== 'auth_required' && evalRes.updatedRuntime.lastStatus !== 'outcome_unknown' && evalRes.updatedRuntime.lastStatus !== 'updated' && <span className="identity-wakeup-status-pill tone-muted">{t('wakeup.lastAttemptFailed')}</span>}
                     <span className="identity-wakeup-status-pill tone-muted">{t(`wakeup.capability.${nativeWakeup.accounts[target.expected_identity]?.capability || 'unknown'}`)}</span>
                     {nativeWakeup.accounts[target.expected_identity]?.lastAttemptAtMs && <span className="identity-wakeup-status-pill tone-muted">{t('wakeup.lastAttemptAt', {time: formatResetClock(Math.floor(nativeWakeup.accounts[target.expected_identity].lastAttemptAtMs! / 1000), false)})}</span>}
                     <Button variant="secondary" size="small" disabled={autoWakeSaving || actionLocked || batchBusy} onClick={() => void updateAutoWakeConfig({excludedIdentities: autoWakeConfig.excludedIdentities.includes(target.expected_identity) ? autoWakeConfig.excludedIdentities.filter(id => id !== target.expected_identity) : [...autoWakeConfig.excludedIdentities, target.expected_identity]})}>{t(autoWakeConfig.excludedIdentities.includes(target.expected_identity) ? 'wakeup.resume' : 'wakeup.pause')}</Button>
-                    {nativeWakeup.accounts[target.expected_identity]?.authBlocked && <Button variant="secondary" size="small" disabled={actionLocked || batchBusy} onClick={() => void resumeWakeup(target.expected_identity)}>{t('wakeup.recoverOnce')}</Button>}
+                    {(manualBlock === 'auth_required' || nativeWakeup.accounts[target.expected_identity]?.authBlocked || nativeWakeup.accounts[target.expected_identity]?.capability === 'auth_required') && <Button variant="secondary" size="small" disabled={actionLocked || batchBusy || nativeWakeup.accounts[target.expected_identity]?.unknown || nativeWakeup.accounts[target.expected_identity]?.recoveryAllowed} onClick={() => void resumeWakeup(target.expected_identity)}>{t('wakeup.recoverOnce')}</Button>}
                     {canWakeManual && (
                       <Button
                         variant="secondary"
                         size="small"
-                        disabled={actionLocked || batchBusy || loading || wakingAccountId !== null || autoWakeSaving}
+                        disabled={actionLocked || batchBusy || loading || wakingAccountId !== null || autoWakeSaving || manualBlock !== null}
                         loading={wakingAccountId === target.account_id}
                         onClick={() => void wakeupSingleAccount(target.account_id, target.expected_identity, false)}
                       >

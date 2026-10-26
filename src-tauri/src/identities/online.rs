@@ -1,5 +1,5 @@
 // [INPUT]: Explicit account selectors and frozen fingerprints, packaged Python collector, account-bound browser summaries and fixed local quota/config file metadata.
-// [OUTPUT]: Bounded quota batches, strict wakeup confirmation/effect contract and native private audit; Python owns every ledger write.
+// [OUTPUT]: Bounded quota batches, structured scheduler admission, strict wakeup confirmation/effect contract and native private audit; Python owns every ledger write.
 // [POS]: Shared orchestration allows 10s cold runtime probes within one 30s preparation budget outside the identity door; frozen identity/epoch is rechecked at commit.
 // [PROTOCOL]: Batch progress is quota-batch-progress; update identities/CLAUDE.md and the package resource allowlist.
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,23 @@ pub enum OnlineStatus {
     DeadlineExceeded,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserFallbackStatus {
+    ProfileNotRunning,
+    Unavailable,
+    DeadlineExceeded,
+    Cancelled,
+    AccountMismatch,
+    IdentityUnavailable,
+    InvalidResponse,
+    NoQuotaUpdate,
+    UsageUnavailable,
+    WebAuthRequired,
+    WebAccessDenied,
+    RequestTimeout,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OnlineQuotaResult {
@@ -89,6 +106,8 @@ pub struct OnlineQuotaResult {
     pub route_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_fallback_status: Option<BrowserFallbackStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -236,6 +255,16 @@ impl Drop for CleanerGuard {
 }
 
 impl OnlineQuotaResult {
+    pub(super) fn scheduler_blocked(status: OnlineStatus, reason: &str, retry_at_ms: Option<u64>) -> Self {
+        Self {
+            status,
+            stage: Some("scheduler".into()),
+            reason: Some(reason.into()),
+            retry_at_ms,
+            ..Self::unavailable()
+        }
+    }
+
     fn unavailable() -> Self {
         Self {
             status: OnlineStatus::Unavailable,
@@ -252,6 +281,7 @@ impl OnlineQuotaResult {
             country: None,
             route_mode: None,
             retry_scope: None,
+            browser_fallback_status: None,
             verified_at_ms: None,
             wakeup_effect: None,
             wakeup_5h_reset_at: None,
@@ -1211,6 +1241,47 @@ fn browser_fallback_allowed(result: &OnlineQuotaResult) -> bool {
         && result.reason.as_deref() == Some("auth_required")
 }
 
+fn with_browser_fallback(
+    mut oauth_result: OnlineQuotaResult,
+    query: impl FnOnce() -> Result<Value, String>,
+    import: impl FnOnce(Value) -> Result<OnlineQuotaResult, String>,
+) -> OnlineQuotaResult {
+    // Preserve the OAuth outcome and stage when browser recovery fails. A
+    // successful login or metadata-only import is not fresh quota evidence.
+    let fallback = query().and_then(import);
+    match fallback {
+        Ok(browser_result) if successful_browser_quota(&browser_result) => browser_result,
+        Ok(browser_result) => {
+            oauth_result.browser_fallback_status = Some(match browser_result.status {
+                OnlineStatus::AccountMismatch => BrowserFallbackStatus::AccountMismatch,
+                OnlineStatus::InvalidResponse => BrowserFallbackStatus::InvalidResponse,
+                OnlineStatus::DeadlineExceeded => BrowserFallbackStatus::DeadlineExceeded,
+                OnlineStatus::Cancelled => BrowserFallbackStatus::Cancelled,
+                OnlineStatus::Updated | OnlineStatus::Cached => BrowserFallbackStatus::NoQuotaUpdate,
+                _ => BrowserFallbackStatus::Unavailable,
+            });
+            oauth_result
+        }
+        Err(error) => {
+            oauth_result.browser_fallback_status = Some(match error.as_str() {
+                "quotaOnline.browserProfileNotRunning" => BrowserFallbackStatus::ProfileNotRunning,
+                "quotaOnline.deadlineExceeded" => BrowserFallbackStatus::DeadlineExceeded,
+                "quotaOnline.cancelled" => BrowserFallbackStatus::Cancelled,
+                "quotaOnline.accountMismatch" => BrowserFallbackStatus::AccountMismatch,
+                "quotaOnline.bridgeIdentityUnavailable" => BrowserFallbackStatus::IdentityUnavailable,
+                "quotaOnline.invalidResponse" => BrowserFallbackStatus::InvalidResponse,
+                "quotaOnline.browserNoQuotaUpdate" => BrowserFallbackStatus::NoQuotaUpdate,
+                "quotaOnline.browserUsageUnavailable" => BrowserFallbackStatus::UsageUnavailable,
+                "quotaOnline.browserWebAuthRequired" => BrowserFallbackStatus::WebAuthRequired,
+                "quotaOnline.browserWebAccessDenied" => BrowserFallbackStatus::WebAccessDenied,
+                "quotaOnline.browserRequestTimeout" => BrowserFallbackStatus::RequestTimeout,
+                _ => BrowserFallbackStatus::Unavailable,
+            });
+            oauth_result
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn identities_refresh_all_quotas(
     app: tauri::AppHandle,
@@ -1302,16 +1373,14 @@ pub async fn identities_refresh_all_quotas(
                     let mut result = collect_controlled(app, json!({"account_id":target.account_id,"expected_identity":target.expected_identity}), Some(task), epoch)
                         .unwrap_or_else(|_| OnlineQuotaResult::unavailable());
                     if allow_browser_fallback.unwrap_or(false) && browser_fallback_allowed(&result) && task.stopped().is_none() {
-                        if let Ok(snapshot) = crate::browser::quota_bridge::query_existing_profile(
-                            app, &target.account_id, &target.expected_identity, task.deadline,
-                            &|| task.stopped().is_some(),
-                        ) {
-                            if task.stopped().is_none() {
-                                if let Ok(browser_result) = collect_controlled(app, json!({"account_id":target.account_id,"expected_identity":target.expected_identity,"browser_snapshot":snapshot}), Some(task), epoch) {
-                                    if successful_browser_quota(&browser_result) { result = browser_result; }
-                                }
-                            }
-                        }
+                        result = with_browser_fallback(result,
+                            || crate::browser::quota_bridge::query_existing_profile(
+                                app, &target.account_id, &target.expected_identity, task.deadline,
+                                &|| task.stopped().is_some()),
+                            |snapshot| {
+                                if task.stopped().is_some() { return Err("quotaOnline.cancelled".into()); }
+                                collect_controlled(app, json!({"account_id":target.account_id,"expected_identity":target.expected_identity,"browser_snapshot":snapshot}), Some(task), epoch)
+                            });
                     }
                     if let Some(stopped) = task.stopped() { result = terminal_result(stopped); }
                     for index in group.aliases { record_outcome(app, task, &targets[index], result.clone()); }
@@ -1774,6 +1843,31 @@ print(json.dumps({'type':'result','result':{'status':'updated','source':'oauth'}
         assert!(!successful_browser_quota(&metadata_only));
         assert!(!successful_browser_quota(&cached));
         assert!(successful_browser_quota(&quota_update));
+    }
+
+    #[test]
+    fn browser_failure_keeps_oauth_facts_and_reports_the_independent_failure() {
+        let oauth = parse_result(br#"{"status":"auth_required","reason":"auth_required","stage":"profile"}"#).unwrap();
+        for (error, expected) in [
+            ("quotaOnline.browserProfileNotRunning", BrowserFallbackStatus::ProfileNotRunning),
+            ("quotaOnline.deadlineExceeded", BrowserFallbackStatus::DeadlineExceeded),
+            ("quotaOnline.accountMismatch", BrowserFallbackStatus::AccountMismatch),
+            ("quotaOnline.bridgeIdentityUnavailable", BrowserFallbackStatus::IdentityUnavailable),
+            ("quotaOnline.browserRequestTimeout", BrowserFallbackStatus::RequestTimeout),
+            ("quotaOnline.invalidResponse", BrowserFallbackStatus::InvalidResponse),
+        ] {
+            let result = with_browser_fallback(oauth.clone(), || Err(error.into()), |_| panic!("failed receiver cannot import"));
+            assert_eq!(result.status, OnlineStatus::AuthRequired);
+            assert_eq!(result.stage.as_deref(), Some("profile"));
+            assert_eq!(result.reason.as_deref(), Some("auth_required"));
+            assert_eq!(result.browser_fallback_status, Some(expected));
+            assert!(parse_result(&serde_json::to_vec(&result).unwrap()).is_some());
+        }
+        let metadata_only = with_browser_fallback(oauth, || Ok(json!({})), |_| Ok(parse_result(
+            br#"{"status":"updated","source":"browser","metadata_updated":true,"updated_windows":[]}"#).unwrap()));
+        assert_eq!(metadata_only.status, OnlineStatus::AuthRequired);
+        assert_eq!(metadata_only.browser_fallback_status, Some(BrowserFallbackStatus::NoQuotaUpdate));
+        assert!(parse_result(br#"{"status":"auth_required","browser_fallback_status":"raw-private-error"}"#).is_none());
     }
 
     #[test]

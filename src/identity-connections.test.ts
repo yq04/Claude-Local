@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Synthetic quota targets, outcomes and a process-local history model.
- * [OUTPUT]: Central recovery queue, subset validation and remount retention regression checks.
+ * [OUTPUT]: Web recovery queue, precise browser failure, CLI separation, subset validation and remount retention checks.
  * [POS]: No Tauri IPC, network, browser, credentials or real identity data.
  * [PROTOCOL]: Keep coverage aligned with src/CLAUDE.md and Phase 5.
  */
@@ -8,6 +8,7 @@ import {expect, test} from 'bun:test';
 import {
   ConnectionHistory,
   connectionIssueFor,
+  describeConnectionIssue,
   isValidQuotaTargetSubset,
   type ConnectionOutcome,
 } from './identity-connections';
@@ -71,4 +72,19 @@ test('runtime and transient failures remain actionable without opening a browser
   expect(connectionIssueFor(result('network_error'))).toBe('retry');
   expect(connectionIssueFor(result('deadline_exceeded'))).toBe('retry');
   expect(connectionIssueFor(result('cached'))).toBeNull();
+});
+
+test('browser failure explains web access and only real quota updates resolve it; wakeup stays separate', () => {
+  const inventory = [target('a', 'a')];
+  const history = new ConnectionHistory();
+  const denied = result('auth_required', {browser_fallback_status: 'web_access_denied'});
+  expect(connectionIssueFor(denied)).toBe('browser');
+  expect(describeConnectionIssue(denied, 0, key => key)).toBe('quotaOnline.browserFallback.web_access_denied');
+  history.merge(inventory, [{target: inventory[0], result: denied}], inventory);
+  history.merge(inventory, [{target: inventory[0], result: result('updated', {source: 'browser', updated_windows: []})}], inventory);
+  expect(connectionIssueFor(history.snapshot()[0].result)).toBe('browser');
+  history.merge(inventory, [{target: inventory[0], result: result('updated', {source: 'browser', updated_windows: ['5h']})}], inventory);
+  expect(connectionIssueFor(history.snapshot()[0].result)).toBeNull();
+  history.merge(inventory, [{target: inventory[0], result: result('auth_required', {stage: 'scheduler', reason: 'auth_required'})}], inventory);
+  expect(connectionIssueFor(history.snapshot()[0].result)).toBeNull();
 });

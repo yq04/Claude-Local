@@ -1,5 +1,5 @@
 // [INPUT]: Fresh synthetic private roots, staged public Python sources and a deterministic test transport.
-// [OUTPUT]: Real cold-runtime deadline/cancellation and shared native core -> runtime/resource resolution -> grant/ledger -> projection evidence.
+// [OUTPUT]: Real cold-runtime deadlines and native retry -> OAuth auth cooldown -> browser receiver -> Python grant/ledger -> projection evidence.
 // [POS]: cfg(test)-only integration fixture; the Tauri adapter and browser launch/WebView remain separately tested seams.
 // [PROTOCOL]: No HOME/AppData resolution, external network, real accounts, process stopping or recursive cleanup.
 use super::*;
@@ -161,6 +161,19 @@ fn installed_python_native_receiver_ledger_and_projection_chain() {
     assert_eq!(calls[0]["endpoint"], "https://api.anthropic.com/api/oauth/profile");
     assert_eq!(calls[1]["endpoint"], "https://api.anthropic.com/api/oauth/usage");
 
+    // Reproduce the repair queue's next retry using the actual installed
+    // helper's persisted auth cooldown, without any external OAuth request.
+    let state_path = fixture.root.join("app-data/identity-vault/quota_online_state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    state["accounts"][&identity]["last_status"] = json!("auth_required");
+    state["accounts"][&identity]["retry_at_ms"] = json!(now_ms() + 300_000);
+    super::super::private::write(&state_path, &serde_json::to_vec(&state).unwrap()).unwrap();
+    let oauth = collect_in(&fixture, json!({"account_id":"current", "expected_identity":identity})).unwrap();
+    assert_eq!(oauth.status, OnlineStatus::Cooldown);
+    assert_eq!(oauth.retry_scope.as_deref(), Some("oauth"));
+    assert_eq!(oauth.reason.as_deref(), Some("auth_required"));
+    assert!(browser_fallback_allowed(&oauth));
+
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -187,11 +200,17 @@ fn installed_python_native_receiver_ledger_and_projection_chain() {
         stream.read_to_string(&mut response).unwrap();
         assert!(response.starts_with("HTTP/1.1 200 OK"));
     });
-    let snapshot = crate::browser::receive_for_test(listener, &"a".repeat(48), &nonce, Instant::now()+Duration::from_secs(5), &||false).unwrap();
+    let result = with_browser_fallback(oauth,
+        || crate::browser::receive_for_test(listener, &"a".repeat(48), &nonce, Instant::now()+Duration::from_secs(5), &||false),
+        |snapshot| collect_in(&fixture, json!({"account_id":"current", "expected_identity":identity, "browser_snapshot":snapshot})));
     sender.join().unwrap();
-    let result = collect_in(&fixture, json!({"account_id":"current", "expected_identity":identity, "browser_snapshot":snapshot})).unwrap();
     assert_eq!(result.status, OnlineStatus::Updated);
     assert_eq!(result.source.as_deref(), Some("browser"));
+    assert_eq!(result.browser_fallback_status, None);
+    assert!(successful_browser_quota(&result));
+    let state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    assert_eq!(state["accounts"][&identity]["last_status"], "updated");
+    assert_eq!(state["accounts"][&identity]["last_source"], "browser");
     assert_eq!(fixture.grants.load(Ordering::SeqCst), 2);
     let projection = fixture.current();
     assert_eq!(projection.quota_5h_used, Some(37));

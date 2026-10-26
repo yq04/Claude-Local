@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Pure online result models, persistent synthetic batch snapshots and mock translations.
- * [OUTPUT]: State, account-fingerprint, cooldown, deadline and display regression checks.
+ * [OUTPUT]: State, account-fingerprint, independent browser failure, no-dispatch scheduler cooldown and display checks.
  * [POS]: No network, real identity, native IPC or user-data access.
  * [PROTOCOL]: Keep this suite aligned with src/CLAUDE.md.
  */
@@ -10,6 +10,15 @@ import {boundedLegacyWakeupState, readNativeWakeupSnapshot, defaultAccountWakeup
 test('native scheduler bridge starts disabled without issuing IPC', () => {
   expect(readNativeWakeupSnapshot().config.enabled).toBe(false);
   expect(readNativeWakeupSnapshot().status).toBe('loading');
+});
+
+test('scheduler admission reports no-dispatch reason and exact retry independently of POST ambiguity', () => {
+  const text = formatOnlineQuotaStatus({status: 'cooldown', stage: 'scheduler', reason: 'backoff_cooldown', retry_at_ms: 61000}, 1000,
+    (key, slots) => `${key}${slots ? JSON.stringify(slots) : ''}`);
+  expect(text.message).toBe('wakeup.gate.backoff_cooldown wakeup.retryIn{"seconds":60}');
+  expect(text.message).not.toContain('outcomeUnknown');
+  expect(formatOnlineQuotaStatus({status: 'auth_required', browser_fallback_status: 'request_timeout'}, 0, key => key).message)
+    .toBe('quotaOnline.browserFallback.request_timeout');
 });
 
 test('legacy migration is bounded and never invents successful windows or idle rounds', () => {

@@ -1,5 +1,5 @@
 // [INPUT]: Explicit versioned settings, restricted local quota summaries and the shared audited collector.
-// [OUTPUT]: One process-owned scheduler, private durable plans and bounded status-only events.
+// [OUTPUT]: One process-owned scheduler, private durable plans, precise no-dispatch results and bounded status-only events.
 // [POS]: No HTTP or quota-ledger writer; survives page unmount, stops with the application.
 // [PROTOCOL]: Keep identities/CLAUDE.md and frontend IPC types aligned.
 use super::online::{OnlineQuotaResult, OnlineStatus, WakeupEffect};
@@ -507,6 +507,60 @@ fn plan(
     }
     None
 }
+/// The same admission gates serve manual and scheduled work. A blocked click
+/// returns a bounded explanation without consuming a recovery grant or writing
+/// an unknown-POST journal.
+fn dispatch_blocker(
+    state: &Snapshot,
+    candidate: &Candidate,
+    items: &[Candidate],
+    automatic: bool,
+    expired: Option<u64>,
+    now: u64,
+    minute: u16,
+) -> Option<OnlineQuotaResult> {
+    let a = state.accounts.get(&candidate.identity).cloned().unwrap_or_default();
+    let retry = state.next_global_at_ms.max(a.backoff_until_ms.unwrap_or(0));
+    let retry = (retry > now).then_some(retry);
+    let reason = if automatic && (!state.config.enabled
+        || !state.config.within(minute) || state.targets != target_set(items)) {
+        "scheduler_unavailable"
+    } else if candidate.running {
+        "cli_active"
+    } else if candidate.weekly.is_some_and(|used| used >= 95) {
+        "low_7d_quota"
+    } else if state.config.excluded_identities.contains(&candidate.identity) {
+        "disabled_by_user"
+    } else if a.unknown {
+        "outcome_unknown"
+    } else if (a.auth_blocked || candidate.capability == "auth_required") && !a.recovery_allowed {
+        "auth_required"
+    } else if candidate.capability != "http_connect"
+        && !(candidate.capability == "auth_required" && a.recovery_allowed) {
+        "capability_blocked"
+    } else if retry.is_some() {
+        "backoff_cooldown"
+    } else if candidate.reset != expired || !candidate.inferred || expired.is_none() {
+        "not_expired"
+    } else if a.last_woken_for_reset_sec == expired {
+        "already_woken"
+    } else if automatic && (a.scheduled_for_reset_sec != expired
+        || a.scheduled_at_ms.is_none_or(|at| at > now)) {
+        "scheduler_unavailable"
+    } else {
+        return None;
+    };
+    Some(OnlineQuotaResult::scheduler_blocked(
+        match reason {
+            "auth_required" => OnlineStatus::AuthRequired,
+            "backoff_cooldown" => OnlineStatus::Cooldown,
+            _ => OnlineStatus::Unavailable,
+        },
+        reason,
+        retry,
+    ))
+}
+
 struct Inner {
     snapshot: Snapshot,
     active: bool,
@@ -648,52 +702,19 @@ impl WakeupOwner {
         now: u64,
         minute: u16,
         jitter: u64,
-    ) -> Result<(), String> {
+    ) -> Result<(), OnlineQuotaResult> {
         let identity = candidate.identity.as_str();
-        let mut guard = self.inner.0.lock().map_err(|_| "wakeup.stateSaveFailed")?;
+        let mut guard = self.inner.0.lock().map_err(|_| OnlineQuotaResult::scheduler_blocked(
+            OnlineStatus::Unavailable, "scheduler_unavailable", None))?;
         if guard.stopped || guard.active || !guard.writable || !guard.snapshot.migrated {
-            return Err("wakeup.notReady".into());
+            return Err(OnlineQuotaResult::scheduler_blocked(
+                OnlineStatus::Unavailable,
+                if guard.active { "scheduler_busy" } else { "scheduler_unavailable" }, None));
         }
-        if automatic
-            && (!guard.snapshot.config.enabled
-                || !guard.snapshot.config.within(minute)
-                || guard.snapshot.targets != target_set(items))
-        {
-            return Err("wakeup.notReady".into());
+        if let Some(blocked) = dispatch_blocker(&guard.snapshot, candidate, items, automatic, expired, now, minute) {
+            return Err(blocked);
         }
-        if candidate.running
-            || candidate.weekly.is_some_and(|used| used >= 95)
-            || (candidate.capability != "http_connect"
-                && !(candidate.capability == "auth_required"
-                    && guard
-                        .snapshot
-                        .accounts
-                        .get(identity)
-                        .is_some_and(|a| a.recovery_allowed)))
-            || guard
-                .snapshot
-                .config
-                .excluded_identities
-                .contains(&identity.to_string())
-        {
-            return Err("wakeup.notReady".into());
-        }
-        let retry = guard.snapshot.next_global_at_ms;
         let a = guard.snapshot.accounts.entry(identity.into()).or_default();
-        if a.unknown
-            || (a.auth_blocked && !a.recovery_allowed)
-            || a.backoff_until_ms.is_some_and(|t| t > now)
-            || retry > now
-            || candidate.reset != expired
-            || !candidate.inferred
-            || expired.is_none()
-            || a.last_woken_for_reset_sec == expired
-            || (automatic
-                && (a.scheduled_for_reset_sec != expired
-                    || a.scheduled_at_ms.is_none_or(|at| at > now)))
-        {
-            return Err("wakeup.notReady".into());
-        }
         a.recovery_allowed = false;
         a.unknown = true;
         a.last_attempt_at_ms = Some(now);
@@ -701,9 +722,10 @@ impl WakeupOwner {
         a.scheduled_for_reset_sec = expired;
         guard.snapshot.last_global_wakeup_at_ms = now;
         guard.snapshot.next_global_at_ms = now + 360_000 + jitter % 420_001;
-        if let Err(error) = self.save_locked(&mut guard) {
+        if self.save_locked(&mut guard).is_err() {
             drop(guard);
-            return Err(error);
+            return Err(OnlineQuotaResult::scheduler_blocked(
+                OnlineStatus::Unavailable, "scheduler_unavailable", None));
         }
         guard.active = true;
         drop(guard);
@@ -733,7 +755,9 @@ impl WakeupOwner {
             random(),
         );
         self.emit(app);
-        admission?;
+        if let Err(blocked) = admission {
+            return Ok(blocked);
+        }
         let result = super::online::collect_wakeup_audited(
             app,
             account_id.to_owned(),
@@ -997,17 +1021,26 @@ pub fn identities_wakeup_resume(
         .accounts
         .get_mut(&expected_identity)
         .ok_or("wakeup.notReady")?;
-    // Explicit recovery grants one attempt; it does not clear an uncertain POST.
-    if a.unknown {
-        return Err("wakeup.outcomeUnknown".into());
-    }
-    a.recovery_allowed = true;
+    grant_recovery(a)?;
     owner.save_locked(&mut guard)?;
     let result = guard.snapshot.clone();
     drop(guard);
     owner.inner.1.notify_all();
     owner.emit(&app);
     Ok(result)
+}
+
+fn grant_recovery(account: &mut Account) -> Result<(), String> {
+    // Explicit recovery permits one attempt. Only a proven authorization-only
+    // account delay may be released; shared spacing and unknown/429 gates hold.
+    if account.unknown {
+        return Err("wakeup.outcomeUnknown".into());
+    }
+    if account.auth_blocked && account.last_status.as_deref() == Some("auth_required") {
+        account.backoff_until_ms = None;
+    }
+    account.recovery_allowed = true;
+    Ok(())
 }
 pub fn request(
     app: &tauri::AppHandle,

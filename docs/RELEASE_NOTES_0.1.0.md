@@ -1,14 +1,16 @@
 <!--
 [INPUT]: Baseline capabilities from internal versions 0.1.0 through 0.3.1, version metadata reset for public candidate, and distribution boundaries.
 [OUTPUT]: Initial public candidate 0.1.0 release notes with scope, compatibility and verification limits.
-[POS]: Candidate release description; product is undeployed/unreleased and repository remains private during preparation.
+[POS]: Candidate release description; local file updates remain separate from public installers/releases and repository visibility.
 [PROTOCOL]: Do not claim current public release or overwrite internal git history.
 -->
 # Claude-Local 0.1.0 (首次公开候选版本)
 
 本版本将产品编号重置为首次公开候选版本 0.1.0，功能基线为 `9b89502` 的本地源码，包含此前迭代功能及尚未安装交付的 Astra 优化。
 
-当前状态明确为：**公开筹备中，未发布、未部署**。内部历史版本记录与既有 `v0.3.0`、`v0.3.1` 标签保持原样，不作覆盖或改写。
+当前处于**公开筹备阶段，尚未公开发布**；候选已完成后续本机文件式更新，正式安装器仍未打包。内部历史记录与既有 `v0.3.0`、`v0.3.1` 标签保持原样，不覆盖或改写。
+
+连接恢复修复：网页额度查询失败与CLI唤醒授权分开显示，浏览器补充查询保留具体失败，手动门禁给出冷却/授权原因；参见 [恢复说明](CONNECTION_RECOVERY.md)。
 
 ## 继承功能与候选版本范围
 

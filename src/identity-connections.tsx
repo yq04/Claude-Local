@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Frozen account/fingerprint quota outcomes and explicit user actions.
- * [OUTPUT]: A centralized, account-bound connection and route-repair queue with a unified subset retry.
+ * [OUTPUT]: An account-bound web-query repair queue with precise browser failures and subset retry, separate from CLI wakeup authorization.
  * [POS]: Identity recovery UI and in-memory history; never reads credentials or selects global CLI/browser state.
  * [PROTOCOL]: Keep bilingual additions in p5-i18n.json and tests synthetic-only.
  */
@@ -12,7 +12,7 @@ export interface ConnectionOutcome {
   result: OnlineQuotaResult;
 }
 
-export type ConnectionIssue = 'login' | 'route' | 'wait' | 'retry';
+export type ConnectionIssue = 'login' | 'browser' | 'route' | 'wait' | 'retry';
 
 export function isValidQuotaTargetSubset(
   subset: QuotaBatchTarget[],
@@ -29,6 +29,8 @@ export function isValidQuotaTargetSubset(
 }
 
 export function connectionIssueFor(result: OnlineQuotaResult): ConnectionIssue | null {
+  if (result.stage === 'scheduler') return null;
+  if (result.browser_fallback_status) return 'browser';
   if (result.status === 'auth_required' || result.reason === 'auth_required' ||
       (result.status === 'cooldown' && result.retry_scope === 'oauth')) return 'login';
   if (result.status === 'route_unavailable' || result.reason === 'unsupported_proxy' || result.reason === 'route_changed') return 'route';
@@ -44,6 +46,7 @@ export function describeConnectionIssue(
 ): string {
   const issue = connectionIssueFor(result);
   const status = formatOnlineQuotaStatus(result, nowMs, t).message;
+  if (issue === 'browser') return status;
   if (issue === 'login') return `${t('quotaOnline.connection.login')} ${status}`;
   if (issue === 'route') return `${status} ${t('quotaOnline.connection.routeHelp')}`;
   if (issue === 'wait') return `${status} ${t('quotaOnline.connection.waitHelp')}`;
@@ -66,7 +69,9 @@ export function mergeConnectionOutcomes(
     if (!currentInventory.some(target => target.account_id === frozen.account_id &&
         target.expected_identity.toLowerCase() === frozen.expected_identity.toLowerCase())) continue;
     // Cancellation and queue omissions carry no new account evidence; keep the prior outcome.
-    if (item.result.status === 'cancelled' || item.result.status === 'not_run') continue;
+    if (item.result.stage === 'scheduler' || item.result.status === 'cancelled' || item.result.status === 'not_run') continue;
+    if (item.result.source === 'browser' && item.result.status === 'updated' &&
+        !item.result.updated_windows?.some(window => window === '5h' || window === '7d')) continue;
     next.set(item.target.account_id, {target: {...frozen}, result: item.result});
   }
   return Array.from(next.values()).filter(item => currentInventory.some(target =>
@@ -135,7 +140,7 @@ export function IdentityConnections({
             <li key={item.target.account_id} data-connection-issue={issue ?? 'resolved'}>
               <span className="identity-connection-account">{item.label}</span>
               <span>{describeConnectionIssue(item.result, Date.now(), t)}</span>
-              {issue === 'login' && (
+              {(issue === 'login' || issue === 'browser') && (
                 <Button variant="secondary" size="small" disabled={busy}
                   onClick={() => onOpen(item.target)}>
                   {t('quotaOnline.openAccountBrowser')}

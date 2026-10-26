@@ -1,5 +1,5 @@
 // [INPUT]: A fresh bundled Chromium profile, fixed MV3 bridge and HTTPS/local synthetic responses.
-// [OUTPUT]: Real-navigation evidence for pairing, service-worker restart, identity recheck and bounded failure handling.
+// [OUTPUT]: Real-navigation evidence for pairing, service-worker restart, identity recheck and precise bounded failure callbacks.
 // [POS]: End-to-end browser bridge test; all Claude-origin requests are intercepted and no user profile is opened.
 // [PROTOCOL]: Keep this test synthetic and isolated; update scripts/CLAUDE.md when its scope changes.
 import assert from 'node:assert/strict';
@@ -237,28 +237,28 @@ try{
   const beforeChallenge=callbacks.length;
   const challenged=await navigate('challenge-response');
   await waitFor(()=>callbacks.length>beforeChallenge,8000);
-  assert.equal(callbacks.at(-1).body.failure,'identity_unavailable','challenge HTML cannot be treated as authorized usage');
+  assert.equal(callbacks.at(-1).body.failure,'invalid_response','challenge HTML cannot be treated as authorized usage');
   await challenged.page.close();
 
   challenge=false;changeIdentityAfterUsage=true;identityCalls=0;
   const beforeMismatch=callbacks.length;
   const changed=await navigate('identity-changed');
   await waitFor(()=>callbacks.length>beforeMismatch,8000);
-  assert.equal(callbacks.at(-1).body.failure,'identity_unavailable','identity change during collection must be rejected');
+  assert.equal(callbacks.at(-1).body.failure,'identity_changed','identity change during collection must be rejected');
   await changed.page.close();
 
   changeIdentityAfterUsage=false;identityCalls=0;usageMode='oversized';
   const beforeOversized=callbacks.length;
   const oversized=await navigate('oversized-response');
   await waitFor(()=>callbacks.length>beforeOversized,8000);
-  assert.equal(callbacks.at(-1).body.failure,'identity_unavailable','oversized response bodies must fail closed');
+  assert.equal(callbacks.at(-1).body.failure,'invalid_response','oversized response bodies must fail closed');
   await oversized.page.close();
 
   usageMode='timeout';identityCalls=0;
   const beforeTimeout=callbacks.length;
   const timedOut=await navigate('timed-out-response');
   await waitFor(()=>callbacks.length>beforeTimeout,9000);
-  assert.equal(callbacks.at(-1).body.failure,'identity_unavailable','request deadline must produce a failure callback');
+  assert.equal(callbacks.at(-1).body.failure,'request_timeout','request deadline must produce a failure callback');
   await timedOut.page.close();
 
   console.log('Synthetic quota integration passed: real MV3 navigation, worker stop/restart, one-org fingerprint match, expiry, challenge/identity rejection, timeout and body cap.');

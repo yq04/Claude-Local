@@ -8,9 +8,11 @@
 
 面向 Windows x64 的 Claude 本地管理工具，集中管理身份备份、账号切换、用量分析和可选的隔离浏览器。使用 Tauri、Rust、React、TypeScript 与 Python，独立维护产品和版本。
 
-当前候选版本：**0.1.0**（首次公开候选版本编号重置；内部版本记录及既有 v0.3.0/v0.3.1 标签保持，既有安装版仍为 0.3.1，当前处于公开筹备与未发布阶段）。已整合用量分析模型推理档位（Effort）分布、原生自动续杯周期调度、可开关悬浮监控窗、浏览环境与电脑环境紧凑布局优化、Windows 隔离浏览器缓存目录 ACL 自愈、单层工作区光学毛玻璃渲染架构、电脑与浏览环境参考核验、额度切换对比与实用化文案。支持 Windows 10 / 11 x64；安装包包含 Claude-Local 与 Claude-Local Browser 两个入口。
+当前候选版本：**0.1.0**（首次公开候选版本编号重置，尚未公开发布；既有 v0.3.0/v0.3.1 标签保持）。已整合用量分析模型推理档位（Effort）分布、原生自动续杯周期调度、可开关悬浮监控窗、Windows 隔离浏览器缓存目录 ACL 自愈及连接恢复反馈修复。支持 Windows 10 / 11 x64；主程序与可选的 Claude-Local Browser 使用独立产品入口。候选已完成本机文件式更新，正式安装/降级包验收仍单独进行。
 
 [版本说明](docs/RELEASE_NOTES_0.1.0.md) · [公开筹备边界](docs/PUBLIC_PREPARATION.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [开发说明](docs/DEVELOPMENT.md) · [用量统计](docs/USAGE_STATISTICS.md) · [分发与许可边界](docs/DISTRIBUTION.md) · [参与贡献](CONTRIBUTING.md)
+
+遇到网页登录后仍无法查询或唤醒，先看 [网页额度与CLI授权恢复说明](docs/CONNECTION_RECOVERY.md)：两套授权独立，重试会分别显示网页读取失败和CLI唤醒阻断原因。
 
 ## 主要功能
 

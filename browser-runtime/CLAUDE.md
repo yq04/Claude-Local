@@ -4,4 +4,6 @@ Optional, independently integrated Fingerprint Chromium subsystem. The pinned ve
 
 Do not commit the engine, generated archives or user profiles. Keep all engine credits/licenses intact. Other platform boundary source is retained for future work; only Windows x64 is currently supported and validated.
 
+The bridge sends only fixed failure reasons for identity mismatch/unavailability, HTTP 401/403, unavailable usage, request timeout and invalid response. The worker strips account/usage fields from a failed callback, and native query diagnostics keep these separate from CLI OAuth/messages authorization. Older `identity_unavailable` callbacks remain supported; no failure becomes a success snapshot.
+
 [PROTOCOL]: Update this map when changing engine preparation or packaging.

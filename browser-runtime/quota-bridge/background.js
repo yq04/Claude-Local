@@ -1,10 +1,12 @@
 // [INPUT]: Explicit local pairing ticket, bounded Claude account/org candidates, and projected metadata.
-// [OUTPUT]: One nonce/tab-bound callback after the existing quota_identity fingerprint uniquely matches.
+// [OUTPUT]: One nonce/tab-bound callback after fingerprint matching, or an allowlisted failure with no account payload.
 // [POS]: Fixed MV3 bridge service worker; fingerprint stays in session storage and never reaches claude.ai.
 "use strict";
 
 const consumed = new Set();
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const FAILURES = new Set(["identity_unavailable", "identity_changed", "usage_unavailable",
+  "web_auth_required", "web_access_denied", "request_timeout", "invalid_response"]);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !sender.tab?.id || !sender.tab?.url) return;
@@ -98,10 +100,11 @@ async function deliver(message, sender) {
   await chrome.storage.session.remove(nonce);
   const snapshot = message.snapshot;
   if (!snapshot || snapshot.nonce !== nonce) return { ok: false };
-  const failure = snapshot.failure === "identity_unavailable";
+  const failure = FAILURES.has(snapshot.failure);
+  if (snapshot.failure !== undefined && !failure) return { ok: false };
   if (!failure && (!paired.selected || snapshot.account_uuid !== paired.selected.account_uuid ||
       snapshot.organization_uuid !== paired.selected.organization_uuid)) return { ok: false };
-  const safeSnapshot = failure ? { nonce, failure: "identity_unavailable" } : projectSnapshot(snapshot, paired.selected);
+  const safeSnapshot = failure ? { nonce, failure: snapshot.failure } : projectSnapshot(snapshot, paired.selected);
   const response = await fetch(callback.href, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

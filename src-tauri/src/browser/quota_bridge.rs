@@ -1,5 +1,5 @@
 // [INPUT]: 用户显式触发的隔离 Chromium、带本地 quota_identity 指纹的短期票据与绑定身份快照。
-// [OUTPUT]: 运行时指纹唯一匹配后交给 Python 唯一额度账本写入者的白名单订阅/重置元数据和有界权益有效期。
+// [OUTPUT]: 运行时指纹唯一匹配后的白名单订阅/重置元数据与有界权益有效期，或白名单桥接失败；Python仍唯一写入额度账本。
 // [POS]: Claude.ai 到身份账本的短期单次桥；不读取 Cookie，不将本地端口/指纹带到远端，不后台轮询。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub(crate) use super::quota_existing::query_existing_profile;
@@ -136,8 +136,17 @@ fn resets(usage: Option<&Value>, observed_ms: u64) -> (Option<u64>, Option<i64>)
 }
 
 pub(super) fn snapshot(incoming: Incoming, observed_ms: u64) -> Result<Snapshot, String> {
-    if incoming.failure.is_some() {
-        return Err("quotaOnline.bridgeIdentityUnavailable".into());
+    if let Some(failure) = incoming.failure.as_deref() {
+        return Err(match failure {
+            "identity_unavailable" => "quotaOnline.bridgeIdentityUnavailable",
+            "identity_changed" => "quotaOnline.accountMismatch",
+            "usage_unavailable" => "quotaOnline.browserUsageUnavailable",
+            "web_auth_required" => "quotaOnline.browserWebAuthRequired",
+            "web_access_denied" => "quotaOnline.browserWebAccessDenied",
+            "request_timeout" => "quotaOnline.browserRequestTimeout",
+            "invalid_response" => "quotaOnline.invalidResponse",
+            _ => "quotaOnline.unavailable",
+        }.into());
     }
     let account_uuid = incoming.account_uuid.as_deref().unwrap_or("");
     let organization_uuid = incoming.organization_uuid.as_deref().unwrap_or("");
@@ -393,8 +402,19 @@ mod tests {
 
     #[test]
     fn browser_collection_failure_cannot_become_a_success_snapshot() {
-        let mut failure = input(None, None);
-        failure.failure = Some("identity_unavailable".into());
-        assert!(snapshot(failure, OBSERVED).is_err());
+        for (reason, expected) in [
+            ("identity_unavailable", "quotaOnline.bridgeIdentityUnavailable"),
+            ("identity_changed", "quotaOnline.accountMismatch"),
+            ("usage_unavailable", "quotaOnline.browserUsageUnavailable"),
+            ("web_auth_required", "quotaOnline.browserWebAuthRequired"),
+            ("web_access_denied", "quotaOnline.browserWebAccessDenied"),
+            ("request_timeout", "quotaOnline.browserRequestTimeout"),
+            ("invalid_response", "quotaOnline.invalidResponse"),
+            ("raw-private-error", "quotaOnline.unavailable"),
+        ] {
+            let mut failure = input(None, None);
+            failure.failure = Some(reason.into());
+            assert_eq!(snapshot(failure, OBSERVED).err().as_deref(), Some(expected));
+        }
     }
 }

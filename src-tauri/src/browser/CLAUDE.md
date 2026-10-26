@@ -1,6 +1,7 @@
 # browser/
 > L2 | 父级: ../CLAUDE.md
 quota_existing.rs: 统一手动查询的已运行资料补充通路；按数据库绑定解析每身份独立profile，不切换全局slot、不复制资料、不读取Cookie，独立短期回环票据/固定扩展Origin/Host与16KiB正文上限；20秒总等待受批次deadline限制，取消每250ms协作检查；真实5h/7d和网页权益摘要经Python再次校验后写账本，自动刷新不调用此通路。`receive_for_test` 仅在 `cfg(test)` 暴露回环接收器给合成原生编排测试，不启动浏览器或读取用户资料。
+失败诊断独立于CLI OAuth：未运行绑定资料、配对总超时、扩展身份不可用/变更、网页HTTP401/403、请求超时、响应异常或无额度窗口均保留受限原因；旧扩展identity_unavailable继续兼容，任何失败都不能导入额度或清messages授权门禁。
 mod.rs: Tauri 浏览器命令、单次变更锁与运行时状态；本地版浏览器包标识 ai.local.claude-local.browser；引擎优先 /Applications/Claude-Local Browser.app，回退 ~/Applications；宿主启动时建立起始页会话（start.url）、写入 launch.args；已有浏览器时打开新会话页以重新连接，回报与接收时间同一快照，上下文/快照共享界面语言与出口服务目录；会话因保存/清理/退出/对齐失效时立即换新，宿主退出删除 start.url；默认浏览器读取与一键请求；快捷换指纹先正常退出，再随机更新种子/地区、清空显式代理以跟随 TUN 并开启 Canvas/布局种子；运行中可重开 Default 实测页，偏好写入、设置、清理与系统对齐要求先退出；同步票据随浏览器会话失效。
 quota_connection.rs: 用户显式选择账号后，只解析数据库中该账号已有绑定的资料与固定 `claude.ai/settings/usage` 地址；Cleaner enter_quota 后再取 Browser gate，冻结并复核账号指纹/绑定路径/配置；不切换全局 slot、不写全局 launch.args、不登记系统浏览器、不创建缺失资料、不读取 Cookie 或启动任意 URL；合成解析测试只用临时身份库和资料。
 config.rs: 按当前身份保存的指纹配置（新资料默认代理留空以跟随 TUN）、实际机器参数、代理/地区语言白名单、回环地址豁免（--proxy-bypass-list 与 IPv6 规则规范化）和 Chromium 参数生成；Windows 仅在固定扩展清单存在时加载隔离额度桥；独占 user-data-dir 内明确启动 Default 资料，品牌版本采用实际引擎版本。

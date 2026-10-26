@@ -1,5 +1,5 @@
 // [INPUT]: Synthetic summaries, fixed clock values, fake collector outcomes and private temporary files.
-// [OUTPUT]: Scheduler scope, plan, restart, unknown-result and recovery regression tests.
+// [OUTPUT]: Scheduler scope, plan, restart, structured admission, unknown-result and recovery regression tests.
 // [POS]: No live identity, Python process, HTTP request or system mutation.
 use super::*;
 fn item() -> Candidate {
@@ -133,6 +133,36 @@ fn result(value: serde_json::Value) -> Result<OnlineQuotaResult, String> {
 }
 
 #[test]
+fn manual_admission_reports_the_gate_and_shared_retry_without_dispatch() {
+    let mut s = enabled();
+    let mut c = item();
+    let mut a = Account::default();
+    a.auth_blocked = true;
+    a.backoff_until_ms = Some(700_000);
+    s.next_global_at_ms = 800_000;
+    s.accounts.insert(c.identity.clone(), a);
+    let blocked = dispatch_blocker(&s, &c, &[c.clone()], false, c.reset, 200_000, 0).unwrap();
+    assert_eq!(blocked.status, OnlineStatus::AuthRequired);
+    assert_eq!(blocked.stage.as_deref(), Some("scheduler"));
+    assert_eq!(blocked.reason.as_deref(), Some("auth_required"));
+    assert_eq!(blocked.retry_at_ms, Some(800_000));
+    assert_eq!(blocked.wakeup_effect, None); // No POST was attempted.
+    s.accounts.get_mut(&c.identity).unwrap().recovery_allowed = true;
+    c.capability = "auth_required".into();
+    let waiting = dispatch_blocker(&s, &c, &[c.clone()], false, c.reset, 200_000, 0).unwrap();
+    assert_eq!(waiting.status, OnlineStatus::Cooldown);
+    assert_eq!(waiting.reason.as_deref(), Some("backoff_cooldown"));
+    assert_eq!(waiting.retry_at_ms, Some(800_000));
+    assert!(dispatch_blocker(&s, &c, &[c.clone()], false, c.reset, 800_000, 0).is_none());
+    s.accounts.get_mut(&c.identity).unwrap().unknown = true;
+    let unknown = dispatch_blocker(&s, &c, &[c.clone()], false, c.reset, 900_000, 0).unwrap();
+    assert_eq!(unknown.reason.as_deref(), Some("outcome_unknown"));
+    assert_eq!(unknown.wakeup_effect, None);
+    c.running = true;
+    assert_eq!(dispatch_blocker(&s, &c, &[c.clone()], false, c.reset, 900_000, 0).unwrap().reason.as_deref(), Some("cli_active"));
+}
+
+#[test]
 fn plan_is_stable_across_ticks_and_page_unmount_has_no_input() {
     let mut s = enabled();
     let c = item();
@@ -214,14 +244,14 @@ fn auth_stays_blocked_until_explicit_one_attempt_recovery() {
         200_000,
         &result(serde_json::json!({"status":"auth_required"})),
     );
-    s.accounts.get_mut(&c.identity).unwrap().backoff_until_ms = None;
     plan(&mut s, &[c.clone()], Some(30), 500_000, 0, 0);
     assert_eq!(s.accounts[&c.identity].decision, "auth_blocked");
     s.config.enabled = false;
     s.config.enabled = true;
     plan(&mut s, &[c.clone()], Some(30), 500_000, 0, 0);
     assert_eq!(s.accounts[&c.identity].decision, "auth_blocked");
-    s.accounts.get_mut(&c.identity).unwrap().recovery_allowed = true;
+    grant_recovery(s.accounts.get_mut(&c.identity).unwrap()).unwrap();
+    assert_eq!(s.accounts[&c.identity].backoff_until_ms, None);
     c.capability = "auth_required".into(); // stale local expiry is not a network verdict
     plan(&mut s, &[c.clone()], Some(30), 500_000, 0, 0);
     assert_eq!(s.accounts[&c.identity].decision, "scheduled");
@@ -237,6 +267,20 @@ fn auth_stays_blocked_until_explicit_one_attempt_recovery() {
     );
     assert!(s.accounts[&c.identity].auth_blocked);
     assert!(!s.accounts[&c.identity].recovery_allowed);
+
+    // Recovery cannot erase an ambiguous/429 delay or the shared dispatch gap.
+    s.next_global_at_ms = 4_000_000;
+    let a = s.accounts.get_mut(&c.identity).unwrap();
+    a.last_status = Some("rate_limited".into());
+    a.backoff_until_ms = Some(4_000_000);
+    grant_recovery(a).unwrap();
+    assert_eq!(a.backoff_until_ms, Some(4_000_000));
+    assert_eq!(s.next_global_at_ms, 4_000_000);
+    let a = s.accounts.get_mut(&c.identity).unwrap();
+    a.recovery_allowed = false;
+    a.unknown = true;
+    assert_eq!(grant_recovery(a).unwrap_err(), "wakeup.outcomeUnknown");
+    assert!(!a.recovery_allowed);
 }
 
 #[test]

@@ -1,5 +1,5 @@
 // [INPUT]: An explicit batch query, frozen account fingerprint and an already running managed browser profile.
-// [OUTPUT]: One bounded, extension-origin, account-bound live usage snapshot with cooperative cancellation; cfg(test) also exposes the receiver for synthetic native-chain tests; no cookies or browser data are read.
+// [OUTPUT]: One bounded, extension-origin, account-bound live usage snapshot or specific bridge failure with cooperative cancellation; cfg(test) exposes the receiver for synthetic native-chain tests; no cookies or browser data are read.
 // [POS]: Browser fallback for unified quota reads; 20-second receiver deadline plus caller deadline/cancel signal; never changes selected identity, seed, profile or credentials.
 // [PROTOCOL]: Only manual batches may use this bridge; update browser/CLAUDE.md with changes.
 use serde_json::Value;
@@ -244,9 +244,13 @@ fn receive(
                 reply(&mut stream, "200 OK", b"{\"ok\":true}", false, true);
                 return Ok(value);
             }
-            _ => {
+            Ok(_) => {
                 reply(&mut stream, "409 Conflict", b"{\"ok\":false}", false, true);
-                return Err("quotaOnline.unavailable".into());
+                return Err("quotaOnline.browserNoQuotaUpdate".into());
+            }
+            Err(error) => {
+                reply(&mut stream, "409 Conflict", b"{\"ok\":false}", false, true);
+                return Err(error);
             }
         }
     }
@@ -303,7 +307,7 @@ pub(crate) fn query_existing_profile(
     let profile = scope.join("profile");
     super::profile::check_path(&root, &profile)?;
     if !super::profile::running(&profile)? {
-        return Err("quotaOnline.unavailable".into());
+        return Err("quotaOnline.browserProfileNotRunning".into());
     }
     let listener = super::server::bind()?;
     let port = listener
@@ -394,5 +398,24 @@ mod tests {
             &|| false,
         );
         assert_eq!(result.unwrap_err(), "quotaOnline.deadlineExceeded");
+    }
+
+    #[test]
+    fn receiver_preserves_allowlisted_extension_failure_for_the_retry_queue() {
+        let listener = super::super::server::bind().unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let token = "a".repeat(48);
+        let nonce = "b".repeat(48);
+        let body = serde_json::json!({"nonce":nonce,"failure":"request_timeout"}).to_string();
+        let sender = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(stream, "POST /{token}/quota-sync HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {ORIGIN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 409 Conflict"));
+        });
+        let result = receive(listener, &"a".repeat(48), &"b".repeat(48), Instant::now() + Duration::from_secs(2), &|| false);
+        sender.join().unwrap();
+        assert_eq!(result.unwrap_err(), "quotaOnline.browserRequestTimeout");
     }
 }
