@@ -10,12 +10,13 @@ mod workspaces;
 use launch::{launch_locked, launch_with_urls_locked};
 pub(crate) use workspaces::delete_saved;
 pub(crate) use workspaces::identity_action;
+pub(crate) use workspaces::switch_identity;
 pub(crate) fn configure_identity(
     app: &tauri::AppHandle,
     reporter: &Reporter,
     action: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
-    workspaces::transition(app, reporter, true, action)
+    workspaces::transition(app, reporter, true, false, action)
 }
 pub(crate) fn sync_current_launch_args(app: &tauri::AppHandle) {
     let state = app.state::<Browser>();

@@ -226,7 +226,7 @@
 .identity-header-actions {
   display: flex;
   align-items: center;
-  gap: 8px 10px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
   min-width: 0;
@@ -244,15 +244,49 @@
   gap: 6px;
   flex-wrap: nowrap;
 }
+.identity-header-secondary {
+  position: relative;
+  padding-left: 8px;
+}
+.identity-header-secondary::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 85%, transparent);
+}
+.identity-header-actions button.isolate {
+  height: 30px !important;
+  border-radius: 8px !important;
+  padding-inline: 11px !important;
+  font-size: 12px !important;
+  font-weight: 550 !important;
+}
 .identity-header-menu-trigger,
 .identity-header-actions .identity-menu-trigger {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
   padding: 0;
   margin-left: 0;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card-elevated, var(--card));
+  color: var(--foreground);
+  font-size: 15px;
+  line-height: 1;
+  box-shadow: 0 1px 2px rgba(20, 20, 19, 0.04);
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+.identity-header-menu-trigger:hover,
+.identity-header-actions .identity-menu-trigger:hover {
+  background: var(--muted);
+  border-color: var(--local-accent);
+  color: var(--foreground);
 }
 .identity-card-status {
   display: block;
@@ -280,36 +314,60 @@
 .identity-connection-queue li[data-connection-issue="login"]{color:var(--destructive,#b42318)}
 .identity-connection-queue li[data-connection-issue="route"]{color:var(--muted-foreground)}
 
-/* 顶部自动续杯胶囊与时间段触发按钮 */
+/* 顶部自动续杯一体化分段胶囊与时间段触发按钮 */
 .wakeup-header-pill {
   display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  align-items: stretch;
+  height: 30px;
+  gap: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card-elevated, var(--card));
+  box-shadow: 0 1px 2px rgba(20, 20, 19, 0.04);
+  overflow: hidden;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
 }
-.wakeup-toggle-btn.is-enabled {
-  border-color: color-mix(in srgb, var(--hud-ok) 40%, var(--border));
+.wakeup-header-pill.is-enabled {
+  border-color: color-mix(in srgb, #10b981 42%, var(--border));
+  background: color-mix(in srgb, #10b981 6%, var(--card-elevated, var(--card)));
+}
+.wakeup-header-pill .wakeup-toggle-btn.isolate {
+  height: 28px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding-inline: 10px !important;
+}
+.wakeup-header-pill .wakeup-toggle-btn.isolate:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--muted) 70%, transparent) !important;
 }
 .wakeup-config-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   height: 28px;
-  padding: 0 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--muted);
+  padding: 0 9px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--muted) 52%, transparent);
   color: var(--muted-foreground);
-  font: 500 11px/1 var(--font-mono);
+  font: 600 11px/1 var(--font-mono);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.wakeup-header-pill.is-enabled .wakeup-config-trigger {
+  border-left-color: color-mix(in srgb, #10b981 28%, var(--border));
+  color: var(--foreground);
 }
 .wakeup-config-trigger:hover,
 .wakeup-config-trigger:focus-visible {
-  color: var(--foreground);
-  border-color: var(--local-accent);
-  background: var(--card);
+  color: var(--local-accent);
+  background: color-mix(in srgb, var(--local-accent) 10%, var(--muted));
   outline: none;
 }
 

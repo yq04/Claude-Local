@@ -538,31 +538,37 @@ code, input { user-select: text; }
   display: flex;
   flex-direction: column;
   flex: 1;
-  gap: 4px;
+  gap: 5px;
   padding: 12px 10px;
   margin-top: 0;
   overflow-y: auto;
 }
 .workspace-nav {
+  position: relative;
   height: 40px;
   gap: 11px;
   padding: 0 12px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 10px;
   overflow: hidden;
-  transition: background-color 150ms ease, color 150ms ease;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
 .app-sidebar[data-locale="en"] .workspace-nav {
-  gap: 8px;
-  padding: 0 9px;
+  gap: 7px;
+  padding: 0 8px;
 }
 .workspace-nav:hover:not(:disabled):not([aria-current="page"]) {
-  background: color-mix(in srgb, var(--muted) 80%, transparent);
+  background: color-mix(in srgb, var(--muted) 84%, transparent);
+  border-color: color-mix(in srgb, var(--landing-line) 75%, transparent);
 }
 .workspace-nav:disabled { opacity: 0.5; }
 .workspace-nav > span:first-child {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-grid;
+  place-items: center;
+  transition: background-color 150ms ease;
 }
 .workspace-nav > span:first-child > span {
   opacity: 1 !important;
@@ -577,43 +583,58 @@ code, input { user-select: text; }
   display: none !important;
 }
 .workspace-nav > span:last-child {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13.5px;
+  font-weight: 530;
   line-height: 20px;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
   color: color-mix(in srgb, var(--foreground) 88%, var(--muted-foreground));
   white-space: nowrap;
 }
 .app-sidebar[data-locale="en"] .workspace-nav > span:last-child {
-  font-size: 12.5px;
-  letter-spacing: -0.01em;
+  font-size: 12px;
+  letter-spacing: -0.015em;
 }
 .workspace-nav[aria-current="page"] {
-  background: var(--local-accent-soft);
-  box-shadow: none;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--local-accent) 16%, transparent) 0%,
+    color-mix(in srgb, var(--local-accent) 7%, transparent) 100%
+  );
+  border-color: color-mix(in srgb, var(--local-accent) 24%, transparent);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+}
+.workspace-nav[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--local-accent);
 }
 .workspace-nav[aria-current="page"] > span:last-child {
   color: var(--local-accent);
-  font-weight: 650;
+  font-weight: 660;
 }
 .workspace-nav[aria-current="page"] > span:first-child > span,
 .workspace-nav[aria-current="page"] svg {
   color: var(--local-accent) !important;
 }
 .nav-divider {
-  margin: auto 4px 6px;
+  margin: auto 6px 6px;
   border: 0;
-  border-top: 1px solid color-mix(in srgb, var(--landing-line) 80%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--landing-line) 85%, transparent);
 }
 
 .sidebar-bottom {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 10px 10px 12px;
+  gap: 8px;
+  padding: 10px 11px;
   border-top: 1px solid color-mix(in srgb, var(--landing-line) 80%, transparent);
-  background: color-mix(in srgb, var(--background) 55%, var(--panel));
+  background: color-mix(in srgb, var(--background) 48%, var(--panel));
 }
 .local-edition {
   order: 2;
@@ -624,12 +645,13 @@ code, input { user-select: text; }
 .local-edition small {
   display: inline-flex;
   align-items: center;
-  padding: 3px 7px;
-  border-radius: 6px;
-  background: var(--muted);
-  border: 1px solid var(--landing-line);
-  color: var(--muted-foreground);
-  font: 10px/1.3 var(--font-mono);
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--local-accent) 9%, var(--muted));
+  border: 1px solid color-mix(in srgb, var(--local-accent) 20%, var(--landing-line));
+  color: var(--local-accent-ink);
+  font: 600 10.5px/1 var(--font-mono);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
 }

@@ -405,7 +405,7 @@ try {
   assert.ok(Math.abs(quickAlignment.title-quickAlignment.card)<=1,'Quick setup cards must share the title margin');
   assert.match(await page.locator('[data-quick-state="identity"]').innerText(),/已保存 3 个身份/);
   assert.match(await page.locator('[data-quick-state="system"]').innerText(),/America\/New_York/);
-  assert.match(await page.locator('.quick-target').innerText(),/America\/Los_Angeles/);
+  assert.match(await page.locator('[data-quick-state="browser"]').innerText(),/引擎已就绪/);
   assert.equal(await page.locator('.quick-page input,.quick-page [role="combobox"]').count(),0);
   const quickStart=(await page.evaluate(()=>window.usageFixture.commands)).length;
   await page.evaluate(()=>{window.usageFixture.failedRead='system_read';});
@@ -541,13 +541,11 @@ try {
   assert.equal(await languageCard.getByRole('button',{name:'应用语言',exact:true}).isEnabled(),true);
   assert.deepEqual([await timezoneCard.locator('.system-current-value').innerText(),await languageCard.locator('.system-current-value').innerText()],currentSystemValues,'Unapplied timezone/language drafts must not replace observed current values');
   assert.deepEqual(await page.evaluate(()=>({timezone:window.usageFixture.systemState.timezone,languages:window.usageFixture.systemState.languages})),{timezone:'America/New_York',languages:['en-US']});
-  await page.evaluate(()=>{window.usageFixture.systemState.location_enabled=null;window.usageFixture.systemState.automatic_timezone=null;});
-  await page.locator('.system-environment-page').getByRole('button',{name:'刷新状态',exact:true}).click();
+  await page.evaluate(()=>{window.usageFixture.systemState.location_enabled=null;window.usageFixture.systemState.automatic_timezone=null;window.dispatchEvent(new Event('focus'));});
   await locationCard.locator('.system-state-label').filter({hasText:/未核验|未知/}).waitFor();
   assert.doesNotMatch(await locationCard.locator('.system-state-label').innerText(),/关闭/,'Unknown location status must not be presented as disabled');
   assert.deepEqual([await timezoneCard.locator('.system-current-value').innerText(),await languageCard.locator('.system-current-value').innerText()],currentSystemValues);
-  await page.evaluate(()=>{window.usageFixture.systemState.location_enabled=false;window.usageFixture.systemState.automatic_timezone=false;});
-  await page.locator('.system-environment-page').getByRole('button',{name:'刷新状态',exact:true}).click();
+  await page.evaluate(()=>{window.usageFixture.systemState.location_enabled=false;window.usageFixture.systemState.automatic_timezone=false;window.dispatchEvent(new Event('focus'));});
   await locationCard.locator('.system-state-label').filter({hasText:/已关闭/}).waitFor();
   await chooseSystemDraft('目标时区','America/New_York','America/New York');
   await chooseSystemDraft('目标语言','en','English');

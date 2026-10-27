@@ -1,12 +1,11 @@
 /**
  * [INPUT]: 共享 YAML 中英文目录与各页面的操作边界。
  * [OUTPUT]: 独立本地产品说明、环境优先配置顺序、新用户授权步骤与身份/浏览器/本地额度同步/网络/电脑操作说明和账号边界。
- * [POS]: 帮助与手写任务交接模板；沿用 Landing 排版和 Cromma Disclosure，不自动读取用户资料，模板只在明示操作时复制用户填写内容。
+ * [POS]: 帮助与安全边界说明；沿用 Landing 排版和 Cromma Disclosure，不自动读取用户资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { Disclosure } from 'cromma-ui';
 import { useI18n } from './i18n';
-import {TaskHandoff} from './task-handoff';
 
 export function HelpPanel() {
     const { t } = useI18n();
@@ -52,7 +51,6 @@ export function HelpPanel() {
         </li>)}</ol>
         <div className="landing-section-band" aria-hidden="true"/>
         <div className="help-notes">
-            <TaskHandoff />
             <Disclosure className="help-details" triggerClassName="help-details-trigger" summary={t('应用使用')}>
                 <div className="help-copy">
                     <p>{t('关闭窗口后应用留在托盘；从托盘菜单退出应用。')}</p>

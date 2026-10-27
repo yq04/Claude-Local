@@ -1,7 +1,7 @@
 /**
  * [INPUT]: Claude-Local 品牌与座舱页面、共享页面图标和 YAML 文案、Cromma UI、任务锁与本地刷新/身份确认事件。
- * [OUTPUT]: 可折叠侧栏、命令面板、手动刷新、手工交接、八个页面及常驻原生唤醒迁移/快照桥（不调度请求）。
- * [POS]: 独立产品编排层；命令快捷键尊重输入、模态与任务锁，只读身份列表仅在面板打开时读取；交接字段仅内存保留。根 MotionRoot 读取减少动画偏好。
+ * [OUTPUT]: 可折叠侧栏、命令面板快捷键、手动刷新、八个页面及常驻原生唤醒迁移/快照桥（不调度请求）。
+ * [POS]: 独立产品编排层；命令快捷键尊重输入、模态与任务锁，只读身份列表仅在面板打开时读取。根 MotionRoot 读取减少动画偏好。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {Panel, NavButton, MotionRoot, TooltipProvider, MOTION, motion} from 'cromma-ui';
@@ -23,7 +23,6 @@ import {HelpPanel} from './help';
 import {SettingsPanel} from './settings';
 import {UsageStatisticsPanel} from './usage-statistics';
 import {CommandPalette} from './command-palette';
-import {TaskHandoff} from './task-handoff';
 import {APP_REFRESH_EVENT, type IdentityReviewRequest} from './app-events';
 import {commandPaletteShortcutAction} from './command-model';
 import {initializeAppearancePreferences, initializePrivacyPreference, stepUiScale, updatePreferences, usePreferences} from './settings-model';
@@ -66,12 +65,10 @@ function App() {
   };
   const [advancedBusy, setAdvancedBusy] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [handoffOpen, setHandoffOpen] = useState(false);
   const [identityReviewRequest, setIdentityReviewRequest] = useState<IdentityReviewRequest | null>(null);
   const [requestNonce, setRequestNonce] = useState(0);
   const paletteOpener = useRef<HTMLElement | null>(null);
-  const paletteTrigger = useRef<HTMLButtonElement>(null);
-  const restorePaletteFocus = () => window.setTimeout(() => (paletteOpener.current ?? paletteTrigger.current)?.focus(), 0);
+  const restorePaletteFocus = () => window.setTimeout(() => paletteOpener.current?.focus(), 0);
   const locked = advancedBusy;
   useEffect(() => {
     rememberPage(page);
@@ -189,12 +186,8 @@ function App() {
             })}
           </nav>
           <div className="sidebar-bottom">
-            <button ref={paletteTrigger} type="button" className="command-palette-trigger" disabled={locked} aria-label={t('commandPalette.trigger')} aria-keyshortcuts="Control+K Meta+K" title={t('commandPalette.triggerTitle')} onClick={event => {paletteOpener.current = event.currentTarget; setPaletteOpen(true);}}>
-              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg>
-              <span>{t('commandPalette.trigger')}</span><kbd>Ctrl K</kbd>
-            </button>
-            <LocalEdition />
             <LanguageSwitch />
+            <LocalEdition />
           </div>
         </aside>
         <Panel frame className="workspace">
@@ -220,10 +213,9 @@ function App() {
         locked={locked}
         onNavigate={setPage}
         onRefresh={() => window.setTimeout(() => window.dispatchEvent(new Event(APP_REFRESH_EVENT)), 0)}
-        onOpenHandoff={() => window.setTimeout(() => setHandoffOpen(true), 50)}
+        onOpenHandoff={() => setPage('help')}
         onReviewIdentity={openIdentityReview}
       />
-      <TaskHandoff open={handoffOpen} onOpenChange={setHandoffOpen} />
     </>
   );
 }

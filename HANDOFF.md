@@ -4,21 +4,21 @@
 [POS]: Repository-root maintenance handoff; private identities, process details, paths and probes stay in ignored .local/.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only changes do not rebuild binaries, replace assets or move product tags.
 -->
-# Claude-Local 新会话交接（0.1.5）
+# Claude-Local 新会话交接（0.2.0）
 
 更新时间：2026-10-26，America/New_York。新会话先读本文、根`AGENTS.md`和`CLAUDE.md`，改模块前再读相应目录`CLAUDE.md`及源码头。
 
-**最终结论：本机已运行0.1.5，源码、Windows安装包、审计及GitHub上传已闭环；公开仓库的README、CCBaga二次开发归属、About、Topics、Issue表单、六个发行页与远端Tags已整理并核验。没有构建、CI、上传或待确认标签删除阻塞。本次结束只更新交接，不再构建、安装、切号、清理或改动运行中的会话。**
+**最终结论：本机已运行0.2.0，源码、Windows安装包、审计及GitHub上传已闭环；完成九项界面/功能精细优化（含Token Monitor风格多模态悬浮监控小窗、官方Claude API定价USD等效花费与缓存节省核算、勾选联动浏览器切号自动打开新账号浏览器验证页、全局导航与工作台精简），公开仓库README、Release v0.2.0与演示截图已同步更新。**
 
 ## 1. 当前任务与用户目标
 
 Claude-Local是**基于[CCBaga](https://github.com/liseami/CCBaga)二次开发、独立维护的Windows10/11 x64工具**，不是全仓原创，也不是Anthropic/CCBaga的官方发行。Tauri/Rust管理原生事务，React/TypeScript负责界面，Python负责额度账本采集/单写。主程序`claude-local.exe`，应用ID`ai.local.claude-local`，伴侣浏览器注册名`Claude-Local-Browser`；资料按用户存放于`%APPDATA%/ai.local.claude-local`，不是OS账号沙箱。
 
-本会话连续处理：自动续杯诊断/Astra方案实施、网页登录与CLI授权混淆、重新登录后的状态同步、浏览器两项未知、加密存储兼容加固、五页截图红框排版与冗余说明精简，最后完成公开项目介绍和来源归属。用户反复强调不能影响已有账号、浏览器登录和正在运行的Claude Code；允许子代理并授权必要的本机更新、打包、上传与GitHub整理。
+本会话在`0.1.5`基础上完成`0.2.0`九项体验与功能升级：浏览环境顶部卡片精简、电脑环境顶栏精简、身份管理顶栏一体化重构与三步法减负、勾选「联动浏览器」切号自动打开新账号浏览器检测页、用量分析同行展示日期范围并新增API等效美元花费/缓存节省/单次均值六维横条、使用说明移除任务交接模板、左侧菜单栏移除底部搜索框并升级视觉样式，以及借鉴Token Monitor重构桌面悬浮监控小窗（支持三态尺寸、置顶、位置锁定、18px边缘磁吸、贴边自动隐藏为侧边胶囊、50%–100%无级透明度、主题与自定义壁纸实时同步）。
 
 最新偏好必须保留：
 
-- Claude-Local**对外发行序列从0.1.0开始**，当前0.1.5。不要把开发快照、早期功能记录或上游版本写成本项目的另一条发行序列。
+- Claude-Local**对外发行序列从0.1.0开始**，当前**0.2.0**。不要把开发快照、早期功能记录或上游版本写成本项目的另一条发行序列。
 - 用户明确决定**不更换.baga后缀**。不改BAGAID01/CLBKUP01、密钥值、账号ID、HMAC、SQLite v3或历史浏览器种子；不为改名重加密资料。
 - README必须显著写CCBaga二次开发，介绍要完整、准确；不能靠末尾一句致谢或抹掉上游版权。原LICENSE和既有第三方声明继续保留。
 - 图片只能用隔离合成数据。用户发来的QQ原图包含真实身份信息，未复制或上传到GitHub，不能拿来做公开预览。
@@ -26,19 +26,10 @@ Claude-Local是**基于[CCBaga](https://github.com/liseami/CCBaga)二次开发�
 
 ## 2. 当前仓库、发布与本机的唯一有效状态
 
-- 仓库：[yq04/Claude-Local](https://github.com/yq04/Claude-Local)，**已公开**；公开和取消Pre-release由用户本人手动操作，不是代理擅自变更。
-- `v0.1.0`至`v0.1.5`共六个Release均`draft=false`、`prerelease=false`，Latest为`v0.1.5`。标题不再带Preview；旧0.1.3已保留CSP缺陷及推荐更新说明，不能因为标为正式版就说其缺陷已消失。
-- 远端现仅有六个0.1.x发行标签。两个旧远端开发标签已获**用户明确确认**，在Git bundle及SHA256核验后原子删除；**提交历史没有删除或重写**。
-- 两个旧标签的**本地引用和bundle仍保留备份**，不要执行`git push --tags`把它们重新上传。只推明确版本引用。对象/恢复证据见`.local/tasks/20261026-github-presentation/tag-cleanup-plan.json`、`tag-cleanup-receipt.json`和`legacy-development-tags.bundle`；删除远端标签的确认不等于授权删除本地备份或改史。
-- 工作分支`feature/functional-reliability-20261023`；`origin/main`与远端工作分支已普通快进同步。本文重写前最新文档提交`71db808`，公开介绍主提交`67cde86`；本文后续纯文档提交会使HEAD继续前进。
-- **产品代码/标签固定**：`v0.1.5` → `2ce460b9c059d002926d82fe2ca91e8d56c89aca`。HEAD比产品标签晚是文档更新的正常结果，不是本机没更新；不要为此重打包、移动标签或替换资产。
-- [0.1.5安装器](https://github.com/yq04/Claude-Local/releases/download/v0.1.5/Claude-Local_0.1.5_x64-setup.exe)：`140,494,613`字节，SHA256`7752c5cee71d206dc57c99f5433bb4dded182d47a99ed11f1f8ce34b9753d0b1`；服务端digest/size已精确核对。
-- 本机0.1.5宿主与解包NSS载荷一致，SHA256`232b44cc3a9bf54c5eb35ef5a8f126003d2ba806c880fc1ee5f191f9a0bb56e2`。原始UNK宿主SHA256`8bb41524c5dad5a14f0d95190c2b41562d6195e63238bd4d155d5b7cdca52f03`；二者仅经审计的3字节Tauri安装格式标记差异，不是两次源码构建。
-- 中性custom-protocol构建：109个解包文件、13项外部隐私探针、0发现；本机102项应用文件核验一致，实际替换8项，先备份/hash/stage，宿主最后替换并验证启动。
-- 更新保留CLI进程（missingClaudeCount=0）及原有两个浏览器根进程；前后3个身份的索引/归档引用/文件大小mtime、3个浏览器绑定、活动指针和SQLite v3一致。工具没有直接读真实归档、密钥、凭据、Cookie或会话正文，也未切号/清理/改代理、指纹或自动开关。
-- **本机采用文件式更新，没有运行NSIS安装/卸载向导验收**。不要把更新成功写成真实新装/升级/卸载全通过。
-
-具体安装路径、PID、创建时间、备份位置和metadata签名仅在忽略的私有回执，不写入公开文档。完整交付见[0.1.5核验](docs/RELEASE_VERIFICATION_0.1.5_UI.md)及`.local/tasks/20261026-ui-polish/`。
+- 仓库：[yq04/Claude-Local](https://github.com/yq04/Claude-Local)，**已公开**；`v0.1.0`至`v0.1.5`及最新`v0.2.0`共七个Release均`draft=false`、`prerelease=false`，Latest为`v0.2.0`。
+- [0.2.0安装器](https://github.com/yq04/Claude-Local/releases/download/v0.2.0/Claude-Local_0.2.0_x64-setup.exe)：`140,537,513`字节，SHA256 `37cfa5106f54aaf16e379dff7b53a93aef4456fe70a229d776039fbff8c645b4`。
+- 本机0.2.0未打包宿主SHA256：`9651d76a46ce1608c63297c683192b0710cf9569be90b74c4bcecf502088d792`。
+- 中性custom-protocol构建：109个解包文件、外部隐私探针0发现；本机无中断覆盖更新保留正在运行的`claude.exe`进程与全部身份库/浏览器资料。完整交付见[0.2.0核验](docs/RELEASE_VERIFICATION_0.2.0.md)与[0.2.0升级说明](docs/UI_MONITOR_0.2.0.md)。
 
 ## 3. 已完成的关键工作与真实证据
 

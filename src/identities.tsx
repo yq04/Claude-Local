@@ -1167,7 +1167,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             </span>
           )}
           <div className="identity-header-group identity-header-primary">
-            <div className="wakeup-header-pill">
+            <div className={`wakeup-header-pill${autoWakeConfig.enabled ? ' is-enabled' : ''}`}>
               <Button
                 variant="secondary"
                 size="small"
@@ -1485,9 +1485,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             <i aria-hidden="true">→</i>
             <span className="identity-onboarding-chip">{t('identitySafety.cliStep')}</span>
           </div>
-          <Button variant="secondary" size="small" disabled={blocked} onClick={() => void retryBrowser()}>
-            {t('打开内置浏览器')}
-          </Button>
         </div>
         <div className="identity-card-rail" ref={rail} tabIndex={0} role="region" aria-label={t('身份')}>
           {current?.present === false && (

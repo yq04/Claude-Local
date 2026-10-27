@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Cromma UI、原生浏览器命令、带回报时间的真实观测事件、共用地区契约、共享活动日志、本地刷新事件和 YAML 文案。
- * [OUTPUT]: 使用统一中性操作按钮的浏览器环境控制台（启动与默认浏览器授权、紧凑身份与引擎信息、目标地区核验与对齐、缓存释放与排障重置）及默认折叠的高级设置；危险确认保留警告色。
+ * [OUTPUT]: 使用统一中性操作按钮的浏览器环境控制台（启动内置浏览器与实测页、目标地区核验与对齐、缓存释放与排障重置）及默认折叠的高级设置；危险确认保留警告色。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -11,60 +11,21 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AppDialog } from './dialog';
 import { CleanupActivity, useCleanupActivity } from './cleaner-activity';
-import { type BrowserConfig, type BrowserState, type DefaultBrowser } from './browser-model';
+import { type BrowserConfig, type BrowserState } from './browser-model';
 import { formatBytes } from './cleaner-model';
 import { usePageRefresh } from './app-events';
-import { maskDisplayName, maskEmailAddress, usePreferences } from './settings-model';
 
 export function BrowserPanel({ onBusy }: {
     onBusy?: (busy: boolean) => void;
 }) {
     const { t, locale } = useI18n();
-    const prefs = usePreferences();
     const [state, setState] = useState<BrowserState | null>(null), [draft, setDraft] = useState<BrowserConfig | null>(null), [busy, setBusy] = useState(''), [error, setError] = useState(''), [confirm, setConfirm] = useState<'reset' | 'align' | null>(null);
     const gate = useRef(false), live = useRef(true);
     const [accepted, setAccepted] = useState(false), [advancedOpen, setAdvancedOpen] = useState(false);
     const activity = useCleanupActivity();
     const [clock, setClock] = useState(Date.now);
     useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30000); return () => window.clearInterval(timer); }, []);
-    const [preferred, setPreferred] = useState<DefaultBrowser | null>(null), [asking, setAsking] = useState(false), [defaultNote, setDefaultNote] = useState('');
     useEffect(() => { onBusy?.(!!busy); return () => onBusy?.(false); }, [busy, onBusy]);
-    async function readDefault() {
-        try {
-            const next = await invoke<DefaultBrowser>('browser_default_read');
-            if (live.current)
-                setPreferred(next);
-            return next;
-        }
-        catch (e) {
-            if (live.current)
-                setDefaultNote(String(e));
-            return null;
-        }
-    }
-    async function makeDefault() {
-        setAsking(true); setDefaultNote('');
-        try {
-            const next = await invoke<DefaultBrowser>('browser_set_default');
-            setPreferred(next);
-            setDefaultNote(next.is_default ? "Claude-Local Browser已是默认浏览器。" : "已向系统请求设为默认浏览器，请检查系统确认。");
-            for (let i = 0; i < 20 && live.current; i++) {
-                await new Promise(r => setTimeout(r, 1500));
-                const fresh = await readDefault();
-                if (fresh?.is_default) {
-                    setDefaultNote("Claude-Local Browser已设为默认浏览器。");
-                    break;
-                }
-            }
-        }
-        catch (e) {
-            setDefaultNote(String(e));
-        }
-        finally {
-            if (live.current)
-                setAsking(false);
-        }
-    }
     async function read(initial = false) {
         const next = await invoke<BrowserState>('browser_read');
         if (live.current) {
@@ -81,13 +42,11 @@ export function BrowserPanel({ onBusy }: {
     useEffect(() => {
         live.current = true;
         void read(true).catch(e => setError(String(e)));
-        void readDefault();
         const event = listen('browser-report', () => {
             if (!gate.current)
                 void read().catch(e => setError(String(e)));
         });
         const focus = () => {
-            void readDefault();
             if (!gate.current)
                 void read().catch(e => setError(String(e)));
         };
@@ -142,7 +101,6 @@ export function BrowserPanel({ onBusy }: {
             <div><h1>{t("浏览环境")}</h1></div>
             <Button size="small" variant="secondary" disabled={!!busy} onClick={() => void act('browser_read')}>{t("刷新状态")}</Button>
         </div>
-        {defaultNote && <p className="system-feedback" role="status">{t(defaultNote)}</p>}
         {error && <p role="alert" className="system-feedback error">{t(error)}</p>}
         {!!changed && <p className="system-hint">{t("先保存指纹设置，再启动浏览器或对齐机器。")}</p>}
 
@@ -154,28 +112,10 @@ export function BrowserPanel({ onBusy }: {
                         <span className={`identity-policy-mode ${state?.running ? 'ok' : ''}`}>
                             {state?.running ? t("运行中") : t("未运行")}
                         </span>
-                        {state?.identity?.name && (
-                            <span className="identity-policy-mode">
-                                {t("browserSafety.boundIdentity", { name: maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask) }) || `绑定本地身份：${maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask)}`}{state.identity.email ? ` (${maskEmailAddress(state.identity.email, prefs.privacyMask)})` : ''}
-                            </span>
-                        )}
-                        {state?.engine_version && (
-                            <span className="identity-policy-mode">
-                                Chromium {state.engine_version}
-                            </span>
-                        )}
                     </div>
                     <div className="network-action-buttons">
                         <Button variant="secondary" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
                             {state?.running ? t("重新打开实测页") : t("打开浏览器并实测")}
-                        </Button>
-                        {state?.running && (
-                            <Button variant="secondary" size="small" disabled={disabled || !state?.running} loading={busy === 'browser_quit'} onClick={() => void act('browser_quit')}>
-                                {t("正常退出浏览器")}
-                            </Button>
-                        )}
-                        <Button variant="secondary" size="small" disabled={!!busy || asking || !preferred?.installed || preferred?.is_default} loading={asking} onClick={() => void makeDefault()}>
-                            {preferred?.is_default ? t("已是默认浏览器") : t("设为默认浏览器")}
                         </Button>
                     </div>
                 </div>

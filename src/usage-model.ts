@@ -52,6 +52,95 @@ export function detectModelFamily(model: string): {key: 'opus' | 'sonnet' | 'fab
   if (lower.includes('haiku')) return {key: 'haiku', label: 'Haiku'};
   return {key: 'other', label: null};
 }
+export type ModelApiPricing = {
+  inputPerM: number;
+  outputPerM: number;
+  cacheWritePerM: number;
+  cacheReadPerM: number;
+};
+export function resolveModelPricing(model?: string | null): ModelApiPricing {
+  const lower = (model ?? '').toLowerCase();
+  if (lower.includes('opus')) {
+    if (lower.includes('4-5') || lower.includes('4.5') || lower.includes('4-6') || lower.includes('4.6')) {
+      return {inputPerM: 5, outputPerM: 25, cacheWritePerM: 6.25, cacheReadPerM: 0.5};
+    }
+    return {inputPerM: 15, outputPerM: 75, cacheWritePerM: 18.75, cacheReadPerM: 1.5};
+  }
+  if (lower.includes('haiku')) {
+    if (lower.includes('4-5') || lower.includes('4.5')) {
+      return {inputPerM: 1, outputPerM: 5, cacheWritePerM: 1.25, cacheReadPerM: 0.1};
+    }
+    return {inputPerM: 0.8, outputPerM: 4, cacheWritePerM: 1, cacheReadPerM: 0.08};
+  }
+  return {inputPerM: 3, outputPerM: 15, cacheWritePerM: 3.75, cacheReadPerM: 0.3};
+}
+export function estimateTotalsCostUsd(
+  totals: UsageTotals | null | undefined,
+  model?: string | null,
+): {costUsd: number; cacheSavingsUsd: number} {
+  if (!totals) return {costUsd: 0, cacheSavingsUsd: 0};
+  const rate = resolveModelPricing(model);
+  const costUsd =
+    (totals.input_tokens * rate.inputPerM +
+      totals.output_tokens * rate.outputPerM +
+      totals.cache_creation_tokens * rate.cacheWritePerM +
+      totals.cache_read_tokens * rate.cacheReadPerM) /
+    1_000_000;
+  const cacheSavingsUsd =
+    Math.max(0, totals.cache_read_tokens * (rate.inputPerM - rate.cacheReadPerM)) / 1_000_000;
+  return {costUsd, cacheSavingsUsd};
+}
+export function estimateSnapshotCostUsd(
+  totals: UsageTotals | null | undefined,
+  models?: UsageModel[] | null,
+): {costUsd: number; cacheSavingsUsd: number} {
+  if (!totals) return {costUsd: 0, cacheSavingsUsd: 0};
+  if (models && models.length > 0) {
+    let costUsd = 0;
+    let cacheSavingsUsd = 0;
+    let coveredInput = 0;
+    let coveredOutput = 0;
+    let coveredWrite = 0;
+    let coveredRead = 0;
+    for (const row of models) {
+      const rowEst = estimateTotalsCostUsd(row.totals, row.model);
+      costUsd += rowEst.costUsd;
+      cacheSavingsUsd += rowEst.cacheSavingsUsd;
+      coveredInput += row.totals.input_tokens;
+      coveredOutput += row.totals.output_tokens;
+      coveredWrite += row.totals.cache_creation_tokens;
+      coveredRead += row.totals.cache_read_tokens;
+    }
+    const remInput = Math.max(0, totals.input_tokens - coveredInput);
+    const remOutput = Math.max(0, totals.output_tokens - coveredOutput);
+    const remWrite = Math.max(0, totals.cache_creation_tokens - coveredWrite);
+    const remRead = Math.max(0, totals.cache_read_tokens - coveredRead);
+    if (remInput > 0 || remOutput > 0 || remWrite > 0 || remRead > 0) {
+      const remEst = estimateTotalsCostUsd({
+        input_tokens: remInput,
+        output_tokens: remOutput,
+        cache_creation_tokens: remWrite,
+        cache_read_tokens: remRead,
+        total_tokens: remInput + remOutput + remWrite + remRead,
+        reasoning_tokens: null,
+        requests: 0,
+      });
+      costUsd += remEst.costUsd;
+      cacheSavingsUsd += remEst.cacheSavingsUsd;
+    }
+    return {costUsd, cacheSavingsUsd};
+  }
+  return estimateTotalsCostUsd(totals);
+}
+export function formatUsdCost(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  if (value <= 0) return '$0.00';
+  if (value < 0.01) return '<$0.01';
+  if (value < 1_000) {
+    return '$' + new Intl.NumberFormat('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}).format(value);
+  }
+  return '$' + new Intl.NumberFormat('en-US', {maximumFractionDigits: 1}).format(value);
+}
 export const emptyUsage = (): UsageTotals => ({input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: 0, reasoning_tokens: null, requests: 0});
 export function cacheHitRate(totals: UsageTotals): number | null {
   const prompt = totals.input_tokens + totals.cache_creation_tokens + totals.cache_read_tokens;

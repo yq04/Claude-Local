@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, upstream CCBaga baseline attribution, 0.1.5 verified delivery and synthetic-data previews.
+[INPUT]: Independent Windows x64 product, upstream CCBaga baseline attribution, 0.2.0 verified delivery and synthetic-data previews.
 [OUTPUT]: Comprehensive project presentation, architectural lineage, feature matrix, installation workflow and runtime boundaries.
 [POS]: Repository introduction; published artifacts retain versioned release notes.
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -8,9 +8,9 @@
 
 面向 Windows x64 的 Claude 本地管理与用量分析工具。本项目**基于 [CCBaga](https://github.com/liseami/CCBaga)（由维护者 [@liseami](https://github.com/liseami) 与贡献者开源）二次开发**，在继承其多身份归档与浏览器隔离工作流的基础上，针对 Windows 桌面运行环境进行持续独立维护、工程重构与功能扩展。
 
-Claude-Local 独立维护产品生命周期与版本序列，版本发布从 **0.1.0** 开始，当前版本为 **0.1.5**。应用基于 Tauri、Rust、React、TypeScript 与 Python 构建，支持 Windows 10 / 11 64 位操作系统，提供多身份本地加密存储、受进程检查保护的账号切换、被动额度监测、用量与模型分析、进程内原生自动续杯调度以及可选的专属隔离浏览器环境。
+Claude-Local 独立维护产品生命周期与版本序列，版本发布从 **0.1.0** 开始，当前版本为 **0.2.0**。应用基于 Tauri、Rust、React、TypeScript 与 Python 构建，支持 Windows 10 / 11 64 位操作系统，提供多身份本地加密存储、受进程检查保护的账号切换、被动额度监测、用量与 API 等效成本（USD）分析、进程内原生自动续杯调度、Token Monitor 风格桌面悬浮监控小窗以及可选的专属隔离浏览器环境。
 
-[下载 0.1.5 Windows x64 安装包](https://github.com/yq04/Claude-Local/releases/download/v0.1.5/Claude-Local_0.1.5_x64-setup.exe) · [0.1.5 Release 页面](https://github.com/yq04/Claude-Local/releases/tag/v0.1.5) · [0.1.5 界面优化说明](docs/UI_POLISH_0.1.5.md) · [0.1.4 浏览器修复](docs/BROWSER_CSP_0.1.4.md) · [0.1.2 存储加固](docs/CRYPTO_HARDENING_0.1.2.md) · [0.1.1 登录同步](docs/AUTH_SYNC_0.1.1.md) · [0.1.0 首发版本](docs/RELEASE_NOTES_0.1.0.md) · [版本与标签约定](docs/RELEASE_POLICY.md) · [发布与维护说明](docs/PUBLIC_PREPARATION.md) · [项目来源与继承](docs/PROJECT_ORIGIN.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [分发与许可边界](docs/DISTRIBUTION.md)
+[下载 0.2.0 Windows x64 安装包](https://github.com/yq04/Claude-Local/releases/download/v0.2.0/Claude-Local_0.2.0_x64-setup.exe) · [0.2.0 Release 页面](https://github.com/yq04/Claude-Local/releases/tag/v0.2.0) · [0.2.0 界面与监控升级](docs/UI_MONITOR_0.2.0.md) · [0.1.5 界面优化说明](docs/UI_POLISH_0.1.5.md) · [0.1.4 浏览器修复](docs/BROWSER_CSP_0.1.4.md) · [0.1.2 存储加固](docs/CRYPTO_HARDENING_0.1.2.md) · [0.1.1 登录同步](docs/AUTH_SYNC_0.1.1.md) · [0.1.0 首发版本](docs/RELEASE_NOTES_0.1.0.md) · [版本与标签约定](docs/RELEASE_POLICY.md) · [发布与维护说明](docs/PUBLIC_PREPARATION.md) · [项目来源与继承](docs/PROJECT_ORIGIN.md) · [与 CCBaga 的定位和取舍](docs/CCBAGA_COMPARISON.md) · [分发与许可边界](docs/DISTRIBUTION.md)
 
 ---
 
@@ -41,10 +41,10 @@ Claude-Local 独立维护产品生命周期与版本序列，版本发布从 **0
 ### 本地独立工程增强
 
 - **专注 Windows x64 平台工程**：针对 Windows 桌面运行细节进行针对性加固，实现 Chromium AppContainer 缓存目录 ACL 继承修复、保留用户资料与配置的升级流程、系统网络修改前后的快照记录与冲突字段按需恢复。
-- **用量分析与被动额度观察**：建立本地被动额度采集机制，直接读取 CLI 本地会话记录与外部账本，完全避免改写 `.claude.json`；细分 5h / 7d 独立额度窗口，提供精确到 Token 消耗、缓存命中率、模型家族（Opus / Sonnet / Haiku）及推理深度（Effort 档位：low / medium / high / xhigh / max）的统计图表与 TSV 导出。
-- **进程内原生自动续杯调度与 HUD 监控**：由应用进程内的单一调度器管理，基于真实 5h 窗口与错峰预算策略自动执行唤醒，无需向操作系统注册计划任务或开机服务，应用退出即刻停止调度；提供轻量置顶的 HUD 悬浮监控窗，随时展现额度状态。
+- **用量分析与 API 等效成本核算**：建立本地被动额度采集机制，直接读取 CLI 本地会话记录与外部账本，完全避免改写 `.claude.json`；细分 5h / 7d 独立额度窗口，结合 Anthropic 官方 Claude API 模型单价自动计算 **API 等效花费（USD）** 与 **Prompt 缓存节省金额（USD）**，提供精确到 Token 消耗、去重响应数、单次均值、缓存命中率、模型家族（Opus / Sonnet / Haiku）及推理深度（Effort 档位：low / medium / high / xhigh / max）的统计图表与 TSV 导出。
+- **进程内原生自动续杯调度与新一代 HUD 监控小窗**：由应用进程内的单一调度器管理，基于真实 5h 窗口与错峰预算策略自动执行唤醒，无需向操作系统注册计划任务或开机服务，应用退出即刻停止调度；配备借鉴 Token Monitor 设计的毛玻璃桌面悬浮监控小窗，支持置顶、位置锁定、18px 边缘磁吸、贴边自动隐藏为侧边胶囊、50%–100% 无级透明度调节，并随软件主题、强调色与自定义壁纸实时联动。
 - **存储加密加固与灾备救援**：基于口令派生（PBKDF2/AES-GCM）导出整库加密备份，恢复前全面验证清单哈希、SQLite 完整性、记录归档数量及内层清单结构；支持导出隔离救援副本以保留排障证据。
-- **交互体验打磨**：在既有界面基础上持续调整的桌面布局，支持深浅色模式跟随系统、Ctrl+K 命令中心快速检索、待办登录排队恢复通道等功能。
+- **交互体验打磨**：极简化的左侧导航栏与一体化顶部工具栏，支持深浅色模式与自定义壁纸、勾选「联动浏览器」切号自动拉起新账号专属浏览器验证页、`Ctrl+K` 命令中心快速检索、待办登录排队恢复通道等功能。
 
 ### 维护与边界声明
 
@@ -56,30 +56,34 @@ Claude-Local 独立维护产品生命周期与版本序列，版本发布从 **0
 
 ## 界面预览
 
-以下五张图片截取自 0.1.5 版本的真实前端界面（视口大小 1280×900）。所有展示数据均为隔离环境下的合成演示数据：账号与组织名称均为虚构，示例邮箱均启用了内置的隐私遮罩；图片中不含任何真实个人账号、代理凭据、本地敏感路径或网络环境隐私。
+以下六张图片截取自 0.2.0 版本的真实前端界面（主窗口视口 1280×900 及桌面悬浮监控窗视口）。所有展示数据均为隔离环境下的合成演示数据：账号与组织名称均为虚构，示例邮箱均启用了内置的隐私遮罩；图片中不含任何真实个人账号、代理凭据、本地敏感路径或网络环境隐私。
 
-**身份管理**：展示当前激活身份、已保存账号列表及独立的 5h / 7d 额度窗口。
+**身份管理**：一体化顶部胶囊工具栏、精简三步法引导、当前激活身份与独立的 5h / 7d 额度窗口。
 
-![Claude-Local 身份管理：分组工具栏、虚构账号和已遮罩示例邮箱](docs/screenshots/0.1.5/identity-management.png)
+![Claude-Local 身份管理：一体化工具栏、虚构账号和已遮罩示例邮箱](docs/screenshots/0.2.0/identity-management.png)
 
-**用量分析**：多维度呈现 Token 消耗、缓存命中率、历史趋势图及模型推理档位分布。
+**用量分析**：同行时间范围、6 项核心遥测横条（含 API 等效美元花费与缓存节省）、历史趋势图及按模型等效成本分布。
 
-![Claude-Local 用量分析：精简范围信息、虚构数据及趋势图](docs/screenshots/0.1.5/usage-analytics.png)
+![Claude-Local 用量分析：API 等效美元花费、缓存节省与趋势图](docs/screenshots/0.2.0/usage-analytics.png)
 
-**浏览环境**：查看身份绑定的隔离资料目录、网络出口状态及环境核验项。
+**桌面悬浮监控小窗（HUD）**：展示 5h / 7d 剩余额度、重置倒计时与耗尽预警、主力模型占比，以及 5h 消耗、实时速率（`tok/m`）和 5h 等效花费（USD），支持置顶、位置锁定、边缘磁吸、贴边自动隐藏与无级透明度调节。
 
-![Claude-Local 浏览环境：精简顶部信息及待测状态演示](docs/screenshots/0.1.5/browser-environment.png)
+![Claude-Local 悬浮监控窗：Token Monitor 风格遥测与多控制开关](docs/screenshots/0.2.0/floating-monitor.png)
+
+**浏览环境**：精简顶部启动卡片，查看身份绑定的隔离资料目录、网络出口状态及十项环境核验。
+
+![Claude-Local 浏览环境：精简顶部卡片及待测状态演示](docs/screenshots/0.2.0/browser-environment.png)
 
 <details>
 <summary>点击展开：快速配置与网络环境预览</summary>
 
 **快速配置**：状态概览卡片、诊断项与常用设置入口。
 
-![Claude-Local 快速配置：四个状态卡与设置入口](docs/screenshots/0.1.5/quick-setup.png)
+![Claude-Local 快速配置：四个状态卡与设置入口](docs/screenshots/0.2.0/quick-setup.png)
 
 **网络环境**：官方域名连通性检测与推广参考链接。
 
-![Claude-Local 网络环境：固定复制操作与手动连通性检测](docs/screenshots/0.1.5/network-environment.png)
+![Claude-Local 网络环境：固定复制操作与手动连通性检测](docs/screenshots/0.2.0/network-environment.png)
 
 </details>
 
@@ -89,12 +93,12 @@ Claude-Local 独立维护产品生命周期与版本序列，版本发布从 **0
 
 - **身份管理与多账号切换**：支持本地加密备份与受保护的账号切换；当前身份固定置顶显示，其余账号沿用原生记录顺序；采用 PBKDF2/AES-GCM 口令派生导出加密归档，恢复前严格核验清单哈希、SQLite 完整性与归档记录数量。
 - **被动额度监测与在线同步**：默认被动同步本地额度记录（读取 CLI 的 `/usage` 缓存与外部本地账本，不向 `.claude.json` 写入数据）；在线查询需用户显式确认开启，收纳于右上角独立弹窗中，弹窗关闭即停；外部账本由 Python 作为单写者，受内存并发锁与文件锁保护。
-- **用量分析**：基于已采集的本地记录统计 Token 消耗量、Prompt 缓存命中率，细分模型家族（Opus、Sonnet、Fable、Haiku）与推理档位（Effort：max、xhigh、high、medium、low），支持时区夏令时（IANA/DST）纠偏、图表/明细切换、分页排序与当前筛选数据的 TSV 复制下载。
+- **用量与 API 等效成本分析**：基于已采集的本地记录统计 Token 消耗量、去重响应数、单次均值、Prompt 缓存命中率，并按 Anthropic 官方 Claude API 模型单价自动计算 **API 等效花费（USD）** 与 **缓存节省金额（USD）**；细分模型家族（Opus、Sonnet、Fable、Haiku）与推理档位（Effort：max、xhigh、high、medium、low），支持时区夏令时（IANA/DST）纠偏、图表/明细切换、分页排序与当前筛选数据的 TSV 复制下载。
 - **进程内原生自动续杯调度**：用户显式开启后，由应用进程内的唯一原生调度器运行，按严格的新 5h 周期与预算进行错峰唤醒；切页或最小化到托盘保持运行，应用彻底退出后立即停止工作；不注册任何系统服务或计划任务；唤醒动作会发送真实提示词并产生正常用量。
-- **额度悬浮监控窗（HUD）**：轻量置顶的悬浮小窗，实时展现当前激活账号的本地额度与会话遥测数据，不因监控本身增加任何网络查询负担。
-- **可选隔离浏览器**：伴侣浏览器 `Claude-Local-Browser` 仅在用户主动点击或指定 `--browser` 参数时启动；为每个身份绑定专属资料目录与稳定种子，切号时保持联动；内置 Chromium AppContainer 缓存目录 ACL 自动修复机制。
+- **新一代额度悬浮监控窗（HUD）**：借鉴 Token Monitor 的桌面实时监控小窗，支持展开（`340×258`）、紧凑（`340×152`）与侧边胶囊（`52×138`）三态切换，内置置顶、位置锁定、18px 边缘磁吸、贴边自动隐藏、50%–100% 透明度调节，并随主界面浅/深色主题、强调色与自定义壁纸实时变化，不因监控本身增加任何网络查询负担。
+- **可选隔离浏览器与切号自动联动**：伴侣浏览器 `Claude-Local-Browser` 仅在用户主动点击、指定 `--browser` 参数或勾选「联动浏览器」切号时启动；为每个身份绑定专属资料目录与稳定种子，勾选联动切号时自动打开新账号的浏览器检测与验证页面；内置 Chromium AppContainer 缓存目录 ACL 自动修复机制。
 - **环境安全检测与快照回滚**：独立读取身份、浏览器、系统网络与 CLI 运行状态；在修改系统配置前自动记录修改前后的完整快照，支持配置冲突比对与按字段恢复；提供本地与浏览器环境的诊断参考。
-- **连接修复队列与快捷操作**：统一查询遇到需重新登录或路由异常的账号集中排队，引导在已绑定的隔离浏览器中完成恢复；支持 Ctrl+K 快捷呼出命令中心进行页面跳转与功能检索；提供六字段便笺草稿箱，仅保留在当前内存中。
+- **连接修复队列与快捷操作**：统一查询遇到需重新登录或路由异常的账号集中排队，引导在已绑定的隔离浏览器中完成恢复；支持 `Ctrl+K` 快捷呼出命令中心进行页面跳转与功能检索。
 
 ---
 
@@ -104,7 +108,7 @@ Claude-Local 独立维护产品生命周期与版本序列，版本发布从 **0
 
 请前往 Releases 页面下载最新安装程序，并核对安装包的 SHA-256 校验和：
 
-- **当前最新版**：[下载 0.1.5 Windows x64 安装包](https://github.com/yq04/Claude-Local/releases/download/v0.1.5/Claude-Local_0.1.5_x64-setup.exe)
+- **当前最新版**：[下载 0.2.0 Windows x64 安装包](https://github.com/yq04/Claude-Local/releases/download/v0.2.0/Claude-Local_0.2.0_x64-setup.exe)
 - **全部版本与更新日志**：[GitHub Releases 列表](https://github.com/yq04/Claude-Local/releases)
 
 ### 安装与运行说明
@@ -226,7 +230,7 @@ Claude-Local 代码仓库遵循 [MIT 许可证](LICENSE)。
 - **[Fingerprint Chromium](https://github.com/adryfish/fingerprint-chromium)**：伴侣浏览器内核采用基于 Ungoogled Chromium 构建的定制引擎，保留原 BSD-3-Clause 声明。
 - **vendor/cromma-ui**：本地界面复用组件树，其独立上游授权状态在 [NOTICE.md](NOTICE.md) 中予以客观记录并持续跟进。
 - **[LobeHub lobe-icons](https://github.com/lobehub/lobe-icons)**：AI 工具矢量图标，遵循 MIT 许可证。
-- **[ccusage](https://github.com/ccusage/ccusage) 与 [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor)**：为本地用量账本统计方案提供了设计参考，遵循 MIT 许可证。
+- **[ccusage](https://github.com/ccusage/ccusage)、[Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor) 与 Token Monitor**：为本地用量账本统计、API 等效成本核算与桌面悬浮监控小窗（HUD）的实时遥测卡片设计提供了参考。
 - **[CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus)**：为用量分析界面的视觉层级与交互排布提供了参考。
 - **[Unicode CLDR 48](https://github.com/unicode-org/cldr)**：用于 Windows 与 IANA 时区名称映射，遵循 Unicode License。
 - **Rust Crates**（`chrono`, `chrono-tz`, `phf` 等）：提供时区计算与编译期静态哈希表，遵循 MIT 许可证。

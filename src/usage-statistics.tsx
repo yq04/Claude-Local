@@ -4,14 +4,14 @@
  * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh, no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
-import {useEffect, useState, type ReactNode} from 'react';
+import {useEffect, useMemo, useState, type ReactNode} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {Button, Disclosure, Select, Tabs} from 'cromma-ui';
 import {Refresh} from 'cromma-ui/pika';
 import {useI18n} from './i18n';
 import {usePageRefresh} from './app-events';
 import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
-import {cacheHitRate, dailySeries, detectModelFamily, formatUsageNumber, summarizeUsageTrend, type UsagePeriod, type UsageSnapshot, type UsageTotals} from './usage-model';
+import {cacheHitRate, dailySeries, detectModelFamily, estimateSnapshotCostUsd, estimateTotalsCostUsd, formatUsdCost, formatUsageNumber, summarizeUsageTrend, type UsagePeriod, type UsageSnapshot, type UsageTotals} from './usage-model';
 import {UsageTrend} from './usage-trend';
 import {UsageTrendTable} from './usage-table';
 import {buildUsageTsv} from './usage-export';
@@ -113,6 +113,7 @@ export function UsageStatisticsPanel() {
     }
   })();
   const dstType = isHourly ? getDstDayType(days) : null;
+  const costSummary = useMemo(() => estimateSnapshotCostUsd(totals, models), [totals, models]);
 
   const makeExport = () => snapshot ? buildUsageTsv({snapshot, period, periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'), accountLabel: selectedAccount, accountIsAll: account === 'all', timezone: snapshot.timezone || timezone || offsetZone, privacy: prefs.privacyMask, days, generatedLabel: new Date(snapshot.generated_at * 1000).toISOString(), coverageLabel: snapshot.tracking_since == null ? t('usage.exportCoverageUnknown') : `${new Date(snapshot.tracking_since * 1000).toISOString()} – ${new Date(snapshot.generated_at * 1000).toISOString()}`, productLabel: 'Claude-Local', labels: {metadata: t('usage.exportTitle'), summary: t('usage.exportSummary'), daily: t('usage.exportBuckets'), time: t('usage.exportTime'), total: t('usage.total'), input: t('usage.input'), output: t('usage.output'), cacheWrite: t('usage.cacheWrite'), cacheRead: t('usage.cacheRead'), requests: t('usage.requests'), account: t('usage.account'), period: t('usage.periodFilter'), timezone: t('usage.exportTimezone'), generated: t('usage.exportGenerated'), coverage: t('usage.exportCoverage')}}) : '';
   const exportTsv = async (download: boolean) => {
@@ -148,20 +149,21 @@ export function UsageStatisticsPanel() {
       {exportStatus && <p className="usage-export-status" role="status">{exportStatus}</p>}
       <div className="usage-content">
         <div className="settings-card usage-filter-card">
-        <div className="usage-toolbar">
-          <div className="usage-period-filter"><span className="usage-filter-label">{t('usage.periodFilter')}</span>
-          <Tabs aria-label={t('usage.periodFilter')} className="usage-periods" value={period} onValueChange={value => setPeriod(value as UsagePeriod)} tabs={periods.map(([value, label]) => ({value, label: t(label)}))} />
+          <div className="usage-toolbar">
+            <div className="usage-period-filter">
+              <span className="usage-filter-label">{t('usage.periodFilter')}</span>
+              <div className="usage-period-row">
+                <Tabs aria-label={t('usage.periodFilter')} className="usage-periods" value={period} onValueChange={value => setPeriod(value as UsagePeriod)} tabs={periods.map(([value, label]) => ({value, label: t(label)}))} />
+                <div className="usage-context">
+                  <strong title={snapshot?.tracking_since != null ? `${t('usage.coverageHint')}: ${t('usage.trackingSince', {date: dateLabel(new Date(snapshot.tracking_since * 1000).toISOString())})}` : undefined}>{range}</strong>
+                  <span className="usage-section-caption usage-tz-caption" title={`${t('usage.activeTimezoneTitle')}: ${timezoneContext} (${offsetZone})`}>{conciseTimezone}</span>
+                  {dstType && <span className="usage-section-caption" title={t(dstType === '23h' ? 'usage.dst23Hint' : 'usage.dst25Hint')}>{t(dstType === '23h' ? 'usage.dst23' : 'usage.dst25')}</span>}
+                  {(period !== 'all' || account !== 'all') && <Button variant="ghost" size="small" onClick={() => {setPeriod('all'); setAccount('all');}}>{t('usage.resetFilters')}</Button>}
+                </div>
+              </div>
+            </div>
+            <div className="usage-account-filter"><span className="usage-filter-label">{t('usage.accountFilter')}</span><Select aria-label={t('usage.accountFilter')} size="small" value={account} onValueChange={setAccount} items={[{value: 'all', label: t('usage.allAccounts')}, ...accounts.map(row => ({value: row.id, label: prefs.privacyMask ? maskAccountLabel(row, true) : row.name}))]} /></div>
           </div>
-          <div className="usage-account-filter"><span className="usage-filter-label">{t('usage.accountFilter')}</span><Select aria-label={t('usage.accountFilter')} size="small" value={account} onValueChange={setAccount} items={[{value: 'all', label: t('usage.allAccounts')}, ...accounts.map(row => ({value: row.id, label: prefs.privacyMask ? maskAccountLabel(row, true) : row.name}))]} /></div>
-        </div>
-        <div className="usage-filter-footer">
-          <div className="usage-context">
-            <strong title={snapshot?.tracking_since != null ? `${t('usage.coverageHint')}: ${t('usage.trackingSince', {date: dateLabel(new Date(snapshot.tracking_since * 1000).toISOString())})}` : undefined}>{range}</strong>
-            <span className="usage-section-caption usage-tz-caption" title={`${t('usage.activeTimezoneTitle')}: ${timezoneContext} (${offsetZone})`}>{conciseTimezone}</span>
-            {dstType && <span className="usage-section-caption" title={t(dstType === '23h' ? 'usage.dst23Hint' : 'usage.dst25Hint')}>{t(dstType === '23h' ? 'usage.dst23' : 'usage.dst25')}</span>}
-          </div>
-          {(period !== 'all' || account !== 'all') && <Button variant="ghost" size="small" onClick={() => {setPeriod('all'); setAccount('all');}}>{t('usage.resetFilters')}</Button>}
-        </div>
         </div>
 
         {error && <p role="alert" className="system-feedback error usage-error">{t('usage.readFailed')} {t(error)}</p>}
@@ -178,6 +180,9 @@ export function UsageStatisticsPanel() {
 
         <div className="settings-card usage-details">
           <div><span>{t('usage.requests')}</span><strong title={num(totals?.requests)}>{num(totals?.requests, true)}</strong></div>
+          <div title={t('usage.estimatedCostHint')}><span>{t('usage.estimatedCost')}</span><strong className="usage-cost-value">{totals ? formatUsdCost(costSummary.costUsd) : '—'}</strong></div>
+          <div title={t('usage.cacheSavingsHint')}><span>{t('usage.cacheSavings')}</span><strong className="usage-savings-value">{totals ? formatUsdCost(costSummary.cacheSavingsUsd) : '—'}</strong></div>
+          <div><span>{t('usage.avgPerRequest')}</span><strong title={totals?.requests ? num(Math.round(totals.total_tokens / totals.requests)) : undefined}>{totals?.requests ? num(Math.round(totals.total_tokens / totals.requests), true) : '—'}</strong></div>
           <div><span>{t('usage.cacheWrite')}</span><strong title={num(totals?.cache_creation_tokens)}>{num(totals?.cache_creation_tokens, true)}</strong></div>
           <div><span>{t('usage.cacheRead')}</span><strong title={num(totals?.cache_read_tokens)}>{num(totals?.cache_read_tokens, true)}</strong></div>
         </div>
@@ -213,7 +218,7 @@ export function UsageStatisticsPanel() {
                     </div>
                     <div className="usage-model-track"><span style={{width: `${totals?.total_tokens ? Math.min(100, row.totals.total_tokens / totals.total_tokens * 100) : 0}%`}} /></div>
                     <div className="usage-model-caption">
-                      <small>{t('usage.responseCount', {n: num(row.totals.requests, true)})} · {t('usage.output')} {num(row.totals.output_tokens, true)}</small>
+                      <small>{t('usage.responseCount', {n: num(row.totals.requests, true)})} · {t('usage.output')} {num(row.totals.output_tokens, true)} · {formatUsdCost(estimateTotalsCostUsd(row.totals, row.model).costUsd)}</small>
                       <small>{t('usage.modelShare', {share: percent(totals?.total_tokens ? row.totals.total_tokens / totals.total_tokens : 0)})}</small>
                     </div>
                     {efforts.length > 0 && (

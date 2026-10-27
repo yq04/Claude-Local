@@ -1,35 +1,7 @@
 /* [INPUT]: Shell and handoff component states plus the current design tokens. */
-/* [OUTPUT]: Width-safe classic and compact command triggers, keyboard palette and bounded handoff dialog layouts. */
+/* [OUTPUT]: Keyboard command palette and bounded handoff dialog layouts. */
 /* [POS]: Productivity surface styling; no new control or animation primitive. */
 /* [PROTOCOL]: Update this header and src/CLAUDE.md with changes. */
-.command-palette-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 7px;
-  min-width: 0;
-  height: 31px;
-  padding: 0 9px;
-  border: 1px solid var(--landing-line);
-  border-radius: 8px;
-  background: var(--background);
-  color: var(--muted-foreground);
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.command-palette-trigger:hover:not(:disabled) { color: var(--foreground); background: var(--muted); border-color: var(--panel-outline); }
-.command-palette-trigger:disabled { opacity: .5; cursor: not-allowed; }
-.command-palette-trigger kbd { margin-left: auto; padding: 1px 4px; border: 1px solid var(--landing-line); border-radius: 4px; color: var(--muted-foreground); font: 9px/1.4 var(--font-mono); }
-.app-shell:not(.sidebar-compact) .sidebar-bottom { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; row-gap: 6px; }
-.app-shell:not(.sidebar-compact) .command-palette-trigger { grid-column: 1 / -1; justify-self: stretch; width: 100%; min-width: 0; }
-.app-shell:not(.sidebar-compact) .language-switch { grid-column: 1; grid-row: 2; justify-self: start; }
-.app-shell:not(.sidebar-compact) .local-edition { grid-column: 2; grid-row: 2; justify-self: end; margin-left: 0; }
-.app-shell.sidebar-compact .command-palette-trigger { width: 40px; height: 34px; justify-content: center; align-self: center; padding: 0; }
-.app-shell.sidebar-compact .command-palette-trigger > span,
-.app-shell.sidebar-compact .command-palette-trigger kbd { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 .command-palette { display: grid; gap: 10px; min-width: 0; }
 .command-palette > input { height: 36px; }

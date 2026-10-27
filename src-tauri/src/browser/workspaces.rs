@@ -92,7 +92,14 @@ pub(crate) fn identity_action(
     reporter: &Reporter,
     action: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
-    transition(app, reporter, false, action)
+    transition(app, reporter, false, false, action)
+}
+pub(crate) fn switch_identity(
+    app: &tauri::AppHandle,
+    reporter: &Reporter,
+    action: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    transition(app, reporter, false, true, action)
 }
 pub(crate) fn delete_saved(
     app: &tauri::AppHandle,
@@ -139,6 +146,7 @@ pub(super) fn transition(
     app: &tauri::AppHandle,
     reporter: &Reporter,
     force: bool,
+    launch_on_linked: bool,
     action: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     let browser = app.state::<Browser>();
@@ -161,7 +169,10 @@ pub(super) fn transition(
     let finish = (|| {
         reporter.log("browser", "running", "正在同步关联浏览器资料。", 0, None);
         refresh_launch_args(app)?;
-        if result.is_ok() && was_running && database(&root)?.browser_link()?.enabled {
+        if result.is_ok()
+            && (was_running || launch_on_linked)
+            && database(&root)?.browser_link()?.enabled
+        {
             launch_locked(app, reporter)?;
         }
         Ok::<_, String>(())

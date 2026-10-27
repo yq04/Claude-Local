@@ -5,11 +5,15 @@
 
 import { describe, expect, test } from 'bun:test'
 import {
+  clampMonitorOpacityPct,
   computeContextMeter,
   computeMonitorWindowBar,
+  cycleMonitorOpacityPct,
   deriveMonitorActivityMode,
   formatCompactCount,
+  formatCompactExhaustionEta,
   formatExhaustionEta,
+  formatMonitorUsd,
   formatVelocityLabel,
   formatWindowResetLabel,
   recommendedMonitorPollIntervalMs,
@@ -55,6 +59,16 @@ describe('floating-monitor-model', () => {
     expect(formatExhaustionEta(95, 'en')).toBe('~1h 35m to limit')
     expect(formatExhaustionEta(120, 'zh')).toBe('约 2h 触顶')
     expect(formatExhaustionEta(120, 'en')).toBe('~2h to limit')
+    expect(formatCompactExhaustionEta(70)).toBe('~1h10m')
+    expect(formatCompactExhaustionEta(120)).toBe('~2h')
+    expect(formatMonitorUsd(0)).toBe('$0.00')
+    expect(formatMonitorUsd(0.008)).toBe('<$0.01')
+    expect(formatMonitorUsd(1.25)).toBe('$1.25')
+    expect(formatMonitorUsd(42.8)).toBe('$42.80')
+    expect(clampMonitorOpacityPct(20)).toBe(50)
+    expect(clampMonitorOpacityPct(100)).toBe(100)
+    expect(cycleMonitorOpacityPct(100)).toBe(88)
+    expect(cycleMonitorOpacityPct(60)).toBe(100)
   })
 
   test('computes remaining percentage and semantic tone for 5h/7d bars', () => {

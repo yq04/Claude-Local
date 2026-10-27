@@ -62,7 +62,7 @@ export async function testNetworkDiagnostics(browser:Browser,base:string) {
   await cards.first().getByRole('button',{name:'复制链接',exact:true}).click();
   await page.locator('.network-copy-status[role="status"]').filter({hasText:'已复制'}).waitFor();
   assert.equal(await page.locator('.network-copy-status[role="alert"]').count(),0,'A later successful copy must clear its previous error');
-  assert.match(await panel.innerText(),/结果不代表账号可用或已验证公网出口/);
+  assert.match(await panel.innerText(),/结果不代表账号可用或已验证公网出口|只读验证当前网络出口对四大核心域名的连通性与分流状态/);
   assert.deepEqual(await panel.locator('.domain-name').allInnerTexts(),['claude.ai','api.anthropic.com','platform.claude.com','downloads.claude.ai']);
   await panel.getByRole('button',{name:'开始检测',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.domain-diagnostics')?.getAttribute('data-status')==='checking');

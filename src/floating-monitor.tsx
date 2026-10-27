@@ -1,10 +1,10 @@
 /**
- * [INPUT]: 原生 monitor_live_telemetry 零轮询本地遥测、当前外观/玻璃/字体/隐私偏好与 BroadcastChannel 跨窗同步消息。
- * [OUTPUT]: 无边框置顶固定尺寸「实时额度悬浮监控窗」（FloatingMonitorApp），采用 Token Monitor 双列并排 5h/7d 进度条、会话上下文微表与双宫格速率磁贴。
- * [POS]: 独立桌面悬浮 HUD 视图（?window=monitor）；100% 本地只读遥测，零后台 OAuth 请求，零跨进程内存读取，固定窗口尺寸且禁止双击最大化。
+ * [INPUT]: 原生 monitor_live_telemetry 零轮询本地遥测、当前外观/壁纸/玻璃/字体/隐私偏好与 BroadcastChannel 跨窗同步消息。
+ * [OUTPUT]: 无边框置顶多态「实时额度悬浮监控窗」（FloatingMonitorApp），融合 Token Monitor 与 Claude-Local 玻璃美学，支持置顶固定、位置锁定、边缘磁吸、贴边自动隐藏胶囊、无级透明度调节及 5h/7d 进度 + 5h API 等效美元花费遥测。
+ * [POS]: 独立桌面悬浮 HUD 视图（?window=monitor）；100% 本地只读遥测，零后台 OAuth 请求，零跨进程内存读取。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {useCallback, useEffect, useState} from 'react';
+import {useCallback, useEffect, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {getCurrentWindow} from '@tauri-apps/api/window';
 import {useI18n, setLocale, type Locale} from './i18n';
@@ -22,18 +22,27 @@ import {
   formatCompactEta,
 } from './identity-quota';
 import {
+  clampMonitorOpacityPct,
   computeContextMeter,
   computeMonitorWindowBar,
+  cycleMonitorOpacityPct,
   deriveMonitorActivityMode,
   formatCompactCount,
+  formatCompactExhaustionEta,
   formatExhaustionEta,
+  formatMonitorUsd,
   formatVelocityLabel,
   formatWindowResetLabel,
   MONITOR_BUS_CHANNEL,
+  MONITOR_OPACITY_PRESETS,
   postMonitorBusMessage,
+  readMonitorOpacityPct,
   recommendedMonitorPollIntervalMs,
+  writeMonitorOpacityPct,
   type MonitorBusMessage,
+  type MonitorDockEdge,
   type MonitorLiveTelemetry,
+  type MonitorWindowState,
 } from './floating-monitor-model';
 import {
   initializeCustomWallpaper,
@@ -49,18 +58,33 @@ export function FloatingMonitorApp() {
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   const [alwaysOnTop, setAlwaysOnTop] = useState(true);
   const [compact, setCompact] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const [autoHide, setAutoHide] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [dockedEdge, setDockedEdge] = useState<MonitorDockEdge | null>('right');
+  const [opacityPct, setOpacityPct] = useState<number>(readMonitorOpacityPct);
+  const [opacityMenuOpen, setOpacityMenuOpen] = useState(false);
+  const collapseTimerRef = useRef<number | null>(null);
+
+  const applyWindowState = useCallback((w: MonitorWindowState) => {
+    setAlwaysOnTop(w.alwaysOnTop);
+    setCompact(w.compact);
+    if (typeof w.locked === 'boolean') setLocked(w.locked);
+    if (typeof w.autoHide === 'boolean') setAutoHide(w.autoHide);
+    if (typeof w.collapsed === 'boolean') setCollapsed(w.collapsed);
+    if (w.dockedEdge !== undefined) setDockedEdge(w.dockedEdge ?? null);
+  }, []);
 
   const fetchTelemetry = useCallback(async () => {
     try {
       const snap = await invoke<MonitorLiveTelemetry>('monitor_live_telemetry');
       setTelemetry(snap);
-      setAlwaysOnTop(snap.window.alwaysOnTop);
-      setCompact(snap.window.compact);
+      applyWindowState(snap.window);
       setNowSec(Math.floor(Date.now() / 1000));
     } catch {
       // Keep last known snapshot on transient local read contention
     }
-  }, []);
+  }, [applyWindowState]);
 
   useEffect(() => {
     syncCustomWallpaperToDom();
@@ -75,7 +99,7 @@ export function FloatingMonitorApp() {
 
   const activityMode = deriveMonitorActivityMode(
     telemetry?.running ?? false,
-    telemetry?.metrics.latestTurnAtSec,
+    telemetry?.metrics?.latestTurnAtSec,
     nowSec,
   );
   const pollIntervalMs = recommendedMonitorPollIntervalMs(activityMode);
@@ -98,6 +122,7 @@ export function FloatingMonitorApp() {
     const onStorage = () => {
       reloadPreferencesFromStorage();
       reloadCustomWallpaperFromStorage();
+      setOpacityPct(readMonitorOpacityPct());
       void fetchTelemetry();
     };
     window.addEventListener('storage', onStorage);
@@ -115,6 +140,9 @@ export function FloatingMonitorApp() {
             reloadPreferencesFromStorage();
             reloadCustomWallpaperFromStorage();
           }
+          if (msg.type === 'window-state') {
+            applyWindowState(msg.state);
+          }
           void fetchTelemetry();
         };
       } catch {
@@ -125,20 +153,73 @@ export function FloatingMonitorApp() {
       window.removeEventListener('storage', onStorage);
       if (channel) channel.close();
     };
-  }, [fetchTelemetry]);
+  }, [applyWindowState, fetchTelemetry]);
+
+  useEffect(() => {
+    return () => {
+      if (collapseTimerRef.current !== null) {
+        window.clearTimeout(collapseTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleTogglePin = async () => {
     const next = !alwaysOnTop;
     setAlwaysOnTop(next);
     try {
-      const state = await invoke<{open: boolean; alwaysOnTop: boolean; compact: boolean}>(
-        'monitor_window_set_always_on_top',
-        {alwaysOnTop: next},
-      );
-      setAlwaysOnTop(state.alwaysOnTop);
+      const state = await invoke<MonitorWindowState>('monitor_window_set_always_on_top', {
+        alwaysOnTop: next,
+      });
+      applyWindowState(state);
       postMonitorBusMessage({type: 'window-state', state});
     } catch {
       setAlwaysOnTop(!next);
+    }
+  };
+
+  const handleToggleLock = async () => {
+    const next = !locked;
+    setLocked(next);
+    try {
+      const state = await invoke<MonitorWindowState>('monitor_window_set_locked', {
+        locked: next,
+      });
+      applyWindowState(state);
+      postMonitorBusMessage({type: 'window-state', state});
+    } catch {
+      setLocked(!next);
+    }
+  };
+
+  const handleToggleAutoHide = async () => {
+    const next = !autoHide;
+    setAutoHide(next);
+    try {
+      const state = await invoke<MonitorWindowState>('monitor_window_set_auto_hide', {
+        autoHide: next,
+      });
+      applyWindowState(state);
+      postMonitorBusMessage({type: 'window-state', state});
+    } catch {
+      setAutoHide(!next);
+    }
+  };
+
+  const handleSetCollapsed = async (nextCollapsed: boolean) => {
+    if (collapseTimerRef.current !== null) {
+      window.clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+    }
+    setCollapsed(nextCollapsed);
+    if (nextCollapsed) setOpacityMenuOpen(false);
+    try {
+      const state = await invoke<MonitorWindowState>('monitor_window_set_collapsed', {
+        collapsed: nextCollapsed,
+      });
+      applyWindowState(state);
+      postMonitorBusMessage({type: 'window-state', state});
+    } catch {
+      setCollapsed(!nextCollapsed);
     }
   };
 
@@ -146,11 +227,10 @@ export function FloatingMonitorApp() {
     const next = !compact;
     setCompact(next);
     try {
-      const state = await invoke<{open: boolean; alwaysOnTop: boolean; compact: boolean}>(
-        'monitor_window_set_compact',
-        {compact: next},
-      );
-      setCompact(state.compact);
+      const state = await invoke<MonitorWindowState>('monitor_window_set_compact', {
+        compact: next,
+      });
+      applyWindowState(state);
       postMonitorBusMessage({type: 'window-state', state});
     } catch {
       setCompact(!next);
@@ -159,23 +239,64 @@ export function FloatingMonitorApp() {
 
   const handleClose = async () => {
     try {
-      const state = await invoke<{open: boolean; alwaysOnTop: boolean; compact: boolean}>(
-        'monitor_window_set_open',
-        {open: false},
-      );
+      const state = await invoke<MonitorWindowState>('monitor_window_set_open', {
+        open: false,
+      });
       postMonitorBusMessage({type: 'window-state', state});
     } catch {
       void getCurrentWindow().hide();
     }
   };
 
+  const handleUpdateOpacity = (nextPct: number) => {
+    const saved = writeMonitorOpacityPct(clampMonitorOpacityPct(nextPct));
+    setOpacityPct(saved);
+  };
+
   const handleDragMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (locked || collapsed) return;
     if (event.button !== 0 || event.detail > 1) return;
     const target = event.target as HTMLElement | null;
-    if (target?.closest('button, [data-no-drag]')) return;
+    if (target?.closest('button, input, [data-no-drag]')) return;
+    setOpacityMenuOpen(false);
+    const triggerEdgeSnap = () => {
+      window.removeEventListener('mouseup', triggerEdgeSnap);
+      window.removeEventListener('blur', triggerEdgeSnap);
+      window.setTimeout(() => {
+        void invoke<MonitorWindowState>('monitor_window_snap_edge')
+          .then(state => {
+            applyWindowState(state);
+            postMonitorBusMessage({type: 'window-state', state});
+          })
+          .catch(() => {});
+      }, 90);
+    };
+    window.addEventListener('mouseup', triggerEdgeSnap, {once: true});
+    window.addEventListener('blur', triggerEdgeSnap, {once: true});
     void invoke('monitor_window_start_drag').catch(() => {
       void getCurrentWindow().startDragging();
     });
+  };
+
+  const handleShellMouseEnter = () => {
+    if (collapseTimerRef.current !== null) {
+      window.clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+    }
+    if (collapsed) {
+      void handleSetCollapsed(false);
+    }
+  };
+
+  const handleShellMouseLeave = () => {
+    if (!collapsed && autoHide && !opacityMenuOpen && (dockedEdge === 'left' || dockedEdge === 'right')) {
+      if (collapseTimerRef.current !== null) {
+        window.clearTimeout(collapseTimerRef.current);
+      }
+      collapseTimerRef.current = window.setTimeout(() => {
+        void handleSetCollapsed(true);
+      }, 420);
+    }
   };
 
   const handleBlockDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -206,6 +327,20 @@ export function FloatingMonitorApp() {
   const bar7d = computeMonitorWindowBar(
     evaluated?.known7d ? evaluated.used7d : current?.quota_7d_used,
   );
+
+  const pctValue5h =
+    bar5h.used === null
+      ? '—'
+      : displayMode === 'used'
+        ? `${bar5h.used}%`
+        : `${bar5h.remaining}%`;
+
+  const pctValue7d =
+    bar7d.used === null
+      ? '—'
+      : displayMode === 'used'
+        ? `${bar7d.used}%`
+        : `${bar7d.remaining}%`;
 
   const pctLabel5h =
     bar5h.used === null
@@ -255,18 +390,74 @@ export function FloatingMonitorApp() {
       : null;
 
   const contextMeter = computeContextMeter(metrics?.contextUsedPct);
-  const exhaustionWarn = formatExhaustionEta(metrics?.exhaustionEtaMins, locale);
+  const exhaustionWarnFull = formatExhaustionEta(metrics?.exhaustionEtaMins, locale);
+  const exhaustionWarnCompact = formatCompactExhaustionEta(metrics?.exhaustionEtaMins);
   const velocityText = formatVelocityLabel(metrics?.tokensPerMin ?? 0);
+  const cost5hText = formatMonitorUsd(metrics?.cost5hUsd ?? 0);
+  const savings5hText = formatMonitorUsd(metrics?.cacheSavings5hUsd ?? 0);
   const sessionModelLabel =
     metrics?.latestModel ||
     (activityMode === 'active'
       ? telemetry?.clientLabel || 'Claude CLI'
       : t('monitor.localZeroPollingBadge'));
 
+  const shellStyle = {
+    '--monitor-opacity': String(opacityPct / 100),
+  } as React.CSSProperties;
+
+  if (collapsed) {
+    return (
+      <div
+        className={`monitor-hud-shell is-collapsed dock-${dockedEdge || 'right'}`}
+        style={shellStyle}
+        onMouseEnter={handleShellMouseEnter}
+        onClick={() => void handleSetCollapsed(false)}
+        onDoubleClick={handleBlockDoubleClick}
+        role="button"
+        tabIndex={0}
+        aria-label={t('monitor.expandEdge')}
+        title={t('monitor.expandEdge')}
+      >
+        <div className="monitor-collapsed-top">
+          <span className="monitor-hud-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none">
+              <path
+                d="M8 1.25v13.5M1.25 8h13.5M3.22 3.22l9.56 9.56M12.78 3.22L3.22 12.78"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </span>
+          <span
+            className={`monitor-hud-dot${activityMode === 'active' ? ' is-active' : ''}`}
+            aria-hidden="true"
+          />
+        </div>
+        <div className="monitor-collapsed-pills">
+          <div className={`monitor-collapsed-pill tone-${bar5h.tone}`}>
+            <small>5h</small>
+            <strong>{pctValue5h}</strong>
+          </div>
+          <div className={`monitor-collapsed-pill tone-${bar7d.tone}`}>
+            <small>7d</small>
+            <strong>{pctValue7d}</strong>
+          </div>
+        </div>
+        <span className="monitor-collapsed-chevron" aria-hidden="true">
+          {dockedEdge === 'left' ? '›' : '‹'}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div
-      className="monitor-hud-shell"
+      className={`monitor-hud-shell${locked ? ' is-locked' : ''}${dockedEdge ? ` dock-${dockedEdge}` : ''}`}
       data-compact={compact ? 'true' : 'false'}
+      style={shellStyle}
+      onMouseEnter={handleShellMouseEnter}
+      onMouseLeave={handleShellMouseLeave}
       onDoubleClick={handleBlockDoubleClick}
     >
       <header
@@ -289,25 +480,97 @@ export function FloatingMonitorApp() {
             className={`monitor-hud-dot${activityMode === 'active' ? ' is-active' : ''}`}
             aria-hidden="true"
           />
-          <span className="monitor-hud-status-text">
-            {activityMode === 'active'
-              ? `${t('monitor.statusActive')}${telemetry?.clientLabel ? ` · ${telemetry.clientLabel}` : ''}`
-              : t('monitor.statusIdle')}
+          <span
+            className="monitor-hud-status-text"
+            title={
+              activityMode === 'active'
+                ? `${t('monitor.statusActive')}${telemetry?.clientLabel ? ` · ${telemetry.clientLabel}` : ''}`
+                : t('monitor.statusIdle')
+            }
+          >
+            {activityMode === 'active' ? t('monitor.statusActive') : t('monitor.statusIdle')}
           </span>
         </div>
         <div className="monitor-hud-controls" data-no-drag>
           <button
             type="button"
-            className="monitor-hud-icon-btn"
-            title={t('monitor.refreshNow')}
-            aria-label={t('monitor.refreshNow')}
-            onClick={() => void fetchTelemetry()}
+            className={`monitor-hud-icon-btn${opacityMenuOpen || opacityPct < 94 ? ' is-active-mode' : ''}`}
+            title={`${t('monitor.opacityLabel')} ${opacityPct}%`}
+            aria-label={t('monitor.opacityLabel')}
+            onClick={() => setOpacityMenuOpen(prev => !prev)}
+            onContextMenu={e => {
+              e.preventDefault();
+              handleUpdateOpacity(cycleMonitorOpacityPct(opacityPct));
+            }}
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none">
+              <circle cx="8" cy="8" r="5.4" stroke="currentColor" strokeWidth="1.35" />
+              <path d="M8 2.6a5.4 5.4 0 0 1 0 10.8V2.6Z" fill="currentColor" opacity="0.65" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`monitor-hud-icon-btn${autoHide ? ' is-active-mode' : ''}`}
+            title={t(autoHide ? 'monitor.autoHideOn' : 'monitor.autoHideOff')}
+            aria-label={t(autoHide ? 'monitor.autoHideOn' : 'monitor.autoHideOff')}
+            onClick={() => void handleToggleAutoHide()}
           >
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none">
               <path
-                d="M13.25 8A5.25 5.25 0 1 1 11.7 4.28M13.25 2.75v2.6h-2.6"
+                d="M13.25 2.75v10.5M3.25 8h7.25M7.75 5.25 10.5 8l-2.75 2.75"
                 stroke="currentColor"
-                strokeWidth="1.4"
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="monitor-hud-icon-btn"
+            title={t('monitor.collapseToEdge')}
+            aria-label={t('monitor.collapseToEdge')}
+            onClick={() => void handleSetCollapsed(true)}
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none">
+              <path
+                d="M5.5 3.75 9.75 8 5.5 12.25M12.25 3.5v9"
+                stroke="currentColor"
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`monitor-hud-icon-btn${locked ? ' is-pinned' : ''}`}
+            title={t(locked ? 'monitor.unlockPosition' : 'monitor.lockPosition')}
+            aria-label={t(locked ? 'monitor.unlockPosition' : 'monitor.lockPosition')}
+            onClick={() => void handleToggleLock()}
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none">
+              <rect x="3.5" y="7.2" width="9" height="6.2" rx="1.6" stroke="currentColor" strokeWidth="1.35" />
+              <path
+                d={locked ? 'M5.5 7.2V5.3a2.5 2.5 0 0 1 5 0v1.9' : 'M5.5 7.2V5.1a2.5 2.5 0 0 1 4.6-1.3'}
+                stroke="currentColor"
+                strokeWidth="1.35"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`monitor-hud-icon-btn${alwaysOnTop ? ' is-pinned' : ''}`}
+            title={t(alwaysOnTop ? 'monitor.unpinTop' : 'monitor.pinTop')}
+            aria-label={t(alwaysOnTop ? 'monitor.unpinTop' : 'monitor.pinTop')}
+            onClick={() => void handleTogglePin()}
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none">
+              <path
+                d="M9.8 2.4 13.6 6.2 12.2 7.6 10.4 6.8 7.5 9.7 8.3 11.5 6.9 12.9 4.5 10.5 2.1 12.9M6.3 5.6 9.8 2.4"
+                stroke="currentColor"
+                strokeWidth="1.35"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -343,16 +606,16 @@ export function FloatingMonitorApp() {
           </button>
           <button
             type="button"
-            className={`monitor-hud-icon-btn${alwaysOnTop ? ' is-pinned' : ''}`}
-            title={t(alwaysOnTop ? 'monitor.unpinTop' : 'monitor.pinTop')}
-            aria-label={t(alwaysOnTop ? 'monitor.unpinTop' : 'monitor.pinTop')}
-            onClick={() => void handleTogglePin()}
+            className="monitor-hud-icon-btn"
+            title={t('monitor.refreshNow')}
+            aria-label={t('monitor.refreshNow')}
+            onClick={() => void fetchTelemetry()}
           >
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none">
               <path
-                d="M9.8 2.4 13.6 6.2 12.2 7.6 10.4 6.8 7.5 9.7 8.3 11.5 6.9 12.9 4.5 10.5 2.1 12.9M6.3 5.6 9.8 2.4"
+                d="M13.25 8A5.25 5.25 0 1 1 11.7 4.28M13.25 2.75v2.6h-2.6"
                 stroke="currentColor"
-                strokeWidth="1.35"
+                strokeWidth="1.4"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -377,6 +640,33 @@ export function FloatingMonitorApp() {
         </div>
       </header>
 
+      {opacityMenuOpen && (
+        <div className="monitor-opacity-popover" data-no-drag>
+          <span className="monitor-opacity-title">{t('monitor.opacityLabel')}</span>
+          <input
+            type="range"
+            min={50}
+            max={100}
+            step={2}
+            value={opacityPct}
+            onChange={e => handleUpdateOpacity(Number(e.currentTarget.value))}
+            aria-label={t('monitor.opacityLabel')}
+          />
+          <div className="monitor-opacity-presets">
+            {MONITOR_OPACITY_PRESETS.map(preset => (
+              <button
+                key={preset}
+                type="button"
+                className={Math.abs(opacityPct - preset) <= 2 ? 'is-selected' : ''}
+                onClick={() => handleUpdateOpacity(preset)}
+              >
+                {preset}%
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div
         className="monitor-hud-account-row"
         onMouseDown={handleDragMouseDown}
@@ -392,15 +682,18 @@ export function FloatingMonitorApp() {
             </span>
           )}
         </div>
-        {current?.plan && (
-          <div className="monitor-hud-badges">
-            <span className="monitor-hud-badge">{current.plan}</span>
-          </div>
-        )}
+        <div className="monitor-hud-badges">
+          {(metrics?.cost5hUsd ?? 0) > 0 && (
+            <span className="monitor-hud-cost-pill" title={`${t('monitor.cost5h')}: ${cost5hText}`}>
+              5h {cost5hText}
+            </span>
+          )}
+          {current?.plan && <span className="monitor-hud-badge">{current.plan}</span>}
+        </div>
       </div>
 
       <section className="monitor-limit-windows" aria-label={t('monitor.title')}>
-        <div className="monitor-limit-window">
+        <div className={`monitor-limit-window tone-${bar5h.tone}`}>
           <div className="monitor-limit-text">
             <span className="monitor-limit-label">5h</span>
             <span className="monitor-limit-pct">{pctLabel5h}</span>
@@ -420,16 +713,20 @@ export function FloatingMonitorApp() {
             />
           </div>
           <div className="monitor-limit-reset">
-            <span className="monitor-limit-reset-text">{reset5hLabel}</span>
-            {exhaustionWarn && (
-              <span className="monitor-hud-eta-warn" title={exhaustionWarn}>
-                ⚠ {exhaustionWarn}
+            <span className="monitor-limit-reset-text" title={reset5hLabel}>
+              {reset5hLabel}
+            </span>
+            {exhaustionWarnCompact ? (
+              <span className="monitor-hud-eta-warn" title={exhaustionWarnFull ?? undefined}>
+                ⚠ {exhaustionWarnCompact}
               </span>
-            )}
+            ) : metrics?.burnRatePctHr != null && metrics.burnRatePctHr > 0 ? (
+              <span className="monitor-hud-burn-tag">{metrics.burnRatePctHr}%/h</span>
+            ) : null}
           </div>
         </div>
 
-        <div className="monitor-limit-window">
+        <div className={`monitor-limit-window tone-${bar7d.tone}`}>
           <div className="monitor-limit-text">
             <span className="monitor-limit-label">7d</span>
             <span className="monitor-limit-pct">{pctLabel7d}</span>
@@ -467,15 +764,21 @@ export function FloatingMonitorApp() {
             )}
           </div>
           <div className="monitor-limit-reset">
-            <span className="monitor-limit-reset-text">{reset7dLabel}</span>
+            <span className="monitor-limit-reset-text" title={reset7dLabel}>
+              {reset7dLabel}
+            </span>
+            {weeklyPace && !weeklyPace.suppressed && (
+              <span className={`monitor-hud-burn-tag${weeklyPace.ahead ? ' is-ahead' : ''}`}>
+                {weeklyPace.deltaUsedPct >= 0 ? `+${weeklyPace.deltaUsedPct}%` : `${weeklyPace.deltaUsedPct}%`}
+              </span>
+            )}
           </div>
         </div>
       </section>
 
-      <div className="monitor-feathered-divider" aria-hidden="true" />
-
       {!compact ? (
         <div className="monitor-hud-detail-body">
+          <div className="monitor-feathered-divider" aria-hidden="true" />
           <div className="monitor-session-strip">
             <div className="monitor-session-left">
               <span
@@ -488,7 +791,7 @@ export function FloatingMonitorApp() {
                 {sessionModelLabel}
               </span>
               <span className="monitor-session-reqs">
-                · {metrics?.requests5h ?? 0} reqs
+                · {metrics?.requests5h ?? 0} {t('monitor.callsShort')}
               </span>
             </div>
             <div
@@ -527,40 +830,26 @@ export function FloatingMonitorApp() {
                   : t('monitor.routeProtected')}
               </span>
             </div>
+            <div className="monitor-usage-tile">
+              <span className="monitor-usage-label">{t('monitor.cost5h')}</span>
+              <span className="monitor-usage-value is-accent">{cost5hText}</span>
+              <span className="monitor-usage-sub">
+                {t('monitor.savedShort')} {savings5hText}
+              </span>
+            </div>
           </div>
         </div>
       ) : (
-        <div className="monitor-hud-compact-body">
-          <div className="monitor-usage-tiles is-compact-overview">
-            <div className="monitor-usage-tile">
-              <span className="monitor-usage-label">{t('monitor.window5h')}</span>
-              <span className="monitor-usage-value">
-                {bar5h.used === null
-                  ? '—'
-                  : displayMode === 'used'
-                    ? `${bar5h.used}%`
-                    : `${bar5h.remaining}%`}
-              </span>
-              <span className="monitor-usage-sub">{reset5hLabel}</span>
-            </div>
-            <div className="monitor-usage-tile">
-              <span className="monitor-usage-label">{t('monitor.window7d')}</span>
-              <span className="monitor-usage-value">
-                {bar7d.used === null
-                  ? '—'
-                  : displayMode === 'used'
-                    ? `${bar7d.used}%`
-                    : `${bar7d.remaining}%`}
-              </span>
-              <span className="monitor-usage-sub">{reset7dLabel}</span>
-            </div>
-          </div>
-          <div className="monitor-compact-status-row">
-            <span className="monitor-compact-shield">
-              ✓ {t('monitor.routeProtected')} · {t('monitor.localZeroPollingBadge')}
-            </span>
-            <span className="monitor-compact-velocity">{velocityText}</span>
-          </div>
+        <div className="monitor-hud-compact-footer">
+          <span className="monitor-compact-shield">
+            <span className={`monitor-session-glyph${activityMode === 'active' ? ' is-active' : ''}`}>
+              {activityMode === 'active' ? '✻' : '⊙'}
+            </span>{' '}
+            {sessionModelLabel} · {formatCompactCount(metrics?.tokens5hTotal ?? 0)} tok
+          </span>
+          <span className="monitor-compact-velocity">
+            {velocityText} · {cost5hText}
+          </span>
         </div>
       )}
     </div>

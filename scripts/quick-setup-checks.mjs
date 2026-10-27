@@ -104,37 +104,13 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
   await page.locator('.quick-header button').click();
   await page.locator('.quick-overview[aria-busy="false"]').waitFor();
   assert.match(await page.locator('.quick-page [role="alert"]').innerText(), /浏览环境/);
-  assert.match(await page.locator('.quick-target strong').innerText(), /无法读取/);
+  assert.match(await page.locator('[data-quick-state="browser"] strong').innerText(), /无法读取/);
   assert.match(await page.locator('[data-quick-state="identity"]').innerText(), /已保存 3 个身份/);
   await page.screenshot({path: join(output, 'quick-setup-partial-error.png'), fullPage: true});
   await page.evaluate(() => { window.usageFixture.failedReads = []; });
-
-  // 4. Target follow_machine resolution
-  // 4a. follow_machine = false: uses config timezone and language
-  await page.evaluate(() => {
-    window.usageFixture.browserConfig = {
-      seed: 123456, proxy: '', follow_machine: false, language: 'en-US', timezone: 'America/Los_Angeles', native_graphics: true
-    };
-  });
   await page.locator('.quick-page').getByRole('button', {name: '刷新状态', exact: true}).click();
   await page.locator('.quick-overview[aria-busy="false"]').waitFor();
-  assert.match(await page.locator('.quick-target strong').innerText(), /America\/Los_Angeles · en-US/);
-
-  // 4b. follow_machine = true: uses browser.machine actual timezone and normalized language (en -> en-US)
-  await page.evaluate(() => {
-    window.usageFixture.browserConfig = {
-      seed: 123456, proxy: '', follow_machine: true, language: 'en-GB', timezone: 'Europe/London', native_graphics: true
-    };
-    window.usageFixture.browserMachine = {
-      platform: 'windows', version: '15.0.0', cores: 8, timezone: 'America/Chicago', languages: ['en'], locale: 'en', location_enabled: false, timezones: ['America/Chicago']
-    };
-  });
-  await page.locator('.quick-page').getByRole('button', {name: '刷新状态', exact: true}).click();
-  await page.locator('.quick-overview[aria-busy="false"]').waitFor();
-  const targetResolved = await page.locator('.quick-target strong').innerText();
-  assert.match(targetResolved, /America\/Chicago/, `Target must resolve machine timezone when follow_machine is true (actual: "${targetResolved}")`);
-  assert.match(targetResolved, /en-US/, `Target must normalize primary language 'en' to 'en-US' (actual: "${targetResolved}")`);
-  assert.doesNotMatch(targetResolved, /Europe\/London|en-GB/, 'Target must not use config fields when follow_machine is true');
+  assert.match(await page.locator('[data-quick-state="browser"]').innerText(), /引擎已就绪/);
 
   // 5. Safe unmount without response pollution
   await page.evaluate(() => {
@@ -324,7 +300,10 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
     'ui_privacy_read',
     'identities_quota_revision',
     'identities_quota_batch_state',
+    'identities_wakeup_state',
     'identities_backup_location',
+    'ui_appearance_read',
+    'ui_wallpaper_read',
   ]);
   const disallowed = commands.filter(item => !allowedCommands.has(item.command));
   assert.deepEqual(disallowed, [], `All invoked commands must be within read-only allowlist: ${disallowed.map(d => d.command).join(', ')}`);

@@ -1,5 +1,5 @@
 // [INPUT]: Tauri AppHandle、本地 ~/.claude/projects JSONL 增量缓存、当前账号快照与零侵入进程检测状态。
-// [OUTPUT]: 独立可开关无边框置顶「实时额度悬浮监控窗」（monitor）生命周期控制与零网络本地实时遥测快照。
+// [OUTPUT]: 独立可开关无边框置顶「实时额度悬浮监控窗」（monitor）生命周期控制（支持置顶、位置锁定、边缘磁吸、贴边自动折叠隐藏、紧凑/展开多尺寸切换）与含 5h API 等效美元花费的零网络本地实时遥测快照。
 // [POS]: 悬浮小窗与实时本地遥测边界；仅做本地文件 mtime/size 缓存读取与只读状态聚合，绝不发起后台 OAuth 轮询或跨进程内存读取。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -12,15 +12,31 @@ use std::{
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
+    WebviewWindowBuilder,
+};
 
 const MONITOR_LABEL: &str = "monitor";
-const MONITOR_WIDTH: f64 = 312.0;
-const MONITOR_HEIGHT: f64 = 216.0;
+pub const MONITOR_WIDTH: f64 = 340.0;
+pub const MONITOR_HEIGHT: f64 = 258.0;
+pub const MONITOR_COMPACT_HEIGHT: f64 = 152.0;
+pub const MONITOR_COLLAPSED_WIDTH: f64 = 52.0;
+pub const MONITOR_COLLAPSED_HEIGHT: f64 = 138.0;
+const SNAP_THRESHOLD_LOGICAL_PX: f64 = 28.0;
+const UNSNAP_THRESHOLD_LOGICAL_PX: f64 = 44.0;
 const MAX_JSONL_BYTES: u64 = 32 * 1024 * 1024;
 const FIVE_HOUR_SECS: u64 = 5 * 3600;
 const VELOCITY_WINDOW_SECS: u64 = 600;
 const CONTEXT_LIMIT_TOKENS: f64 = 200_000.0;
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MonitorDockEdge {
+    Left,
+    Right,
+    Top,
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +44,14 @@ pub struct MonitorWindowState {
     pub open: bool,
     pub always_on_top: bool,
     pub compact: bool,
+    #[serde(default)]
+    pub locked: bool,
+    #[serde(default)]
+    pub auto_hide: bool,
+    #[serde(default)]
+    pub collapsed: bool,
+    #[serde(default)]
+    pub docked_edge: Option<MonitorDockEdge>,
 }
 
 impl Default for MonitorWindowState {
@@ -36,15 +60,25 @@ impl Default for MonitorWindowState {
             open: false,
             always_on_top: true,
             compact: false,
+            locked: false,
+            auto_hide: false,
+            collapsed: false,
+            docked_edge: Some(MonitorDockEdge::Right),
         }
     }
 }
 
-pub struct ManagedMonitorState(Mutex<MonitorWindowState>);
+#[derive(Default)]
+struct MonitorRuntimeMemory {
+    state: MonitorWindowState,
+    saved_expanded_pos: Option<PhysicalPosition<i32>>,
+}
+
+pub struct ManagedMonitorState(Mutex<MonitorRuntimeMemory>);
 
 impl Default for ManagedMonitorState {
     fn default() -> Self {
-        Self(Mutex::new(MonitorWindowState::default()))
+        Self(Mutex::new(MonitorRuntimeMemory::default()))
     }
 }
 
@@ -54,6 +88,8 @@ pub struct LiveTokenMetrics {
     pub tokens_5h_total: u64,
     pub tokens_per_min: u64,
     pub requests_5h: u64,
+    pub cost_5h_usd: f64,
+    pub cache_savings_5h_usd: f64,
     pub cache_hit_pct: Option<u8>,
     pub context_used_pct: Option<u8>,
     pub latest_model: Option<String>,
@@ -119,6 +155,40 @@ fn sanitize_model(raw: &str) -> String {
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         .take(48)
         .collect()
+}
+
+fn model_rates_per_m(model: &str) -> (f64, f64, f64, f64) {
+    let lower = model.to_ascii_lowercase();
+    if lower.contains("opus") {
+        if lower.contains("4-5")
+            || lower.contains("4.5")
+            || lower.contains("4-6")
+            || lower.contains("4.6")
+        {
+            (5.0, 25.0, 6.25, 0.50)
+        } else {
+            (15.0, 75.0, 18.75, 1.50)
+        }
+    } else if lower.contains("haiku") {
+        if lower.contains("4-5") || lower.contains("4.5") {
+            (1.0, 5.0, 1.25, 0.10)
+        } else {
+            (0.80, 4.0, 1.00, 0.08)
+        }
+    } else {
+        (3.0, 15.0, 3.75, 0.30)
+    }
+}
+
+fn estimate_turn_cost_usd(sample: &TurnSample) -> (f64, f64) {
+    let (in_rate, out_rate, write_rate, read_rate) = model_rates_per_m(&sample.model);
+    let cost = ((sample.input as f64) * in_rate
+        + (sample.output as f64) * out_rate
+        + (sample.cache_creation as f64) * write_rate
+        + (sample.cache_read as f64) * read_rate)
+        / 1_000_000.0;
+    let savings = ((sample.cache_read as f64) * (in_rate - read_rate).max(0.0)) / 1_000_000.0;
+    (cost, savings)
 }
 
 fn parse_jsonl_turns(path: &Path) -> Vec<TurnSample> {
@@ -303,6 +373,8 @@ pub fn scan_live_token_metrics(
     let mut prompt_5h_total = 0u64;
     let mut cache_read_5h_total = 0u64;
     let mut requests_5h = 0u64;
+    let mut cost_5h_usd = 0.0f64;
+    let mut cache_savings_5h_usd = 0.0f64;
     let mut recent_tokens = 0u64;
     let mut earliest_recent_ts: Option<u64> = None;
     let mut latest_turn: Option<TurnSample> = None;
@@ -318,6 +390,9 @@ pub fn scan_live_token_metrics(
         prompt_5h_total = prompt_5h_total.saturating_add(prompt);
         cache_read_5h_total = cache_read_5h_total.saturating_add(sample.cache_read);
         requests_5h = requests_5h.saturating_add(1);
+        let (turn_cost, turn_savings) = estimate_turn_cost_usd(sample);
+        cost_5h_usd += turn_cost;
+        cache_savings_5h_usd += turn_savings;
 
         if sample.ts >= velocity_cutoff {
             recent_tokens = recent_tokens.saturating_add(turn_total);
@@ -402,6 +477,8 @@ pub fn scan_live_token_metrics(
         tokens_5h_total,
         tokens_per_min,
         requests_5h,
+        cost_5h_usd: (cost_5h_usd * 1000.0).round() / 1000.0,
+        cache_savings_5h_usd: (cache_savings_5h_usd * 1000.0).round() / 1000.0,
         cache_hit_pct,
         context_used_pct,
         latest_model,
@@ -416,8 +493,9 @@ fn current_window_state(app: &tauri::AppHandle) -> MonitorWindowState {
     let mut state = app
         .try_state::<ManagedMonitorState>()
         .map(|s| {
-            *s.0.lock()
+            s.0.lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .state
         })
         .unwrap_or_default();
     if app.get_webview_window(MONITOR_LABEL).is_none() {
@@ -428,7 +506,7 @@ fn current_window_state(app: &tauri::AppHandle) -> MonitorWindowState {
 
 fn update_window_state(
     app: &tauri::AppHandle,
-    mutate: impl FnOnce(&mut MonitorWindowState),
+    mutate: impl FnOnce(&mut MonitorRuntimeMemory),
 ) -> MonitorWindowState {
     let next = if let Some(managed) = app.try_state::<ManagedMonitorState>() {
         let mut guard = managed
@@ -436,14 +514,33 @@ fn update_window_state(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         mutate(&mut guard);
-        *guard
+        guard.state
     } else {
-        let mut fallback = MonitorWindowState::default();
+        let mut fallback = MonitorRuntimeMemory::default();
         mutate(&mut fallback);
-        fallback
+        fallback.state
     };
     let _ = app.emit("monitor-window-state", next);
     next
+}
+
+pub fn target_logical_size(state: &MonitorWindowState) -> LogicalSize<f64> {
+    if state.collapsed {
+        LogicalSize {
+            width: MONITOR_COLLAPSED_WIDTH,
+            height: MONITOR_COLLAPSED_HEIGHT,
+        }
+    } else if state.compact {
+        LogicalSize {
+            width: MONITOR_WIDTH,
+            height: MONITOR_COMPACT_HEIGHT,
+        }
+    } else {
+        LogicalSize {
+            width: MONITOR_WIDTH,
+            height: MONITOR_HEIGHT,
+        }
+    }
 }
 
 pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
@@ -452,8 +549,8 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     }
     match event {
         tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed => {
-            let _ = update_window_state(window.app_handle(), |state| {
-                state.open = false;
+            let _ = update_window_state(window.app_handle(), |mem| {
+                mem.state.open = false;
             });
         }
         tauri::WindowEvent::Resized(_) => {
@@ -465,16 +562,13 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     }
 }
 
-fn enforce_fixed_monitor_geometry(window: &tauri::WebviewWindow) {
+fn enforce_monitor_geometry(window: &tauri::WebviewWindow, state: &MonitorWindowState) {
     if window.is_maximized().unwrap_or(false) {
         let _ = window.unmaximize();
     }
     let _ = window.set_maximizable(false);
     let _ = window.set_resizable(false);
-    let fixed = Size::Logical(LogicalSize {
-        width: MONITOR_WIDTH,
-        height: MONITOR_HEIGHT,
-    });
+    let fixed = Size::Logical(target_logical_size(state));
     let _ = window.set_min_size(Some(fixed));
     let _ = window.set_max_size(Some(fixed));
     let _ = window.set_size(fixed);
@@ -488,13 +582,161 @@ fn position_top_right(app: &tauri::AppHandle, window: &tauri::WebviewWindow, wid
     if let Some(monitor) = monitor {
         let scale = monitor.scale_factor();
         let area = monitor.work_area();
-        let margin_px = (20.0 * scale).round() as i32;
+        let margin_px = (16.0 * scale).round() as i32;
         let width_px = (width * scale).round() as i32;
-        let min_x = area.position.x + 16;
-        let min_y = area.position.y + 16;
+        let min_x = area.position.x + 12;
+        let min_y = area.position.y + 12;
         let x = (area.position.x + (area.size.width as i32) - width_px - margin_px).max(min_x);
         let y = (area.position.y + margin_px).max(min_y);
         let _ = window.set_position(Position::Physical(PhysicalPosition { x, y }));
+    }
+}
+
+fn evaluate_and_apply_edge_snap(
+    window: &tauri::WebviewWindow,
+    state: &MonitorWindowState,
+) -> Option<MonitorDockEdge> {
+    let Ok(Some(monitor)) = window.current_monitor().or_else(|_| window.primary_monitor()) else {
+        return state.docked_edge;
+    };
+    let Ok(pos) = window.outer_position() else {
+        return state.docked_edge;
+    };
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let logical = target_logical_size(state);
+    let width_px = (logical.width * scale).round() as i32;
+    let height_px = (logical.height * scale).round() as i32;
+    let snap_px = (SNAP_THRESHOLD_LOGICAL_PX * scale).round() as i32;
+    let unsnap_px = (UNSNAP_THRESHOLD_LOGICAL_PX * scale).round() as i32;
+    let edge_pad = (6.0 * scale).round() as i32;
+
+    let left_dist = (pos.x - area.position.x).abs();
+    let right_edge_x = area.position.x + (area.size.width as i32) - width_px;
+    let right_dist = (right_edge_x - pos.x).abs();
+    let top_dist = (pos.y - area.position.y).abs();
+
+    let min_y = area.position.y + edge_pad;
+    let max_y = (area.position.y + (area.size.height as i32) - height_px - edge_pad).max(min_y);
+    let clamped_y = pos.y.clamp(min_y, max_y);
+
+    if left_dist <= snap_px {
+        let target_x = area.position.x + edge_pad;
+        let _ = window.set_position(Position::Physical(PhysicalPosition {
+            x: target_x,
+            y: clamped_y,
+        }));
+        Some(MonitorDockEdge::Left)
+    } else if right_dist <= snap_px {
+        let target_x = (right_edge_x - edge_pad).max(area.position.x + edge_pad);
+        let _ = window.set_position(Position::Physical(PhysicalPosition {
+            x: target_x,
+            y: clamped_y,
+        }));
+        Some(MonitorDockEdge::Right)
+    } else if top_dist <= snap_px {
+        let min_x = area.position.x + edge_pad;
+        let max_x = (right_edge_x - edge_pad).max(min_x);
+        let target_x = pos.x.clamp(min_x, max_x);
+        let target_y = area.position.y + edge_pad;
+        let _ = window.set_position(Position::Physical(PhysicalPosition {
+            x: target_x,
+            y: target_y,
+        }));
+        Some(MonitorDockEdge::Top)
+    } else if left_dist > unsnap_px && right_dist > unsnap_px && top_dist > unsnap_px {
+        None
+    } else {
+        state.docked_edge
+    }
+}
+
+fn apply_collapsed_transition(
+    window: &tauri::WebviewWindow,
+    mem: &mut MonitorRuntimeMemory,
+    collapsed: bool,
+) {
+    let Ok(Some(monitor)) = window.current_monitor().or_else(|_| window.primary_monitor()) else {
+        mem.state.collapsed = collapsed;
+        enforce_monitor_geometry(window, &mem.state);
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let pos = window
+        .outer_position()
+        .unwrap_or(PhysicalPosition {
+            x: area.position.x + (area.size.width as i32) - (MONITOR_WIDTH * scale) as i32 - 16,
+            y: area.position.y + 20,
+        });
+
+    if collapsed {
+        if !mem.state.collapsed {
+            mem.saved_expanded_pos = Some(pos);
+        }
+        let mid_x = area.position.x + (area.size.width as i32) / 2;
+        let dock_edge = match mem.state.docked_edge {
+            Some(MonitorDockEdge::Left) => MonitorDockEdge::Left,
+            Some(MonitorDockEdge::Right) => MonitorDockEdge::Right,
+            _ => {
+                if pos.x + ((MONITOR_WIDTH * scale) as i32 / 2) < mid_x {
+                    MonitorDockEdge::Left
+                } else {
+                    MonitorDockEdge::Right
+                }
+            }
+        };
+        mem.state.docked_edge = Some(dock_edge);
+        mem.state.collapsed = true;
+        enforce_monitor_geometry(window, &mem.state);
+
+        let collapsed_w_px = (MONITOR_COLLAPSED_WIDTH * scale).round() as i32;
+        let collapsed_h_px = (MONITOR_COLLAPSED_HEIGHT * scale).round() as i32;
+        let min_y = area.position.y + 12;
+        let max_y = (area.position.y + (area.size.height as i32) - collapsed_h_px - 12).max(min_y);
+        let target_y = pos.y.clamp(min_y, max_y);
+        let target_x = match dock_edge {
+            MonitorDockEdge::Left => area.position.x,
+            _ => (area.position.x + (area.size.width as i32) - collapsed_w_px).max(area.position.x),
+        };
+        let _ = window.set_position(Position::Physical(PhysicalPosition {
+            x: target_x,
+            y: target_y,
+        }));
+    } else {
+        mem.state.collapsed = false;
+        enforce_monitor_geometry(window, &mem.state);
+        let logical = target_logical_size(&mem.state);
+        let expanded_w_px = (logical.width * scale).round() as i32;
+        let expanded_h_px = (logical.height * scale).round() as i32;
+        let pad = (8.0 * scale).round() as i32;
+        let min_y = area.position.y + pad;
+        let max_y = (area.position.y + (area.size.height as i32) - expanded_h_px - pad).max(min_y);
+        let base_y = mem
+            .saved_expanded_pos
+            .map(|p| p.y)
+            .unwrap_or(pos.y)
+            .clamp(min_y, max_y);
+        let target_x = match mem.state.docked_edge {
+            Some(MonitorDockEdge::Left) => area.position.x + pad,
+            Some(MonitorDockEdge::Right) => {
+                (area.position.x + (area.size.width as i32) - expanded_w_px - pad)
+                    .max(area.position.x + pad)
+            }
+            _ => {
+                let min_x = area.position.x + pad;
+                let max_x = (area.position.x + (area.size.width as i32) - expanded_w_px - pad)
+                    .max(min_x);
+                mem.saved_expanded_pos
+                    .map(|p| p.x)
+                    .unwrap_or(pos.x)
+                    .clamp(min_x, max_x)
+            }
+        };
+        let _ = window.set_position(Position::Physical(PhysicalPosition {
+            x: target_x,
+            y: base_y,
+        }));
     }
 }
 
@@ -508,14 +750,21 @@ pub async fn monitor_window_set_open(
     app: tauri::AppHandle,
     open: bool,
 ) -> Result<MonitorWindowState, String> {
-    let current = current_window_state(&app);
+    let mut current = current_window_state(&app);
     if open {
+        current.collapsed = false;
+        let size = target_logical_size(&current);
         if let Some(existing) = app.get_webview_window(MONITOR_LABEL) {
             let _ = existing.unminimize();
-            enforce_fixed_monitor_geometry(&existing);
+            let next = update_window_state(&app, |mem| {
+                mem.state.open = true;
+                mem.state.collapsed = false;
+                apply_collapsed_transition(&existing, mem, false);
+            });
             let _ = existing.show();
-            let _ = existing.set_always_on_top(current.always_on_top);
+            let _ = existing.set_always_on_top(next.always_on_top);
             let _ = existing.set_focus();
+            Ok(next)
         } else {
             let win = WebviewWindowBuilder::new(
                 &app,
@@ -523,9 +772,9 @@ pub async fn monitor_window_set_open(
                 WebviewUrl::App("index.html?window=monitor".into()),
             )
             .title("Claude-Local Monitor")
-            .inner_size(MONITOR_WIDTH, MONITOR_HEIGHT)
-            .min_inner_size(MONITOR_WIDTH, MONITOR_HEIGHT)
-            .max_inner_size(MONITOR_WIDTH, MONITOR_HEIGHT)
+            .inner_size(size.width, size.height)
+            .min_inner_size(size.width, size.height)
+            .max_inner_size(size.width, size.height)
             .decorations(false)
             .always_on_top(current.always_on_top)
             .resizable(false)
@@ -533,18 +782,22 @@ pub async fn monitor_window_set_open(
             .visible(false)
             .build()
             .map_err(|_| "无法创建实时额度悬浮监控窗。".to_string())?;
-            enforce_fixed_monitor_geometry(&win);
-            position_top_right(&app, &win, MONITOR_WIDTH);
+            enforce_monitor_geometry(&win, &current);
+            position_top_right(&app, &win, size.width);
             let _ = win.show();
             let _ = win.set_always_on_top(current.always_on_top);
             let _ = win.set_focus();
+            Ok(update_window_state(&app, |mem| {
+                mem.state.open = true;
+                mem.state.collapsed = false;
+                mem.state.docked_edge = Some(MonitorDockEdge::Right);
+            }))
         }
-        Ok(update_window_state(&app, |s| s.open = true))
     } else {
         if let Some(existing) = app.get_webview_window(MONITOR_LABEL) {
             let _ = existing.hide();
         }
-        Ok(update_window_state(&app, |s| s.open = false))
+        Ok(update_window_state(&app, |mem| mem.state.open = false))
     }
 }
 
@@ -557,8 +810,8 @@ pub async fn monitor_window_set_always_on_top(
         win.set_always_on_top(always_on_top)
             .map_err(|_| "无法切换悬浮窗置顶状态。".to_string())?;
     }
-    Ok(update_window_state(&app, |s| {
-        s.always_on_top = always_on_top
+    Ok(update_window_state(&app, |mem| {
+        mem.state.always_on_top = always_on_top
     }))
 }
 
@@ -567,14 +820,81 @@ pub async fn monitor_window_set_compact(
     app: tauri::AppHandle,
     compact: bool,
 ) -> Result<MonitorWindowState, String> {
-    if let Some(win) = app.get_webview_window(MONITOR_LABEL) {
-        enforce_fixed_monitor_geometry(&win);
-    }
-    Ok(update_window_state(&app, |s| s.compact = compact))
+    let win = app.get_webview_window(MONITOR_LABEL);
+    Ok(update_window_state(&app, |mem| {
+        mem.state.compact = compact;
+        mem.state.collapsed = false;
+        if let Some(ref w) = win {
+            enforce_monitor_geometry(w, &mem.state);
+        }
+    }))
+}
+
+#[tauri::command]
+pub async fn monitor_window_set_locked(
+    app: tauri::AppHandle,
+    locked: bool,
+) -> Result<MonitorWindowState, String> {
+    Ok(update_window_state(&app, |mem| {
+        mem.state.locked = locked;
+    }))
+}
+
+#[tauri::command]
+pub async fn monitor_window_set_auto_hide(
+    app: tauri::AppHandle,
+    auto_hide: bool,
+) -> Result<MonitorWindowState, String> {
+    let win = app.get_webview_window(MONITOR_LABEL);
+    Ok(update_window_state(&app, |mem| {
+        mem.state.auto_hide = auto_hide;
+        if !auto_hide && mem.state.collapsed {
+            if let Some(ref w) = win {
+                apply_collapsed_transition(w, mem, false);
+            } else {
+                mem.state.collapsed = false;
+            }
+        }
+    }))
+}
+
+#[tauri::command]
+pub async fn monitor_window_set_collapsed(
+    app: tauri::AppHandle,
+    collapsed: bool,
+) -> Result<MonitorWindowState, String> {
+    let win = app.get_webview_window(MONITOR_LABEL);
+    Ok(update_window_state(&app, |mem| {
+        if let Some(ref w) = win {
+            apply_collapsed_transition(w, mem, collapsed);
+        } else {
+            mem.state.collapsed = collapsed;
+        }
+    }))
+}
+
+#[tauri::command]
+pub async fn monitor_window_snap_edge(app: tauri::AppHandle) -> Result<MonitorWindowState, String> {
+    let win = app.get_webview_window(MONITOR_LABEL);
+    Ok(update_window_state(&app, |mem| {
+        if mem.state.collapsed {
+            return;
+        }
+        if let Some(ref w) = win {
+            mem.state.docked_edge = evaluate_and_apply_edge_snap(w, &mem.state);
+            if let Ok(pos) = w.outer_position() {
+                mem.saved_expanded_pos = Some(pos);
+            }
+        }
+    }))
 }
 
 #[tauri::command]
 pub async fn monitor_window_start_drag(app: tauri::AppHandle) -> Result<(), String> {
+    let state = current_window_state(&app);
+    if state.locked {
+        return Ok(());
+    }
     if let Some(win) = app.get_webview_window(MONITOR_LABEL) {
         if win.is_maximized().unwrap_or(false) {
             let _ = win.unmaximize();
@@ -654,7 +974,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scan_live_token_metrics_computes_velocity_cache_hit_and_burn_eta() {
+    fn scan_live_token_metrics_computes_velocity_cache_hit_cost_and_burn_eta() {
         let dir = std::env::temp_dir().join(format!(
             "claude-local-monitor-test-{}-{}",
             std::process::id(),
@@ -669,22 +989,18 @@ mod tests {
         let file_path = proj.join("session.jsonl");
         fs::write(&file_path, format!("{line1}\n{line2}\n")).unwrap();
 
-        // 2025-10-09T08:52:00Z = 1759999920 (80 seconds before now_sec = 1_760_000_000)
-        // Reset in 3 hours (10800s), so 2 hours elapsed, 50% used -> 25%/hr burn rate -> remaining 50% exhausted in 120 mins (< 180 mins reset)
         let metrics = scan_live_token_metrics(&dir, now_sec, Some(50), Some(now_sec + 10_800));
         assert_eq!(metrics.requests_5h, 2);
-        // Turn 1: 4000+1000+6000+30000 = 41,000; Turn 2: 10000+2000+10000+60000 = 82,000 -> total 123,000
         assert_eq!(metrics.tokens_5h_total, 123_000);
         assert!(metrics.tokens_per_min > 0);
-        // Prompt total = (4000+6000+30000) + (10000+10000+60000) = 120,000; cache_read = 90,000 -> 75%
+        assert!(metrics.cost_5h_usd > 0.20);
+        assert!(metrics.cache_savings_5h_usd > 0.30);
         assert_eq!(metrics.cache_hit_pct, Some(75));
-        // Latest turn prompt = 80,000 / 200,000 = 40%
         assert_eq!(metrics.context_used_pct, Some(40));
         assert_eq!(metrics.latest_model.as_deref(), Some("claude-opus-4-6"));
         assert_eq!(metrics.burn_rate_pct_hr, Some(25.0));
         assert_eq!(metrics.exhaustion_eta_mins, Some(120));
 
-        // Second call hits the mtime/len cache and returns identical results
         let metrics_cached =
             scan_live_token_metrics(&dir, now_sec, Some(50), Some(now_sec + 10_800));
         assert_eq!(metrics_cached, metrics);
@@ -693,12 +1009,28 @@ mod tests {
     }
 
     #[test]
-    fn monitor_window_uses_fixed_non_resizable_geometry() {
-        assert_eq!(MONITOR_WIDTH, 312.0);
-        assert_eq!(MONITOR_HEIGHT, 216.0);
+    fn monitor_window_uses_multi_mode_fixed_geometry() {
+        assert_eq!(MONITOR_WIDTH, 340.0);
+        assert_eq!(MONITOR_HEIGHT, 258.0);
+        assert_eq!(MONITOR_COMPACT_HEIGHT, 152.0);
+        assert_eq!(MONITOR_COLLAPSED_WIDTH, 52.0);
+        assert_eq!(MONITOR_COLLAPSED_HEIGHT, 138.0);
         let default_state = MonitorWindowState::default();
         assert!(!default_state.open);
         assert!(default_state.always_on_top);
         assert!(!default_state.compact);
+        assert!(!default_state.locked);
+        assert!(!default_state.auto_hide);
+        assert!(!default_state.collapsed);
+        assert_eq!(default_state.docked_edge, Some(MonitorDockEdge::Right));
+        let expanded_size = target_logical_size(&default_state);
+        assert_eq!(expanded_size.width, 340.0);
+        assert_eq!(expanded_size.height, 258.0);
+        let mut compact_state = default_state;
+        compact_state.compact = true;
+        assert_eq!(target_logical_size(&compact_state).height, 152.0);
+        let mut collapsed_state = default_state;
+        collapsed_state.collapsed = true;
+        assert_eq!(target_logical_size(&collapsed_state).width, 52.0);
     }
 }

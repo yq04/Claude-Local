@@ -14,7 +14,7 @@ quota_bridge.rs: 用户显式命令打开当前绑定隔离浏览器，创建 90
 windows.rs: Windows 引擎和共同资料/回环会话编排；运行中打开外部链接时沿用当前会话不重复追加实测页；用户点击后仅注册 Claude-Local-Browser、.URL/.HTML 独立名称空间，不改写默认关联；本地 B 启动项进入同一宿主，CI 启动阶段只记录固定字符串；纯内存回归拒绝把官方协议认作本地默认并核对安装钩子，CI 实际核验本地注册命令/两个协议，前后默认关联必须不变。
 tests.rs: 模块共用临时目录样本，验证代理/资料边界、Windows 固定额度扩展参数、缓存隔离与地区核验；合成 HTTP 样本验证 Host/framing 拒绝及 429 备援解析，Windows 使用真实 junction 样本验证拒绝跨资料目录；不触碰现有账号数据。
 linux.rs: Linux libexec 隔离引擎（兼容源码/Arch 的资源目录），带双布局路径回归，与宿主驱动的 Claude-Local Browser 启动项；处理 --browser 链接、同资料重连、显式 xdg-mime 注册并核验 HTTP/HTTPS；定位状态未知的桌面禁止完整机器对齐，修改前停止；Linux UA 不提供内核版本，不用 UA 值伪装内核核验。
-workspaces.rs: 以 SQLite 绑定统一解析 macOS/Linux/Windows 资料与配置；transition 仅在 was_running 且绑定开启时重开浏览器，关闭状态保持关闭；正常退出成功后才报告退出完成，身份动作结束再开始资料同步/重开阶段；持久阻断文件防止恢复前打开错误资料，删除关联资料单独确认。
+workspaces.rs: 以 SQLite 绑定统一解析 macOS/Linux/Windows 资料与配置；switch_identity 在绑定开启且未指定 skip_browser_launch 时自动启动或重开新账号对应的内置浏览器实测页，empty_identity 仅在 was_running 且绑定开启时重开；正常退出成功后才报告退出完成，身份动作结束再开始资料同步/重开阶段；持久阻断文件防止恢复前打开错误资料，删除关联资料单独确认。
 launch.rs: 已持有浏览器互斥锁时复用的同步启动核心；身份联动与手动启动走同一参数、资料和进程验证。
 workspace_tests.rs: 临时数据库清理前明确释放句柄以兼容 Windows；临时 Cookie/缓存/配置与种子隔离、手动换指纹持久化、旧资料保留及恢复阻断回归。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

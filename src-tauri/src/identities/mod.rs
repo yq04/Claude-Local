@@ -280,7 +280,7 @@ pub async fn identities_switch(
     let worker = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(Some(on_progress));
-        let result = crate::browser::identity_action(&worker, &reporter, || {
+        let result = crate::browser::switch_identity(&worker, &reporter, || {
             let mut store =
                 store::Store::open(&vault(&worker)?, &crate::cleaner::identity::root()?)?;
             if recover {
