@@ -1,119 +1,150 @@
 <!--
-[INPUT]: Final repository/release state, checked product delivery, source and metadata receipts, owner preferences and retained limitations.
-[OUTPUT]: Context-free handoff covering active goal, completed work, remaining gates, next actions and pitfalls.
+[INPUT]: Final v0.2.0 repository/release state, checked product delivery, bilingual README/README_EN, synthetic previews, owner preferences and retained limitations.
+[OUTPUT]: Context-free handoff covering active goal, completed work, current status/blockers, next actions and pitfalls.
 [POS]: Repository-root maintenance handoff; private identities, process details, paths and probes stay in ignored .local/.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only changes do not rebuild binaries, replace assets or move product tags.
 -->
-# Claude-Local 新会话交接（0.2.0）
+# Claude-Local 新会话交接文档（v0.2.0）
 
-更新时间：2026-10-26，America/New_York。新会话先读本文、根`AGENTS.md`和`CLAUDE.md`，改模块前再读相应目录`CLAUDE.md`及源码头。
+更新时间：2026-10-26 22:48（America/New_York）。
+**写给完全没有上下文的新会话**：请先通读本文、根目录 `AGENTS.md` 与 `CLAUDE.md`；修改具体模块前再阅读对应子目录的 `CLAUDE.md` 与文件头部注释。
 
-**最终结论：本机已运行0.2.0，源码、Windows安装包、审计及GitHub上传已闭环；完成九项界面/功能精细优化（含Token Monitor风格多模态悬浮监控小窗、官方Claude API定价USD等效花费与缓存节省核算、勾选联动浏览器切号自动打开新账号浏览器验证页、全局导航与工作台精简），公开仓库README、Release v0.2.0与演示截图已同步更新。**
+> **一句话全局结论**：
+> **Claude-Local `v0.2.0` 已全部开发、验证、打包、更新本机并正式发布至 GitHub Release（Latest）**。本机 `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 已无中断升级至 `0.2.0`；GitHub 仓库已完成中英双语旗舰级 `README.md` / `README_EN.md`、13 张合成脱敏截图（`docs/screenshots/0.2.0/`）、仓库 About 简介与 `v0.2.0` Release 页面升级。**当前没有任何代码、测试、打包或发布阻塞**；新会话切勿无故重打包、移动 `v0.2.0` 标签、强杀运行中的 `claude.exe` 或提交 `AGENTS.md`。
 
-## 1. 当前任务与用户目标
+---
 
-Claude-Local是**基于[CCBaga](https://github.com/liseami/CCBaga)二次开发、独立维护的Windows10/11 x64工具**，不是全仓原创，也不是Anthropic/CCBaga的官方发行。Tauri/Rust管理原生事务，React/TypeScript负责界面，Python负责额度账本采集/单写。主程序`claude-local.exe`，应用ID`ai.local.claude-local`，伴侣浏览器注册名`Claude-Local-Browser`；资料按用户存放于`%APPDATA%/ai.local.claude-local`，不是OS账号沙箱。
+## 1. 我们在做什么任务（项目定位与核心规则）
 
-本会话在`0.1.5`基础上完成`0.2.0`九项体验与功能升级：浏览环境顶部卡片精简、电脑环境顶栏精简、身份管理顶栏一体化重构与三步法减负、勾选「联动浏览器」切号自动打开新账号浏览器检测页、用量分析同行展示日期范围并新增API等效美元花费/缓存节省/单次均值六维横条、使用说明移除任务交接模板、左侧菜单栏移除底部搜索框并升级视觉样式，以及借鉴Token Monitor重构桌面悬浮监控小窗（支持三态尺寸、置顶、位置锁定、18px边缘磁吸、贴边自动隐藏为侧边胶囊、50%–100%无级透明度、主题与自定义壁纸实时同步）。
+### 1.1 项目定位
+- **产品名称**：**Claude-Local**（基于开源项目 [CCBaga](https://github.com/liseami/CCBaga) 二次开发并独立维护的 Windows 10 / 11 x64 桌面应用，非全仓原创，亦非 Anthropic 或 CCBaga 官方发行）。
+- **技术栈与标识**：Tauri 2 + Rust（原生事务与进程/文件安全边界）+ React 19 / TypeScript（前端工作台与悬浮监控窗）+ Python 3.10+ / `cryptography`（外部额度账本单写者与口令备份加解密）。
+  - 主程序二进制：`claude-local.exe`
+  - 应用 Bundle ID：`ai.local.claude-local`
+  - 伴侣隔离浏览器：`Claude-Local Browser`（Windows 注册名：`Claude-Local-Browser`）
+  - 用户持久化数据目录：`%APPDATA%\ai.local.claude-local`（按用户隔离，非 OS 账号沙箱）
+  - 默认安装目录：`%LOCALAPPDATA%\Programs\Claude-Local`
 
-最新偏好必须保留：
+### 1.2 必须遵守的用户偏好与架构铁律
+1. **对外发行序列**：从 **`0.1.0`** 开始计数，依次发布了 `v0.1.0`、`v0.1.1`、`v0.1.2`、`v0.1.3`、`v0.1.4`、`v0.1.5`，当前最新正式版为 **`v0.2.0`**。早期开发记录中的内部编号仅作工程历史归档，不得当作另一条公开版本线。
+2. **100% 存储兼容（绝不改后缀或重生成密钥）**：完整保留 `BAGAID01` 魔数、`.baga` 归档后缀、SQLite `user_version = 3`、账号 HMAC 规则、32 字节主密钥及 legacy 浏览器种子域，确保已有身份库与专属浏览器资料无损读取。
+3. **显著标注 CCBaga 二次开发归属**：`README.md`、`README_EN.md`、`NOTICE.md` 与所有 Release 正文均显著声明基于 [@liseami/CCBaga](https://github.com/liseami/CCBaga) 二次开发并保留原 MIT 版权声明。
+4. **严禁中断运行中的 `claude.exe` 或用户浏览器**：测试、编译与本机部署均不得杀死正在运行的 `claude.exe` 会话；所有自动化测试必须使用合成数据与隔离临时目录，绝不触碰真实身份库或发真实消息。
+5. **公开截图与文档零隐私泄漏**：仓库内所有截图（`docs/screenshots/`）必须由合成 IPC 数据与保留域名 `@example.invalid`（开启软件隐私打码）生成；用户聊天中上传的真实截图绝不复制入库或上传 GitHub。
+6. **固定推广链接只读复制**：网络环境页内置的 iKuuu 与 Kookeey 链接经产品所有者批准随包分发，仅提供「复制链接」与「复制提示词」动作，不渲染明文 URL/邀请码，不提供界面编辑器或自动外部跳转。
 
-- Claude-Local**对外发行序列从0.1.0开始**，当前**0.2.0**。不要把开发快照、早期功能记录或上游版本写成本项目的另一条发行序列。
-- 用户明确决定**不更换.baga后缀**。不改BAGAID01/CLBKUP01、密钥值、账号ID、HMAC、SQLite v3或历史浏览器种子；不为改名重加密资料。
-- README必须显著写CCBaga二次开发，介绍要完整、准确；不能靠末尾一句致谢或抹掉上游版权。原LICENSE和既有第三方声明继续保留。
-- 图片只能用隔离合成数据。用户发来的QQ原图包含真实身份信息，未复制或上传到GitHub，不能拿来做公开预览。
-- iKuuu/Kookeey固定推广链接已经用户批准，随包内置但只复制，不提供收件人编辑、安装级覆盖或自动外跳。
+---
 
-## 2. 当前仓库、发布与本机的唯一有效状态
+## 2. 已经完成了什么（v0.2.0 及历史关键成果）
 
-- 仓库：[yq04/Claude-Local](https://github.com/yq04/Claude-Local)，**已公开**；`v0.1.0`至`v0.1.5`及最新`v0.2.0`共七个Release均`draft=false`、`prerelease=false`，Latest为`v0.2.0`。
-- [0.2.0安装器](https://github.com/yq04/Claude-Local/releases/download/v0.2.0/Claude-Local_0.2.0_x64-setup.exe)：`140,537,513`字节，SHA256 `37cfa5106f54aaf16e379dff7b53a93aef4456fe70a229d776039fbff8c645b4`。
-- 本机0.2.0未打包宿主SHA256：`9651d76a46ce1608c63297c683192b0710cf9569be90b74c4bcecf502088d792`。
-- 中性custom-protocol构建：109个解包文件、外部隐私探针0发现；本机无中断覆盖更新保留正在运行的`claude.exe`进程与全部身份库/浏览器资料。完整交付见[0.2.0核验](docs/RELEASE_VERIFICATION_0.2.0.md)与[0.2.0升级说明](docs/UI_MONITOR_0.2.0.md)。
+### 2.1 本轮完成的 `v0.2.0` 九项界面与功能升级
+详见 [docs/UI_MONITOR_0.2.0.md](docs/UI_MONITOR_0.2.0.md)：
 
-## 3. 已完成的关键工作与真实证据
+1. **浏览环境顶部启动卡片精简**（`src/browser.tsx`）：
+   - 移除了「启动内置浏览器与 CLI 授权联动」卡片中冗余的 `绑定身份: ...` 与 `Chromium ...` 胶囊，以及右侧极少使用的 `正常退出浏览器`、`设为默认浏览器` 按钮，仅保留运行状态徽章与主启动/重开实测页按钮。
+2. **电脑环境顶栏精简**（`src/system.tsx`）：
+   - 移除了右上角低频冗余的「查看/恢复本次环境修改」、「系统授权设置」和「刷新状态」三个按钮。
+3. **身份管理顶栏一体化与三步法精简**（`src/identities.tsx`、`src/identity-productivity.css`）：
+   - 将右上角 `[• 自动续杯 | 08:00–23:00] | [• 悬浮监控窗] [↻ 同步本地额度] [⋯]` 重构为统一 `30px` 高度的分段胶囊与操作栏；
+   - 移除了「添加新号 3 步法」引导条右侧冗余的「打开内置浏览器」按钮。
+4. **「联动浏览器」切号自动弹出新账号验证页**（`src-tauri/src/browser/workspaces.rs`、`src-tauri/src/browser/mod.rs`、`src-tauri/src/identities/mod.rs`）：
+   - 修复了勾选「联动浏览器」后切换身份时若浏览器未处于运行状态则不会自动弹出的问题：`workspaces::switch_identity` 现传入 `launch_on_linked = true`，在绑定开启且未指定 `skip_browser_launch`（测试参数）时自动启动或重开新切入账号对应的隔离浏览器实测与登录验证页。
+5. **用量分析时间区间同行排布**（`src/usage-statistics.tsx`、`src/usage-statistics.css`）：
+   - 将筛选日期区间与时区标识（如 `2026年10月6日 – 2026年10月26日 EDT`）移至 `[今天 | 昨天 | 近7天 | 近30天 | 全部]` 右侧同行空白处。
+6. **用量分析新增官方 API 等效美元花费（USD）、缓存节省与单次均值**（`src/usage-model.ts`、`src/usage-model.test.ts`、`src/usage-statistics.tsx`）：
+   - 将四大 KPI 卡片下方的 3 项次级统计升级为单行 **6 项遥测横条**（`去重响应数 | API 等效花费 ($USD) | 缓存节省 ($USD) | 单次均值 | 缓存写入 | 缓存读取`）；
+   - 基于 Anthropic 官方 Claude API 模型单价（区分 Opus 4.x、Sonnet 4.x、Haiku 4.5 / 3.5 的输入、输出、缓存写入与缓存读取单价）自动核算美元花费与缓存节省金额，并在右侧「模型分布」中逐模型标注美元成本。
+7. **使用说明移除「任务交接模板」**（`src/help.tsx`、`src/main.tsx`）：
+   - 从帮助页面底部与主壳层移除了非必要的 `<TaskHandoff />` 板块（组件源码与单测保留以备兼容）。
+8. **左侧导航栏移除搜索框并升级视觉设计**（`src/main.tsx`、`src/productivity-shell.css`、`src/style.css`）：
+   - 移除了左下角「命令 Ctrl K」搜索按钮（保留 `Ctrl+K` 快捷键呼出命令中心），为当前选中项增加左侧 `3px` 主题色指示条与柔和渐变胶囊背景，并将底部 `[CN | EN]` 语言切换与 `v0.2.0` 版本徽章合并为单行底栏。
+9. **借鉴 Token Monitor 全面重构桌面悬浮监控小窗（HUD）**（`src-tauri/src/monitor_window.rs`、`src-tauri/src/main.rs`、`src/floating-monitor-model.ts`、`src/floating-monitor.tsx`、`src/floating-monitor.css`）：
+   - **三态几何自适应**：支持 **展开模式（`340×258`）**、**紧凑模式（`340×152`）** 与 **侧边胶囊模式（`52×138`）**，消除窄窗倒计时（`重置 2h 15m`）与耗尽预警（`⚠ ~1h10m`）文字截断；
+   - **Token Monitor 三栏实时遥测磁贴**：底部展示 `5h 消耗（含缓存命中率）`、`实时速率（tok/m + 路由隔离状态）` 与 `5h 等效花费（$X.XX + 缓存省 $X.XX）`，账号行展示主力模型调用次数及占比；
+   - **置顶 / 位置锁定 / 18px 边缘磁吸 / 贴边自动隐藏 / 50%–100% 无级透明度**：支持一键置顶（Pin）、位置锁定（Lock）、显示器工作区四边 18px 自动磁吸对齐（持久化 `dock_edge`）、左右边缘移出 420ms 自动收缩为 `52px` 侧边胶囊（悬停或点击即刻展开），以及 50%–100% 无级透明度滑块与预设档位（持久化至 `%APPDATA%\ai.local.claude-local\monitor-window.json`）；
+   - **主题与自定义壁纸实时联动**：通过 `BroadcastChannel` 与 `storage` 事件实时同步主窗口的浅/深色主题、6 套强调色、毛玻璃参数与自定义本地壁纸。
 
-### 3.1 公开呈现、归属和文档
+### 2.2 中英双语旗舰级 GitHub 呈现与预览图重拍
+- **`README.md`（默认简体中文）与 `README_EN.md`（完整英文版）**：
+  - 顶部居中品牌徽标、一句话定位、5 枚状态徽章与醒目的双向中英文切换栏（`🌐 语言 / Language：🇨🇳 简体中文 · 🇺🇸 English`）；
+  - 包含「✨ 核心特色一览」六大模块表、图文并茂的五大核心界面导览、三态 HUD 并排对比表、与 CCBaga 的演进对比表、`v0.1.0`–`v0.2.0` 版本演进表、安装校验指南与安全边界说明。
+- **`docs/screenshots/0.2.0/`（13 张合成脱敏预览图）**：
+  - 中文五页（`1280×900`）：`identity-management.png`、`usage-analytics.png`、`browser-environment.png`、`quick-setup.png`、`network-environment.png`；
+  - 英文五页（`1280×900`，供 `README_EN.md` 使用）：`identity-management-en.png`、`usage-analytics-en.png`、`browser-environment-en.png`、`quick-setup-en.png`、`network-environment-en.png`；
+  - 桌面 HUD 三态预览：`floating-monitor.png`（浅色展开）、`floating-monitor-dark.png`（深色极光）、`floating-monitor-collapsed.png`（侧边胶囊）。
 
-README已完整重构：首屏二开说明、继承与本地改动、下载/安装/依赖、功能、五张演示截图、构建、限制、排障、贡献和致谢。新增[项目来源](docs/PROJECT_ORIGIN.md)、[版本与标签约定](docs/RELEASE_POLICY.md)，NOTICE显著链接上游仓库/许可/贡献者；原LICENSE及NOTICE所有既有第三方章节保持原文。
+### 2.3 当前仓库、安装包、本机与 GitHub 唯一有效状态
+- **公开仓库**：[yq04/Claude-Local](https://github.com/yq04/Claude-Local)（`main` 与工作分支 `feature/functional-reliability-20261023` 完全快进同步）。
+- **固定产品源码与标签**：
+  - 标签 `v0.2.0` → 提交 `5521719f3a15351922be9f47fa3e91d1b8cac877`（后续 `f79b824` 及本交接提交为纯文档/介绍润色，按规范不移动 `v0.2.0` 标签、不重打包）。
+  - 远端现共有 7 个正式 Release（`v0.1.0` 至 `v0.1.5` 及 **`v0.2.0` Latest**，均 `draft=false, prerelease=false`）。
+- **`v0.2.0` Windows x64 安装包（已审计并上传 GitHub Release）**：
+  - 下载地址：<https://github.com/yq04/Claude-Local/releases/download/v0.2.0/Claude-Local_0.2.0_x64-setup.exe>
+  - 文件大小：`140,537,513` 字节（134.03 MiB）
+  - 安装包 SHA-256：`37cfa5106f54aaf16e379dff7b53a93aef4456fe70a229d776039fbff8c645b4`（已与 GitHub Release 资产服务端 `digest` 核对一致）
+  - 中性目录构建回执：`.local/artifacts/20261027T020452Z-8ef3115ef1464922a71646053976fb45/`（NSIS 只读解包 109 个文件，13 项隐私探针 `findings=0`）。
+- **本机安装状态**：
+  - 已通过 `scripts/deploy-local.ps1` 将 `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 无中断更新至 **`0.2.0`** 并自动重启 GUI；
+  - 本机未打包宿主 SHA-256：`9651d76a46ce1608c63297c683192b0710cf9569be90b74c4bcecf502088d792`；
+  - 更新前后正在运行的 `claude.exe` 终端进程数量保持为 `1`（零中断），已有身份库与伴侣浏览器资料完整保留。
+- **全量验证结果（100% 通过）**：
+  - `bun test`：23 个文件、**142 项通过**（0 失败）
+  - `bun run build`（`tsc --noEmit && vite build`）：**0 错误**
+  - `cargo test --manifest-path src-tauri/Cargo.toml --bin claude-local`：**260 项通过**、0 失败、1 项保留忽略
+  - `python scripts/test-windows.py`：**18 项通过**、1 项 CI-only 按设计跳过
+  - Playwright 合成端到端与多视口几何回归：`test-identities-ui.ts`（73 项）、`test-handoff-ui.ts`、`test-local-shell.mjs`、`test-usage-statistics.mjs`（含 `--layout-only` 96 项、`--quick-only` 16 类及完整 38 类）、`.local/tasks/20261026-ui-polish/check-layout.mjs`（15 项中英双语五页检查）全部通过。
 
-About已写CCBaga二开，首页指向本仓库Releases/latest；Topics14项包含ccbaga/claude-code/Windows等实际关键词。新增两个Issue Forms及config，保留空白Issue，要求脱敏，不虚构私密安全渠道，不将本项目支持责任转给上游。六个Release正文追加来源/许可页脚，原正文、发布flags、Latest、附件ID/字节/digest及0.1.x标签目标均核验保持。
+### 2.4 历史核心架构成果速查（0.1.0–0.1.5 继承基线）
+- **浏览器两项未知修复（0.1.3–0.1.4）**：`src/browser-webrtc.ts` 将 RTCPeerConnection 同步构造与 ICE 协商/收集预算分离（5s 协商 + 2s 候选收集，真实耗时约 3.7s）；`src/browser-network.ts` 在地理结果缺少 `hosting` 字段时向固定 `api.ipquery.io` 补查同 IP 分类，并在生产 CSP（`src-tauri/src/browser/server.rs`）中精确放行 `https://api.ipquery.io`。更新宿主后需在「浏览环境」点击「重新打开实测页」。
+- **自动续杯与授权分离（0.1.1）**：`src-tauri/src/identities/wakeup.rs` 是进程内唯一自动续杯调度器（切页/最小化托盘不中断，退出即停）；仅当同账号返回新鲜未来 `new_5h_confirmed` reset 时才记为成功；网页额度恢复队列与 CLI/messages 授权状态严格分离。
+- **加密存储兼容加固（0.1.2）**：`src-tauri/src/identities/backup.rs` 与 `archive_limits.rs` 实现 `ScratchGuard` 暂存目录自清理、普通解包有界限额、Zeroizing 明文缓冲与 32 字节主密钥严格核验。
 
-当前README和规范版本说明不再讲旧开发编号重置/降级，也不定位为私有预览产品。两个误导性旧版本说明文件改为`FEATURE_NOTES_APPEARANCE_MONITOR.md`、`FEATURE_NOTES_USAGE_BROWSER.md`，内容备份保留；其他早期功能/计划资料标注为开发记录，不作现行发行时间线。源候选manifest只调整非必要版本描述，原files/hash/base commit保留。
+---
 
-对外来源不能夸大：`bdfb90c`是固定**比较快照**，不是已证明最初fork点；本仓库初始导入`167780a`日期早于它。不要推测作者法律姓名或贡献百分比，不把通用AES算法宣传为本项目创造。
+## 3. 当前卡在哪（阻塞状态与未执行边界）
 
-最近的公开说明整理没有改应用代码、版本号、CI权限或自动发布流程，没有重编译或替换任何已发安装包。`package.json`的`private:true`是阻止npm发布的保护，与GitHub仓库已公开并不矛盾，不要顺手改掉。
+**当前没有任何研发、构建、本机部署或 GitHub 发布阻塞。**
 
-### 3.2 浏览器两项未知的修复
+以下事项属于**按设计保留的工程边界或独立后续议题**（切勿将它们误认为当前版本发布失败，也不要未经用户指令擅自启动）：
+1. **真实 NSIS 安装器向导全生命周期验收**：本机采用带备份的文件式无中断更新（`deploy-local.ps1`），未在个人开发机上直接运行 NSIS 安装/升级/卸载向导。完整安装器 UI 与系统时区修改测试需在一次性 Windows 虚拟机/Runner 中使用合成数据验收。
+2. **第三方组件独立许可核对**：`vendor/cromma-ui` 复用子集的独立上游许可证、Pika 图标子集来源及 Fingerprint Chromium 完整 credits 清单仍在 `NOTICE.md` / `docs/DISTRIBUTION.md` 中客观记录边界，不将顶层 MIT 等同于所有第三方资产授权。
+3. **单身份便携包（`bagapack`）与跨平台打包**：目前仅分发 Windows x64 版本，并提供全库口令加密备份与隔离恢复副本；单账号便携包导出属于远期候选特性。
+4. **公开仓库下的手动 CI 打包工作流（`.github/workflows/share-windows.yml`）**：该工作流保留了私有仓库安全门禁条件，公开仓库下默认跳过（日常 `checks.yml` 正常运行，本机可通过 `scripts/build-windows-share.ps1` 构建审计安装包）。
 
-“以前通过、后来两项未知”的源码转折是`9b89502`（2026-10-25 22:34 UTC-4）：旧RTC超时未见地址也通过，旧ISP未命中机房关键词默认通过；收紧证据后暴露了真正的测量缺口，不说明网络突然变差。
+---
 
-- **RTC计时**：固定引擎`148.0.7778.215`创建RTCPeerConnection约3.5秒，旧1秒定时器在构造前布放，返回时已经过期。现在同步构造不吃ICE预算，之后5秒协商，描述设置成功再给2秒候选观察；真正结束/complete才通过，异常/超时仍未知，晚到Promise不能复活关闭探针。无STUN，原UDP隐私参数保留；本地候选完成不证明公网STUN/DNS或账号安全。
-- **机房字段**：原ipwho.is公共调用和ipapi.co缺所需hosting字段；ipapi.is当前匿名短响应同样不适用，没有接入。仅缺hosting时，沿浏览器当前路由或冻结原生proxy client向固定IPQuery补查**同一个IP**；IPv4/IPv6规范化校验、布尔字段、3秒/32KiB、无API密钥/凭据/Referrer/重定向。失败保留原地理信息和受控未知，不按ASN猜住宅。
-- **生产CSP**：0.1.3候选最初漏放新增分类域名，dev页面测试未带生产CSP而漏测。0.1.4只精确加入api.ipquery.io，保留其他脚本/帧/来源限制；实际HTTP头和带生产connect-src的GUI先复现失败再通过。0.1.5延续这些核心修复。
+## 4. 下一步计划是什么（新会话行动指南）
 
-已用实际安装的生产前端、完整生产CSP、真实引擎RTC和隔离临时资料，配合**合成地理/分类HTTP**验证20/20；更新后RTC约3.7秒完成。不是用户真实出口或账号权限的20/20认证，不能用演示数据声称用户已无风险。
+1. **先等待并响应用户的新指令**：
+   - 当前 `v0.2.0` 已完美收官，新会话启动后**不要重跑构建、不要重发 Release、不要修改已发布的 `v0.2.0` 标签**，直接根据用户提出的新需求或新反馈开展工作。
+2. **若用户后续提出 `v0.2.1` / `v0.3.0` 新功能或体验微调**：
+   - 先阅读对应目录的 `CLAUDE.md` 与源码头部 `[INPUT]/[OUTPUT]/[POS]/[PROTOCOL]` 注释；
+   - 修改代码时同步维护 `src/locales/zh.yaml` 与 `src/locales/en.yaml` 双语词条；
+   - 运行对应的定向测试（`bun test`、`cargo test`、`test-usage-statistics.mjs --layout-only` 等）；
+   - 如需打包 `build:windows`，传入本机便携 7-Zip 路径：
+     ```powershell
+     pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-share.ps1 -SevenZipPath (Resolve-Path .local/build-tools/7zip-26.04-f4a03f7e/portable/7z.exe).Path
+     ```
 
-更新宿主后，用户应在主软件“浏览环境”点“重新打开实测页”，再实测。旧标签仍持有旧脚本/CSP，宿主重启后旧端口/票据也可能失效；不要只反复点击旧页按钮，更不能为此清Cookie、全重置、重登CLI或换代理。
+---
 
-核心入口：`src/browser-webrtc.ts`及test、browser-network.ts/test、browser-model.ts、browser-verification.ts、browser-start.tsx；`src-tauri/src/browser/network.rs/mod.rs/server.rs/tests.rs`。详见[0.1.4说明](docs/BROWSER_CSP_0.1.4.md)。
+## 5. 有哪些踩过的坑绝对不要再踩（避坑铁律）
 
-### 3.3 五页红框排版（0.1.5）
-
-Quick去掉重复的目标时区/语言脚注；浏览页绑定/引擎合入紧凑顶栏、删除重复登录段和未检测指引，但真实未完成/冲突/过时仍提示；网络页去重复范围段，保留一处用途说明及手动检测。
-
-身份页将续杯/时段与浮窗/同步/更多分组，统一28px并窄屏折行；用量页收拢更新与导出/刷新，日期和简写时区常驻，完整IANA/偏移/跟踪起点保留在提示和方法说明，查询/TSV字段不变。浏览器数据卡和高级设置按**内容容器**宽度折为单列，不能只按整个窗口宽度忽略侧栏。
-
-五页中文1280px/英文760px共10项布局检查通过，额外窄屏浏览器及真实未完成反馈通过。五张0.1.5公开预览为合成数据，邮箱仅example.invalid并遮罩，视觉/DOM/PNG文本EXIF检查通过，远端五图及渲染核验一致。截图页脚0.1.1不是当时实际运行版本；检查过实际实例/hash和两个快捷入口均已是正确安装，没有发现旧运行副本。
-
-入口：quick-actions.tsx/quick-setup.css、browser.tsx/vps.tsx/style.css、identities.tsx/identity-productivity.css、usage-statistics.tsx/usage-statistics.css。详见[UI说明](docs/UI_POLISH_0.1.5.md)。
-
-### 3.4 授权、续杯与加密加固
-
-Astra优化已实施，见`docs/plans/2026-10-25-functional-audit/04`与`05`；旧pending为规划历史，不重新执行。Rust是唯一进程内续杯owner，切页/托盘可工作，退出或睡眠不发请求。不注册服务/计划任务，明确opt-in；只有同账号新鲜未来5h reset且晚于到期reset才确认成功，普通updated/cached/7d-only不算。派发前unknown落盘，崩溃不重放，429/共享错峰保护保持。
-
-网页查询失败队列与CLI/messages授权已分离；浏览器补充失败保留具体原因，网页登录不更新CLI OAuth。本地valid/CLI本地登录成功不等于保存快照或云端messages权限恢复，保存generation变化也不证明重新登录。关闭自动续杯仍同步本地readiness，当前摘要保留既有授权到期元数据；显式一次恢复只释放确认的auth专属退避，不绕过全局/429/unknown。不要让已登录用户无故反复重登。
-
-0.1.2加固备份操作自有新暂存RAII/错误清理、成功副本的独立清理诊断、普通解包资源限额及认证尾部排空、自有明文Zeroizing缓冲和最多33字节读取后严格要求32字节的主密钥验证。内部保险库主密钥是随机值，**不是PBKDF派生，也没有DPAPI包装**；PBKDF2只用于口令导出备份。未实施Argon2、密钥轮换或格式迁移；单身份bagapack尚未实现。
-
-## 4. 验证与回执入口
-
-[源码CI40311799063](https://github.com/yq04/Claude-Local/actions/runs/40311799063)对固定产品源码success：141项前端通过，原生主套件260通过1忽略、另1项定向检查通过；离线Python套件121通过2跳过。类型/前端构建、真实生产策略GUI与隔离固定引擎验证已完成；已绿的验证不因文档更新重复运行。
-
-私有证据都在忽略的`.local/tasks/`，不要加入Git：
-
-- `20261026-ui-polish/`：0.1.5构建、package/deployment/release回执、storage前后、browser进程保留、安装前后生产bundle检查、10项布局/额外浏览器检查、演示图与源/HANDOFF基线。
-- `20261026-github-presentation/`：来源/README草稿及基线、metadata审计、六Release前后、validation-final、旧标签批准删除计划/receipt、bundle及SHA256。
-- `20261026-public-docs/`：从0.1.0开始的介绍整理，85文档备份/hash、源manifest hash保持和owner手动公开/正式标记的记录。
-- `20261026-browser-csp/`、`browser-repair/`、`browser-unknown-diagnosis/`：CSP红绿复现、1.3候选/1.4交付、历史与实机耗时诊断。
-- `20261026-crypto-hardening/`、`sync-repair/`：加密加固/1.2与授权同步/1.1的合成测试和交付证据。
-
-公共核验`docs/RELEASE_VERIFICATION_0.1.0.md`及各0.1.x后缀核验文件保留精确源/包/CI信息，后续文档不重算旧校验值。对照时不要拿某个更早源码候选或旧内部同名功能笔记代替当前发行回执。
-
-## 5. 当前卡在哪、下一步怎么做
-
-**没有当前交付技术阻塞，也没有待批准的远端标签删除。以下是明确未完成事项，不是已经验收成功。新会话先接受用户新目标，不自行启动大范围重构或清史。**
-
-1. **公开后许可核对应优先单独推进**：Cromma复制子集独立许可、15个Pika图标取得范围、Chromium完整credits/notices清单仍未核实完。保留NOTICE/DISTRIBUTION的事实，不把顶层MIT、上游已公开或加致谢当作全部授权，也不直接推定已违法。必要时在明确范围内替换组件并保留原归属。
-2. **历史隐私尚未完整审查**：以前受控Markdown历史曾发现机器路径，当前文件清理/Tag删除未清除旧提交。若用户要审查可达历史/分支/资产，另开有明确范围的任务；改史、强推或删除历史必须先备份并明确确认，不能直接执行。
-3. **真实NSIS生命周期验收**：新装、保留资料升级、卸载、版本回退、取消/失败，以及睡眠恢复，仍需一次性Windows环境使用合成身份测试。不能在当前个人工作机跑CI-only系统测试，也不能把文件更新/三语编译/解包审计代替它们。
-4. **真实账号权限未代测**：环境通过不判断封禁或messages授权。按用户新反馈和stage/reason/retry_at等证据判断，必要时由账号持有人确认保存快照及一次验证；不代发消息/唤醒或共享refresh测试，不自动改开关。
-5. **公开仓库的分享工作流**：现有可选share-windows任务仍有private-only条件，公开后会跳过；源码checks正常，本地build:windows可用。若用户要公开CI手动打包，再独立调整门禁/资源与审计，不顺带加自动公开发布、upstream更新或secret。
-6. 单身份便携包和macOS/Linux发行只是后续候选方向，不是现有功能；不要为本次结束补做。Agent Reach1.6.0已升级且不属于产品运行依赖，不重装。
-
-## 6. 绝对不要再踩的坑
-
-- **保护用户改动**：当前只剩用户原始`AGENTS.md`未提交，必须保留且不顺带提交。不要stash/reset/restore/clean/强推或递归删worktree来“清场”；多会话共享工作区，失败先查原因。
-- **授权边界**：远端两个旧标签已明确批准删除且已完成，不能无限扩大为删本地备份/其他标签/Release/重写历史。破坏性动作遵守现行AGENTS说明范围并等明确确认。只推具体版本，禁止push全部本地Tags。
-- **工具纪律**：使用pwsh7；functions.exec严禁notify/yield_control，CPA1:1响应错位会报400并毁会话。进度在commentary工具外发送；tools.exec_command返回session_id时完整保存并用write_stdin续查，不要只打印output丢句柄；functions.exec返回Script running with cell ID时才用functions.wait，二者不能混用。
-- **子代理与节约**：当前AGENTS的Lane-A默认Gemini3.8Flash high，复杂用Sol6.1 high，fork none；不派Claude/Luna/Argon/Astra/旧Sol。按实际工具槽位上限调度（本次最多3子代理+root），Lane-B含root在飞<=3且ultra<=1。例行独立工作并行卸载，不由主会话串行包揽；验证通过即止，不无端重复全库或多轮深审。子代理草稿必须核事实，不能直接转述。
-- **隐私与进程**：工具不读真实.env/credentials/token/secret/key/.baga/Cookies/会话正文，不输出邮箱/IP/代理秘密/身份指纹。测试只用临时合成上下文；不杀claude.exe或用户浏览器，不切号/清理真实资料/发消息测试。公开图片不使用用户原图。
-- **部署与时间比较**：精准校验宿主路径/PID/创建时间/当前用户SID，先备份/hash，宿主最后；有recovery或.pending/.stage写入先推迟。PowerShell跨JSON会自动解析ISO日期，进程创建时间须转UTC ticks比较，不把字符串与DateTime直接比而误报浏览器被关。
-- **浏览器测量**：必须使用生产CSP测试，Vite放行不等于实际页面可请求。只精确许可固定域名，不用通配HTTPS、unsafe-eval或disable-web-security强行变绿。初始化和ICE分预算；没有完整结果就未知，不用“没看见”推断安全。旧页面重新打开，不重置用户资料。
-- **资料兼容**：保留.baga/BAGAID01/CLBKUP01、SQLite user_version=3、HMAC、稳定ID和legacy种子域。迁移只复制新私有目标并验收，保留源。Python是quota账本唯一writer，跨进程锁/原子替换/新锚点优先；默认被动CLI/statusLine，不加OAuth usage后台轮询、不写.claude.json或旋转共享refresh，额度UI一小时或手动。
-- **正确表述**：随机内部主密钥与PBKDF口令备份分开；没有DPAPI/Argon2迁移。bdf只是比较基线，不是确证fork点。未验证的Python最低版本、无损升级、零泄漏/防封或全第三方许可，不能写成保证。GitHub公开不等于所有组件已许可；源码/安装包校验不等于真实安装验收。
-- **包与文档**：正式build启用custom-protocol，新中性Cargo home/target只复制公共缓存，外部13标记只传私有路径。NSS/UNK合法3字节差异不能当版本不一致，也不手改二进制。README/归属/介绍/交接变更不重建安装包、替换资产、升软件版本或移Tag；`package.json private:true`防npm发布，不是GitHub隐私状态。
-- **维护资料**：43份历史文档整批删除仍无具体批准，旧清单/hash已漂移；不是按年龄自动删除的垃圾。YAML表单检查语法、字段和尾随空白即可，不为文档跑全库。CSS响应式按内容容器宽度而不只看视口。HANDOFF整篇更新前必须备份/hash。
-
-本次收尾前原HANDOFF及SHA256在`.local/tasks/20261026-final-handoff/HANDOFF.before-session-close.md`和`backup-manifest.json`。新会话不要再从“没更新/没打包/没上传/没注明CCBaga/旧远端Tags没处理”重做，先核实用户最新反馈与实际状态。
+1. **绝不提交或还原根目录 `AGENTS.md`**：
+   - `git status` 中未暂存的 `M AGENTS.md` 是用户的本地规则文件改动，**必须原样保留在工作区，绝不能 `git add AGENTS.md`，更不能 `git checkout / restore / reset --hard / clean` 清掉它**。
+2. **绝不执行 `git push --tags`**：
+   - 本地 `.git/refs/tags/` 与 `.local/tasks/20261026-github-presentation/legacy-development-tags.bundle` 中保留了早期开发标签的本地备份（远端已获批清理）。推送新版本标签时**必须显式指定标签名**（如 `git push origin refs/tags/v0.2.0`），严禁运行 `git push --tags` 把旧开发标签重新推上远端。
+3. **纯文档/README 更新绝不重编译安装包或移动已有版本标签**：
+   - 修改 `README.md`、`README_EN.md`、`HANDOFF.md` 或 `docs/` 时，只提交并推送文档 commit，**不要重新生成 `.exe` 替换已发布的 Release 资产，也不要移动已发布的 `v0.2.0` 标签**，确保已公布的 SHA-256 校验和永久有效。
+4. **绝不杀死运行中的 `claude.exe` 或用户浏览器进程**：
+   - 本机通常有正在运行的 `claude.exe` 终端会话。部署更新本机软件时只允许停止并重启精确匹配的 `claude-local.exe` GUI 进程，严禁停止 `claude.exe` 或 `chrome.exe`。
+5. **在 `identities_switch` 测试中注意 `skip_browser_launch`**：
+   - `v0.2.0` 起，当身份库中 `browser.enabled === true`（默认开启联动）时，调用 `identities_switch` 会自动启动新切入账号的内置浏览器（`workspaces::switch_identity` 传入 `launch_on_linked = true`）。因此，在不需要实际拉起 Chromium 窗口的无头/合成测试中，调用 `identities_switch` 应显式传入 `skipBrowserLaunch: true`（Rust 侧 `skip_browser_launch: Some(true)`）。
+6. **响应式与窄窗布局必须同时验证中英文与容器宽度**：
+   - 调整侧边栏（`.app-sidebar`）或悬浮窗（`.monitor-hud`）样式时，务必同时检查中文（`zh`）与英文（`en`，单词更长）在窄视口（`760×640`）和 HUD 固定宽度（`340px`）下是否发生文字截断或溢出（可运行 `node scripts/test-usage-statistics.mjs --layout-only` 与 `node scripts/test-local-shell.mjs` 验证）。
+7. **数据与安全边界红线**：
+   - 绝不在源码、测试或文档中写入任何真实邮箱、账号 UUID、OAuth Token、代理凭据或个人路径；
+   - 额度采集路径绝不向 `.claude.json` 写入数据，Python 是 `quota_ledger.json` 的唯一写入者；
+   - `package.json` 中的 `"private": true` 是防止意外发布到 npm 的保护标记，与 GitHub 仓库公开状态无关，切勿删除。
+8. **重写 `HANDOFF.md` 前必须先备份并校验 SHA-256**：
+   - 本次更新前的上一版 `HANDOFF.md` 已备份于 `.local/tasks/20261026-v0.2.0-handoff/HANDOFF.before-rewrite.md`（SHA-256: `c3e86749377707afc533ab97b205e2674f1d15b77d5fc7adcb1cd15210589a50`），清单见同目录 `backup-manifest.json`。
