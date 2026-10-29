@@ -155,14 +155,15 @@ While preserving compatibility with existing vaults and browser profiles, Claude
 
 ### 1. Latest Windows x64 Installer (`v0.2.2`)
 
-| Asset | Platform |
-| :--- | :--- |
-| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) |
+| Asset | Platform | File Size | SHA-256 Checksum |
+| :--- | :--- | :--- | :--- |
+| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,550,954` bytes (134.04 MiB) | `1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51` |
 
 Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.2.2 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2):
 
 ```powershell
 Get-FileHash .\Claude-Local_0.2.2_x64-setup.exe -Algorithm SHA256
+# Expected SHA-256: 1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51
 ```
 
 ### 2. Installation & Non-Disruptive Upgrade Notes

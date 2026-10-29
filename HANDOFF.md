@@ -1,17 +1,17 @@
 <!--
-[INPUT]: Immutable public v0.2.0 baseline and owner-authorized v0.2.2 release preparation, token-focused telemetry, synthetic verification and retained limitations.
+[INPUT]: Published v0.2.2 delivery, immutable earlier assets, token-focused telemetry, synthetic verification and retained limitations.
 [OUTPUT]: Context-free handoff covering active goal, completed work, current status/blockers, next actions and pitfalls.
 [POS]: Repository-root maintenance handoff; private identities, process details, paths and probes stay in ignored .local/.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only changes do not rebuild binaries, replace assets or move product tags.
 -->
-# Claude-Local 新会话交接文档（v0.2.2 发布准备）
+# Claude-Local 新会话交接文档（v0.2.2）
 
 更新时间：2026-10-29（America/New_York）。
 **写给完全没有上下文的新会话**：请先通读本文、根目录 `AGENTS.md` 与 `CLAUDE.md`；修改具体模块前再阅读对应子目录的 `CLAUDE.md` 与文件头部注释。
 
 ## 本轮增量：v0.2.2
 
-用户已授权发布 v0.2.2；此前 0.2.1 仅为本机维护候选，没有公开发行。目前正在构建与审计新的 Windows x64 安装包，公开 Latest 暂为 v0.2.0；发布完成后更新本节。下方 v0.2.0 内容保留为历史交付基线。
+**v0.2.2 已正式发布为 GitHub Latest，本机已无中断更新至 0.2.2。** 此前 0.2.1 仅为本机维护候选，没有公开发行。下方 v0.2.0 内容保留为历史交付基线，当前状态以本节及 `docs/RELEASE_VERIFICATION_0.2.2_USAGE.md` 为准。
 
 - 统计身份独立于归档登记；受控新登录后可统计续聊产生的新响应；保留请求去重、账号证据与四类 Token 总量守恒。已有历史默认规则限制在固定截止时间内，不扩大到未来记录。
 - 用量页突出四类 Token 构成、明确会话/活跃日、去重响应、全部模型与 Effort。移除美元猜价；账号下拉仅显示“全部”和动态正常账号，不再呈现历史规则或内部归属状态。
@@ -19,6 +19,9 @@
 - 公开说明见 `docs/RELEASE_NOTES_0.2.2_USAGE.md`。`docs/USAGE_RELIABILITY_0.2.1.md` 仅记录维护候选的工程过程；当前界面以 0.2.2 为准。新用量图为合成、遮罩示例，其他 README 页面保留标注版本的历史图片。
 - 私有维护、账号核验和本机运行回执保存在忽略的 `.local/` 中，不属于源码或发行材料。发布不得引用真实账号、机器路径、账本、个人截图或配置。预存 `AGENTS.md` 改动保持原样且不提交。
 - v0.2.0 标签与已公布安装包保持不可变。新版本使用独立标签、全新中性路径构建、解包资源/隐私审计与 SHA256；不执行真实安装/卸载向导，不中断 Claude CLI 或用户浏览器。
+- 产品标签 `v0.2.2` 固定指向 `5f6ead951a573d29772f2d5a85ae9f01d889976c`；[Windows CI](https://github.com/yq04/Claude-Local/actions/runs/40818011121) 全部通过。后续文档提交可以推进分支，不移动产品标签或替换已发布资产。
+- [正式 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2) 为 `draft=false, prerelease=false`。安装包 `Claude-Local_0.2.2_x64-setup.exe` 大小 `140,550,954` 字节；SHA256 `1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51`，已与 GitHub 服务端摘要一致；另提供 `SHA256SUMS.txt`。
+- 解包审计核对 109 个文件，29 项本机隐私探针无发现；仅选定安装包和校验和上传，真实数据、探针内容和维护回执均未入库或上传。本机更新有资源备份及哈希复核，原 CLI 进程保持运行。
 
 ---
 

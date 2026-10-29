@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Version 0.2.2 account-attribution reliability, token-focused analytics and account-isolated shared-ledger HUD.
+[INPUT]: Version 0.2.2 account-attribution reliability, token-focused analytics, account-isolated shared-ledger HUD and audited installer receipts.
 [OUTPUT]: Bilingual public release notes for Claude-Local v0.2.2 without private runtime data or unverified artifact values.
 [POS]: Current public release description; the older RELEASE_NOTES_0.2.2.md remains a historical development record.
 [PROTOCOL]: Retain CCBaga/MIT attribution and data-format compatibility; record artifact checksums only from the audited build.
@@ -10,6 +10,17 @@
 
 Windows 10 / 11 x64 · [下载安装包](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)
 
+安装包 / Installer: `Claude-Local_0.2.2_x64-setup.exe` · `140,550,954` bytes (134.04 MiB)
+
+SHA-256: `1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51`
+
+源码 / Source: [`5f6ead951a573d29772f2d5a85ae9f01d889976c`](https://github.com/yq04/Claude-Local/commit/5f6ead951a573d29772f2d5a85ae9f01d889976c)
+
+```powershell
+Get-FileHash .\Claude-Local_0.2.2_x64-setup.exe -Algorithm SHA256
+# Expected SHA-256: 1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51
+```
+
 ## 简体中文
 
 0.2.2 改善新账号与续聊记录的统计归属，并将用量页和悬浮监控窗统一为有记录依据的 Token 指标。
@@ -19,7 +30,9 @@ Windows 10 / 11 x64 · [下载安装包](https://github.com/yq04/Claude-Local/re
 - **HUD 与用量页共享账本**：按当前账号显示滚动近 5 小时 Token、四类构成、缓存命中与近 10 分钟平均 `tok/m`。无法确认账号或读取失败时显示未知；移除假定上下文容量和缺少依据的耗尽时间预测。
 - **保留现有工作流**：继续支持时间/账号筛选、IANA/DST、TSV 导出和 HUD 三态、置顶、锁定、磁吸、自动隐藏、透明度与主题同步。已有身份库、`.baga` 归档、密钥及浏览器资料格式保持兼容。
 
-Token 统计来自本地已有记录，不能换算为订阅账单或剩余额度。升级前建议导出口令加密备份；安装包大小与 SHA-256 以本次 Release 的实际产物记录为准。README 用量页为 0.2.2 合成截图，其他页面保留标注版本的旧版示例。
+本次安装包通过 109 个资源文件的审计，29 项私有隐私探针均无发现；相关合成检查已通过。这些检查不等于真实账号授权或安装/卸载向导全生命周期验收。
+
+Token 统计来自本地已有记录，不能换算为订阅账单或剩余额度。升级前建议导出口令加密备份。README 用量页为 0.2.2 合成截图，其他页面保留标注版本的旧版示例。
 
 ## English
 
@@ -32,4 +45,6 @@ Version 0.2.2 improves attribution for new accounts and resumed sessions, and al
 - **One ledger for analytics and HUD**: Filters by the current account and shows rolling 5h tokens, composition, cache hit rate, and a fixed 10-minute average `tok/m`. Unverified accounts or read failures show unknown values. Removes assumed context capacity and unsupported exhaustion-time predictions.
 - **Existing workflows preserved**: Retains time/account filters, IANA/DST, TSV export, and HUD modes, Pin, Lock, snap, auto-hide, opacity, and theme sync. Existing vaults, `.baga` archives, keys, and browser profiles remain format-compatible.
 
-Local token records do not convert to subscription charges or remaining quota. Export a password-encrypted backup before upgrading. Installer size and SHA-256 come from this Release's actual build records. README usage images show synthetic 0.2.2 data; other pages retain labeled historical examples.
+The installer passed an audit covering 109 resource files, and all 29 private privacy probes returned no findings. Relevant synthetic checks passed. These checks do not establish live account authorization or full installer/uninstaller lifecycle acceptance.
+
+Local token records do not convert to subscription charges or remaining quota. Export a password-encrypted backup before upgrading. README usage images show synthetic 0.2.2 data; other pages retain labeled historical examples.

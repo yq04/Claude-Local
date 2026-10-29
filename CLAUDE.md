@@ -61,6 +61,7 @@ docs/RELEASE_VERIFICATION_0.1.5_UI.md - Current source CI, audited installer/ser
 docs/UI_MONITOR_0.2.0.md - Version 0.2.0 nine-point UI/UX refinement, Token Monitor-inspired multi-mode HUD (pin, lock, magnetic edge snap, edge auto-hide/collapse capsule, opacity slider, theme/wallpaper sync), official Anthropic API USD cost & cache savings analytics, and linked browser auto-open on account switch.
 docs/USAGE_RELIABILITY_0.2.1.md - Local maintenance candidate: independent statistics identities, controlled new-login/session attribution, historical fallback cutoff, conserved unknown totals, verified activity, token composition and account-isolated shared HUD; public v0.2.0 artifacts stay immutable.
 docs/RELEASE_NOTES_0.2.2_USAGE.md - Public bilingual 0.2.2 release notes for reliable account statistics, ordinary account-only filters and token-focused analytics/shared HUD; no private account or workstation receipts.
+docs/RELEASE_VERIFICATION_0.2.2_USAGE.md - Fixed 0.2.2 source/CI, neutral NSIS payload/privacy checks, GitHub asset digest and backed-up local GUI update; no real-account switching or installer lifecycle claim.
 README_EN.md - Full English companion README linked bidirectionally with README.md, using synthetic English 1280x900 screenshots and identical safety/attribution boundaries.
 docs/screenshots/ - README screenshots of the actual frontend with synthetic data, masked reserved-domain emails, no real identity/network/path information or embedded text/EXIF metadata; see its source and privacy notes.
 

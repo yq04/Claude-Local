@@ -164,14 +164,15 @@ Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **W
 
 ### 1. 下载最新安装包（`v0.2.2`）
 
-| 发行资产 | 适用系统 |
-| :--- | :--- |
-| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) |
+| 发行资产 | 适用系统 | 文件大小 | SHA-256 校验和 |
+| :--- | :--- | :--- | :--- |
+| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,550,954` 字节 (134.04 MiB) | `1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51` |
 
 下载后在 PowerShell 中计算 SHA-256，并与 [v0.2.2 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2) 公布的校验值比对：
 
 ```powershell
 Get-FileHash .\Claude-Local_0.2.2_x64-setup.exe -Algorithm SHA256
+# 预期 SHA-256：1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51
 ```
 
 ### 2. 安装与无损升级说明
