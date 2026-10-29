@@ -1,5 +1,5 @@
 # [INPUT]: Voluntary redacted contributor feedback.
-# [OUTPUT]: Public versioned/diagnostic feedback with privacy confirmation.
+# [OUTPUT]: Public versioned/diagnostic feedback for the 0.2.2 release series with privacy confirmation.
 # [POS]: GitHub presentation only; no app runtime or secret collection.
 name: 缺陷反馈 (Bug Report)
 description: 提交 Claude-Local 在 Windows x64 运行中遇到的错误或异常
@@ -18,7 +18,9 @@ body:
       label: 发生版本 (App Version)
       description: 请选择您当前运行的 Claude-Local 版本（可从主界面或安装包文件名确认）
       options:
-        - "0.1.5 (当前最新)"
+        - "0.2.2 (当前最新 / Latest)"
+        - "0.2.0"
+        - "0.1.5"
         - "0.1.4"
         - "0.1.3"
         - "0.1.2"

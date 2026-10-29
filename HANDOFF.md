@@ -1,15 +1,28 @@
 <!--
-[INPUT]: Final v0.2.0 repository/release state, checked product delivery, bilingual README/README_EN, synthetic previews, owner preferences and retained limitations.
+[INPUT]: Immutable public v0.2.0 baseline and owner-authorized v0.2.2 release preparation, token-focused telemetry, synthetic verification and retained limitations.
 [OUTPUT]: Context-free handoff covering active goal, completed work, current status/blockers, next actions and pitfalls.
 [POS]: Repository-root maintenance handoff; private identities, process details, paths and probes stay in ignored .local/.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only changes do not rebuild binaries, replace assets or move product tags.
 -->
-# Claude-Local 新会话交接文档（v0.2.0）
+# Claude-Local 新会话交接文档（v0.2.2 发布准备）
 
-更新时间：2026-10-26 22:48（America/New_York）。
+更新时间：2026-10-29（America/New_York）。
 **写给完全没有上下文的新会话**：请先通读本文、根目录 `AGENTS.md` 与 `CLAUDE.md`；修改具体模块前再阅读对应子目录的 `CLAUDE.md` 与文件头部注释。
 
-> **一句话全局结论**：
+## 本轮增量：v0.2.2
+
+用户已授权发布 v0.2.2；此前 0.2.1 仅为本机维护候选，没有公开发行。目前正在构建与审计新的 Windows x64 安装包，公开 Latest 暂为 v0.2.0；发布完成后更新本节。下方 v0.2.0 内容保留为历史交付基线。
+
+- 统计身份独立于归档登记；受控新登录后可统计续聊产生的新响应；保留请求去重、账号证据与四类 Token 总量守恒。已有历史默认规则限制在固定截止时间内，不扩大到未来记录。
+- 用量页突出四类 Token 构成、明确会话/活跃日、去重响应、全部模型与 Effort。移除美元猜价；账号下拉仅显示“全部”和动态正常账号，不再呈现历史规则或内部归属状态。
+- 小窗与用量页共享按账号隔离的账本，显示滚动近 5 小时用量及近 10 分钟平均速率；保留配额来源、重置时刻与三态窗口能力，移除无证据的上下文/耗尽预测。
+- 公开说明见 `docs/RELEASE_NOTES_0.2.2_USAGE.md`。`docs/USAGE_RELIABILITY_0.2.1.md` 仅记录维护候选的工程过程；当前界面以 0.2.2 为准。新用量图为合成、遮罩示例，其他 README 页面保留标注版本的历史图片。
+- 私有维护、账号核验和本机运行回执保存在忽略的 `.local/` 中，不属于源码或发行材料。发布不得引用真实账号、机器路径、账本、个人截图或配置。预存 `AGENTS.md` 改动保持原样且不提交。
+- v0.2.0 标签与已公布安装包保持不可变。新版本使用独立标签、全新中性路径构建、解包资源/隐私审计与 SHA256；不执行真实安装/卸载向导，不中断 Claude CLI 或用户浏览器。
+
+---
+
+> **v0.2.0 公开基线结论（历史交付记录）**：
 > **Claude-Local `v0.2.0` 已全部开发、验证、打包、更新本机并正式发布至 GitHub Release（Latest）**。本机 `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 已无中断升级至 `0.2.0`；GitHub 仓库已完成中英双语旗舰级 `README.md` / `README_EN.md`、13 张合成脱敏截图（`docs/screenshots/0.2.0/`）、仓库 About 简介与 `v0.2.0` Release 页面升级。**当前没有任何代码、测试、打包或发布阻塞**；新会话切勿无故重打包、移动 `v0.2.0` 标签、强杀运行中的 `claude.exe` 或提交 `AGENTS.md`。
 
 ---

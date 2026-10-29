@@ -1,10 +1,10 @@
 /*
  * [INPUT]: Shared application theme variables and Usage analytics components.
- * [OUTPUT]: Account selector sized to its selected label, compact filter console, uniform metrics, responsive analysis panels, muted header update indicators with compact TSV/refresh groups, concise timezone captions, and sortable period tables; control skins remain shared with Cromma UI.
+ * [OUTPUT]: Token-first composition overview, four activity/cache cards, full model distribution and responsive trend/tables with a concise All/account selector; control skins remain shared with Cromma UI.
  * [POS]: Usage page styles; respects accent, dark theme, compact sidebar and shared margins.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
-.usage-page { --usage-total: var(--local-accent); --usage-secondary: color-mix(in srgb, var(--foreground) 76%, var(--panel)); }
+.usage-page { --usage-total: var(--local-accent); --usage-secondary: color-mix(in srgb, var(--foreground) 76%, var(--panel)); --usage-input: #6086cf; --usage-output: #ad7ad4; --usage-write: #d49b4e; --usage-read: #4ba995; }
 .usage-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; flex-shrink: 0; }
 .usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .usage-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--usage-secondary); min-width: 0; }
@@ -30,19 +30,34 @@
 .usage-context strong { color: var(--foreground); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .usage-context > span { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-tz-caption { font-family: var(--font-mono); font-weight: 500; font-size: 10.5px; cursor: default; }
+.usage-overview { display: grid; gap: 12px; min-width: 0; }
+.usage-total-card { display: flex; flex-direction: column; gap: 18px; min-width: 0; padding: 20px; }
+.usage-total-value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; font: 650 48px/1.1 var(--font-sans); font-variant-numeric: tabular-nums; letter-spacing: -1.5px; overflow-wrap: anywhere; }
+.usage-total-value small { font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--muted-foreground); }
+.usage-total-card .usage-metric-heading > small { margin-left: auto; font-size: 11px; font-weight: 400; }
+.usage-composition { min-width: 0; }
+.usage-composition-track { display: flex; gap: 2px; width: 100%; height: 7px; border-radius: 5px; overflow: hidden; background: var(--muted); }
+.usage-composition-track > span { min-width: 0; height: 100%; }
+.usage-composition-track > span[data-token-kind="input"], [data-token-kind="input"] dt i { background: var(--usage-input); }
+.usage-composition-track > span[data-token-kind="output"], [data-token-kind="output"] dt i { background: var(--usage-output); }
+.usage-composition-track > span[data-token-kind="cacheWrite"], [data-token-kind="cacheWrite"] dt i { background: var(--usage-write); }
+.usage-composition-track > span[data-token-kind="cacheRead"], [data-token-kind="cacheRead"] dt i { background: var(--usage-read); }
+.usage-composition.has-details .usage-composition-track { height: 12px; border-radius: 6px; }
+.usage-composition-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 17px 20px; margin: 20px 0 0; }
+.usage-composition-details > div { min-width: 0; }
+.usage-composition-details dt { display: flex; align-items: center; gap: 6px; color: var(--usage-secondary); font-size: 11.5px; }
+.usage-composition-details dt i { width: 7px; height: 7px; flex-shrink: 0; border-radius: 2px; }
+.usage-composition-details dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; margin: 6px 0 0 13px; font-size: 22px; font-weight: 600; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.usage-composition-details dd small { color: var(--muted-foreground); font-size: 11px; font-weight: 400; }
+.usage-overview-note { margin: auto 0 0; padding-top: 12px; border-top: 1px solid var(--landing-line); font-size: 11px; line-height: 1.6; color: var(--muted-foreground); }
+.usage-composition-placeholder { display: grid; place-items: center; flex: 1; min-height: 110px; color: var(--muted-foreground); font-size: 12px; }
 .usage-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.usage-metric { display: flex; flex-direction: column; gap: 10px; padding: 15px 16px; min-width: 0; }
+.usage-metric { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0; }
 .usage-metric-heading { display: flex; align-items: center; gap: 9px; color: var(--usage-secondary); font-size: 13px; font-weight: 600; }
 .usage-metric-icon { display: grid; place-items: center; width: 27px; height: 27px; flex-shrink: 0; border-radius: 8px; color: var(--local-accent-ink); background: var(--local-accent-soft); }
 .usage-metric > strong { font: 650 31px/1.15 var(--font-sans); font-variant-numeric: tabular-nums; letter-spacing: -.7px; overflow-wrap: anywhere; }
 .usage-metric > small { font-size: 11px; line-height: 1.6; color: var(--usage-secondary); margin-top: auto; }
-.usage-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 12px; padding: 13px 0; }
-.usage-details > div { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; padding: 2px 15px; min-width: 0; border-right: 1px solid var(--landing-line); }
-.usage-details > div:nth-child(3n) { border-right: 0; }
-.usage-details span { font-size: 11.5px; color: var(--usage-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.usage-details strong { font-size: 15.5px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; color: var(--foreground); }
-.usage-details strong.usage-cost-value { color: var(--local-accent); }
-.usage-details strong.usage-savings-value { color: #10b981; }
+.usage-metric > small b { color: var(--foreground); font-weight: 600; }
 .usage-group-heading { flex-wrap: wrap; gap: 8px; }
 .usage-group-heading h2 { font-size: 15px; }
 .usage-section-caption { display: inline-grid; place-items: center; padding: 2px 6px; border-radius: 5px; background: var(--muted); font-size: 11px; color: var(--usage-secondary); font-variant-numeric: tabular-nums; }
@@ -91,6 +106,7 @@
 .usage-model-row small { font-size: 12px; color: var(--usage-secondary); font-weight: 400; }
 .usage-model-caption { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px 8px; margin-top: 7px; }
 .usage-model-caption small { font-size: 11px; font-variant-numeric: tabular-nums; }
+.usage-model-row > .usage-composition { margin-top: 10px; }
 .usage-model-track { height: 7px; border-radius: 6px; background: var(--muted); overflow: hidden; }
 .usage-model-track > span { display: block; height: 100%; border-radius: inherit; background: var(--usage-total); }
 .usage-model-efforts { margin-top: 10px; padding: 9px 11px; border-radius: 8px; background: color-mix(in srgb, var(--muted) 50%, transparent); border: 1px solid var(--landing-line); display: grid; gap: 7px; min-width: 0; }
@@ -132,12 +148,8 @@
 .usage-account-name > span { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
 .usage-account-name small { color: var(--usage-secondary); font-size: 12px; font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
 .usage-account-name em { color: var(--local-accent-ink); font-size: 11px; font-style: normal; background: var(--local-accent-soft); border-radius: 4px; padding: 2px 5px; }
-.usage-notice, .usage-history-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 16px; border: 1px solid var(--landing-line); border-radius: 12px; background: var(--muted); font-size: 12px; line-height: 1.7; }
-.usage-notice { display: grid; gap: 3px; }
-.usage-notice > span, .usage-history-note span { color: var(--usage-secondary); }
-.usage-history-note > div { display: grid; gap: 3px; flex: 1 1 260px; }
-.usage-accounts-card .usage-history-note { margin: 12px 16px; background: var(--background); border-style: dashed; border-radius: 8px; }
-.usage-history-note strong, .usage-notice strong { font-weight: 600; font-size: 13px; }
+.usage-notice { display: grid; gap: 3px; padding: 13px 16px; border: 1px solid var(--landing-line); border-radius: 12px; background: var(--muted); font-size: 12px; line-height: 1.7; }
+.usage-notice > span { color: var(--usage-secondary); }
 .usage-empty { display: grid; gap: 6px; padding: 16px; text-align: center; color: var(--usage-secondary); font-size: 13px; line-height: 1.7; border: 1px dashed var(--landing-line); border-radius: 12px; }
 .usage-empty strong { color: var(--foreground); font-weight: 550; }
 .usage-model-empty { grid-column: 1 / -1; padding: 16px; font-size: 13px; color: var(--usage-secondary); text-align: center; }
@@ -145,13 +157,8 @@
 .usage-method-trigger { padding: 13px 16px; font-weight: 600; font-size: 13px; }
 .usage-method-body { display: grid; gap: 8px; padding: 0 16px 15px; color: var(--usage-secondary); }
 .usage-error { margin: 0; overflow-wrap: anywhere; }
-@container usage (min-width: 660px) {
-  .usage-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
-@container usage (min-width: 720px) {
-  .usage-details { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  .usage-details > div:nth-child(3n) { border-right: 1px solid var(--landing-line); }
-  .usage-details > div:last-child { border-right: 0; }
+@container usage (min-width: 760px) {
+  .usage-overview { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
 }
 @container usage (min-width: 860px) {
   .usage-analysis-grid[data-trend-view="chart"] { grid-template-columns: minmax(0, 1.9fr) minmax(260px, 1fr); align-items: stretch; }
@@ -165,8 +172,13 @@
   .usage-panel-header { padding: 13px 14px; }
   .usage-chart-body { padding-inline: 9px; }
   .usage-chart-summary { padding-inline: 15px; gap: 12px 22px; }
-  .usage-details > div { display: grid; padding: 0 12px; }
   .usage-table th, .usage-table td { padding: 11px; }
+}
+@container usage (max-width: 380px) {
+  .usage-summary { grid-template-columns: minmax(0, 1fr); }
+  .usage-total-card { padding: 16px; }
+  .usage-total-value { font-size: 40px; }
+  .usage-composition-details { gap: 16px 10px; }
 }
 @media (max-width: 760px) {
   .usage-header-actions { gap: 8px; }

@@ -1,5 +1,5 @@
 // [INPUT]: Synthetic token counters and fixed local calendar dates.
-// [OUTPUT]: Cache denominator, precise counters, calendar spans and elapsed-only trend summary regressions.
+// [OUTPUT]: Four-part composition, cache denominator, precise counters, calendar spans and elapsed-only trend summary regressions.
 // [POS]: Pure presentation tests; no runtime identities or browser profiles.
 // [PROTOCOL]: Keep tests proportional to the usage presentation contract.
 import {expect, test} from 'bun:test';
@@ -8,12 +8,9 @@ import {
   dailySeries,
   detectModelFamily,
   emptyUsage,
-  estimateSnapshotCostUsd,
-  estimateTotalsCostUsd,
   formatUsageNumber,
-  formatUsdCost,
-  resolveModelPricing,
   summarizeUsageTrend,
+  tokenComposition,
 } from './usage-model';
 
 test('cache hits include creation and uncached prompt tokens in the denominator', () => {
@@ -110,47 +107,14 @@ test('detectModelFamily classifies Opus, Sonnet, Fable and Haiku identifiers cle
   expect(detectModelFamily('claude-test-model')).toEqual({key: 'other', label: null});
 });
 
-test('estimates USD API cost and prompt cache savings across Opus, Sonnet, and Haiku tiers', () => {
-  expect(resolveModelPricing('claude-opus-4-6')).toEqual({
-    inputPerM: 5.0,
-    outputPerM: 25.0,
-    cacheWritePerM: 6.25,
-    cacheReadPerM: 0.5,
-  });
-  expect(resolveModelPricing('claude-sonnet-4-5')).toEqual({
-    inputPerM: 3.0,
-    outputPerM: 15.0,
-    cacheWritePerM: 3.75,
-    cacheReadPerM: 0.3,
-  });
-  const sonnetTotals = {
-    ...emptyUsage(),
-    input_tokens: 1_000_000,
-    output_tokens: 200_000,
-    cache_creation_tokens: 400_000,
-    cache_read_tokens: 2_000_000,
-  };
-  const sonnetCost = estimateTotalsCostUsd(sonnetTotals, 'claude-sonnet-4-5');
-  // 1M * $3 + 0.2M * $15 + 0.4M * $3.75 + 2M * $0.30 = $3 + $3 + $1.50 + $0.60 = $8.10
-  expect(sonnetCost.costUsd).toBeCloseTo(8.1, 5);
-  // 2M * ($3.00 - $0.30) = $5.40
-  expect(sonnetCost.cacheSavingsUsd).toBeCloseTo(5.4, 5);
-
-  const snapshotCost = estimateSnapshotCostUsd(
-    {
-      ...sonnetTotals,
-      input_tokens: 1_500_000,
-      output_tokens: 300_000,
-    },
-    [
-      {model: 'claude-sonnet-4-5', totals: sonnetTotals},
-      {model: 'claude-haiku-4-5', totals: {...emptyUsage(), input_tokens: 500_000, output_tokens: 100_000}},
-    ],
-  );
-  // $8.10 + (0.5M * $1 + 0.1M * $5 = $1.00) = $9.10
-  expect(snapshotCost.costUsd).toBeCloseTo(9.1, 5);
-  expect(formatUsdCost(0)).toBe('$0.00');
-  expect(formatUsdCost(0.0042)).toBe('<$0.01');
-  expect(formatUsdCost(8.1)).toBe('$8.10');
-  expect(formatUsdCost(142.75)).toBe('$142.75');
+test('composition preserves four disjoint counters and uses all tokens as its denominator', () => {
+  const totals = {...emptyUsage(), input_tokens: 10, output_tokens: 20, cache_creation_tokens: 30, cache_read_tokens: 40, total_tokens: 100, reasoning_tokens: 12};
+  expect(tokenComposition(totals)).toEqual([
+    {kind: 'input', tokens: 10, share: 0.1},
+    {kind: 'output', tokens: 20, share: 0.2},
+    {kind: 'cacheWrite', tokens: 30, share: 0.3},
+    {kind: 'cacheRead', tokens: 40, share: 0.4},
+  ]);
+  expect(tokenComposition(emptyUsage()).every(part => part.share === 0)).toBe(true);
+  expect(tokenComposition(totals).reduce((sum, part) => sum + part.tokens, 0)).toBe(100);
 });

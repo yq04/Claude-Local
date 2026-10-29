@@ -1,17 +1,17 @@
 /**
  * [INPUT]: Native numeric usage aggregates, shared locale and display/privacy preferences.
- * [OUTPUT]: Label-sized account filters, fallback-attributed metrics, responsive trend/model panels, sortable time-bucket views, muted header update indicators with compact TSV/refresh actions, concise IANA timezone tooltips and non-intrusive method coverage disclosures; period and chart/data switches use Cromma Tabs, the method note uses Disclosure.
+ * [OUTPUT]: Token-first overview with four-part composition, recorded session/day activity, full model distribution, a concise All/account selector, responsive trend/data views and scoped TSV actions.
  * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh, no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
-import {useEffect, useMemo, useState, type ReactNode} from 'react';
+import {useEffect, useState, type ReactNode} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {Button, Disclosure, Select, Tabs} from 'cromma-ui';
 import {Refresh} from 'cromma-ui/pika';
 import {useI18n} from './i18n';
 import {usePageRefresh} from './app-events';
 import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
-import {cacheHitRate, dailySeries, detectModelFamily, estimateSnapshotCostUsd, estimateTotalsCostUsd, formatUsdCost, formatUsageNumber, summarizeUsageTrend, type UsagePeriod, type UsageSnapshot, type UsageTotals} from './usage-model';
+import {cacheHitRate, dailySeries, detectModelFamily, formatUsageNumber, summarizeUsageTrend, tokenComposition, type UsagePeriod, type UsageSnapshot, type UsageTotals} from './usage-model';
 import {UsageTrend} from './usage-trend';
 import {UsageTrendTable} from './usage-table';
 import {buildUsageTsv} from './usage-export';
@@ -27,10 +27,27 @@ function GroupTitle({children, aside}: {children: ReactNode; aside?: ReactNode})
   return <div className="settings-group-heading usage-group-heading"><span className="settings-group-bar" aria-hidden="true" /><h2>{children}</h2>{aside && <span className="usage-section-caption">{aside}</span>}</div>;
 }
 
-function MetricGlyph({kind}: {kind: 'total' | 'input' | 'output' | 'cache'}) {
+function MetricGlyph({kind}: {kind: 'total' | 'input' | 'output' | 'cache' | 'sessions' | 'days' | 'responses'}) {
   return <span className="usage-metric-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-    {kind === 'total' ? <><path d="m12 3 8 4-8 4-8-4 8-4Z" /><path d="m4 12 8 4 8-4M4 17l8 4 8-4" /></> : kind === 'input' ? <><path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4" /></> : kind === 'output' ? <><path d="M12 16V4m-4 4 4-4 4 4M5 17v4h14v-4" /></> : <><ellipse cx="12" cy="5" rx="7" ry="3" /><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0" /></>}
+    {kind === 'total' ? <><path d="m12 3 8 4-8 4-8-4 8-4Z" /><path d="m4 12 8 4 8-4M4 17l8 4 8-4" /></> : kind === 'sessions' || kind === 'responses' ? <><path d="M4 4h16v12H9l-5 4V4Z" />{kind === 'responses' && <path d="m8 10 3 3 5-6" />}</> : kind === 'days' ? <><rect x="4" y="5" width="16" height="16" rx="2" /><path d="M8 3v4m8-4v4M4 10h16m-11 5 2 2 4-4" /></> : kind === 'input' ? <><path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4" /></> : kind === 'output' ? <><path d="M12 16V4m-4 4 4-4 4 4M5 17v4h14v-4" /></> : <><ellipse cx="12" cy="5" rx="7" ry="3" /><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0" /></>}
   </svg></span>;
+}
+
+function TokenComposition({totals, details = false}: {totals: UsageTotals; details?: boolean}) {
+  const {t, locale} = useI18n();
+  const parts = tokenComposition(totals);
+  const number = (value: number, compact = false) => formatUsageNumber(value, locale, compact);
+  const share = (value: number) => new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {style: 'percent', maximumFractionDigits: 1}).format(value);
+  const description = parts.map(part => `${t(`usage.${part.kind}`)}: ${number(part.tokens)} (${share(part.share)})`).join(' · ');
+  return <div className={`usage-composition${details ? ' has-details' : ''}`}>
+    <div className="usage-composition-track" role="img" aria-label={`${t('usage.composition')}: ${description}`} title={description}>
+      {parts.map(part => <span key={part.kind} data-token-kind={part.kind} style={{width: `${Math.min(100, part.share * 100)}%`}} />)}
+    </div>
+    {details && <dl className="usage-composition-details">{parts.map(part => <div key={part.kind} data-token-kind={part.kind}>
+      <dt><i aria-hidden="true" />{t(`usage.${part.kind}`)}</dt>
+      <dd title={number(part.tokens)}>{number(part.tokens, true)}<small>{share(part.share)}</small></dd>
+    </div>)}</dl>}
+  </div>;
 }
 
 export function UsageStatisticsPanel() {
@@ -94,7 +111,7 @@ export function UsageStatisticsPanel() {
   const range = snapshot ? days.length > 1 && days[0].day.slice(0, 10) !== days.at(-1)!.day.slice(0, 10) ? `${dateLabel(days[0].day)} – ${dateLabel(days.at(-1)!.day)}` : dateLabel(days[0].day) : '—';
   const isHourly = period === 'today' || period === 'yesterday';
   const peakLabel = trend.peak ? isHourly ? trend.peak.day.slice(11) : new Date(`${trend.peak.day}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric'}) : '';
-  const selectedAccount = account === 'all' ? t('usage.allAccounts') : prefs.privacyMask ? t('usage.account') : snapshot?.accounts.find(item => item.id === account)?.name ?? t('usage.allAccounts');
+  const selectedAccount = account === 'all' ? t('usage.allAccounts') : prefs.privacyMask ? t('usage.account') : snapshot?.accounts.find(item => item.id === account)?.name ?? t('usage.account');
   const offsetMinutes = -new Date().getTimezoneOffset();
   const offsetZone = `UTC${offsetMinutes >= 0 ? '+' : '-'}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0')}:${String(Math.abs(offsetMinutes) % 60).padStart(2, '0')}`;
   const activeTz = snapshot?.timezone || timezone;
@@ -113,9 +130,10 @@ export function UsageStatisticsPanel() {
     }
   })();
   const dstType = isHourly ? getDstDayType(days) : null;
-  const costSummary = useMemo(() => estimateSnapshotCostUsd(totals, models), [totals, models]);
+  const sessions = snapshot?.activity?.sessions ?? totals?.sessions;
+  const activeDays = snapshot?.activity?.active_days;
 
-  const makeExport = () => snapshot ? buildUsageTsv({snapshot, period, periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'), accountLabel: selectedAccount, accountIsAll: account === 'all', timezone: snapshot.timezone || timezone || offsetZone, privacy: prefs.privacyMask, days, generatedLabel: new Date(snapshot.generated_at * 1000).toISOString(), coverageLabel: snapshot.tracking_since == null ? t('usage.exportCoverageUnknown') : `${new Date(snapshot.tracking_since * 1000).toISOString()} – ${new Date(snapshot.generated_at * 1000).toISOString()}`, productLabel: 'Claude-Local', labels: {metadata: t('usage.exportTitle'), summary: t('usage.exportSummary'), daily: t('usage.exportBuckets'), time: t('usage.exportTime'), total: t('usage.total'), input: t('usage.input'), output: t('usage.output'), cacheWrite: t('usage.cacheWrite'), cacheRead: t('usage.cacheRead'), requests: t('usage.requests'), account: t('usage.account'), period: t('usage.periodFilter'), timezone: t('usage.exportTimezone'), generated: t('usage.exportGenerated'), coverage: t('usage.exportCoverage')}}) : '';
+  const makeExport = () => snapshot ? buildUsageTsv({snapshot, period, periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'), accountLabel: selectedAccount, accountIsAll: account === 'all', timezone: snapshot.timezone || timezone || offsetZone, privacy: prefs.privacyMask, days, generatedLabel: new Date(snapshot.generated_at * 1000).toISOString(), coverageLabel: snapshot.tracking_since == null ? t('usage.exportCoverageUnknown') : `${new Date(snapshot.tracking_since * 1000).toISOString()} – ${new Date(snapshot.generated_at * 1000).toISOString()}`, productLabel: 'Claude-Local', labels: {metadata: t('usage.exportTitle'), summary: t('usage.exportSummary'), daily: t('usage.exportBuckets'), time: t('usage.exportTime'), total: t('usage.total'), input: t('usage.input'), output: t('usage.output'), cacheWrite: t('usage.cacheWrite'), cacheRead: t('usage.cacheRead'), requests: t('usage.requests'), sessions: t('usage.sessions'), activeDays: t('usage.activeDays'), account: t('usage.account'), period: t('usage.periodFilter'), timezone: t('usage.exportTimezone'), generated: t('usage.exportGenerated'), coverage: t('usage.exportCoverage')}}) : '';
   const exportTsv = async (download: boolean) => {
     if (!snapshot || busy) return;
     setExportStatus('');
@@ -169,22 +187,19 @@ export function UsageStatisticsPanel() {
         {error && <p role="alert" className="system-feedback error usage-error">{t('usage.readFailed')} {t(error)}</p>}
         {snapshot?.warnings.some(code => code !== 'attribution_gap') ? <div className="usage-notice" role="status"><span>{[...new Set(snapshot.warnings.filter(code => code !== 'attribution_gap').map(code => t(warningKeys[code] ?? 'usage.warning.partial')))].join(' · ')}</span></div> : null}
 
-        <div className="usage-summary" aria-busy={busy}>
-          {([
-            ['usage.total', totals?.total_tokens, 'total'],
-            ['usage.input', totals?.input_tokens, 'input'],
-            ['usage.output', totals?.output_tokens, 'output'],
-          ] as const).map(([label, value, kind]) => <div key={label} data-usage-metric={kind} className="settings-card usage-metric"><div className="usage-metric-heading"><MetricGlyph kind={kind} /><span>{t(label)}</span></div><strong title={num(value)}>{num(value, true)}</strong></div>)}
-          <div data-usage-metric="cache" className="settings-card usage-metric"><div className="usage-metric-heading"><MetricGlyph kind="cache" /><span>{t('usage.cacheHit')}</span></div><strong>{totals ? rate(totals) : '—'}</strong></div>
-        </div>
-
-        <div className="settings-card usage-details">
-          <div><span>{t('usage.requests')}</span><strong title={num(totals?.requests)}>{num(totals?.requests, true)}</strong></div>
-          <div title={t('usage.estimatedCostHint')}><span>{t('usage.estimatedCost')}</span><strong className="usage-cost-value">{totals ? formatUsdCost(costSummary.costUsd) : '—'}</strong></div>
-          <div title={t('usage.cacheSavingsHint')}><span>{t('usage.cacheSavings')}</span><strong className="usage-savings-value">{totals ? formatUsdCost(costSummary.cacheSavingsUsd) : '—'}</strong></div>
-          <div><span>{t('usage.avgPerRequest')}</span><strong title={totals?.requests ? num(Math.round(totals.total_tokens / totals.requests)) : undefined}>{totals?.requests ? num(Math.round(totals.total_tokens / totals.requests), true) : '—'}</strong></div>
-          <div><span>{t('usage.cacheWrite')}</span><strong title={num(totals?.cache_creation_tokens)}>{num(totals?.cache_creation_tokens, true)}</strong></div>
-          <div><span>{t('usage.cacheRead')}</span><strong title={num(totals?.cache_read_tokens)}>{num(totals?.cache_read_tokens, true)}</strong></div>
+        <div className="usage-overview" aria-busy={busy}>
+          <section data-usage-metric="total" className="settings-card usage-total-card">
+            <div className="usage-metric-heading"><MetricGlyph kind="total" /><span>{t('usage.total')}</span><small>{t('usage.composition')}</small></div>
+            <strong className="usage-total-value" title={num(totals?.total_tokens)}>{num(totals?.total_tokens, true)}<small>Token</small></strong>
+            {totals ? <TokenComposition totals={totals} details /> : <div className="usage-composition-placeholder">{t('usage.totalHint')}</div>}
+            <p className="usage-overview-note">{t('usage.scopeNote')}</p>
+          </section>
+          <div className="usage-summary">
+            <div data-usage-metric="cache" className="settings-card usage-metric"><div className="usage-metric-heading"><MetricGlyph kind="cache" /><span>{t('usage.cacheHit')}</span></div><strong>{totals ? rate(totals) : '—'}</strong><small>{t('usage.cacheHitHint')}</small></div>
+            <div data-usage-metric="sessions" className="settings-card usage-metric" title={t('usage.sessionsHint')}><div className="usage-metric-heading"><MetricGlyph kind="sessions" /><span>{t('usage.sessions')}</span></div><strong>{num(sessions, true)}</strong><small>{t(sessions == null ? 'usage.activityUnknown' : 'usage.sessionsHint')}</small></div>
+            <div data-usage-metric="activeDays" className="settings-card usage-metric" title={t('usage.activeDaysHint')}><div className="usage-metric-heading"><MetricGlyph kind="days" /><span>{t('usage.activeDays')}</span></div><strong>{num(activeDays)}</strong><small>{t(activeDays == null ? 'usage.activityUnknown' : 'usage.activeDaysHint')}</small></div>
+            <div data-usage-metric="responses" className="settings-card usage-metric"><div className="usage-metric-heading"><MetricGlyph kind="responses" /><span>{t('usage.requests')}</span></div><strong title={num(totals?.requests)}>{num(totals?.requests, true)}</strong><small>{t('usage.avgPerRequest')} <b title={totals?.requests ? num(Math.round(totals.total_tokens / totals.requests)) : undefined}>{totals?.requests ? num(Math.round(totals.total_tokens / totals.requests), true) : '—'}</b> Token</small></div>
+          </div>
         </div>
 
         {!snapshot && busy && <p className="usage-empty" role="status">{t('usage.firstScan')}</p>}
@@ -202,25 +217,26 @@ export function UsageStatisticsPanel() {
             <div className="usage-chart-caption"><span><i aria-hidden="true" />{t('usage.total')}</span><span>{t(trendView === 'chart' ? 'usage.trendHint' : 'usage.tableHint')}</span></div>
           </section>
           <section className="settings-card usage-model-card">
-            <div className="usage-panel-header"><div><GroupTitle aside={String(models.length)}>{t('usage.models')}</GroupTitle></div></div>
+            <div className="usage-panel-header"><div><GroupTitle aside={String(models.length)}>{t('usage.models')}</GroupTitle><p>{t('usage.modelsHint')}</p></div></div>
             <div className="usage-models">
-              {models.length ? models.slice(0, 6).map(row => {
+              {models.length ? models.map(row => {
                 const family = detectModelFamily(row.model);
                 const efforts = row.efforts ?? [];
                 return (
                   <div className="usage-model-row" key={row.model} data-model-family={family.key}>
                     <div>
                       <span className="usage-model-title">
-                        {row.model !== 'unknown' && <em className="usage-model-family" data-family={family.key}>{family.label}</em>}
+                        {family.label && <em className="usage-model-family" data-family={family.key}>{family.label}</em>}
                         <strong title={row.model === 'unknown' ? t('usage.unknownModel') : row.model}>{row.model === 'unknown' ? t('usage.unknownModel') : row.model}</strong>
                       </span>
-                      <span title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</span>
+                      <span title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}<small>{percent(totals?.total_tokens ? row.totals.total_tokens / totals.total_tokens : 0)}</small></span>
                     </div>
                     <div className="usage-model-track"><span style={{width: `${totals?.total_tokens ? Math.min(100, row.totals.total_tokens / totals.total_tokens * 100) : 0}%`}} /></div>
                     <div className="usage-model-caption">
-                      <small>{t('usage.responseCount', {n: num(row.totals.requests, true)})} · {t('usage.output')} {num(row.totals.output_tokens, true)} · {formatUsdCost(estimateTotalsCostUsd(row.totals, row.model).costUsd)}</small>
-                      <small>{t('usage.modelShare', {share: percent(totals?.total_tokens ? row.totals.total_tokens / totals.total_tokens : 0)})}</small>
+                      <small>{t('usage.responseCount', {n: num(row.totals.requests, true)})}</small>
+                      <small>{t('usage.cacheHit')} {rate(row.totals)}</small>
                     </div>
+                    <TokenComposition totals={row.totals} />
                     {efforts.length > 0 && (
                       <div className="usage-model-efforts" aria-label={t('usage.effortBreakdown')}>
                         <div className="usage-effort-header">
@@ -258,14 +274,15 @@ export function UsageStatisticsPanel() {
           <section className="settings-card usage-accounts-card">
             <div className="usage-panel-header"><div><GroupTitle aside={String(sortedAccounts.length)}>{t('usage.accounts')}</GroupTitle></div></div>
             <div className="usage-table-wrap" role="region" aria-label={t('usage.accounts')} tabIndex={0}>
-              <table className="usage-table" aria-label={t('usage.accounts')}><thead><tr><th scope="col">{t('usage.account')}</th><th scope="col">{t('usage.total')}</th><th scope="col">{t('usage.input')}</th><th scope="col">{t('usage.output')}</th><th scope="col">{t('usage.cacheRead')}</th><th scope="col">{t('usage.cacheHit')}</th></tr></thead>
-                <tbody>{sortedAccounts.map(row => <tr key={row.id} className={account === row.id ? 'usage-row-selected' : ''}><th scope="row"><button type="button" className="usage-account-name" onClick={() => setAccount(row.id)}><span>{maskDisplayName(row.name, row.email, prefs.privacyMask)}{row.current && <em>{t('usage.current')}</em>}</span>{row.email && <small>{maskEmailAddress(row.email, prefs.privacyMask)}</small>}</button></th><td title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</td><td title={num(row.totals.input_tokens)}>{num(row.totals.input_tokens, true)}</td><td title={num(row.totals.output_tokens)}>{num(row.totals.output_tokens, true)}</td><td title={num(row.totals.cache_read_tokens)}>{num(row.totals.cache_read_tokens, true)}</td><td>{rate(row.totals)}</td></tr>)}</tbody>
+              <table className="usage-table" aria-label={t('usage.accounts')}><thead><tr><th scope="col">{t('usage.account')}</th><th scope="col">{t('usage.total')}</th><th scope="col">{t('usage.input')}</th><th scope="col">{t('usage.output')}</th><th scope="col">{t('usage.cacheWrite')}</th><th scope="col">{t('usage.cacheRead')}</th><th scope="col">{t('usage.requests')}</th><th scope="col">{t('usage.cacheHit')}</th></tr></thead>
+                <tbody>{sortedAccounts.map(row => <tr key={row.id} className={account === row.id ? 'usage-row-selected' : ''}><th scope="row"><button type="button" className="usage-account-name" onClick={() => setAccount(row.id)}><span>{maskDisplayName(row.name, row.email, prefs.privacyMask)}{row.current && <em>{t('usage.current')}</em>}</span>{row.email && <small>{maskEmailAddress(row.email, prefs.privacyMask)}</small>}</button></th><td title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</td><td title={num(row.totals.input_tokens)}>{num(row.totals.input_tokens, true)}</td><td title={num(row.totals.output_tokens)}>{num(row.totals.output_tokens, true)}</td><td title={num(row.totals.cache_creation_tokens)}>{num(row.totals.cache_creation_tokens, true)}</td><td title={num(row.totals.cache_read_tokens)}>{num(row.totals.cache_read_tokens, true)}</td><td title={num(row.totals.requests)}>{num(row.totals.requests, true)}</td><td>{rate(row.totals)}</td></tr>)}
+                </tbody>
               </table>
               {!sortedAccounts.length && <p className="usage-model-empty">{t('usage.noAccounts')}</p>}
             </div>
           </section>
         </>}
-        <Disclosure className="usage-method settings-card" triggerClassName="usage-method-trigger" summary={t('usage.method')}><div className="usage-method-body"><p>{t('usage.logCounters')}</p><p>{t('usage.totalFormula')}</p><p>{t('usage.cacheFormula')}</p><p>{t('usage.timezoneNote')}</p>{snapshot?.tracking_since != null && <p>{t('usage.trackingSince', {date: dateLabel(new Date(snapshot.tracking_since * 1000).toISOString())})}</p>}</div></Disclosure>
+        <Disclosure className="usage-method settings-card" triggerClassName="usage-method-trigger" summary={t('usage.method')}><div className="usage-method-body"><p>{t('usage.logCounters')}</p><p>{t('usage.totalFormula')}</p><p>{t('usage.cacheFormula')}</p><p>{t('usage.activityMethod')}</p><p>{t('usage.coverageNote')}</p><p>{t('usage.refreshNote')}</p><p>{t('usage.timezoneNote')}</p>{snapshot?.tracking_since != null && <p>{t('usage.trackingSince', {date: dateLabel(new Date(snapshot.tracking_since * 1000).toISOString())})}</p>}</div></Disclosure>
       </div>
     </section>
   );

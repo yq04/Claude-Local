@@ -1,5 +1,5 @@
-// [INPUT]: Pure floating-monitor-model functions and synthetic telemetry inputs.
-// [OUTPUT]: Unit test assertions for activity mode, compact token formatting, burn-rate ETA, and window bar tones.
+// [INPUT]: Pure floating-monitor-model functions and synthetic account-scoped telemetry inputs.
+// [OUTPUT]: Assertions for disjoint token composition, unavailable rates, activity mode, compact formatting, opacity and quota window tones.
 // [POS]: Bun test suite for src/floating-monitor-model.ts.
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -13,9 +13,9 @@ import {
   formatCompactCount,
   formatCompactExhaustionEta,
   formatExhaustionEta,
-  formatMonitorUsd,
   formatVelocityLabel,
   formatWindowResetLabel,
+  monitorTokenComposition,
   recommendedMonitorPollIntervalMs,
 } from './floating-monitor-model'
 import {
@@ -61,14 +61,29 @@ describe('floating-monitor-model', () => {
     expect(formatExhaustionEta(120, 'en')).toBe('~2h to limit')
     expect(formatCompactExhaustionEta(70)).toBe('~1h10m')
     expect(formatCompactExhaustionEta(120)).toBe('~2h')
-    expect(formatMonitorUsd(0)).toBe('$0.00')
-    expect(formatMonitorUsd(0.008)).toBe('<$0.01')
-    expect(formatMonitorUsd(1.25)).toBe('$1.25')
-    expect(formatMonitorUsd(42.8)).toBe('$42.80')
     expect(clampMonitorOpacityPct(20)).toBe(50)
     expect(clampMonitorOpacityPct(100)).toBe(100)
     expect(cycleMonitorOpacityPct(100)).toBe(88)
     expect(cycleMonitorOpacityPct(60)).toBe(100)
+  })
+
+  test('keeps unavailable rates distinct from real zero and composes disjoint token counters', () => {
+    expect(formatVelocityLabel(undefined)).toBe('—')
+    expect(formatVelocityLabel(0)).toBe('0 tok/m')
+    const parts = monitorTokenComposition({
+      available: true,
+      tokens5hTotal: 1_000,
+      tokensPerMin: 100,
+      requests5h: 2,
+      input5h: 100,
+      output5h: 200,
+      cacheWrite5h: 300,
+      cacheRead5h: 400,
+      jsonlRevision: 'fixture',
+    })
+    expect(parts.map(part => part.tokens)).toEqual([100, 200, 300, 400])
+    expect(parts.map(part => part.share)).toEqual([0.1, 0.2, 0.3, 0.4])
+    expect(monitorTokenComposition(undefined).every(part => part.share === 0)).toBe(true)
   })
 
   test('computes remaining percentage and semantic tone for 5h/7d bars', () => {

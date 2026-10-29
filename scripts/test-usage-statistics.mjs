@@ -1,5 +1,5 @@
 // [INPUT]: Main React shell, fake IPC aggregates and an isolated local browser context.
-// [OUTPUT]: Compact account filters, usage/identity/system checks including cards with optional subscription metadata, and isolated read-only layout previews; --quick-only and --layout-only select focused checks without unrelated suites.
+// [OUTPUT]: Isolated usage/identity/system layout previews; --usage-reliability-only verifies complete token totals, recorded activity, all models, concise account scopes, TSV and bilingual responsive layouts without unrelated suites.
 // [POS]: Synthetic UI verification; no live identities, external requests or native mutations.
 // [PROTOCOL]: Update this header and scripts/CLAUDE.md when changing this harness.
 import assert from 'node:assert/strict';
@@ -14,9 +14,10 @@ import {chromium} from 'playwright-core';
 const args = process.argv.slice(2);
 const quickOnly = args.includes('--quick-only');
 const layoutOnly = args.includes('--layout-only');
-const outArg = args.find(a => !['--quick-only', '--layout-only'].includes(a));
+const usageReliabilityOnly = args.includes('--usage-reliability-only');
+const outArg = args.find(a => !['--quick-only', '--layout-only', '--usage-reliability-only'].includes(a));
 const root = fileURLToPath(new URL('../', import.meta.url));
-const output = resolve(outArg || join(root, '.local', 'preview', layoutOnly ? 'window-layout' : quickOnly ? 'quick-setup-refinements' : 'ui-refinements'));
+const output = resolve(outArg || join(root, '.local', 'preview', usageReliabilityOnly ? 'usage-reliability' : layoutOnly ? 'window-layout' : quickOnly ? 'quick-setup-refinements' : 'ui-refinements'));
 await mkdir(output, {recursive: true});
 const privateHome = await mkdtemp(join(tmpdir(), 'claude-local-usage-ui-'));
 await mkdir(join(privateHome, 'config'));
@@ -29,9 +30,10 @@ const id = n => String(n).padStart(32, '0');
 const now = Math.floor(Date.now() / 1000);
 const totals = (input, output, creation, read, reasoning = null) => ({input_tokens:input,output_tokens:output,cache_creation_tokens:creation,cache_read_tokens:read,total_tokens:input+output+creation+read,reasoning_tokens:reasoning,requests:2});
 const alpha = totals(200,100,100,600,20), beta = totals(500,300,200,1000);
-const all = totals(700,400,300,1600,20), unknown = totals(40,10,0,50);
+const all = totals(740,410,300,1650,20), unknown = totals(40,10,0,50);
 const empty = totals(0,0,0,0);
-alpha.requests = 48; beta.requests = 72; all.requests = 120; unknown.requests = 14; empty.requests = 0;
+alpha.requests = 48; beta.requests = 72; all.requests = 134; unknown.requests = 14; empty.requests = 0;
+alpha.sessions = 2; beta.sessions = 3; unknown.sessions = 1; all.sessions = 6; empty.sessions = 0;
 const accounts = [{id:id(1),name:'Alpha workspace',email:'alpha@example.invalid',current:true,totals:alpha},{id:id(2),name:'Beta workspace',email:'beta@example.invalid',current:false,totals:beta}];
 accounts.push({id:id(3),name:'Gamma workspace',email:'gamma@example.invalid',current:false,totals:empty});
 window.usageFixture = {
@@ -40,7 +42,7 @@ window.usageFixture = {
   hold:false,pendingReads:[],
   holdBrowser:false,browserPendingResolvers:[],
   holdIdentity:false,identityPendingResolvers:[],
-  longNames:false,
+  longNames:false,legacyActivity:false,manyModels:${usageReliabilityOnly},lastSnapshot:null,
   browserConfig:{
     seed:123456,proxy:'',follow_machine:false,language:'en-US',timezone:'America/Los_Angeles',native_graphics:true
   },
@@ -78,14 +80,14 @@ function dailyRows(value,period){
   });
 }
 function modelRows(value){
-  const names=['claude-test-model','claude-research-sonnet','claude-studio-haiku'];
+  const names=['claude-test-model','claude-research-sonnet','claude-studio-haiku','claude-opus-4-6','claude-fable-preview','claude-sonnet-4-6','third-party-model-zeta','unknown'];
   let cumulative=0;
-  return [60,30,10].map((weight,index)=>{
+  return (window.usageFixture.manyModels?[30,20,15,10,8,7,6,4]:[60,30,10]).map((weight,index)=>{
     const before=cumulative;cumulative+=weight;const row={...empty};
     for(const key of ['input_tokens','output_tokens','cache_creation_tokens','cache_read_tokens','requests'])row[key]=Math.floor(value[key]*cumulative/100)-Math.floor(value[key]*before/100);
     row.total_tokens=row.input_tokens+row.output_tokens+row.cache_creation_tokens+row.cache_read_tokens;
     row.reasoning_tokens=value.reasoning_tokens==null?null:Math.floor(value.reasoning_tokens*cumulative/100)-Math.floor(value.reasoning_tokens*before/100);
-    return {model:window.usageFixture.longNames&&index>0?names[index]+'-synthetic-long-context-workspace-preview-2026-10-20':names[index],totals:row};
+    return {model:window.usageFixture.longNames&&index>0&&names[index]!=='unknown'?names[index]+'-synthetic-long-context-workspace-preview-2026-10-20':names[index],totals:row,...(window.usageFixture.manyModels&&index===0?{efforts:[{effort:'max',totals:row}]}:{})};
   });
 }
 const current = {present:true,display_name:'Alpha account owner',email:'alpha@example.invalid',organization:'Test workspace',plan:'Pro',auth_status:'valid',proxy:null,unavailable:false,quota_5h_used:49,quota_5h_reset_at:now+10560,quota_7d_used:18,quota_7d_reset_at:now+475200,subscription_expires_at:now+19*86400};
@@ -109,9 +111,14 @@ mockIPC(async (command,args)=>{
     window.usageFixture.requests.push(structuredClone(args));
     if(window.usageFixture.hold)await new Promise(resolve=>window.usageFixture.pendingReads.push(resolve));
     if(window.usageFixture.fail)throw Error('Synthetic usage read failure');
-    const selected = args.accountId==='unattributed'?unknown:args.accountId===id(1)?alpha:args.accountId===id(2)?beta:all;
+    const selected = args.accountId==='unattributed'?unknown:args.accountId===id(1)?alpha:args.accountId===id(2)?beta:args.accountId===id(3)?empty:all;
     const value = window.usageFixture.empty?empty:selected;
-    return {generated_at:Math.floor(Date.now()/1000),tracking_since:now-86400,granularity:(args.period==='today'||args.period==='yesterday')?'hour':'day',totals:value,unattributed:window.usageFixture.empty?empty:unknown,accounts:accounts.map(a=>({...a,totals:window.usageFixture.empty?empty:a.totals})),daily:window.usageFixture.empty?[]:dailyRows(value,args.period),models:window.usageFixture.empty?[]:modelRows(value),warnings:window.usageFixture.warnings};
+    const daily=window.usageFixture.empty?[]:dailyRows(value,args.period);
+    const visibleTotals={...value};
+    if(window.usageFixture.legacyActivity)delete visibleTotals.sessions;
+    const snapshot={generated_at:Math.floor(Date.now()/1000),tracking_since:now-86400,timezone:args.timezone,granularity:(args.period==='today'||args.period==='yesterday')?'hour':'day',totals:visibleTotals,unattributed:window.usageFixture.empty?empty:unknown,accounts:accounts.map(a=>({...a,totals:window.usageFixture.empty?empty:a.totals})),daily,models:window.usageFixture.empty?[]:modelRows(value),warnings:[...window.usageFixture.warnings,...(!window.usageFixture.empty?['attribution_gap']:[])],attribution:{fallback_account_id:id(1),fallback_account_name:'Alpha workspace',fallback_before:now-3600,unassigned_requests:0,unassigned_tokens:0},...(!window.usageFixture.legacyActivity?{activity:{sessions:value.sessions,active_days:new Set(daily.filter(row=>row.totals.total_tokens>0).map(row=>row.day.slice(0,10))).size}}:{})};
+    window.usageFixture.lastSnapshot=structuredClone(snapshot);
+    return snapshot;
   }
   if(command==='ui_privacy_read')return false;
   if(command==='ui_privacy_write')return;
@@ -251,7 +258,10 @@ try {
   page.setDefaultTimeout(15000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  if (layoutOnly) {
+  if (usageReliabilityOnly) {
+    const {runUsageReliabilityChecks} = await import('./usage-reliability-checks.mjs');
+    await runUsageReliabilityChecks({page, output, base, errors});
+  } else if (layoutOnly) {
     const {runWindowLayoutChecks} = await import('./window-layout-checks.mjs');
     await runWindowLayoutChecks({page, output, base, errors});
   } else if (quickOnly) {
@@ -264,19 +274,20 @@ try {
   await page.getByText('claude-test-model', {exact: true}).waitFor();
   assert.equal(await page.locator('.usage-trend').getAttribute('data-usage-bucket-count'),'81','All time must include history older than 30 days');
   assert.equal((await page.evaluate(()=>window.usageFixture.commands)).some(item=>item.command==='browser_read'),false,'Inactive quick setup must not read browser state');
-  assert.equal(await page.locator('.usage-filter-note, .usage-live-note, .usage-history-note, .usage-attribution-card').count(), 0);
+  assert.equal(await page.locator('.usage-filter-note, .usage-live-note, .usage-attribution-card').count(), 0);
+  assert.equal(await page.locator('.usage-history-note').count(), 0, 'Account selector must remain concise');
   assert.equal(await page.getByRole('tab', {name: '昨天', exact: true}).count(), 1);
   const accountSelect = page.locator('.usage-account-filter').getByRole('combobox');
   assert.equal(await accountSelect.innerText(), '全部');
   await accountSelect.click();
-  assert.equal(await page.getByRole('option').count(), 4, 'Only All and saved accounts belong in the selector');
+  assert.equal(await page.getByRole('option').count(), 4, 'Only All and ordinary accounts belong in the selector');
   assert.equal(await page.getByRole('option', {name: '未归属历史', exact: true}).count(), 0);
   await page.getByRole('option', {name: '全部', exact: true}).click();
-  const alignment = await page.locator('.usage-page').evaluate(node => ({title: node.querySelector('h1').getBoundingClientRect().left, card: node.querySelector('.usage-summary').getBoundingClientRect().left}));
+  const alignment = await page.locator('.usage-page').evaluate(node => ({title: node.querySelector('h1').getBoundingClientRect().left, card: node.querySelector('.usage-overview').getBoundingClientRect().left}));
   assert.ok(Math.abs(alignment.title - alignment.card) <= 1, 'Usage cards must share the page-title margin');
   assert.equal(await page.locator('.usage-details').getByText('已报告推理', {exact:true}).count(), 0);
   assert.equal(await page.locator('.usage-bar-input, .usage-bar-output, .usage-bar-cache').count(), 0);
-  assert.equal(await page.locator('[data-usage-metric="total"] > strong').innerText(), '3K');
+  assert.equal(await page.locator('.usage-total-value').getAttribute('title'), '3,100');
   const metricStyles=await page.locator('.usage-summary > .usage-metric').evaluateAll(nodes=>nodes.map(node=>({background:getComputedStyle(node).backgroundColor,image:getComputedStyle(node).backgroundImage,border:getComputedStyle(node).borderColor,value:getComputedStyle(node.querySelector(':scope > strong')).color})));
   assert.ok(metricStyles.every(style=>JSON.stringify(style)===JSON.stringify(metricStyles[0])),'All metric cards must use the same surface and value color');
   const chartColor=await page.locator('.usage-total-line').evaluate(node=>getComputedStyle(node).stroke);
@@ -288,7 +299,7 @@ try {
   await page.getByRole('heading', {name: '用量分析', exact: true}).click();
   await page.screenshot({path: join(output, 'usage-analytics-zh-light.png'), fullPage: true});
   await page.locator('.usage-table').scrollIntoViewIfNeeded();
-  assert.equal(await page.locator('.usage-table').getByRole('row').count(), 4, 'All bound accounts must remain visible in account details');
+  assert.equal(await page.locator('.usage-table').getByRole('row').count(), 4, 'Only ordinary accounts belong in account details');
   assert.equal(await page.locator('.usage-model-row').count(),3,'Model distribution must render every synthetic model');
   assert.deepEqual(await page.locator('.usage-model-track > span').evaluateAll(nodes=>nodes.map(node=>node.style.width)),['60%','30%','10%']);
   await page.setViewportSize({width:1440,height:900});
@@ -390,7 +401,7 @@ try {
   await page.evaluate(() => { window.usageFixture.fail = true; });
   await page.getByRole('button', {name: '刷新', exact: true}).click();
   await page.getByRole('alert').filter({hasText: /Synthetic usage read failure/}).waitFor();
-  assert.equal(await page.locator('[data-usage-metric="total"] > strong').innerText(),'2K','Refresh failure must retain this filter\'s previous totals');
+  assert.equal(await page.locator('.usage-total-value').getAttribute('title'),'2,000','Refresh failure must retain this filter\'s previous totals');
   await page.evaluate(() => { window.usageFixture.fail = false; });
   await page.getByRole('button', {name: '刷新', exact: true}).click();
   await page.waitForFunction(() => !document.querySelector('.usage-page [role="alert"]'));

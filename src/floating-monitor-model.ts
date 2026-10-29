@@ -1,5 +1,5 @@
-// [INPUT]: Native monitor_live_telemetry payload, active account quota windows, and local JSONL velocity/cost metrics.
-// [OUTPUT]: Pure formatting, burn-rate ETA evaluation, USD cost formatting, HUD opacity persistence, adaptive local polling cadence, and cross-window BroadcastChannel helpers.
+// [INPUT]: Native monitor_live_telemetry payload, active-account quota windows, and account-scoped shared-ledger token counters.
+// [OUTPUT]: Pure token composition/formatting, quota labels, HUD opacity persistence, adaptive local polling cadence, and cross-window BroadcastChannel helpers.
 // [POS]: Pure model layer for the toggleable Floating Monitor HUD and main-window live telemetry strip; zero network I/O.
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -19,18 +19,29 @@ export interface MonitorWindowState {
 }
 
 export interface LiveUsageMetrics {
+  available: boolean
   tokens5hTotal: number
   tokensPerMin: number
   requests5h: number
-  cost5hUsd?: number
-  cacheSavings5hUsd?: number
+  input5h: number
+  output5h: number
+  cacheWrite5h: number
+  cacheRead5h: number
   cacheHitPct?: number
-  contextUsedPct?: number
   latestModel?: string
   latestTurnAtSec?: number
-  burnRatePctHr?: number
-  exhaustionEtaMins?: number
   jsonlRevision: string
+}
+
+export function monitorTokenComposition(metrics: LiveUsageMetrics | undefined) {
+  const parts = [
+    {kind: 'input', tokens: metrics?.input5h ?? 0},
+    {kind: 'output', tokens: metrics?.output5h ?? 0},
+    {kind: 'cacheWrite', tokens: metrics?.cacheWrite5h ?? 0},
+    {kind: 'cacheRead', tokens: metrics?.cacheRead5h ?? 0},
+  ] as const
+  const total = parts.reduce((sum, part) => sum + part.tokens, 0)
+  return parts.map(part => ({...part, share: total > 0 ? part.tokens / total : 0}))
 }
 
 export interface MonitorCurrentAccount {
@@ -163,20 +174,8 @@ export function formatCompactCount(value: number | undefined | null): string {
 }
 
 export function formatVelocityLabel(tokensPerMin: number | undefined | null): string {
+  if (tokensPerMin == null || !Number.isFinite(tokensPerMin)) return '—'
   return `${formatCompactCount(tokensPerMin)} tok/m`
-}
-
-export function formatMonitorUsd(value: number | undefined | null): string {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return '$0.00'
-  }
-  if (value < 0.01) {
-    return '<$0.01'
-  }
-  if (value < 100) {
-    return `$${value.toFixed(2)}`
-  }
-  return `$${Math.round(value)}`
 }
 
 export function formatExhaustionEta(

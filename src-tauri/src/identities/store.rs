@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 目录、用户策略、白名单源、已验收归档代次、认证加密与平台凭据桥。
-// [OUTPUT]: 有界主密钥读取、已验证身份归档、先暂存后切换、显式切换/恢复后的窄账号缓存维护、原始历史保留、持久恢复与真实阶段进度。
+// [OUTPUT]: 有界主密钥读取、已验证身份归档、先暂存后切换、幂等统计边界与受控空身份登录回执、原始历史保留、持久恢复与真实阶段进度。
 // [POS]: 身份的文件事务；SQLite 与文件系统由恢复日志协调，不能假装是同一原子事务。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -539,6 +539,7 @@ impl Store {
             reporter.log("commit", "running", "正在保存当前身份选择。", 0, Some(1));
             self.db.complete(target)?;
             self.db.compact()?;
+            super::usage::commit_switch_boundary(&self.vault, &self.home, live_key.as_deref());
             let _ = self.collect_generations();
             reporter.log("commit", "ok", "当前身份选择已保存。", 1, Some(1));
             reporter.log("verify", "ok", "当前身份已经是所选身份。", 1, Some(1));
@@ -643,7 +644,11 @@ impl Store {
             } else {
                 self.record(target)?.account_key
             };
-            super::usage::commit_switch_boundary(&self.vault, &self.home, next_account.as_deref());
+            if target == "empty" {
+                super::usage::commit_empty_login_boundary(&self.vault, &self.home);
+            } else {
+                super::usage::commit_switch_boundary(&self.vault, &self.home, next_account.as_deref());
+            }
             if !record.empty {
                 let _ = self.db.set_summary(
                     &record.id,

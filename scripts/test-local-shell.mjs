@@ -1,5 +1,5 @@
 // [INPUT]: Main shell and fictional account/browser/system snapshots.
-// [OUTPUT]: Bilingual local-only shell and quick setup previews.
+// [OUTPUT]: Bilingual local-only shell/quick setup previews and optional focused three-size monitor checks.
 // [POS]: Isolated fake IPC screenshot helper; no runtime data or native changes.
 // [PROTOCOL]: Update scripts/CLAUDE.md with changes.
 import assert from 'node:assert/strict';
@@ -7,10 +7,12 @@ import {resolve,join} from 'node:path';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
+import {checkMonitorLayouts} from './monitor-layout-checks.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const {createServer}=await import(pathToFileURL(resolve(root,'node_modules/vite/dist/node/index.js')).href);
 const {chromium}=await import(pathToFileURL(resolve(root,'node_modules/playwright-core/index.mjs')).href);
-const output=resolve(process.argv[2]||join(tmpdir(),'claude-local-ui-20261018'));
+const monitorOnly=process.argv.includes('--monitor-only');
+const output=resolve(process.argv.slice(2).find(arg=>arg!=='--monitor-only')||join(tmpdir(),'claude-local-ui-20261018'));
 await mkdir(output,{recursive:true});
 const privateHome=await mkdtemp(join(tmpdir(),'claude-local-preview-home-'));
 await mkdir(join(privateHome,'config'));await mkdir(join(privateHome,'cache'));
@@ -44,8 +46,9 @@ mockIPC((command,args)=>{
   if(command==='identities_wakeup_state')return {enabled:false,window_enabled:false,window_start:'08:00',window_end:'23:00',prewarm_threshold:20,accounts:{},scope_changed:false,runtime_available:true};
   if(command==='ui_appearance_read')return null;
   if(command==='ui_wallpaper_read')return null;
-  if(command==='monitor_live_telemetry')return {observedAtMs:now*1000,running:true,sessionCount:1,clientLabel:'Claude CLI',activeId:id(1),activeName:'Studio account',current:structuredClone(current),metrics:{tokens5hTotal:148500,requests5h:42,tokensPerMin:1840,cacheHitPct:91,contextUsedPct:48,exhaustionEtaMins:70,cost5hUsd:1.84,cacheSavings5hUsd:3.12,latestModel:'claude-opus-4-6',latestTurnAtSec:now-18,jsonlRevision:'1'},routeProtected:true,window:window.__monitorWin||{open:true,alwaysOnTop:true,compact:false,collapsed:false,locked:false,autoHide:true,dockedEdge:'right'}};
+  if(command==='monitor_live_telemetry')return {observedAtMs:now*1000,running:true,sessionCount:1,clientLabel:'Claude CLI',activeId:id(1),activeName:'Studio account',current:structuredClone(current),metrics:{available:window.__monitorUsageAvailable!==false,tokens5hTotal:148500,input5h:10000,output5h:8500,cacheWrite5h:10000,cacheRead5h:120000,requests5h:42,tokensPerMin:1840,cacheHitPct:86,latestModel:'claude-opus-4-6',latestTurnAtSec:now-18,jsonlRevision:'1'},routeProtected:true,window:window.__monitorWin||{open:true,alwaysOnTop:true,compact:false,collapsed:false,locked:false,autoHide:false,dockedEdge:'right'}};
   if(command==='monitor_window_set_collapsed'){window.__monitorWin={...(window.__monitorWin||{open:true,alwaysOnTop:true,compact:false,locked:false,autoHide:true,dockedEdge:'right'}),collapsed:!!args.collapsed};return window.__monitorWin;}
+  if(command==='monitor_window_set_compact'){window.__monitorWin={...(window.__monitorWin||{open:true,alwaysOnTop:true,collapsed:false,locked:false,autoHide:false,dockedEdge:'right'}),compact:!!args.compact};return window.__monitorWin;}
   if(command==='plugin:event|listen')return 1;
   if(command==='plugin:event|unlisten')return;
   throw Error('Screenshot preview rejected command: '+command);
@@ -74,6 +77,10 @@ try{
  await context.route('**/*',route=>route.request().url().startsWith(base+'/')?route.continue():route.abort());
  const page=await context.newPage();page.setDefaultTimeout(15000);
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ let geometry=[],monitorChecks;
+ if(monitorOnly){
+   monitorChecks=await checkMonitorLayouts(page,base,output);
+ }else{
  await page.goto(base+'/__local-preview.html');
  await page.evaluate(async()=>{const prefs=await import('/src/settings-model.ts');await prefs.synchronizePrivacyPreference(false);});
  await page.getByRole('group',{name:'本地版本信息',exact:true}).waitFor();
@@ -90,7 +97,7 @@ try{
  await page.getByRole('dialog').getByText('额度与重置权益',{exact:true}).waitFor();
  await page.screenshot({path:join(output,'10-quota-details-zh.png'),fullPage:true});
  await page.getByRole('dialog').getByRole('button',{name:'关闭弹窗',exact:true}).click();
- const geometry=await page.locator('.identity-card').evaluateAll(nodes=>nodes.slice(0,4).map(node=>{const box=node.getBoundingClientRect();return {width:box.width,height:box.height,scrollWidth:node.scrollWidth,clientWidth:node.clientWidth};}));
+ geometry=await page.locator('.identity-card').evaluateAll(nodes=>nodes.slice(0,4).map(node=>{const box=node.getBoundingClientRect();return {width:box.width,height:box.height,scrollWidth:node.scrollWidth,clientWidth:node.clientWidth};}));
  await page.getByRole('radio',{name:'EN',exact:true}).click();
  await page.getByRole('group',{name:'Local build information',exact:true}).waitFor();
  await page.mouse.move(2,2);
@@ -133,9 +140,10 @@ try{
  await page.locator('button[aria-label="贴边收起为悬浮胶囊"]').click();
  await page.locator('.monitor-hud-shell.is-collapsed').waitFor();
  await page.screenshot({path:join(output,'13-monitor-collapsed.png')});
+ }
  const commands=await page.evaluate(()=>window.localPreviewCommands);
  if(commands.some(command=>/update|stop|switch|manage|delete|clean/.test(command)))throw Error('Unexpected mutation/update request: '+commands.join(','));
- const result={output,geometry,errors,commands:[...new Set(commands)]};
+ const result={output,geometry,monitorChecks,errors,commands:[...new Set(commands)]};
  await writeFile(join(output,'preview-results.json'),JSON.stringify(result,null,2));
  if(errors.length)throw Error(errors.join('\n'));
  console.log(JSON.stringify(result,null,2));

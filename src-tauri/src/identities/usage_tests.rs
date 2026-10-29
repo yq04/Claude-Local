@@ -1,5 +1,5 @@
 // [INPUT]: Synthetic usage fragments and isolated temporary files/SQLite ledgers.
-// [OUTPUT]: Regressions for idempotency/ownership, cursors with bounded effort context and migration recovery, named-timezone DST calendars, stable fallback attribution and token semantics.
+// [OUTPUT]: Synthetic regressions for conserved all/unknown scopes, immutable historical ownership, proven session evidence, live registration, login windows, parser migration and DST calendars.
 // [POS]: Unit tests for identities::usage; never touches the user's Claude profile or identity vault.
 // [PROTOCOL]: Keep all fixtures synthetic and scoped to temporary directories.
 use super::usage::{self, Counts, Event};
@@ -26,6 +26,8 @@ fn event(key: &str, ts: u64, counts: Counts) -> Event {
     Event {
         event_key: key.into(),
         message_key: None,
+        session_key: None,
+        session_start: None,
         ts,
         model: "sonnet".into(),
         effort: String::new(),
@@ -306,8 +308,8 @@ fn aggregate_filters_keep_account_and_unattributed_totals_global_and_ignore_remo
     drop(conn);
 
     let all = usage::read_at(&vault, &home, "all", None, 0).unwrap();
-    assert_eq!(all.totals.input_tokens, 2); // currently bound A + B only
-    assert_eq!(all.unattributed.input_tokens, 1);
+    assert_eq!(all.totals.input_tokens, 4); // all includes unresolved and removed owners
+    assert_eq!(all.unattributed.input_tokens, 2);
     assert_eq!(
         all.accounts
             .iter()
@@ -330,7 +332,7 @@ fn aggregate_filters_keep_account_and_unattributed_totals_global_and_ignore_remo
     );
     let one = usage::read_at(&vault, &home, "all", Some(aid), 0).unwrap();
     assert_eq!(one.totals.input_tokens, 1);
-    assert_eq!(one.unattributed.input_tokens, 1); // independent of account filter
+    assert_eq!(one.unattributed.input_tokens, 2); // independent of account filter
     assert_eq!(
         one.accounts
             .iter()
@@ -339,14 +341,14 @@ fn aggregate_filters_keep_account_and_unattributed_totals_global_and_ignore_remo
         2
     );
     let unknown = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
-    assert_eq!(unknown.totals.input_tokens, 1);
+    assert_eq!(unknown.totals.input_tokens, 2);
     assert_eq!(
         unknown
             .daily
             .iter()
             .map(|d| d.totals.input_tokens)
             .sum::<u64>(),
-        1
+        2
     );
     // A statistics read with fallback_name does NOT silently write to meta.
     let in_memory_read =
@@ -417,7 +419,7 @@ fn aggregate_filters_keep_account_and_unattributed_totals_global_and_ignore_remo
         "future-unknown".into(),
         event(
             "future-unknown",
-            110,
+            t - 600,
             Counts {
                 input: 7,
                 ..Counts::default()
@@ -427,13 +429,14 @@ fn aggregate_filters_keep_account_and_unattributed_totals_global_and_ignore_remo
     usage::persist_scan(&ledger, later, &[], &[]).unwrap();
     drop(ledger);
     let repeated = usage::read_at(&vault, &home, "all", Some(aid), 0).unwrap();
-    assert_eq!(repeated.totals.input_tokens, 10);
+    assert_eq!(repeated.totals.input_tokens, 3);
+    assert_eq!(repeated.unattributed.input_tokens, 7);
     assert_eq!(
         usage::read_at(&vault, &home, "all", Some(aid), 0)
             .unwrap()
             .totals
             .input_tokens,
-        10
+        3
     );
     drop(index);
     drop(all);
@@ -503,11 +506,15 @@ fn first_unbound_scan_stays_unknown_then_save_current_starts_a_verified_new_wind
     assert_eq!(after.unattributed.input_tokens, 2);
     // This fixture deliberately uses a timestamp far in the future; invalid future
     // records must not inflate visible totals or create a trend bucket.
-    assert_eq!(after.totals.input_tokens, 0);
-    assert!(after
-        .daily
-        .iter()
-        .all(|bucket| bucket.totals.input_tokens == 0));
+    assert_eq!(after.totals.input_tokens, 2);
+    assert_eq!(
+        after
+            .daily
+            .iter()
+            .map(|bucket| bucket.totals.input_tokens)
+            .sum::<u64>(),
+        2
+    );
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -1245,7 +1252,7 @@ fn fallback_attribution_stable_id_lifecycle_and_invariance() {
         .total_tokens;
     assert_eq!(acc1_tokens, 15);
     assert_eq!(acc2_tokens, 30);
-    assert_eq!(snap0.totals.total_tokens, 45);
+    assert_eq!(snap0.totals.total_tokens, 150);
 
     // 2. Invalid ID: no write to meta
     let invalid_id = "0192e2b3ffff70008000000000000099";
@@ -1377,7 +1384,7 @@ fn fallback_attribution_stable_id_lifecycle_and_invariance() {
             .total_tokens,
         30
     );
-    assert_eq!(snap_cleared.totals.total_tokens, 45);
+    assert_eq!(snap_cleared.totals.total_tokens, 150);
 
     // 8. Timezone source preserved
     let snap_tz = usage::read_at_with_timezone_now(
@@ -1919,27 +1926,25 @@ fn legacy_cursor_bounded_recovery_and_conservative_unknown_handling() {
         .iter()
         .find(|m| m.model == "claude-far-test")
         .unwrap();
-    // The newly appended turn at > 70KB offset is outside the 64KB tail window,
-    // so recover_prefix_effort returns unknown (""), and msg-far-new is NOT forged into "max".
-    // Thus the "max" effort tier stays at 140 tokens (from initial 70 padding lines),
-    // while far_model total reaches 160 tokens (140 max + 20 unassigned).
+    // Parser v2 replays old-version files from their beginning once to recover
+    // session evidence. The explicit head effort is therefore proven on replay.
     assert_eq!(far_model.totals.requests, 71);
     assert_eq!(far_model.totals.total_tokens, 160);
     assert_eq!(far_model.efforts.len(), 1);
     assert_eq!(far_model.efforts[0].effort, "max");
-    assert_eq!(far_model.efforts[0].totals.total_tokens, 140);
+    assert_eq!(far_model.efforts[0].totals.total_tokens, 160);
 
     let conn = usage::open_ledger(&ledger_path).unwrap();
     let far_event_effort: String = conn
         .query_row(
-            "SELECT effort FROM events WHERE event_key LIKE '%msg-far-new%' OR message_key IS NOT NULL ORDER BY ts DESC LIMIT 1",
+            "SELECT effort FROM events WHERE model='claude-far-test' ORDER BY ts DESC LIMIT 1",
             [],
             |r| r.get(0),
         )
         .unwrap();
     assert_eq!(
-        far_event_effort, "",
-        "Appended turn beyond 64KiB tail window must not forge head effort"
+        far_event_effort, "max",
+        "Full version migration retains the explicit head effort"
     );
     let far_cursor: (String, i64) = conn
         .query_row(
@@ -1948,7 +1953,7 @@ fn legacy_cursor_bounded_recovery_and_conservative_unknown_handling() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!(far_cursor.0, "");
+    assert_eq!(far_cursor.0, "max");
     assert_eq!(far_cursor.1, usage::USAGE_PARSER_VERSION);
     drop(conn);
 

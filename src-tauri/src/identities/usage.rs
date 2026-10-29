@@ -1,6 +1,6 @@
 // [INPUT]: Bounded Claude Code usage JSONL, identity HMAC keys, private SQLite ledger and optional IANA display timezone.
-// [OUTPUT]: Redacted aggregates, per-model reasoning effort breakdowns, DST-correct local calendar trends with explicit hourly intervals, and stable fallback attribution.
-// [POS]: Read-only identity usage command and pre-switch collection boundary; never reads credentials, archives, or session bodies into the ledger.
+// [OUTPUT]: Conserved scoped aggregates, proven session/activity counts, live HMAC identity registration, historical-only fallback and account-isolated HUD telemetry.
+// [POS]: Read-only Claude source consumer and pre-switch collection boundary; never writes credentials, Claude configuration, archives or quota ledgers.
 // [PROTOCOL]: Complete-line offsets, bounded prefix/tail hashes, and bounded cursor effort context live only in the usage ledger; identity database user_version remains 3. See identities/CLAUDE.md.
 use super::{catalog, private};
 use chrono::{DateTime, Datelike, Days, LocalResult, NaiveDate, TimeZone, Utc};
@@ -10,13 +10,19 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::{self, File},
     io::{self, BufRead, BufReader, Read, Seek, SeekFrom},
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
+
+#[path = "usage_attribution.rs"]
+mod attribution;
+#[cfg(test)]
+#[path = "usage_reliability_tests.rs"]
+mod reliability_tests;
 
 const MAX_DEPTH: usize = 6;
 const MAX_LINE_BYTES: usize = 2 * 1024 * 1024;
@@ -31,6 +37,8 @@ pub struct UsageTotals {
     pub total_tokens: u64,
     pub reasoning_tokens: Option<u64>,
     pub requests: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sessions: Option<u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -68,6 +76,14 @@ pub struct UsageAttributionConfig {
     pub fallback_account_name: Option<String>,
     pub unassigned_requests: u64,
     pub unassigned_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_before: Option<u64>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct UsageActivity {
+    pub sessions: u64,
+    pub active_days: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -77,6 +93,8 @@ pub struct UsageSnapshot {
     pub timezone: Option<String>,
     pub tracking_since: Option<u64>,
     pub totals: UsageTotals,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity: Option<UsageActivity>,
     pub unattributed: UsageTotals,
     pub accounts: Vec<UsageAccount>,
     pub daily: Vec<UsageDaily>,
@@ -157,6 +175,8 @@ impl Counts {
 pub(super) struct Event {
     pub event_key: String,
     pub message_key: Option<String>,
+    pub session_key: Option<String>,
+    pub session_start: Option<u64>,
     pub ts: u64,
     pub model: String,
     pub effort: String,
@@ -178,7 +198,7 @@ fn now() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
-pub(super) const USAGE_PARSER_VERSION: i64 = 1;
+pub(super) const USAGE_PARSER_VERSION: i64 = 2;
 pub(super) const MAX_EFFORT_RECOVERY_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug)]
@@ -404,6 +424,7 @@ pub(super) fn parse_file_from_with_context(
     let mut weak = false;
     let mut complete = true;
     let mut last_effort = clean_effort_str(initial_effort);
+    let session_roots = attribution::session_roots(path);
     loop {
         let (line, terminated) = match bounded_line(&mut reader) {
             Ok(Some(v)) => v,
@@ -468,11 +489,16 @@ pub(super) fn parse_file_from_with_context(
         };
         let msg_id = msg.get("id").and_then(Value::as_str).unwrap_or("");
         let request_id = obj.get("requestId").and_then(Value::as_str).unwrap_or("");
-        let session = obj
+        let explicit_session = obj
             .get("sessionId")
             .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(file_tag);
+            .filter(|s| !s.is_empty() && s.len() <= 254);
+        let session = explicit_session.unwrap_or(file_tag);
+        let session_key = explicit_session.map(attribution::session_hash);
+        let session_start = session_key
+            .as_ref()
+            .and_then(|key| session_roots.get(key))
+            .copied();
         let is_weak = msg_id.is_empty() || request_id.is_empty();
         weak |= is_weak;
         // Hash all identifiers at the boundary. The ledger never stores raw IDs, paths, or message bodies.
@@ -503,6 +529,8 @@ pub(super) fn parse_file_from_with_context(
         let event = Event {
             event_key: event_key.clone(),
             message_key,
+            session_key,
+            session_start,
             ts: current_ts,
             model,
             effort,
@@ -514,7 +542,17 @@ pub(super) fn parse_file_from_with_context(
         events
             .entry(event_key)
             .and_modify(|old| {
+                if old.sidechain != event.sidechain {
+                    if old.sidechain {
+                        *old = event.clone();
+                    }
+                    return;
+                }
                 old.counts = old.counts.component_max(event.counts);
+                old.session_key = old
+                    .session_key
+                    .clone()
+                    .or_else(|| event.session_key.clone());
                 if event.ts > old.ts {
                     old.ts = event.ts;
                 }
@@ -590,13 +628,19 @@ fn scan_dir(
                     && cursor_guard(&path, old.offset).ok().as_ref() == Some(&old.guard)
             });
             if let (Some(old), Some(mtime)) = (old, mtime) {
-                if old.size == meta.len() && old.mtime == mtime && old.offset == meta.len() {
+                if old.parser_version >= USAGE_PARSER_VERSION
+                    && old.size == meta.len()
+                    && old.mtime == mtime
+                    && old.offset == meta.len()
+                {
                     continue;
                 }
             }
             let (start_offset, initial_effort) = match (old, mtime) {
                 (Some(old), Some(mtime))
-                    if meta.len() > old.size || (meta.len() == old.size && mtime == old.mtime) =>
+                    if old.parser_version >= USAGE_PARSER_VERSION
+                        && (meta.len() > old.size
+                            || (meta.len() == old.size && mtime == old.mtime)) =>
                 {
                     let offset = old.offset.min(old.size);
                     let effort = if old.parser_version >= USAGE_PARSER_VERSION {
@@ -765,6 +809,7 @@ pub(super) fn open_ledger(path: &Path) -> Result<Connection, String> {
     }
     conn.execute_batch("CREATE INDEX IF NOT EXISTS events_timestamp ON events(ts); CREATE INDEX IF NOT EXISTS events_message ON events(message_key,sidechain);")
         .map_err(|_| "usage ledger index unavailable")?;
+    attribution::migrate(&conn)?;
     Ok(conn)
 }
 
@@ -839,29 +884,34 @@ fn identity_db_readonly(vault: &Path) -> Result<Connection, String> {
     )
     .map_err(|_| "identity index unavailable".into())
 }
-fn live_account_key(vault: &Path, home: &Path) -> Option<String> {
+pub(crate) fn live_account_key(vault: &Path, home: &Path) -> Option<String> {
     let key_path = vault.join("key.bin");
     private::parents(vault).ok()?;
     if private::safe(&key_path).is_err() {
         return None;
     }
-    let key = zeroize::Zeroizing::new(fs::read(key_path).ok()?);
+    let mut key = zeroize::Zeroizing::new(Vec::with_capacity(33));
+    File::open(key_path)
+        .ok()?
+        .take(33)
+        .read_to_end(&mut key)
+        .ok()?;
     if key.len() != 32 {
         return None;
     }
     catalog::live_key(home, &key).ok().flatten()
 }
 fn mark_external_gap(conn: &Connection, vault: &Path, home: &Path) {
-    let latest: Option<Option<String>> = conn
+    let latest: Option<(u64, Option<String>)> = conn
         .query_row(
-            "SELECT account_key FROM boundaries ORDER BY ts DESC,rowid DESC LIMIT 1",
+            "SELECT ts,account_key FROM boundaries ORDER BY ts DESC,rowid DESC LIMIT 1",
             [],
-            |r| r.get(0),
+            |r| Ok((r.get::<_, i64>(0)?.max(0) as u64, r.get(1)?)),
         )
         .optional()
         .ok()
         .flatten();
-    let Some(Some(previous)) = latest else {
+    let Some((latest_at, Some(previous))) = latest else {
         return;
     };
     let active = identity_db_readonly(vault).ok().and_then(|db| {
@@ -914,7 +964,7 @@ fn mark_external_gap(conn: &Connection, vault: &Path, home: &Path) {
         .unwrap_or_else(now);
     let _ = conn.execute(
         "INSERT INTO boundaries(ts,account_key) VALUES(?1,NULL)",
-        params![cutoff as i64],
+        params![cutoff.max(latest_at) as i64],
     );
 }
 
@@ -937,6 +987,9 @@ pub(super) fn persist_scan(
             .rev()
             .find(|(ts, _)| *ts <= e.ts)
             .and_then(|(_, a)| a.clone());
+        if e.account.is_none() {
+            e.account = attribution::session_owner(&tx, &e);
+        }
         if let Some(message_key) = e.message_key.as_ref() {
             let parent_exists: bool = tx
                 .query_row(
@@ -956,7 +1009,7 @@ pub(super) fn persist_scan(
                 .map_err(|_| "usage replay cleanup failed")?;
             }
         }
-        tx.execute("INSERT INTO events(event_key,message_key,ts,model,effort,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(event_key) DO UPDATE SET ts=MAX(events.ts,excluded.ts),input=MAX(events.input,excluded.input),output=MAX(events.output,excluded.output),creation=MAX(events.creation,excluded.creation),cache_read=MAX(events.cache_read,excluded.cache_read),reasoning=CASE WHEN events.reasoning IS NULL THEN excluded.reasoning WHEN excluded.reasoning IS NULL THEN events.reasoning ELSE MAX(events.reasoning,excluded.reasoning) END,model=CASE WHEN events.model='unknown' THEN excluded.model ELSE events.model END,effort=CASE WHEN excluded.effort!='' THEN excluded.effort ELSE events.effort END,weak=MIN(events.weak,excluded.weak)",params![e.event_key,e.message_key,e.ts as i64,e.model,e.effort,e.counts.input as i64,e.counts.output as i64,e.counts.creation as i64,e.counts.read as i64,e.counts.reasoning.map(|x|x as i64),e.account,e.weak as i64,e.sidechain as i64]).map_err(|_|"usage event write failed")?;
+        tx.execute("INSERT INTO events(event_key,message_key,session_key,ts,model,effort,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,?2,?14,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(event_key) DO UPDATE SET ts=MAX(events.ts,excluded.ts),session_key=COALESCE(events.session_key,excluded.session_key),input=MAX(events.input,excluded.input),output=MAX(events.output,excluded.output),creation=MAX(events.creation,excluded.creation),cache_read=MAX(events.cache_read,excluded.cache_read),reasoning=CASE WHEN events.reasoning IS NULL THEN excluded.reasoning WHEN excluded.reasoning IS NULL THEN events.reasoning ELSE MAX(events.reasoning,excluded.reasoning) END,model=CASE WHEN events.model='unknown' THEN excluded.model ELSE events.model END,effort=CASE WHEN excluded.effort!='' THEN excluded.effort ELSE events.effort END,weak=MIN(events.weak,excluded.weak)",params![e.event_key,e.message_key,e.ts as i64,e.model,e.effort,e.counts.input as i64,e.counts.output as i64,e.counts.creation as i64,e.counts.read as i64,e.counts.reasoning.map(|x|x as i64),e.account,e.weak as i64,e.sidechain as i64,e.session_key]).map_err(|_|"usage event write failed")?;
     }
     for (key, size, mtime, offset, guard, effort, parser_version) in cache {
         tx.execute(
@@ -1184,6 +1237,108 @@ fn add_row(
     .add_to(out);
 }
 
+pub(crate) struct MonitorUsage {
+    pub account_key: String,
+    pub totals: UsageTotals,
+    pub recent_tokens: u64,
+    pub latest_model: Option<String>,
+    pub latest_at: Option<u64>,
+    pub revision: String,
+}
+
+pub(crate) fn monitor_usage(
+    vault: &Path,
+    home: &Path,
+    clock: u64,
+) -> Result<Option<MonitorUsage>, String> {
+    let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(owner) = live_account_key(vault, home) else {
+        return Ok(None);
+    };
+    let conn = open_ledger(&vault.join("usage.sqlite"))?;
+    attribution::observe(&conn, vault, home, clock);
+    let scanned = conn
+        .query_row("SELECT value FROM meta WHERE key='last_scan'", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .optional()
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    if clock.saturating_sub(scanned) >= 30 {
+        // This path uses the same complete-line cursors as the statistics page.
+        // The three-second HUD tick only queries SQLite between shared scans.
+        read_at_with_timezone_now(vault, home, "today", None, 0, None, None, clock)?;
+    }
+    if live_account_key(vault, home).as_deref() != Some(owner.as_str()) {
+        return Ok(None);
+    }
+    let mut totals = UsageTotals::default();
+    let mut recent_tokens = 0u64;
+    let mut latest_model = None;
+    let mut latest_at = None;
+    let mut sessions = HashSet::new();
+    let mut complete = true;
+    let mut query = conn.prepare("SELECT ts,model,input,output,creation,cache_read,reasoning,session_key FROM events WHERE account_key=?1 AND ts>=?2 AND ts<=?3 ORDER BY ts,event_key").map_err(|_| "usage ledger unavailable")?;
+    let rows = query
+        .query_map(
+            params![owner, clock.saturating_sub(5 * 3600) as i64, clock as i64],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?.max(0) as u64,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, Option<i64>>(6)?,
+                    r.get::<_, Option<String>>(7)?,
+                ))
+            },
+        )
+        .map_err(|_| "usage ledger unavailable")?;
+    for row in rows {
+        let (ts, model, i, o, c, r, reason, session) =
+            row.map_err(|_| "usage ledger unavailable")?;
+        add_row(&mut totals, i, o, c, r, reason);
+        if ts >= clock.saturating_sub(600) {
+            recent_tokens = recent_tokens
+                .saturating_add(i.max(0) as u64)
+                .saturating_add(o.max(0) as u64)
+                .saturating_add(c.max(0) as u64)
+                .saturating_add(r.max(0) as u64);
+        }
+        if let Some(session) = session {
+            sessions.insert(session);
+        } else {
+            complete = false;
+        }
+        latest_at = Some(ts);
+        latest_model = (!model.is_empty() && model != "unknown").then_some(model);
+    }
+    totals.sessions = complete.then_some(sessions.len() as u64);
+    let revision = hex_hash(
+        format!(
+            "{owner}\0{}\0{}\0{}\0{}\0{}\0{latest_at:?}\0{latest_model:?}",
+            totals.input_tokens,
+            totals.output_tokens,
+            totals.cache_creation_tokens,
+            totals.cache_read_tokens,
+            totals.requests
+        )
+        .as_bytes(),
+    );
+    Ok(Some(MonitorUsage {
+        account_key: owner,
+        totals,
+        recent_tokens,
+        latest_model,
+        latest_at,
+        revision,
+    }))
+}
+
 pub(crate) fn collect_before_switch(vault: &Path, home: &Path, _account_key: Option<&str>) {
     let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let projects = home.join(".claude").join("projects");
@@ -1198,6 +1353,7 @@ pub(crate) fn collect_before_switch(vault: &Path, home: &Path, _account_key: Opt
         return;
     };
     ensure_tracking_start(&conn, vault, home);
+    attribution::observe(&conn, vault, home, now());
     mark_external_gap(&conn, vault, home);
     let mut known = HashMap::new();
     if let Ok(mut q) = conn.prepare(
@@ -1268,6 +1424,33 @@ pub(crate) fn commit_switch_boundary(vault: &Path, home: &Path, account_key: Opt
     // JSONL timestamps have second precision. Leave the switching second unknown so a
     // request written on either side of the filesystem commit cannot be assigned wrongly.
     let boundary = now();
+    if verified.is_some() {
+        let _ = conn.execute("DELETE FROM meta WHERE key='pending_empty_login'", []);
+    }
+    let latest: Option<Option<String>> = conn
+        .query_row(
+            "SELECT account_key FROM boundaries ORDER BY ts DESC,rowid DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let committed: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key='committed_account_window'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    if verified.is_some()
+        && latest.as_ref().and_then(|v| v.as_deref()) == verified
+        && committed.as_deref() == verified
+    {
+        return;
+    }
     let _ = conn.execute(
         "INSERT INTO boundaries(ts,account_key) VALUES(?1,NULL)",
         params![boundary as i64],
@@ -1277,47 +1460,30 @@ pub(crate) fn commit_switch_boundary(vault: &Path, home: &Path, account_key: Opt
             "INSERT INTO boundaries(ts,account_key) VALUES(?1,?2)",
             params![boundary.saturating_add(1) as i64, account],
         );
+        let _ = conn.execute("INSERT INTO meta(key,value) VALUES('committed_account_window',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [account]);
     }
 }
 
-fn ensure_default_fallback_account(vault: &Path) {
-    let Ok(config) = read_attribution_config(vault) else {
-        return;
-    };
-    if config.fallback_account_id.is_some() {
+pub(crate) fn observe_current(vault: &Path, home: &Path) {
+    let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Ok(conn) = open_ledger(&vault.join("usage.sqlite")) {
+        attribution::observe(&conn, vault, home, now());
+        mark_external_gap(&conn, vault, home);
+    }
+}
+
+pub(crate) fn commit_empty_login_boundary(vault: &Path, home: &Path) {
+    commit_switch_boundary(vault, home, None);
+    let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if live_account_key(vault, home).is_some() {
         return;
     }
-    let Ok(db) = identity_db_readonly(vault) else {
-        return;
-    };
-    let active: Option<String> = db
-        .query_row("SELECT value FROM state WHERE key='active'", [], |r| {
-            r.get(0)
-        })
-        .optional()
-        .ok()
-        .flatten();
-    let default_id: Option<String> = active
-        .filter(|id| {
-            db.query_row(
-                "SELECT EXISTS(SELECT 1 FROM identities WHERE id=?1 AND empty=0 AND account_key IS NOT NULL AND account_key != '')",
-                [id],
-                |r| r.get::<_, bool>(0),
-            )
-            .unwrap_or(false)
-        })
-        .or_else(|| {
-            db.query_row(
-                "SELECT id FROM identities WHERE empty=0 AND account_key IS NOT NULL AND account_key != '' ORDER BY saved_at DESC, id LIMIT 1",
-                [],
-                |r| r.get(0),
-            )
-            .optional()
-            .ok()
-            .flatten()
-        });
-    if let Some(id) = default_id {
-        let _ = set_fallback_account_id(vault, &id);
+    if let Ok(conn) = open_ledger(&vault.join("usage.sqlite")) {
+        let _ = conn.execute("INSERT INTO meta(key,value) VALUES('pending_empty_login',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [now().to_string()]);
+        let _ = conn.execute(
+            "INSERT INTO live_windows(started_at,account_key,controlled) VALUES(?1,NULL,0)",
+            [now() as i64],
+        );
     }
 }
 
@@ -1353,7 +1519,6 @@ pub async fn usage_statistics_read(
             .map_err(|_| "usage ledger unavailable")?
             .join("identity-vault");
         let home = crate::cleaner::identity::root()?;
-        ensure_default_fallback_account(&vault);
         read_at_with_timezone_now(
             &vault,
             &home,
@@ -1452,6 +1617,7 @@ pub(crate) fn set_fallback_account_id(
     let verified_id = validate_account_id_exists(vault, account_id)?;
     let ledger_path = vault.join("usage.sqlite");
     let conn = open_ledger(&ledger_path)?;
+    attribution::fallback_before(&conn, true)?;
     conn.execute(
         "INSERT INTO meta(key,value) VALUES('fallback_account_id',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         [&verified_id],
@@ -1514,6 +1680,12 @@ pub(crate) fn read_attribution_config(vault: &Path) -> Result<UsageAttributionCo
         }
     }
 
+    if let Ok(mut q) = conn.prepare("SELECT account_key FROM usage_identities") {
+        if let Ok(rows) = q.query_map([], |r| r.get::<_, String>(0)) {
+            known_keys.extend(rows.flatten());
+        }
+    }
+
     let mut unassigned_requests = 0u64;
     let mut unassigned_tokens = 0u64;
     if let Ok(mut q) =
@@ -1547,6 +1719,7 @@ pub(crate) fn read_attribution_config(vault: &Path) -> Result<UsageAttributionCo
         fallback_account_name,
         unassigned_requests,
         unassigned_tokens,
+        fallback_before: attribution::fallback_before(&conn, false)?,
     })
 }
 
@@ -1613,6 +1786,7 @@ pub(super) fn read_at_with_timezone_now(
     let mut warnings = Vec::new();
     let conn = open_ledger(&ledger_path)?;
     ensure_tracking_start(&conn, vault, home);
+    attribution::observe(&conn, vault, home, snapshot_now);
     mark_external_gap(&conn, vault, home);
     let mut events = HashMap::new();
     let mut cache = Vec::new();
@@ -1642,6 +1816,8 @@ pub(super) fn read_at_with_timezone_now(
             scan_dir(&projects, 0, &mut events, &mut warnings, &mut cache, &known);
         }
     }
+    attribution::observe(&conn, vault, home, snapshot_now);
+    mark_external_gap(&conn, vault, home);
     let mut boundaries = Vec::new();
     if let Ok(mut q) = conn.prepare("SELECT ts,account_key FROM boundaries ORDER BY ts") {
         if let Ok(rows) = q.query_map([], |r| {
@@ -1686,11 +1862,7 @@ pub(super) fn read_at_with_timezone_now(
         .ok()
         .flatten()
     });
-    let live = if db.is_some() {
-        live_account_key(vault, home)
-    } else {
-        None
-    };
+    let live = live_account_key(vault, home);
     let current = db
         .as_ref()
         .and_then(|d| {
@@ -1756,6 +1928,7 @@ pub(super) fn read_at_with_timezone_now(
             }
         }
     }
+    attribution::append_registry(&conn, live.as_deref(), &mut account_map, &mut key_to_id);
     if !unbound_accounts.is_empty() {
         warnings.push("attribution_gap".into());
     }
@@ -1783,6 +1956,7 @@ pub(super) fn read_at_with_timezone_now(
                 None
             }
         });
+    let fallback_before = attribution::fallback_before(&conn, fallback_id.is_some())?;
     let weak_from = start.unwrap_or(0).min(i64::MAX as u64) as i64;
     let weak_to = end
         .map(|e| e.saturating_sub(1))
@@ -1801,7 +1975,7 @@ pub(super) fn read_at_with_timezone_now(
     }
     let mut rows = Vec::new();
     {
-        let mut q=conn.prepare("SELECT COALESCE(account_key,''),ts,model,COALESCE(effort,''),input,output,creation,cache_read,reasoning FROM events WHERE ts>=?1 AND ts<=?2 ORDER BY ts").map_err(|_|"usage ledger unavailable")?;
+        let mut q=conn.prepare("SELECT COALESCE(account_key,''),ts,model,COALESCE(effort,''),input,output,creation,cache_read,reasoning,session_key FROM events WHERE ts>=?1 AND ts<=?2 ORDER BY ts").map_err(|_|"usage ledger unavailable")?;
         let mapped = q
             .query_map(params![weak_from, weak_to], |r| {
                 Ok((
@@ -1814,6 +1988,7 @@ pub(super) fn read_at_with_timezone_now(
                     r.get::<_, i64>(6)?,
                     r.get::<_, i64>(7)?,
                     r.get::<_, Option<i64>>(8)?,
+                    r.get::<_, Option<String>>(9)?,
                 ))
             })
             .map_err(|_| "usage ledger unavailable")?;
@@ -1828,15 +2003,19 @@ pub(super) fn read_at_with_timezone_now(
     let mut buckets: BTreeMap<i64, UsageTotals> = BTreeMap::new();
     let mut models: BTreeMap<String, UsageTotals> = BTreeMap::new();
     let mut model_efforts: BTreeMap<String, BTreeMap<String, UsageTotals>> = BTreeMap::new();
-    for (owner, ts, model, effort, i, o, c, r, reason) in rows {
+    let mut sessions = HashSet::new();
+    let mut session_complete = true;
+    let mut active_days = HashSet::new();
+    for (owner, ts, model, effort, i, o, c, r, reason, session) in rows {
         if start.is_some_and(|s| ts < s) || end.is_some_and(|e| ts >= e) || ts > snapshot_now {
             continue;
         }
-        let id = key_to_id
-            .get(&owner)
-            .cloned()
-            .or_else(|| fallback_id.clone());
-        if owner.is_empty() && id.is_none() {
+        let id = key_to_id.get(&owner).cloned().or_else(|| {
+            fallback_before
+                .filter(|before| ts <= *before)
+                .and_then(|_| fallback_id.clone())
+        });
+        if id.is_none() {
             add_row(&mut unknown, i, o, c, r, reason);
         } else if let Some(id) = id.as_ref() {
             if let Some(a) = account_map.values_mut().find(|a| &a.id == id) {
@@ -1844,11 +2023,24 @@ pub(super) fn read_at_with_timezone_now(
             }
         }
         let selected = match account_id {
-            None => id.is_some(),
-            Some("unattributed") => owner.is_empty() && id.is_none(),
+            None => true,
+            Some("unattributed") => id.is_none(),
             Some(filter) => id.as_deref() == Some(filter),
         };
         if selected {
+            if let Some(session) = session {
+                sessions.insert(session);
+            } else {
+                session_complete = false;
+            }
+            active_days.insert(if let Some(timezone) = timezone {
+                local_datetime(timezone, ts)?
+                    .date_naive()
+                    .format("%Y-%m-%d")
+                    .to_string()
+            } else {
+                day_label(ts, offset)
+            });
             add_row(&mut totals, i, o, c, r, reason);
             let bucket = if let Some(timezone) = timezone {
                 if let Some(slots) = hourly_slots.as_ref() {
@@ -1982,13 +2174,21 @@ pub(super) fn read_at_with_timezone_now(
             fallback_account_name,
             unassigned_requests,
             unassigned_tokens,
+            fallback_before,
         }
     };
     Ok(UsageSnapshot {
         generated_at: snapshot_now,
         timezone: timezone.map(|timezone| timezone.name().to_string()),
         tracking_since: tracking,
-        totals,
+        totals: {
+            totals.sessions = session_complete.then_some(sessions.len() as u64);
+            totals
+        },
+        activity: session_complete.then_some(UsageActivity {
+            sessions: sessions.len() as u64,
+            active_days: active_days.len() as u64,
+        }),
         unattributed: unknown,
         accounts,
         daily,

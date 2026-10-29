@@ -29,3 +29,16 @@ test('TSV quotes tabs, newlines and quotes in fields', () => {
   const text = buildUsageTsv({snapshot, period: 'today', periodLabel: 'today', accountLabel: 'all', accountIsAll: true, timezone: 'UTC', privacy: false, days: [], generatedLabel: 'a\tb"c\nd', coverageLabel: 'x', productLabel: 'x', labels});
   expect(text).toContain('"a\tb""c\nd"');
 });
+
+test('recorded activity and ordinary account scopes preserve privacy and missing legacy values', () => {
+  const totals = {...emptyUsage(), requests: 12, sessions: 3};
+  const snapshot: UsageSnapshot = {generated_at: 1, tracking_since: null, totals, unattributed: totals, accounts: [], daily: [], models: [], warnings: [], activity: {sessions: 3, active_days: 2}};
+  const labels = {metadata:'metadata', summary:'summary', daily:'daily', time:'time', total:'total', input:'input', output:'output', cacheWrite:'cacheWrite', cacheRead:'cacheRead', requests:'requests', sessions:'sessions', activeDays:'activeDays', account:'account', period:'period', timezone:'timezone', generated:'generated', coverage:'coverage'};
+  const options = {snapshot, period: 'all' as const, periodLabel: 'all', accountLabel: 'Alpha workspace', accountIsAll: false, timezone: 'UTC', privacy: false, days: [], generatedLabel: 'now', coverageLabel: 'scope', productLabel: 'x', labels};
+  const exported = buildUsageTsv(options);
+  expect(exported).toContain('requests\tsessions\tactiveDays');
+  expect(exported).toContain('Alpha workspace\t0\t0\t0\t0\t0\t12\t3\t2');
+  expect(buildUsageTsv({...options, privacy: true})).not.toContain('Alpha workspace');
+  const legacy = buildUsageTsv({...options, snapshot: {...snapshot, totals: {...emptyUsage(), requests: 12}, activity: undefined}});
+  expect(legacy).toContain('Alpha workspace\t0\t0\t0\t0\t0\t12\t\t');
+});

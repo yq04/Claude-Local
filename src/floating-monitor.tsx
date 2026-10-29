@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生 monitor_live_telemetry 零轮询本地遥测、当前外观/壁纸/玻璃/字体/隐私偏好与 BroadcastChannel 跨窗同步消息。
- * [OUTPUT]: 无边框置顶多态「实时额度悬浮监控窗」（FloatingMonitorApp），融合 Token Monitor 与 Claude-Local 玻璃美学，支持置顶固定、位置锁定、边缘磁吸、贴边自动隐藏胶囊、无级透明度调节及 5h/7d 进度 + 5h API 等效美元花费遥测。
+ * [OUTPUT]: 无边框置顶多态「实时额度悬浮监控窗」（FloatingMonitorApp），支持置顶固定、位置锁定、边缘磁吸、贴边自动隐藏胶囊、透明度调节及 5h/7d 额度；共享账本展示当前已确认账号的Token构成、10分钟均值速率、去重响应及最近实际模型。
  * [POS]: 独立桌面悬浮 HUD 视图（?window=monitor）；100% 本地只读遥测，零后台 OAuth 请求，零跨进程内存读取。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -23,16 +23,13 @@ import {
 } from './identity-quota';
 import {
   clampMonitorOpacityPct,
-  computeContextMeter,
   computeMonitorWindowBar,
   cycleMonitorOpacityPct,
   deriveMonitorActivityMode,
   formatCompactCount,
-  formatCompactExhaustionEta,
-  formatExhaustionEta,
-  formatMonitorUsd,
   formatVelocityLabel,
   formatWindowResetLabel,
+  monitorTokenComposition,
   MONITOR_BUS_CHANNEL,
   MONITOR_OPACITY_PRESETS,
   postMonitorBusMessage,
@@ -65,6 +62,7 @@ export function FloatingMonitorApp() {
   const [opacityPct, setOpacityPct] = useState<number>(readMonitorOpacityPct);
   const [opacityMenuOpen, setOpacityMenuOpen] = useState(false);
   const collapseTimerRef = useRef<number | null>(null);
+  const telemetryPendingRef = useRef(false);
 
   const applyWindowState = useCallback((w: MonitorWindowState) => {
     setAlwaysOnTop(w.alwaysOnTop);
@@ -76,6 +74,8 @@ export function FloatingMonitorApp() {
   }, []);
 
   const fetchTelemetry = useCallback(async () => {
+    if (telemetryPendingRef.current) return;
+    telemetryPendingRef.current = true;
     try {
       const snap = await invoke<MonitorLiveTelemetry>('monitor_live_telemetry');
       setTelemetry(snap);
@@ -83,6 +83,8 @@ export function FloatingMonitorApp() {
       setNowSec(Math.floor(Date.now() / 1000));
     } catch {
       // Keep last known snapshot on transient local read contention
+    } finally {
+      telemetryPendingRef.current = false;
     }
   }, [applyWindowState]);
 
@@ -389,17 +391,15 @@ export function FloatingMonitorApp() {
       ? evaluateWeeklyPace(bar7d.used, evaluated.r7, nowSec)
       : null;
 
-  const contextMeter = computeContextMeter(metrics?.contextUsedPct);
-  const exhaustionWarnFull = formatExhaustionEta(metrics?.exhaustionEtaMins, locale);
-  const exhaustionWarnCompact = formatCompactExhaustionEta(metrics?.exhaustionEtaMins);
-  const velocityText = formatVelocityLabel(metrics?.tokensPerMin ?? 0);
-  const cost5hText = formatMonitorUsd(metrics?.cost5hUsd ?? 0);
-  const savings5hText = formatMonitorUsd(metrics?.cacheSavings5hUsd ?? 0);
-  const sessionModelLabel =
-    metrics?.latestModel ||
-    (activityMode === 'active'
-      ? telemetry?.clientLabel || 'Claude CLI'
-      : t('monitor.localZeroPollingBadge'));
+  const usageAvailable = metrics?.available === true;
+  const velocityText = formatVelocityLabel(usageAvailable ? metrics.tokensPerMin : undefined);
+  const totalText = usageAvailable ? formatCompactCount(metrics.tokens5hTotal) : '—';
+  const sessionModelLabel = usageAvailable && metrics.latestModel
+    ? metrics.latestModel
+    : t(usageAvailable ? 'monitor.noModel' : 'monitor.accountUsageUnavailable');
+  const composition = monitorTokenComposition(usageAvailable ? metrics : undefined);
+  const partLabel = (kind: typeof composition[number]['kind']) => t(`monitor.${kind}Short`);
+  const usageScopeTitle = t('monitor.localUsageScope');
 
   const shellStyle = {
     '--monitor-opacity': String(opacityPct / 100),
@@ -683,11 +683,6 @@ export function FloatingMonitorApp() {
           )}
         </div>
         <div className="monitor-hud-badges">
-          {(metrics?.cost5hUsd ?? 0) > 0 && (
-            <span className="monitor-hud-cost-pill" title={`${t('monitor.cost5h')}: ${cost5hText}`}>
-              5h {cost5hText}
-            </span>
-          )}
           {current?.plan && <span className="monitor-hud-badge">{current.plan}</span>}
         </div>
       </div>
@@ -716,13 +711,6 @@ export function FloatingMonitorApp() {
             <span className="monitor-limit-reset-text" title={reset5hLabel}>
               {reset5hLabel}
             </span>
-            {exhaustionWarnCompact ? (
-              <span className="monitor-hud-eta-warn" title={exhaustionWarnFull ?? undefined}>
-                ⚠ {exhaustionWarnCompact}
-              </span>
-            ) : metrics?.burnRatePctHr != null && metrics.burnRatePctHr > 0 ? (
-              <span className="monitor-hud-burn-tag">{metrics.burnRatePctHr}%/h</span>
-            ) : null}
           </div>
         </div>
 
@@ -787,68 +775,56 @@ export function FloatingMonitorApp() {
               >
                 {activityMode === 'active' ? '✻' : '⊙'}
               </span>
-              <span className="monitor-session-model" title={sessionModelLabel}>
+              <span className="monitor-session-model" title={`${t('monitor.latestModel')}: ${sessionModelLabel}`}>
                 {sessionModelLabel}
               </span>
-              <span className="monitor-session-reqs">
-                · {metrics?.requests5h ?? 0} {t('monitor.callsShort')}
-              </span>
             </div>
-            <div
-              className={`monitor-session-context tone-${contextMeter.tone}`}
-              title={`${t('monitor.contextLoad')}: ${contextMeter.usedPct != null ? `${contextMeter.usedPct}%` : '—'}`}
-            >
-              <span className="monitor-context-meter" aria-hidden="true">
-                <span
-                  className="monitor-context-meter-fill"
-                  style={{width: `${contextMeter.fillWidthPct}%`}}
-                />
-              </span>
-              <span className="monitor-context-pct">
-                {contextMeter.usedPct != null ? `${contextMeter.usedPct}%` : '200k —'}
-              </span>
+            <span className="monitor-session-cache" title={t('monitor.cacheHitTitle')}>
+              {t('monitor.cacheHit')} {usageAvailable && metrics.cacheHitPct != null ? `${metrics.cacheHitPct}%` : '—'}
+            </span>
+          </div>
+
+          <div className="monitor-token-composition" title={usageScopeTitle}>
+            <div className="monitor-token-track" aria-hidden="true">
+              {composition.map(part => (
+                <span key={part.kind} className={`token-${part.kind}`} style={{width: `${part.share * 100}%`}} />
+              ))}
+            </div>
+            <div className="monitor-token-legend">
+              {composition.map(part => (
+                <span key={part.kind} className="monitor-token-part" title={`${partLabel(part.kind)}: ${usageAvailable ? part.tokens.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') : '—'}`}>
+                  <span className="monitor-token-part-label"><i className={`token-${part.kind}`} />{partLabel(part.kind)}</span>
+                  <strong>{usageAvailable ? formatCompactCount(part.tokens) : '—'}</strong>
+                </span>
+              ))}
             </div>
           </div>
 
-          <div className="monitor-usage-tiles">
+          <div className="monitor-usage-tiles" title={usageScopeTitle}>
             <div className="monitor-usage-tile">
               <span className="monitor-usage-label">{t('monitor.tokens5h')}</span>
-              <span className="monitor-usage-value">
-                {formatCompactCount(metrics?.tokens5hTotal ?? 0)}
-              </span>
-              <span className="monitor-usage-sub">
-                {t('monitor.cacheHit')}{' '}
-                {metrics?.cacheHitPct != null ? `${metrics.cacheHitPct}%` : '—'}
-              </span>
+              <span className="monitor-usage-value">{totalText}</span>
             </div>
             <div className="monitor-usage-tile">
               <span className="monitor-usage-label">{t('monitor.velocity')}</span>
               <span className="monitor-usage-value">{velocityText}</span>
-              <span className="monitor-usage-sub">
-                {metrics?.burnRatePctHr != null
-                  ? t('monitor.burnRate', {rate: metrics.burnRatePctHr})
-                  : t('monitor.routeProtected')}
-              </span>
             </div>
             <div className="monitor-usage-tile">
-              <span className="monitor-usage-label">{t('monitor.cost5h')}</span>
-              <span className="monitor-usage-value is-accent">{cost5hText}</span>
-              <span className="monitor-usage-sub">
-                {t('monitor.savedShort')} {savings5hText}
-              </span>
+              <span className="monitor-usage-label">{t('monitor.responses5h')}</span>
+              <span className="monitor-usage-value">{usageAvailable ? formatCompactCount(metrics.requests5h) : '—'}</span>
             </div>
           </div>
         </div>
       ) : (
-        <div className="monitor-hud-compact-footer">
-          <span className="monitor-compact-shield">
+        <div className="monitor-hud-compact-footer" title={usageScopeTitle}>
+          <span className="monitor-compact-shield" title={sessionModelLabel}>
             <span className={`monitor-session-glyph${activityMode === 'active' ? ' is-active' : ''}`}>
               {activityMode === 'active' ? '✻' : '⊙'}
             </span>{' '}
-            {sessionModelLabel} · {formatCompactCount(metrics?.tokens5hTotal ?? 0)} tok
+            {sessionModelLabel}
           </span>
           <span className="monitor-compact-velocity">
-            {velocityText} · {cost5hText}
+            5h {totalText} · {velocityText}
           </span>
         </div>
       )}

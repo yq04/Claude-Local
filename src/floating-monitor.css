@@ -1,5 +1,5 @@
 /* [INPUT]: Global design tokens (--foreground, --muted-foreground, --panel, --card-elevated, --background, --border, --local-accent, --glass-blur, --glass-opacity, --wallpaper-dim, --custom-wallpaper-image) from style.css plus --monitor-opacity. */
-/* [OUTPUT]: Frameless Multi-Mode Floating Monitor HUD layout (Expanded 340x258, Compact 340x152, Edge-Collapsed 52x138), 5-layer optical glass surface, wallpaper/theme refraction, opacity control, and Token Monitor telemetry grid. */
+/* [OUTPUT]: Frameless HUD layout (340x258 / 340x152 / 52x138), glass/theme/opacity controls, account-scoped token composition, cache rate and bounded bilingual metrics. */
 /* [POS]: Dedicated stylesheet for src/floating-monitor.tsx and the main-window header toggle button. */
 /* [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md */
 
@@ -356,6 +356,11 @@
 
 /* Inline Opacity Popover Bar */
 .monitor-opacity-popover {
+  position: absolute;
+  z-index: 2;
+  top: 38px;
+  left: 10px;
+  right: 10px;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -442,18 +447,6 @@
   align-items: center;
   gap: 5px;
   flex-shrink: 0;
-}
-
-.monitor-hud-cost-pill {
-  padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 10px;
-  font-weight: 650;
-  font-family: var(--font-mono);
-  background: color-mix(in srgb, var(--hud-ok) 12%, transparent);
-  color: var(--hud-ok);
-  border: 1px solid var(--hud-ok-border);
-  white-space: nowrap;
 }
 
 .monitor-hud-badge {
@@ -575,7 +568,9 @@
   font-weight: 500;
   color: var(--muted-foreground);
   white-space: nowrap;
-  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .monitor-hud-eta-warn {
@@ -631,7 +626,7 @@
   min-height: 0;
 }
 
-/* Token Monitor active session & context headroom strip */
+/* Latest recorded model and prompt cache ratio; no assumed context limit. */
 .monitor-session-strip {
   display: flex;
   align-items: center;
@@ -665,6 +660,71 @@
   font-weight: 600;
   color: var(--foreground);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.monitor-session-cache {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.monitor-token-composition {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.monitor-token-track {
+  height: 5px;
+  border-radius: 3px;
+  overflow: hidden;
+  display: flex;
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+
+.token-input { background: var(--local-accent); }
+.token-output { background: #8b5cf6; }
+.token-cacheWrite { background: var(--hud-warn); }
+.token-cacheRead { background: var(--hud-ok); }
+
+.monitor-token-legend {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.monitor-token-part {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  font-size: 9px;
+  line-height: 1.2;
+  color: var(--muted-foreground);
+}
+
+.monitor-token-part-label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.monitor-token-part i {
+  width: 5px;
+  height: 5px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.monitor-token-part strong {
+  padding-left: 8px;
+  font: 600 10px/1.25 var(--font-mono);
+  color: var(--foreground);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -724,7 +784,7 @@
   white-space: nowrap;
 }
 
-/* Token Monitor 3-column usage & cost tiles */
+/* Three counters share the same confirmed account and rolling time scope. */
 .monitor-usage-tiles {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -785,9 +845,26 @@
 }
 
 .monitor-compact-shield {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.monitor-hud-shell[data-compact="true"] {
+  padding-top: 7px;
+  padding-bottom: 7px;
+  gap: 4px;
+}
+
+.monitor-hud-shell[data-compact="true"] .monitor-limit-window {
+  padding-top: 4px;
+  padding-bottom: 4px;
+  gap: 3px;
+}
+
+.monitor-hud-shell[data-compact="true"] .monitor-hud-compact-footer {
+  padding-top: 0;
 }
 
 .monitor-compact-velocity {

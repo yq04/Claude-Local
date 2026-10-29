@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, upstream CCBaga baseline attribution, 0.2.0 verified delivery and English synthetic-data previews.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.2.2 usage reliability and mixed-version English synthetic-data previews.
 [OUTPUT]: Full English flagship project presentation, architectural lineage, feature matrix, visual tour, installation workflow and runtime boundaries.
 [POS]: English repository introduction linked bidirectionally with README.md.
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -11,11 +11,11 @@
 
 # Claude-Local
 
-**A Local-First Windows 10 / 11 x64 Multi-Identity Encrypted Vault, Token & USD Cost Analyzer, 5h Auto-Wake Scheduler, and Isolated Browser for Claude**
+**A Local-First Windows 10 / 11 x64 Multi-Identity Encrypted Vault, Token Usage Analyzer, 5h Auto-Wake Scheduler, and Isolated Browser for Claude**
 
-Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://github.com/liseami)) and independently maintained · 100% Local-First · Zero Cloud Credential Hosting · Never Force-Kills Running `claude.exe` Sessions
+Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://github.com/liseami)) and independently maintained, retaining the original contributors' copyright and [MIT license](LICENSE) · Local-First · Zero Cloud Credential Hosting · Never Force-Kills Running `claude.exe` Sessions
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.2.0-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.0)
+[![Latest Release](https://img.shields.io/badge/Release-v0.2.2-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@ Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://git
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.0/Claude-Local_0.2.0_x64-setup.exe"><strong>⬇️ Download v0.2.0 Installer (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe"><strong>⬇️ Download v0.2.2 Installer (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.0"><strong>✨ v0.2.0 Release Page</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.2"><strong>✨ v0.2.2 Release Page</strong></a>
   ·
   <a href="#-visual-tour--core-capabilities"><strong>🖼️ Visual Tour</strong></a>
   ·
@@ -47,7 +47,7 @@ Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://git
 - [✨ Why Claude-Local?](#-why-claude-local)
 - [🖼️ Visual Tour & Core Capabilities](#️-visual-tour--core-capabilities)
   - [1. Identity Management Workbench](#1-identity-management-workbench)
-  - [2. Usage Analytics & Official USD API Cost Estimation](#2-usage-analytics--official-usd-api-cost-estimation)
+  - [2. Usage Analytics & Token Composition](#2-usage-analytics--token-composition)
   - [3. Next-Gen Token Monitor-Style Floating HUD](#3-next-gen-token-monitor-style-floating-hud)
   - [4. Identity-Bound Isolated Browser & Anti-Ban Verification](#4-identity-bound-isolated-browser--anti-ban-verification)
   - [5. Quick Setup & Read-Only Network Diagnostics](#5-quick-setup--read-only-network-diagnostics)
@@ -62,13 +62,13 @@ Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://git
 
 ## ✨ Why Claude-Local?
 
-Built for developers on Windows who rely heavily on **Claude Code CLI** and manage multiple **Claude Pro / Max** subscriptions, Claude-Local unifies encrypted identity switching, passive quota tracking, API-equivalent USD cost analytics, and browser profile isolation into a single desktop workbench:
+Built for developers on Windows who rely heavily on **Claude Code CLI** and manage multiple **Claude Pro / Max** subscriptions, Claude-Local unifies encrypted identity switching, passive quota tracking, token analytics, and browser profile isolation into a single desktop workbench:
 
 | Core Pillar | Key Capabilities & Engineering Highlights |
 | :--- | :--- |
 | **🔐 Multi-Identity Encrypted Vault & Safe Switching** | Preserves `BAGAID01` / `.baga` (Zstandard + AES-256-GCM) archives and SQLite `user_version = 3`; enforces live `claude.exe` process locks before switching (never force-killing active CLI sessions), performs 4-dimensional cross-account residue sanitization, and supports PBKDF2 password-encrypted full-vault backups with isolated recovery copies. |
-| **📊 Token Analytics & Official USD Cost Estimation** | Parses local session logs 100% offline and calculates **Estimated API Cost (`$USD`)** and **Prompt Cache Savings (`$USD`)** using **official Anthropic Claude API per-model token pricing** (Opus 4.x / Sonnet 4.x / Haiku 4.5 & 3.5); breaks down usage by model family and reasoning Effort tiers (`low` / `medium` / `high` / `xhigh` / `max`) with IANA/DST timezone accuracy and one-click TSV export. |
-| **🖥️ Token Monitor-Style Multi-Mode Floating HUD** | A glassmorphism desktop HUD supporting **Expanded (`340×258`)**, **Compact (`340×152`)**, and **Edge-Collapsed Capsule (`52×138`)** geometries; equipped with **Always-on-Top Pin**, **Position Lock**, **18px Magnetic Edge Snap**, **Edge Auto-Hide** (collapses to a side capsule on mouse leave, expands on hover/click), **50%–100% Continuous Opacity Slider**, and real-time synchronization with app theme, accent color, and custom wallpaper. |
+| **📊 Token Usage & Account Analytics** | A local deduplicated ledger shows **uncached input, output, cache writes, and cache reads**, cache hit rate, explicitly recorded sessions, and active days. Newly signed-in accounts can register for statistics before an archive is saved. Includes all-model and recorded Effort breakdowns, dynamic account filters, IANA/DST timezones, and TSV export. |
+| **🖥️ Multi-Mode Floating HUD** | Shares the analytics ledger and filters by the current account to show **rolling 5h token composition, a 10-minute average rate, unique responses, and cache hit rate**. Supports Expanded, Compact, and Edge-Collapsed Capsule modes, Pin, Lock, magnetic edge snap, auto-hide, 50%–100% opacity, and theme/wallpaper synchronization. |
 | **⏱️ In-Process Native 5h Auto-Wake Scheduler** | Driven by a single Rust in-process scheduler with configurable active time windows (e.g. `08:00–23:00`), primary-account threshold pre-warming, and staggered per-account backoff; strictly requires a fresh `new_5h_confirmed` server reset anchor, registers zero Windows services or scheduled tasks, and stops immediately when the app exits. |
 | **🌐 Identity-Bound Isolated Browser & Auto-Launch** | Binds each identity to a dedicated Chromium user-data directory and deterministic fingerprint seed; **checking "Link browser" automatically launches or re-opens the newly switched account's isolated browser verification page upon account switch**; includes Windows AppContainer DACL self-healing, phased no-STUN WebRTC checks, and same-IP hosting/ISP classification. |
 | **🧭 Passive Quota Sync & Connection Recovery Queue** | Passively observes CLI `/usage` caches and the Python single-writer quota ledger by default (**zero background OAuth polling, zero writes to `.claude.json`**); offers optional on-demand batch verification and groups accounts needing re-authentication or route fixes into a centralized Connection Recovery Queue. |
@@ -77,7 +77,7 @@ Built for developers on Windows who rely heavily on **Claude Code CLI** and mana
 
 ## 🖼️ Visual Tour & Core Capabilities
 
-> **Privacy & Synthetic Data Notice**: All screenshots below are captured from the real `Claude-Local v0.2.0` frontend (`1280×900` main viewport and native HUD dimensions) using **100% synthetic demonstration data**. Account names, organizations, token counts, and CLI versions are fictional, and emails use the reserved `@example.invalid` domain with privacy masking enabled.
+> **Screenshot Versions & Privacy Notice**: The usage screenshot shows `Claude-Local v0.2.2`; other pages remain labeled historical `v0.2.0` examples. See the current descriptions and [0.2.2 release notes](docs/RELEASE_NOTES_0.2.2_USAGE.md). The real frontend was captured in an isolated environment using **synthetic demonstration data**. Account names, organizations, token counts, and CLI versions are fictional; emails use the reserved `@example.invalid` domain with privacy masking enabled.
 
 ### 1. Identity Management Workbench
 
@@ -90,31 +90,25 @@ Built for developers on Windows who rely heavily on **Claude Code CLI** and mana
 
 ---
 
-### 2. Usage Analytics & Official USD API Cost Estimation
+### 2. Usage Analytics & Token Composition
 
-![Claude-Local 0.2.0 Usage Analytics (English)](docs/screenshots/0.2.0/usage-analytics-en.png)
+![Claude-Local 0.2.2 Usage Analytics (English)](docs/screenshots/0.2.2/usage-analytics-en.png)
 
 - **Inline Date Range & Timezone Badge**: Displays the active date interval and timezone abbreviation (`Oct 6, 2026 – Oct 26, 2026 EDT`) directly alongside `[Today | Yesterday | 7 days | 30 days | All time]`.
-- **4 Primary KPI Cards + 6-Item Secondary Telemetry Bar**:
-  - Top cards highlight **Total tokens**, **Uncached input**, **Output**, and **Cache hit rate**;
-  - The 6-column horizontal strip summarizes **`Unique responses`**, **`Est. API cost ($USD)`**, **`Cache savings ($USD)`**, **`Avg / response`**, **`Cache writes`**, and **`Cache reads`**.
-- **Per-Model USD Cost & Effort Breakdown**: The **Model distribution** panel shows responses, output tokens, **estimated USD cost** (e.g. `$7.12` for Sonnet 4.6, `$6.47` for Opus 4.6), and token share alongside reasoning Effort tiers.
+- **Total Tokens & Four-Part Composition**: Shows amounts and shares for uncached input, output, cache writes, and cache reads. Reasoning tokens are already included in output and are not added again.
+- **Recorded Activity**: Shows cache hit rate, deduplicated explicit session identifiers, active calendar days in the selected timezone, unique responses, and tokens per response.
+- **All Models & Effort**: Lists all models by total token share with four-part composition, responses, cache hit rate, and recorded reasoning Effort tiers.
+- **Account & Time Filters**: The account dropdown offers only All accounts and the dynamic account list; retains chart/data views, privacy masking, and scoped TSV export.
 
 ---
 
 ### 3. Next-Gen Token Monitor-Style Floating HUD
 
-Inspired by **Token Monitor** and tailored to Claude-Local's optical glassmorphism and custom wallpaper engine:
+Inspired by **Token Monitor**, the HUD supports Expanded, Compact, and Edge-Collapsed Capsule modes and synchronizes with the app's theme, accent color, and custom wallpaper.
 
-| Light Expanded Mode (`340×258`) | Dark Aurora Mode (Theme & Wallpaper Sync) | Edge-Collapsed Capsule (`52×138`) |
-| :---: | :---: | :---: |
-| ![Light Expanded HUD](docs/screenshots/0.2.0/floating-monitor.png) | ![Dark Aurora HUD](docs/screenshots/0.2.0/floating-monitor-dark.png) | ![Edge-Collapsed Capsule HUD](docs/screenshots/0.2.0/floating-monitor-collapsed.png) |
-| Full 5h/7d bars, reset timers, `⚠ ~1h10m` burn ETA, dominant model share & 3-column live telemetry | Syncs live with light/dark theme, 6 accent tones, glass blur & custom local wallpaper | Docks to left/right screen edge as a `52px` capsule; expands immediately on hover or click |
-
-- **3-Column Live Telemetry Tiles**:
-  1. **5h Usage**: Cumulative 5h tokens and prompt cache hit rate (`149k · 91% cache hit`);
-  2. **Live Velocity**: Rolling 10-minute token burn rate (`1.8k tok/m`) and proxy/direct isolation state;
-  3. **5h Est. API Cost**: Real-time 5h USD cost (`$1.84`) and prompt cache savings (`Saved $3.12`).
+- **Shared Account Ledger**: Displays only records supported by the current account's evidence. An unverified account or read failure shows unknown values without borrowing another account's data.
+- **Rolling Window Metrics**: Shows rolling 5h tokens and their four-part composition, cache hit rate, the most recently recorded model, and unique responses. `tok/m` is the average over a fixed 10-minute window.
+- **Separate Quota & Token Measures**: Keeps quota sources and reset countdowns; local token totals are not a conversion of subscription quota.
 - **Desktop Window Controls**:
   - **Always-on-Top Pin & Position Lock**: Keep the HUD above all windows and lock coordinates to prevent accidental dragging;
   - **18px Magnetic Edge Snap**: Automatically snaps to the nearest monitor work-area edge within 18px;
@@ -145,13 +139,13 @@ Inspired by **Token Monitor** and tailored to Claude-Local's optical glassmorphi
 
 Claude-Local is **derived from the open-source project [CCBaga](https://github.com/liseami/CCBaga) (created by [@liseami](https://github.com/liseami) and contributors)**. We gratefully acknowledge the original authors for their foundational work on multi-identity archive encoding and browser profile isolation.
 
-While preserving 100% backward compatibility with existing vaults and browser profiles, Claude-Local is independently engineered for **Windows 10 / 11 x64 desktop reliability, passive quota & USD cost analytics, in-process 5h auto-wake scheduling, and desktop HUD monitoring**:
+While preserving compatibility with existing vaults and browser profiles, Claude-Local is independently engineered for **Windows 10 / 11 x64 desktop reliability, passive quota & token analytics, in-process 5h auto-wake scheduling, and desktop HUD monitoring**:
 
-| Dimension | Inherited CCBaga Baseline | Claude-Local (`v0.2.0`) Independent Engineering & Enhancements |
+| Dimension | Inherited CCBaga Baseline | Claude-Local (`v0.2.2`) Independent Engineering & Enhancements |
 | :--- | :--- | :--- |
 | **Vault & Archive Protocol** | `BAGAID01` magic header, `.baga` archives, SQLite `user_version = 3`, account HMACs, and deterministic browser seed domain | **Full backward compatibility**; added Zstandard streaming compression support, bounded tar extraction limits, `ScratchGuard` staging cleanup, strict 32-byte master key validation, and PBKDF2 + AES-GCM password-encrypted vault backups with isolated recovery copies. |
 | **Quota Tracking & Auto-Wake** | Basic identity state management | Built **passive CLI quota observation + Python single-writer ledger + `quota_core` per-window monotonic merge** (zero writes to `.claude.json`); added `reset_inferred` post-expiry recovery, **in-process Rust 5h auto-wake scheduler**, online batch queries, and the Connection Recovery Queue. |
-| **Usage & USD Cost Analytics** | — | Native SQLite token ledger + **CPAMP / ccusage-inspired analytics workbench** with **official Anthropic API USD cost & cache savings estimation**, model family & Effort tier breakdowns, IANA/DST timezone accuracy, and TSV export. |
+| **Token Usage Analytics** | — | Native deduplicated SQLite ledger + **CPAMP / ccusage-inspired analytics workbench** with independent statistics identities, controlled sign-in attribution for resumed sessions, four-part composition, explicit sessions and active days, all-model/Effort breakdowns, IANA/DST timezones, and TSV export. |
 | **Floating HUD Monitor** | — | **Token Monitor-inspired multi-mode desktop HUD** supporting Expanded/Compact/Capsule geometries, Pin, Lock, 18px Magnetic Edge Snap, Edge Auto-Hide, 50%–100% Opacity slider, and live theme/accent/wallpaper synchronization. |
 | **Windows x64 & Anti-Ban Hardening** | Cross-platform baseline | Purpose-built for **Windows x64**: Chromium AppContainer cache DACL self-healing, Win32/MSIX `claude.exe` process tree detection, cross-account `tool_use/tool_result` orphan repair & `tengu_exit` telemetry sanitization, and before/after system setting snapshots with conflict-checked rollback. |
 
@@ -159,30 +153,30 @@ While preserving 100% backward compatibility with existing vaults and browser pr
 
 ## 📦 Download, Installation & Release History
 
-### 1. Latest Windows x64 Installer (`v0.2.0`)
+### 1. Latest Windows x64 Installer (`v0.2.2`)
 
-| Asset | Platform | File Size | SHA-256 Checksum |
-| :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.2.0_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.0/Claude-Local_0.2.0_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,537,513` bytes (134.03 MiB) | `37cfa5106f54aaf16e379dff7b53a93aef4456fe70a229d776039fbff8c645b4` |
+| Asset | Platform |
+| :--- | :--- |
+| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) |
 
-Verify the installer checksum in PowerShell before running:
+Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.2.2 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2):
 
 ```powershell
-Get-FileHash .\Claude-Local_0.2.0_x64-setup.exe -Algorithm SHA256
-# Expected: 37CFA5106F54AAF16E379DFF7B53A93AEF4456FE70A229D776039FBFF8C645B4
+Get-FileHash .\Claude-Local_0.2.2_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. Installation & Non-Disruptive Upgrade Notes
 
 1. **Install Location & Identifiers**: Per-user NSIS installer defaulting to `%LOCALAPPDATA%\Programs\Claude-Local`; main executable `claude-local.exe`, bundle identifier `ai.local.claude-local`, companion browser registration `Claude-Local-Browser`.
 2. **User Data Root**: All encrypted vaults, master keys, quota/usage ledgers, appearance settings, and browser profiles live under `%APPDATA%\ai.local.claude-local`.
-3. **Seamless Upgrades**: Upgrading from `0.1.x` to `0.2.0` preserves all existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions.
+3. **Seamless Upgrades**: Upgrading from `0.1.x` or `0.2.0` to `0.2.2` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
 
-### 3. Public Release Series (`0.1.0` – `0.2.0`)
+### 3. Public Release Series (`0.1.0` – `0.2.2`)
 
 | Version | Date | Highlights | Documentation |
 | :--- | :--- | :--- | :--- |
-| **`v0.2.0`** *(Latest)* | 2026-10-26 | **Token Monitor-style multi-mode Floating HUD (Pin/Lock/Snap/Auto-Hide/Opacity/Theme Sync)**, **official Anthropic API USD cost & cache savings analytics**, **auto-launch linked browser on account switch**, and global UI/sidebar polish | [UI & HUD Note](docs/UI_MONITOR_0.2.0.md) · [Release Notes](docs/RELEASE_NOTES_0.2.0.md) · [Verification](docs/RELEASE_VERIFICATION_0.2.0.md) |
+| **`v0.2.2`** *(Latest)* | 2026-10-29 | Independent statistics identities and controlled resumed-session attribution, four-part token composition, sessions and active days, all-model distribution, simple dynamic account filters, and a shared account-ledger HUD with rolling windows | [Release Notes](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
+| **`v0.2.0`** | 2026-10-26 | **Token Monitor-style multi-mode Floating HUD (Pin/Lock/Snap/Auto-Hide/Opacity/Theme Sync)**, **official API USD cost & cache savings analytics (historical feature)**, **auto-launch linked browser on account switch**, and global UI/sidebar polish | [UI & HUD Note](docs/UI_MONITOR_0.2.0.md) · [Release Notes](docs/RELEASE_NOTES_0.2.0.md) · [Verification](docs/RELEASE_VERIFICATION_0.2.0.md) |
 | **`v0.1.5`** | 2026-10-26 | Five-page copy & toolbar refinement, synthetic preview refresh, and 20-check isolated production browser verification | [UI Polish Note](docs/UI_POLISH_0.1.5.md) · [Verification](docs/RELEASE_VERIFICATION_0.1.5_UI.md) |
 | **`v0.1.4`** | 2026-10-26 | Production CSP (`api.ipquery.io`) completion for same-IP hosting classification in the companion browser | [Browser CSP Note](docs/BROWSER_CSP_0.1.4.md) · [Verification](docs/RELEASE_VERIFICATION_0.1.4_BROWSER.md) |
 | **`v0.1.3`** | 2026-10-26 | Phased no-STUN WebRTC candidate timing fix and same-IP hosting/ISP supplementary classification | [Browser Verification](docs/BROWSER_VERIFICATION_0.1.3.md) |
@@ -257,7 +251,7 @@ Issues and Pull Requests are welcome via [GitHub Issues](https://github.com/yq04
 ### Acknowledgements
 
 - **[CCBaga](https://github.com/liseami/CCBaga)**: Created by [@liseami](https://github.com/liseami) and contributors; Claude-Local inherits its MIT-licensed core vault architecture and `.baga` archive specification.
-- **[ccusage](https://github.com/ccusage/ccusage), [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor), [CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus) & Token Monitor**: Design inspiration for local token ledger aggregation, API cost estimation, usage analytics layout, and the desktop Floating HUD monitor.
+- **[ccusage](https://github.com/ccusage/ccusage), [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor), [CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus) & Token Monitor**: Design inspiration for local token ledger aggregation, usage analytics layout, and the desktop Floating HUD monitor.
 - **[Fingerprint Chromium](https://github.com/adryfish/fingerprint-chromium)**, **vendor/cromma-ui**, **[LobeHub lobe-icons](https://github.com/lobehub/lobe-icons)** & **[Unicode CLDR 48](https://github.com/unicode-org/cldr)**: Governed by their respective licenses; see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
 
 > **Disclaimer**: Claude-Local is an independent open-source utility and is not affiliated with, endorsed by, or sponsored by Anthropic or the upstream CCBaga project.
