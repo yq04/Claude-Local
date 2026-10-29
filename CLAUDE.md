@@ -8,7 +8,8 @@ src/identities.tsx - Pinned current card and saved-record order without search/s
 src/quick-actions.tsx - On-demand independent environment reads, scoped recovery and seven configuration destinations using shared page icons and no duplicate browser-target footer.
 src/usage-statistics.tsx - Scoped token analytics, current-snapshot TSV copy/download and real IANA/DST intervals; responsive trend/model panels and visible-page refresh remain separate from hourly quota refresh.
 src/main.tsx / command-palette.tsx / task-handoff.tsx - Guarded Ctrl+K navigation/refresh/review and an in-memory manual handoff form with explicit preview/copy/download; no automatic identity actions or session reads.
-src/vps.tsx - Fixed referral copies without rendered URLs/codes, concise agent setup prompts and truthful clipboard feedback.
+src/vps.tsx - Fixed referral copies without rendered URLs/codes, hardened KYC/DNS/QUIC agent setup prompts and truthful clipboard feedback.
+src/risk-verification.tsx / risk-model.ts / qrcode-svg.ts - Read-only desktop DNS leak & claude.ai vs withpersona.com exit consistency audit, strictly RFC1918-bounded in-memory mobile KYC residential bridge (Shadowrocket/Clash Mi/Stash/sing-box + offline SVG QR + public-WAN standalone double-hop fallback), and a 6-step genuine-hardware pre-KYC checklist.
 src/system.tsx - Paired rounded timezone/language cards, observed values separate from drafts and a compact full-width location row; narrow content stacks the paired cards.
 src-tauri/ - Native commands, Windows boundaries, vault transactions, local quota consumers and installer configuration.
 src-tauri/windows/installer-hooks.nsh - Existing MUI pre-welcome upgrade confirmation, read-only process checks and synchronous data-preserving removal before the next install; owner-selected unsigned distribution.

@@ -1,10 +1,10 @@
 // [INPUT]: 本机指纹引擎（优先 /Applications/Claude-Local Browser.app，回退 ~/Applications）、本地版浏览器包标识、配置/资料边界、真实浏览器观测、宿主界面语言与共享操作日志。
-// [OUTPUT]: 有界绑定身份上下文、固定出口地理/分类服务目录与浏览器设置/启动/清理/核验及显式资料桥；账号连接不改全局 slot、launch.args 或系统注册。
+// [OUTPUT]: 有界绑定身份上下文、固定出口地理/分类服务目录、只读风控核验浏览器摘要与浏览器设置/启动/清理/核验及显式资料桥；账号连接不改全局 slot、launch.args 或系统注册。
 // [POS]: 独立浏览器模块的唯一编排入口；改变资料前必须退出浏览器；不自行改系统默认浏览器，只发起系统确认。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub(crate) mod config;
 mod launch;
-mod network;
+pub(crate) mod network;
 mod profile;
 mod workspaces;
 use launch::{launch_locked, launch_with_urls_locked};
@@ -147,6 +147,51 @@ pub(crate) fn configured_or_system_proxy(app: &tauri::AppHandle) -> String {
             .map(|m| m.system_proxy)
             .unwrap_or_default()
     })
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct RiskBrowserContext {
+    pub configured_proxy: String,
+    pub target_country: Option<String>,
+    pub target_timezone: String,
+    pub target_language: String,
+}
+
+pub(crate) fn current_risk_browser_context(app: &tauri::AppHandle) -> RiskBrowserContext {
+    let machine = config::machine().ok();
+    let cfg = root(app)
+        .and_then(|r| workspaces::scope(&r))
+        .and_then(|s| config::load(&s))
+        .ok();
+    let configured_proxy = cfg
+        .as_ref()
+        .map(|c| c.proxy.clone())
+        .filter(|p| !p.is_empty())
+        .unwrap_or_default();
+    let (target_country, target_timezone, target_language) = match (&cfg, &machine) {
+        (Some(c), Some(m)) => (
+            c.region(m).map(|r| r.country.to_string()),
+            c.timezone(m),
+            c.language(m),
+        ),
+        (Some(c), None) => (None, c.timezone.clone(), c.language.clone()),
+        (None, Some(m)) => (
+            crate::regions::matching_country(&m.locale_country, &m.timezone)
+                .map(|r| r.country.to_string()),
+            m.timezone.clone(),
+            m.languages
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "en-US".to_string()),
+        ),
+        (None, None) => (None, "America/New_York".into(), "en-US".into()),
+    };
+    RiskBrowserContext {
+        configured_proxy,
+        target_country,
+        target_timezone,
+        target_language,
+    }
 }
 #[cfg(target_os = "macos")]
 pub const BROWSER_ID: &str = "ai.local.claude-local.browser";

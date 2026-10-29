@@ -15,8 +15,10 @@ browser-verification.ts: 固定必需指标 ID 与报告 schema 校验；逐项�
 browser-verification.test.ts: 合成报告验证完整/缺项/旧版/未知出口与指标三态，不访问网络。
 browser-network.ts: 按宿主服务目录经当前浏览器路由取得地理出口；仅缺hosting时补查固定IPQuery同IP的布尔分类，32KiB/3秒、omit credentials/no-referrer、禁重定向；失败保留原地理信息和受控原因，IPv6规范化匹配，不按ASN猜住宅。
 browser-network.test.ts: 模拟限流、备用响应与非法出口，验证故障恢复和错误信息，不访问外网。
-main.tsx: 独立产品壳、默认身份页与受限页面记忆；侧栏统一全四字标头（快速配置、网络环境、身份管理、用量分析、浏览环境、电脑环境、使用说明、软件设置），底部含语言/版本与命令面板入口；Ctrl+K/Cmd+K 尊重输入焦点、IME、其他模态和任务锁。命令面板导航八页、对当前可刷新页分发本地事件，身份项仅打开已有身份确认；Root 常驻受控手工交接弹窗。根 MotionRoot 读取「减少动画」偏好。
-command-palette.tsx / command-model.ts / command-model.test.ts: 键盘可搜索的八页面命令、当前页刷新、身份确认入口与交接入口；身份只在用户打开面板时只读载入，标签遵循隐私遮罩；方向键和 Home/End 更新活动项并滚入可视区但焦点留在搜索框；不执行身份切换。
+main.tsx: 独立产品壳、默认身份页与受限页面记忆；侧栏统一全四字标头（快速配置、浏览环境、电脑环境、网络环境、风控验证、身份管理、用量分析、使用说明、软件设置），底部含语言/版本与命令面板入口；Ctrl+K/Cmd+K 尊重输入焦点、IME、其他模态和任务锁。命令面板导航九页、对当前可刷新页分发本地事件，身份项仅打开已有身份确认；Root 常驻受控手工交接弹窗。根 MotionRoot 读取「减少动画」偏好。
+command-palette.tsx / command-model.ts / command-model.test.ts: 键盘可搜索的九页面命令、当前页刷新、身份确认入口与交接入口；身份只在用户打开面板时只读载入，标签遵循隐私遮罩；方向键和 Home/End 更新活动项并滚入可视区但焦点留在搜索框；不执行身份切换。
+risk-verification.tsx / risk-verification.css / risk-model.ts / risk-model.test.ts: 风控验证页；只读诊断本机浏览器远程 DNS 强锁、Mihomo 国内明文 DNS 抢答隐患与 claude.ai vs withpersona.com 跨域名出口一致性；提供严格限制 RFC1918 内网、内存一次性口令且零家宽密码外泄的四端手机防泄露同源桥接配置（Shadowrocket / Clash Mi / Stash / sing-box，含公网/校园网独立双跳回退、RFC 3986 socks5:// 离线生码与代码粘贴引号清洗、纯 IP DoH 防校园网 UDP:53 死锁、免传文件配置展开及 KYC/日常一键切换说明）及 6 步真机实拍飞行清单。
+qrcode-svg.ts: 零外部依赖的纯前端内存 ISO/IEC 18004 二维码矩阵与紧凑 SVG 路径生成器（离线渲染手机桥接节点码，零网络传输与存储）。
 task-handoff.tsx / handoff-model.ts / handoff-model.test.ts: 六项有界手填任务字段、Markdown 预览/复制/显式下载；字段只保留在组件内存，模板不读取会话/项目/账号，未填验证保持待补充。
 productivity-shell.css: 经典侧栏底部自适应两行网格避免命令按钮内容受压，紧凑侧栏保留纵向快捷入口；命令面板与手工交接表单复用现有主题变量。
 page-icons.tsx: 侧栏与快速配置共用的页面图标映射；复用已有 Pika 子集与现存用量图形，不增加图标依赖或重复 SVG。
@@ -27,12 +29,12 @@ productivity-shell.css: 经典侧栏底部自适应两行网格避免命令按�
 navigation.ts / navigation.test.ts: 本机页面偏好白名单（含 settings 设置页和 usage Token 统计页）、存储失败回退身份页；不存账号或路径。
 help.tsx: 双语只读本地产品说明，含置顶的「新用户与添加新号」三步法及身份/浏览器/离线额度/网络诊断/电脑设置分节说明（统一采用与软件设置一致的强调色竖条标头，去除机械数字序号），Cromma Disclosure 折叠应用使用、账号边界与申诉；不读取用户资料或调用原生命令；手工交接由共享有界模板显式打开。
 identity-connections.tsx / identity-connections.test.ts: 中央身份连接与路由修复队列；严格校验当前完整账号/指纹清单的冻结子集，只为明确的授权失败提供按账号打开已有绑定浏览器资料，只提交待处理子集到既有统一额度命令；进程内保留结果以跨页面卸载呈现成功与原失败，不保存凭据或落盘账号结果，合成测试覆盖双成功/授权/路由队列、冷却重试、重新挂载和过期指纹拒绝。
-identities.tsx: 紧凑身份工作台与180×286工牌；顶部默认按钮执行本地身份摘要同步并给出已同步徽章反馈，同时提供一键持久化开关的「自动续杯」胶囊与生效时段配置入口；定时元数据检查接收CLI被动额度的本地变化；无订阅/重置资料时紧凑卡片省略该行，详情仍保留未知。在线额度批次、前台定时查询开关、5h 到期自动续杯配置面板（含自定义生效时段、待命号联动阈值、逐账号防风控退避状态与一键唤醒）和集中修复队列位于标题⋯菜单或时段胶囊打开的弹窗；只有原生回传新鲜 `new_5h_confirmed` reset 才记作成功，7d/cached/未知结果均持久退避；auth_required 显示需重新连接或手动恢复，不宣称时间到自动解锁；配置保存失败不更新界面。唤醒调用附带 auto/manual 与 expiredResetAt。手动在线批次按冻结指纹读取全部当前/保存账号，最多两路并发；结果不清除本地观测，目标身份变化使旧结果失效；成功服务端锚点按原有严格账号绑定合并。保持额度窗口来源区分、预计恢复说明、180×286卡片、身份安全和保留策略现有行为。
-identity-model.ts: 浏览器绑定脱敏状态与 SQLite 受限目录、当前/暂存显示字段（含离线/在线 5h/7d 额度百分比、逐窗来源/实际观测时间、quota_identity 64hex脱敏指纹、重置时间戳、订阅日期、重置余额、manual_resets_valid_until 与各自独立的观测时间戳）和保留策略契约；当前与保存摘要均保留本地 OAuth 有效期/刷新存在性元数据，订阅日期与重置资料缺失保持未知，不复用 OAuth 凭据有效期。
+identities.tsx: 紧凑身份工作台与180×286工牌；名称行在 Pro/Max 药丸右侧紧凑显示 MM/DD 订阅到期标签（支持点击标签或卡片 ⋯ 菜单 / 额度详情打开「设置订阅到期」弹窗，输入充值日自动按 +1 自然月推算到期日并支持自动浏览器订阅同步较新优先）；顶部默认按钮执行本地身份摘要同步并给出已同步徽章反馈，同时提供一键持久化开关的「自动续杯」胶囊与生效时段配置入口；定时元数据检查接收CLI被动额度与手动订阅到期的本地变化；无订阅/重置资料时紧凑卡片省略该行，详情仍保留未知。在线额度批次、前台定时查询开关、5h 到期自动续杯配置面板（含自定义生效时段、待命号联动阈值、逐账号防风控退避状态与一键唤醒）和集中修复队列位于标题⋯菜单或时段胶囊打开的弹窗；只有原生回传新鲜 `new_5h_confirmed` reset 才记作成功，7d/cached/未知结果均持久退避；auth_required 显示需重新连接或手动恢复，不宣称时间到自动解锁；配置保存失败不更新界面。唤醒调用附带 auto/manual 与 expiredResetAt。手动在线批次按冻结指纹读取全部当前/保存账号，最多两路并发；结果不清除本地观测，目标身份变化使旧结果失效；成功服务端锚点按原有严格账号绑定合并。保持额度窗口来源区分、预计恢复说明、180×286卡片、身份安全和保留策略现有行为。
+identity-model.ts: 浏览器绑定脱敏状态与 SQLite 受限目录、当前/暂存显示字段（含离线/在线 5h/7d 额度百分比、逐窗来源/实际观测时间、quota_identity 64hex脱敏指纹、重置时间戳、订阅日期、手工充值/到期日历元数据、重置余额、manual_resets_valid_until 与各自独立的观测时间戳）和保留策略契约；当前与保存摘要均保留本地 OAuth 有效期/刷新存在性元数据，订阅日期与重置资料缺失保持未知，不复用 OAuth 凭据有效期。
 identity-list.ts / identity-list.test.ts: 仅保留逐窗观测年龄格式化，搜索/排序辅助已移除；身份页固定当前卡，其余卡片按原生记录顺序显示。
 identity-diagnostics.ts / identity-diagnostics.test.ts: literal白名单诊断JSON，仅限有界版本、时间、来源枚举与配置/资源flag；运行时始终未验证，不包含账号名/邮箱/id/代理/路径或原始命令。
-identity-productivity.css: 观测年龄、⋯无障碍下拉菜单、顶部自动续杯胶囊、在线额度与5h到期自动续杯配置面板、紧凑活动批次状态、预计进度条弱化、Pro/Max药丸、前台自动刷新开关与集中连接修复队列的局部紧凑布局，维持180×286工牌；已清除搜索/排序行及其空结果样式。
-identity-online-quota.ts / identity-online-quota.test.ts: 在线额度状态解析、批量目标构建与指纹集变动检测（buildBatchTargets/generateBatchRequestId/formatBatchProgress）、严格目标指纹核验（isExpectedCurrentTarget/isExpectedSavedTarget）、冷却倒计时格式化、带独立观测时钟和有限有效期/过期状态的订阅与重置格式化、前台聚焦180s串行调度器，以及 5h 到期自动续杯纯模型（含跨午夜时段、逐账号阶梯退避、跨账号错峰、主力号联动唤醒、严格新5h确认及配置保存失败检测），不访问网络或凭据。
+identity-productivity.css: 观测年龄、⋯无障碍下拉菜单、Pro/Max药丸及右侧紧凑 MM/DD 订阅到期标签、手动充值/到期编辑弹窗、顶部自动续杯胶囊、在线额度与5h到期自动续杯配置面板、紧凑活动批次状态、预计进度条弱化、前台自动刷新开关与集中连接修复队列的局部紧凑布局，维持180×286工牌；已清除搜索/排序行及其空结果样式。
+identity-online-quota.ts / identity-online-quota.test.ts: 在线额度状态解析、批量目标构建与指纹集变动检测（buildBatchTargets/generateBatchRequestId/formatBatchProgress）、严格目标指纹核验（isExpectedCurrentTarget/isExpectedSavedTarget）、冷却倒计时格式化、带独立观测时钟和有限有效期/过期状态的订阅与重置格式化、日历 +1 自然月推算与跨时区 MM/DD 订阅到期徽章（addOneCalendarMonthYmd/formatSubscriptionExpiryBadge）、前台聚焦180s串行调度器，以及 5h 到期自动续杯纯模型（含跨午夜时段、逐账号阶梯退避、跨账号错峰、主力号联动唤醒、严格新5h确认及配置保存失败检测），不访问网络或凭据。
 identity-quota.ts / identity-quota.test.ts: 逐窗优先读取 5h/7d 来源，兼容旧整体来源；可信服务端重置时间已过时显示 reset_inferred 本地预计恢复及已重置时长（formatElapsedSinceReset），保留原观测且不推算下一重置；缺少可信依据仍未知。evaluateWeeklyPace 按 7d 锚点计算已耗时占比与实际消耗偏差（重置后前24小时静默，超前>=15%预警）。evaluateQuota.recommendable 保持严格非预计契约，切到最优号支持 5h 已静置恢复且 7d 窗口有效的备用账号（同分优先实测账号）。身份页仅更新本地显示时钟，不增加每小时/手动之外的原生读取；详情逐窗展示来源/观测时间，卡片维持180×286。
 claude-cli-panel.tsx: 身份页内的品牌 CLI 维护卡片，展示本地版本/路径（支持路径一键复制）与用户手动检查的最新版本，未安装时展示官方 Windows 安装命令复制与「重新检查」入口；读取失败显示不可读与手动重试，不误报未安装，读取错误和操作错误分别保留；运行中禁用更新，首次挂载只读，不自动结束进程。
 usage-attribution.ts / usage-attribution.test.ts: 用量归属纯模型；提供脱敏账号标签（复用 settings-model 的 maskDisplayName/maskEmailAddress，防止本地邮箱别名泄露）、未归属用量范围预览、DST 23h/25h 判定与 IANA 时区格式化。

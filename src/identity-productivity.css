@@ -1,5 +1,5 @@
-/* [INPUT]: Identity workbench online quota dialog, 5h auto-wakeup panel, observation age, weekly pace tick, sync feedback and recovery queue.
- * [OUTPUT]: Accessible ⋯ dropdown menu, compact primary auto-wake and secondary HUD/sync/menu header action groups with uniform 28px controls, header auto-wakeup pill, auto-wakeup time-window & status panel with compact wrap-safe 4-zone account blocks, quota estimation track with 7d pace tick, sync confirmation pill, result ages and centralized connection recovery styling without changing card geometry.
+/* [INPUT]: Identity workbench online quota dialog, 5h auto-wakeup panel, compact card MM/DD subscription expiry badge + manual recharge/expiry dialog, observation age, weekly pace tick, sync feedback and recovery queue.
+ * [OUTPUT]: Accessible ⋯ dropdown menu, Pro/Max pill + right-hand MM/DD subscription expiry tag, manual recharge/expiry date editor dialog, compact primary auto-wake and secondary HUD/sync/menu header action groups with uniform 28px controls, header auto-wakeup pill, auto-wakeup time-window & status panel with compact wrap-safe 4-zone account blocks, quota estimation track with 7d pace tick, sync confirmation pill, result ages and centralized connection recovery styling without changing card geometry.
  * [POS]: Identity productivity presentation; the 180×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
  */
@@ -113,6 +113,115 @@
   background: rgba(52, 211, 153, 0.2);
   color: #6ee7b7;
   border-color: rgba(52, 211, 153, 0.4);
+}
+
+/* PRO/MAX 右侧订阅到期 MM/DD 紧凑标签与手动充值/到期编辑弹窗 */
+.identity-card .identity-expiry-tag,
+.identity-expiry-tag {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--identity-muted);
+  border-radius: 3px;
+  padding: 1px 2px;
+  transition: color 0.14s ease, background-color 0.14s ease;
+}
+:root.dark .identity-card .identity-expiry-tag,
+:root.dark .identity-expiry-tag,
+.current .identity-expiry-tag {
+  color: #d6d3cb;
+}
+.identity-card .identity-expiry-tag.is-clickable {
+  cursor: pointer;
+}
+.identity-card .identity-expiry-tag.is-clickable:hover,
+.identity-card .identity-expiry-tag.is-clickable:focus-visible {
+  color: var(--foreground);
+  background: rgba(16, 185, 129, 0.14);
+  outline: none;
+}
+:root.dark .identity-card .identity-expiry-tag.is-clickable:hover,
+:root.dark .identity-card .identity-expiry-tag.is-clickable:focus-visible,
+.current .identity-expiry-tag.is-clickable:hover,
+.current .identity-expiry-tag.is-clickable:focus-visible {
+  color: #fffefb;
+  background: rgba(52, 211, 153, 0.22);
+}
+
+.identity-expiry-dialog {
+  display: grid;
+  gap: 12px;
+}
+.identity-expiry-field {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--foreground);
+}
+.identity-expiry-field > label {
+  font-weight: 550;
+  color: var(--foreground);
+}
+.identity-expiry-date-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.identity-expiry-date-input {
+  height: 32px;
+  min-width: 170px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 500 12.5px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.identity-expiry-date-input:focus-visible {
+  outline: 2px solid var(--local-accent);
+  outline-offset: 1px;
+}
+.identity-expiry-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  font-size: 12px;
+}
+.identity-expiry-preview-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.identity-expiry-inline-edit {
+  margin-left: 6px;
+  padding: 1px 6px;
+  height: 20px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+.identity-expiry-inline-edit:hover:not(:disabled) {
+  color: var(--foreground);
+  border-color: var(--local-accent);
 }
 
 /* 预计额度进度条与 7d 消耗步调刻度 */

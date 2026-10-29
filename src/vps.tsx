@@ -37,15 +37,17 @@ export function buildAiProxyPrompt(locale: Locale = 'zh'): string {
     'I have an iKuuu subscription and a Kookeey US static residential SOCKS5 proxy. Help configure Clash Verge Rev for Claude-Local, Claude Code and Claude websites.',
     'Route: iKuuu transit node → Kookeey residential exit. Ask me for any missing proxy parameters.',
     'Inspect and back up the current configuration first. Preserve other subscriptions and routing rules, and use dialer-proxy or a compatible method supported by the installed version.',
-    'Configure the necessary TUN, DNS and Claude routing while keeping localhost, 127.0.0.1 and ::1 callbacks direct.',
-    'Verify the proxy chain, final exit IP/DNS and Claude connectivity. Report what remains unverified and provide troubleshooting and rollback steps.',
+    'Route Claude AND KYC/anti-fraud domains (claude.ai, anthropic.com, clau.de, withpersona.com, persona-cdn.com, stripe.com, hcaptcha.com, challenges.cloudflare.com, arkoselabs.com, sift.com, sentry.io, ipquery.io) through the exact same static residential exit while keeping localhost, 127.0.0.1 and ::1 callbacks direct.',
+    'Harden DNS & QUIC: enable dns.respect-rules, proxy-server-nameserver, encrypted remote DoH for non-CN/Claude/Persona domains, and tun.strict-route; reject UDP 443 QUIC for TCP-only SOCKS5 exits, and add a local 127.0.0.1:7899 listener bound to the residential exit for Claude-Local Browser (socks5://127.0.0.1:7899).',
+    'Verify that https://claude.ai/cdn-cgi/trace and https://withpersona.com/cdn-cgi/trace return the exact same exit IP and country. Report what remains unverified and provide troubleshooting and rollback steps.',
     'If local tools are available, complete the setup and briefly report the result; otherwise provide only the necessary steps.',
   ] : [
     '我已准备 iKuuu 订阅和 Kookeey 美国静态住宅 SOCKS5。请用 Clash Verge Rev 为 Claude-Local、Claude Code 和 Claude 网页配置双跳代理。',
     '目标链路：iKuuu 前置节点 → Kookeey 住宅出口；缺少节点参数时先向我确认。',
     '先检查并备份现有配置，保留其他订阅和分流规则，按已安装版本使用 dialer-proxy 或兼容方式建立链路。',
-    '配置必要的 TUN、DNS 与 Claude 分流，确保 localhost、127.0.0.1、::1 等本地回调直连。',
-    '验证代理链路、最终出口 IP/DNS 和 Claude 连通性；说明未验证项，并提供排障与回滚方法。',
+    '将 Claude 及 KYC/风控关联域名（claude.ai、anthropic.com、clau.de、withpersona.com、persona-cdn.com、stripe.com、hcaptcha.com、challenges.cloudflare.com、arkoselabs.com、sift.com、sentry.io、ipquery.io）统一指向同一静态住宅出口，并确保 localhost、127.0.0.1、::1 本地回调保持直连。',
+    '防 DNS 泄露与 QUIC 加固：开启 dns.respect-rules、proxy-server-nameserver、海外加密远程 DoH 与 tun.strict-route，针对纯 TCP 家宽阻断 UDP 443（QUIC），并配置绑定该静态家宽的本地独立监听端口 127.0.0.1:7899 供 Claude-Local 浏览环境（socks5://127.0.0.1:7899）锁定远程 DNS。',
+    '实测验证 https://claude.ai/cdn-cgi/trace 与 https://withpersona.com/cdn-cgi/trace 的出口 IP 和国家完全一致；说明未验证项，并提供排障与回滚方法。',
     '能在本机操作时完成配置并简要说明结果，否则给出最少必要步骤。',
   ]).join('\n');
 }

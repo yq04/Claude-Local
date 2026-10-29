@@ -165,8 +165,23 @@ function execute(command:string,args:any){
  }
  if(command==='identities_sync_subscription'){
   if(!args.expectedIdentity||state.current.quota_identity!==args.expectedIdentity)throw 'quotaOnline.accountMismatch';
-  Object.assign(state.current,{billing_date_kind:'next_renewal',billing_date:Math.floor(Date.now()/1000)+86400*20,billing_observed_at_ms:Date.now(),manual_resets_remaining:0,manual_resets_observed_at_ms:Date.now()});
+  Object.assign(state.current,{billing_date_kind:'next_renewal',billing_date:Math.floor(Date.now()/1000)+86400*20,billing_observed_at_ms:Date.now(),manual_resets_remaining:0,manual_resets_observed_at_ms:Date.now(),subscription_date_source:'browser',subscription_expiry_ymd:null,subscription_recharge_ymd:null});
   return;
+ }
+ if(command==='identities_set_subscription_expiry'){
+  const target=args.accountId==='current'?state.current:state.summaries[args.accountId];
+  if(!target)throw '身份不存在。';
+  if(args.expectedIdentity&&target.quota_identity!==args.expectedIdentity)throw 'quotaOnline.accountMismatch';
+  if(!args.expiryYmd&&!args.rechargeYmd){
+   Object.assign(target,{billing_date:null,billing_date_kind:null,billing_observed_at_ms:null,subscription_expiry_ymd:null,subscription_recharge_ymd:null,subscription_date_source:null,subscription_expires_at:null});
+  }else{
+   const exp=args.expiryYmd||args.rechargeYmd;
+   const [yy,mm,dd]=String(exp).split('-').map(Number);
+   const sec=Math.floor(Date.UTC(yy,mm-1,dd,12,0,0)/1000);
+   Object.assign(target,{billing_date:sec,billing_date_kind:'next_renewal',billing_observed_at_ms:Date.now(),subscription_expiry_ymd:exp,subscription_recharge_ymd:args.rechargeYmd||null,subscription_date_source:'manual',subscription_expires_at:sec});
+  }
+  fixture.quotaRevision++;
+  return structuredClone(state);
  }
  if(command==='claude_residue_scan'){
   residue.scans++;

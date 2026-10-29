@@ -1,5 +1,5 @@
 // [INPUT]: Real application shell, shared fictional IPC fixture and an isolated browser context.
-// [OUTPUT]: Bilingual classic/compact geometry, readable narrow onboarding and stable synthetic screenshots across eight pages and narrow/default/wide windows.
+// [OUTPUT]: Bilingual classic/compact geometry, readable narrow onboarding and stable synthetic screenshots across nine pages and narrow/default/wide windows.
 // [POS]: Focused layout verification selected by test-usage-statistics.mjs --layout-only; no real native commands or network access.
 // [PROTOCOL]: Update scripts/CLAUDE.md when changing this helper.
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ import {join} from 'node:path';
 export async function runWindowLayoutChecks({page, output, base, errors}) {
   await page.goto(base + '/__usage-fixture.html');
   await page.locator('.workspace-nav').last().waitFor();
-  const pages = ['quick', 'browser', 'system', 'network', 'identities', 'usage', 'help', 'settings'];
+  const pages = ['quick', 'browser', 'system', 'network', 'risk', 'identities', 'usage', 'help', 'settings'];
   const viewports = [{width: 760, height: 640}, {width: 1040, height: 820}, {width: 1440, height: 900}];
   const results = [];
   for (const locale of ['zh', 'en']) {
@@ -51,7 +51,7 @@ export async function runWindowLayoutChecks({page, output, base, errors}) {
           assert.ok(geometry.workspace.right <= viewport.width + 1, label + ': workspace must stay inside window');
           assert.ok(geometry.workspace.width > 0, label + ': content must retain usable width');
           assert.ok(geometry.content && geometry.content.scrollWidth <= geometry.content.width + 1, label + ': page must fit without clipping horizontal content');
-          assert.equal(geometry.nav.length, 8, label + ': all navigation destinations remain available');
+          assert.equal(geometry.nav.length, 9, label + ': all navigation destinations remain available');
           for (const button of [...geometry.nav, ...geometry.footer]) {
             assert.ok(button.width > 0 && button.height > 0, label + ': shell controls remain visible');
             assert.ok(button.x >= geometry.sidebar.x - 1 && button.right <= geometry.sidebar.right + 1, label + ': shell controls stay inside sidebar');

@@ -34,6 +34,11 @@ export function HelpPanel() {
             t('点击开始检测后，检查四个 Claude 服务域名的连通性。'),
             t('连接对端不是公网出口 IP；检测成功不代表账号可用。')
         ] },
+        { title: t('风控验证'), lines: [
+            t('help.riskLine1'),
+            t('help.riskLine2'),
+            t('help.riskLine3')
+        ] },
         { title: t('电脑环境'), lines: [
             t('分别调整时区、语言和地区，不会改变公网 IP。'),
             t('系统可能要求授权、重启或重新登录。')

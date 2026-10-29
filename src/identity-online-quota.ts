@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 在线额度状态/原因白名单、持久批次结果契约、前台轮询设置与订阅重置元数据。
- * [OUTPUT]: 批次/额度纯模型、独立浏览器失败与原生调度门禁倒计时、严格新5h确认、单例快照订阅、受限迁移和显式设置IPC。
+ * [INPUT]: 在线额度状态/原因白名单、持久批次结果契约、前台轮询设置与订阅重置元数据（含浏览器自动同步与手动充值/到期日历）。
+ * [OUTPUT]: 批次/额度纯模型、订阅到期短标签（MM/DD）与 +1 自然月推算、独立浏览器失败与原生调度门禁倒计时、严格新5h确认、单例快照订阅、受限迁移和显式设置IPC。
  * [POS]: 仅原生owner调度唤醒；前端桥不设唤醒timer、不读取凭据或发HTTP，不写额度账本。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -225,6 +225,119 @@ export function formatSubscriptionAndResets(
     billing,
     manualResets,
   };
+}
+
+function daysInCalendarMonth(year: number, month: number): number {
+  if (month === 2) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    return leap ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+export function isValidCalendarYmd(ymd: string | null | undefined): ymd is string {
+  if (typeof ymd !== 'string') return false;
+  const trimmed = ymd.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 2020 || year > 2100 || month < 1 || month > 12) return false;
+  return day >= 1 && day <= daysInCalendarMonth(year, month);
+}
+
+export function addOneCalendarMonthYmd(ymd: string | null | undefined): string | null {
+  if (!isValidCalendarYmd(ymd)) return null;
+  const [yStr, mStr, dStr] = ymd.trim().split('-');
+  const year = Number(yStr);
+  const month = Number(mStr);
+  const day = Number(dStr);
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  if (nextYear > 2100) return null;
+  const nextDay = Math.min(day, daysInCalendarMonth(nextYear, nextMonth));
+  return `${String(nextYear).padStart(4, '0')}-${String(nextMonth).padStart(2, '0')}-${String(nextDay).padStart(2, '0')}`;
+}
+
+export function formatYmdAsShortMd(ymd: string | null | undefined): string | null {
+  if (!isValidCalendarYmd(ymd)) return null;
+  const [, mm, dd] = ymd.trim().split('-');
+  return `${mm}/${dd}`;
+}
+
+export function epochSecToCalendarYmd(epochSec: number | null | undefined): string | null {
+  if (typeof epochSec !== 'number' || !Number.isFinite(epochSec) || epochSec <= 0) return null;
+  const dt = new Date(epochSec * 1000);
+  if (!Number.isFinite(dt.getTime())) return null;
+  const year = dt.getFullYear();
+  if (year < 2020 || year > 2100) return null;
+  const month = String(dt.getMonth() + 1).padStart(2, '0');
+  const day = String(dt.getDate()).padStart(2, '0');
+  return `${String(year).padStart(4, '0')}-${month}-${day}`;
+}
+
+export interface SubscriptionExpiryBadge {
+  shortMd: string;
+  fullYmd: string;
+  rechargeYmd: string | null;
+  rechargeShortMd: string | null;
+  source: 'browser' | 'manual' | 'summary';
+}
+
+export function formatSubscriptionExpiryBadge(
+  meta: (IdentitySubscriptionMetadata & { subscription_expires_at?: number | null }) | null | undefined
+): SubscriptionExpiryBadge | null {
+  if (!meta) return null;
+  const rechargeYmd = isValidCalendarYmd(meta.subscription_recharge_ymd)
+    ? meta.subscription_recharge_ymd.trim()
+    : null;
+  const rechargeShortMd = formatYmdAsShortMd(rechargeYmd);
+
+  if (isValidCalendarYmd(meta.subscription_expiry_ymd)) {
+    const fullYmd = meta.subscription_expiry_ymd.trim();
+    const shortMd = formatYmdAsShortMd(fullYmd);
+    if (shortMd) {
+      return {
+        shortMd,
+        fullYmd,
+        rechargeYmd,
+        rechargeShortMd,
+        source: meta.subscription_date_source === 'browser' ? 'browser' : 'manual',
+      };
+    }
+  }
+
+  const isKnownKind = meta.billing_date_kind === 'next_renewal' || meta.billing_date_kind === 'access_until';
+  if (isKnownKind && typeof meta.billing_date === 'number' && Number.isFinite(meta.billing_date) && meta.billing_date > 0) {
+    const fullYmd = epochSecToCalendarYmd(meta.billing_date);
+    const shortMd = formatYmdAsShortMd(fullYmd);
+    if (fullYmd && shortMd) {
+      return {
+        shortMd,
+        fullYmd,
+        rechargeYmd,
+        rechargeShortMd,
+        source: meta.subscription_date_source === 'manual' ? 'manual' : 'browser',
+      };
+    }
+  }
+
+  if (typeof meta.subscription_expires_at === 'number' && Number.isFinite(meta.subscription_expires_at) && meta.subscription_expires_at > 0) {
+    const fullYmd = epochSecToCalendarYmd(meta.subscription_expires_at);
+    const shortMd = formatYmdAsShortMd(fullYmd);
+    if (fullYmd && shortMd) {
+      return {
+        shortMd,
+        fullYmd,
+        rechargeYmd,
+        rechargeShortMd,
+        source: 'summary',
+      };
+    }
+  }
+
+  return null;
 }
 
 export interface SchedulerOptions {

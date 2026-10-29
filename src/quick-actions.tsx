@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Independent identity/browser/system/CLI reads, page icons, locale and local refresh event.
- * [OUTPUT]: Progressive environment overview, scoped failure reasons and six consistent configuration destinations.
+ * [OUTPUT]: Progressive environment overview, scoped failure reasons and eight consistent configuration destinations (including Risk & KYC).
  * [POS]: Mounted only on the quick page; actions navigate or refresh guarded reads, never rotate fingerprints, start browsers or change system settings.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -64,6 +64,7 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
     {page: 'browser', title: '浏览环境', description: 'quick.browserHint', action: '前往浏览器环境'},
     {page: 'system', title: '电脑环境', description: 'quick.systemHint', action: '前往电脑环境'},
     {page: 'vps', title: '网络环境', description: 'quick.networkHint', action: '前往网络环境'},
+    {page: 'risk', title: '风控验证', description: 'quick.riskHint', action: 'quick.riskAction'},
     {page: 'cleaner', title: '身份管理', description: 'quick.identityHint', action: '前往身份管理'},
     {page: 'cleaner', title: 'quick.troubleshootCard', description: 'quick.troubleshootHint', action: 'quick.troubleshootAction', target: 'residue'},
     {page: 'usage', title: 'usage.title', description: 'quick.usageHint', action: '查看用量统计'},

@@ -3,7 +3,8 @@
 wakeup.rs / wakeup_tests.rs: Windows进程唯一owner；私有schema=1配置/计划/派发前unknown日志，固定冻结指纹集、每分钟本地摘要（跳过active_sessions扫描），15秒判断已存计划。切页/托盘隐藏不停止，真正Exit停止。人工/自动共用audited collect、6–13分钟单次抽样错峰和周额度/CLI/排除/401门禁；3–10分钟→25–60分钟→主力阈值按需待命。未知POST不重启重发，仅同指纹新鲜可信5h被动锚点解除unknown；不解除messages授权阻断，显式恢复仅许可一次尝试。开启先无账号Python导入探针和HTTP CONNECT类型投影，不代表联网可达、不返回原值/凭据。白名单IPC迁移旧localStorage只保留守门时间/失败，不继承旧空转轮数。Python独占quota账本，合成测试无真实账号/网络/系统修改。
 人工唤醒未派发时返回stage=scheduler、固定reason和仍生效的账号/全局最大retry_at_ms；不消耗恢复许可、不伪造POST未知/成功、不绕过429或unknown。统一查询的browser_fallback_status独立保留浏览器未运行/身份/页面授权/超时/响应/无窗口失败，OAuth原状态与阶段保持；只有实际browser 5h/7d更新才能替换查询失败，不能解除messages授权阻断。online_native_chain_tests.rs将真实installed Python auth cooldown接入同一fallback编排、loopback接收、授权提交与账本/摘要读取，所有账号/文件均临时合成。
 本地readiness独立于automatic开关，禁用时仍每分钟及显式读取/配置时同步account能力和decision但绝不派发；读取/恢复的本地摘要工作在blocking线程。恢复先核对当前绑定目标并初始化缺失状态，仅释放last_status=auth_required且auth_blocked的账号授权退避，授予一次受控验证/唤醒链；profile401消耗许可，明确本地probe/启动/不支持代理失败保留许可与尝试间隔。全局错峰、429和未知POST门禁保持；execute超时/协议异常仍按未知保护。新归档代次或网页额度成功不自动释放messages授权阻断。
-identities_quota_revision: 只检查固定两项产品账本和CLI根目录下 .claude.json 的修改时间/长度，拒绝链接，不读取正文、凭据或项目目录，不联网；可见身份页每约2秒检查，变化时才读取受账号绑定保护的完整本地摘要。
+subscription.rs: 独立于 SQLite v3 与 Python 单写者账本的手动订阅到期与充值日私有原子存储（manual_subscriptions.json，按 quota_identity 64-hex 主键及归档 ID 兜底），提供 +1 自然月月末钳制推算、12:00 UTC 正午防跨时区日历偏移锚点与自动网页同步较新时间戳优先合并；操作仅获取短事务门，绝不中断运行中的 claude.exe。
+identities_quota_revision: 只检查固定产品账本/手动订阅文件和CLI根目录下 .claude.json 的修改时间/长度，拒绝链接，不读取正文、凭据或项目目录，不联网；可见身份页每约2秒检查，变化时才读取受账号绑定保护的完整本地摘要。
 online_passive_revision_tests.rs: 合成临时根验证固定三文件元数据边界，以及CLI /usage缓存更新→revision变化→本地额度摘要同步；其他账号的较新同邮箱锚点不混入，账本不改写，未知窗口及重置推定保持真实来源。
 online.rs runtime probe: 每候选最多10秒，真实 cryptography/AES-GCM 冷启动、所有解释器候选和网络准备共享一次30秒总预算，并受批次截止时间/取消约束；不重置准备时钟，已授权提交仍保留45秒宽限。
 wakeup_audit.rs: 原生唤醒结果的私有本地审计，仅保留随机request ID、trigger、独立域匿名slot、阶段/状态/时间与旧新reset；30天/200条上限、原子私有写入与并发锁，不存账号标识/路由/请求内容，也不接触额度账本。

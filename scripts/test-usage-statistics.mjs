@@ -148,7 +148,23 @@ mockIPC(async (command,args)=>{
   if(command==='system_read')return structuredClone(window.usageFixture.systemState);
   if(command==='identities_quota_revision')return 1;
   if(command==='identities_quota_batch_state')return null;
+  if(command==='identities_set_subscription_expiry'){
+    const target=args.accountId==='current'?identityState.current:identityState.summaries[args.accountId];
+    if(target){
+      if(!args.expiryYmd&&!args.rechargeYmd){
+        Object.assign(target,{billing_date:null,billing_date_kind:null,subscription_expiry_ymd:null,subscription_recharge_ymd:null,subscription_date_source:null,subscription_expires_at:null});
+      }else{
+        const exp=args.expiryYmd||args.rechargeYmd;
+        const [yy,mm,dd]=String(exp).split('-').map(Number);
+        const sec=Math.floor(Date.UTC(yy,mm-1,dd,12,0,0)/1000);
+        Object.assign(target,{billing_date:sec,billing_date_kind:'next_renewal',subscription_expiry_ymd:exp,subscription_recharge_ymd:args.rechargeYmd||null,subscription_date_source:'manual',subscription_expires_at:sec});
+      }
+    }
+    return structuredClone(identityState);
+  }
   if(command==='identities_backup_location')return 'C:/fixture/data';
+  if(command==='risk_inspect_local_env')return {browser:{proxy_configured:true,proxy_scheme:'socks5',proxy_local_port:7899,remote_dns_locked:true,target_country:'US',target_timezone:'America/Los_Angeles',target_language:'en-US'},mihomo:{detected:true,client_kind:'clash-verge-rev',mixed_port:7897,allow_lan:false,tun_enabled:true,tun_strict_route:true,dns_enabled:true,dns_enhanced_mode:'fake-ip',dns_respect_rules:true,dns_has_remote_doh:true,dns_has_domestic_plain:false,dns_has_nameserver_policy:true,has_claude_rules:true,has_persona_rules:true,has_quic_reject:true,has_geoip_cn:true,dedicated_listener_port:7899},system:{tun_adapter_active:true,secondary_plaintext_dns_active:false,lan_ipv4_candidates:['192.168.31.10'],public_wan_detected:false}};
+  if(command==='risk_probe_consistency')return {claude:{domain:'claude.ai',ok:true,country:'US',colo:'LAX',ip:'198.51.100.24',latency_ms:180,error:null},persona:{domain:'withpersona.com',ok:true,country:'US',colo:'LAX',ip:'198.51.100.24',latency_ms:184,error:null},unlisted_dns:{domain:'cloudflare-dns.com',ok:true,country:'US',colo:'LAX',ip:'198.51.100.24',latency_ms:179,error:null},exit_isp:{ip:'198.51.100.24',country:'US',city:'Los Angeles',timezone:'America/Los_Angeles',isp:'Synthetic Residential Fiber',hosting:false},same_country:true,same_exit_ip:true,unlisted_same_country:true};
   if(command==='plugin:event|listen')return 1;
   if(command==='plugin:event|unlisten')return;
   throw Error('Unexpected native command: '+command);
@@ -411,7 +427,7 @@ try {
   beforePoll=await page.evaluate(()=>window.usageFixture.requests.length);
   await page.clock.fastForward(90_000);
   assert.equal(await page.evaluate(()=>window.usageFixture.requests.length),beforePoll,'Leaving Usage must cancel polling');
-  assert.equal(await page.locator('[data-quick-destination]').count(),7);
+  assert.equal(await page.locator('[data-quick-destination]').count(),8);
   const quickAlignment=await page.locator('.quick-page').evaluate(node=>({title:node.querySelector('h1').getBoundingClientRect().left,card:node.querySelector('.quick-overview').getBoundingClientRect().left}));
   assert.ok(Math.abs(quickAlignment.title-quickAlignment.card)<=1,'Quick setup cards must share the title margin');
   assert.match(await page.locator('[data-quick-state="identity"]').innerText(),/已保存 3 个身份/);
@@ -430,7 +446,7 @@ try {
   const readCommands=(await page.evaluate(()=>window.usageFixture.commands)).slice(quickStart);
   assert.ok(readCommands.every(item=>['identities_read','browser_read','system_read','claude_cli_read'].includes(item.command)));
   await page.screenshot({path:join(output,'quick-setup-zh-light.png'),fullPage:true});
-  for(const [destination,title] of [['vps','网络环境'],['cleaner','身份管理'],['browser','浏览环境'],['system','电脑环境'],['usage','用量分析'],['settings','软件设置']]){
+  for(const [destination,title] of [['vps','网络环境'],['risk','风控验证'],['cleaner','身份管理'],['browser','浏览环境'],['system','电脑环境'],['usage','用量分析'],['settings','软件设置']]){
     await page.locator('[data-quick-destination="'+destination+'"]').first().getByRole('button').click();
     await page.getByRole('heading',{name:title,exact:true}).waitFor();
     assert.equal(await page.getByRole('dialog').count(),0,'Navigation must not open a destructive confirmation');
@@ -492,6 +508,13 @@ try {
   assert.match(await identityCards.first().locator('[data-quota-window="7d"]').innerText(),/剩余 82%/);
   assert.equal(await identityCards.first().locator('.identity-organization').count(),0);
   assert.equal(await identityCards.first().locator('.identity-email').count(),1);
+  assert.match(await identityCards.first().locator('[data-identity-expiry]').innerText(),/^\d{2}\/\d{2}$/,'Subscription expiry badge must render as MM/DD');
+  const pillAndExpiry=await identityCards.first().evaluate(node=>{
+    const pill=node.querySelector('.identity-plan-pill').getBoundingClientRect();
+    const exp=node.querySelector('[data-identity-expiry]').getBoundingClientRect();
+    return {pillRight:pill.right,expLeft:exp.left,sameLine:Math.abs(pill.top-exp.top)<8};
+  });
+  assert.ok(pillAndExpiry.expLeft>=pillAndExpiry.pillRight-1&&pillAndExpiry.sameLine,'Expiry MM/DD must appear directly to the right of PRO on the same line');
   assert.equal(await identityCards.nth(1).locator('.identity-sub-resets-block').count(),0);
   assert.equal(await identityCards.nth(2).locator('[data-quota-window="5h"] i').count(),0);
   assert.match(await identityCards.nth(2).innerText(),/Max 20x/i);

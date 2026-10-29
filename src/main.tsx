@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Claude-Local 品牌与座舱页面、共享页面图标和 YAML 文案、Cromma UI、任务锁与本地刷新/身份确认事件。
- * [OUTPUT]: 可折叠侧栏、命令面板快捷键、手动刷新、八个页面及常驻原生唤醒迁移/快照桥（不调度请求）。
+ * [OUTPUT]: 可折叠侧栏、命令面板快捷键、手动刷新、九个页面（含风控验证）及常驻原生唤醒迁移/快照桥（不调度请求）。
  * [POS]: 独立产品编排层；命令快捷键尊重输入、模态与任务锁，只读身份列表仅在面板打开时读取。根 MotionRoot 读取减少动画偏好。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -15,6 +15,7 @@ import {BrowserPanel} from './browser';
 import {SystemPanel} from './system';
 import {QuickSetupPanel} from './quick-actions';
 import {VpsPanel} from './vps';
+import {RiskVerificationPanel} from './risk-verification';
 import {LanguageSwitch} from './language-switch';
 import {LocalEdition} from './local-edition';
 import {readPage, rememberPage, type Page} from './navigation';
@@ -41,11 +42,12 @@ const titles: Record<Page, string> = {
   browser: '浏览环境',
   system: '电脑环境',
   vps: '网络环境',
+  risk: '风控验证',
   help: '使用说明',
   settings: '软件设置',
 };
 
-const PAGE_ORDER: readonly Page[] = ['quick', 'browser', 'system', 'vps', 'cleaner', 'usage', 'help', 'settings'];
+const PAGE_ORDER: readonly Page[] = ['quick', 'browser', 'system', 'vps', 'risk', 'cleaner', 'usage', 'help', 'settings'];
 
 function App() {
   useEffect(() => { void initializeNativeWakeupBridge(); }, []);
@@ -163,7 +165,7 @@ function App() {
             </button>
           </div>
           <nav aria-label={t('主要页面')}>
-            {(['quick', 'browser', 'system', 'vps', 'cleaner', 'usage', 'help', 'settings'] as const).map(p => {
+            {(['quick', 'browser', 'system', 'vps', 'risk', 'cleaner', 'usage', 'help', 'settings'] as const).map(p => {
               const Icon = icons[p];
               return (
                 <Fragment key={p}>
@@ -198,6 +200,7 @@ function App() {
             {page === 'usage' && <UsageStatisticsPanel />}
             {page === 'system' && <SystemPanel onBusy={setAdvancedBusy} />}
             {page === 'vps' && <VpsPanel />}
+            {page === 'risk' && <RiskVerificationPanel onNavigate={setPage} />}
             {page === 'help' && <HelpPanel />}
             {page === 'settings' && <SettingsPanel onNavigate={setPage} />}
           </motion.div>

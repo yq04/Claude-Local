@@ -627,6 +627,19 @@ code, input { user-select: text; }
   border-top: 1px solid color-mix(in srgb, var(--landing-line) 85%, transparent);
 }
 
+@media (max-height: 700px) {
+  .app-sidebar nav {
+    gap: 3px;
+    padding: 7px 10px;
+  }
+  .workspace-nav {
+    height: 34px;
+  }
+  .nav-divider {
+    margin: auto 6px 3px;
+  }
+}
+
 .sidebar-bottom {
   display: flex;
   align-items: center;

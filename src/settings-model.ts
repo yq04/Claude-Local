@@ -15,7 +15,7 @@ export type FontFamily = 'system' | 'modern' | 'humanist' | 'serif';
 export type MonoFontFamily = 'cascadia' | 'jetbrains' | 'consolas';
 export type QuotaDisplayMode = 'remaining' | 'used';
 export type UiScale = 90 | 95 | 100 | 105 | 110;
-export type StartupPage = 'remember' | 'quick' | 'cleaner' | 'usage' | 'browser' | 'system' | 'vps' | 'help' | 'settings';
+export type StartupPage = 'remember' | 'quick' | 'cleaner' | 'usage' | 'browser' | 'system' | 'vps' | 'risk' | 'help' | 'settings';
 export type ThemePresetId = 'parchment' | 'auroraGlass' | 'sunsetGlass' | 'nebulaDark' | 'duneGlass';
 
 export const UI_SCALES: readonly UiScale[] = [90, 95, 100, 105, 110];
@@ -24,7 +24,7 @@ export const SURFACE_STYLES: readonly SurfaceStyle[] = ['cockpit', 'glass', 'hat
 export const BACKDROP_STYLES: readonly BackdropStyle[] = ['minimal', 'aurora', 'sunset', 'ocean', 'nebula', 'dune', 'fuji', 'custom'];
 export const FONT_FAMILIES: readonly FontFamily[] = ['system', 'modern', 'humanist', 'serif'];
 export const MONO_FONT_FAMILIES: readonly MonoFontFamily[] = ['cascadia', 'jetbrains', 'consolas'];
-const STARTUP_PAGES: readonly StartupPage[] = ['remember', 'quick', 'cleaner', 'usage', 'browser', 'system', 'vps', 'help', 'settings'];
+const STARTUP_PAGES: readonly StartupPage[] = ['remember', 'quick', 'cleaner', 'usage', 'browser', 'system', 'vps', 'risk', 'help', 'settings'];
 
 export type UiPreferences = {
   theme: ThemeMode;

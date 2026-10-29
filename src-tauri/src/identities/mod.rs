@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务门与显式身份写入代次、Tauri 进度通道。
-// [OUTPUT]: 有界归档加载、身份/网页摘要与管理命令、轻量usage身份观察登记、跳过活动session扫描的原生调度摘要入口及唯一进程级唤醒owner。
+// [OUTPUT]: 有界归档加载、身份/网页摘要与手动订阅到期补充管理命令、轻量usage身份观察登记、跳过活动session扫描的原生调度摘要入口及唯一进程级唤醒owner。
 // [POS]: GUI 身份管理的原生入口；在线子模块仅允许固定额度端点和白名单回执，不提供凭据读取或任意文件/网络接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 mod archive;
@@ -22,6 +22,7 @@ mod optimization_tests;
 pub(crate) mod private;
 pub(crate) mod profile;
 mod store;
+pub(crate) mod subscription;
 #[cfg(test)]
 mod tests;
 pub(crate) mod usage;
@@ -152,6 +153,7 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
         .unwrap_or(0);
     let active =
         catalog::current_id(&vault_path, &root_path, &db)?.unwrap_or_else(|| "current".into());
+    let manual_subs = subscription::read_store(&vault_path);
     let mut current = profile::read_live(&root_path, &vault_path);
     usage::observe_current(&vault_path, &root_path);
     online::apply_metadata(
@@ -168,6 +170,13 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
             }
         }
     }
+    subscription::apply_manual(
+        &manual_subs,
+        current.quota_identity.as_deref(),
+        (active != "current").then_some(active.as_str()),
+        &mut current.web,
+        &mut current.subscription_expires_at,
+    );
     let saved_map: std::collections::HashMap<String, u64> =
         records.iter().map(|r| (r.id.clone(), r.saved_at)).collect();
     for (id, summary) in summaries.iter_mut() {
@@ -178,6 +187,14 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
             &vault_path,
             summary.quota_identity.as_deref(),
             &mut summary.web,
+        );
+        summary.subscription_expires_at = None;
+        subscription::apply_manual(
+            &manual_subs,
+            summary.quota_identity.as_deref(),
+            Some(id.as_str()),
+            &mut summary.web,
+            &mut summary.subscription_expires_at,
         );
     }
     Ok(State {
@@ -350,9 +367,13 @@ pub async fn identities_delete(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(Some(on_progress));
         let action = || {
+            let vault_path = vault(&worker)?;
             let mut store =
-                store::Store::open(&vault(&worker)?, &crate::cleaner::identity::root()?)?;
+                store::Store::open(&vault_path, &crate::cleaner::identity::root()?)?;
             store.delete(&id, &policy, &reporter)?;
+            if id != "current" {
+                subscription::remove_record_entry(&vault_path, &id);
+            }
             Ok(())
         };
         let result = if id == "current" {

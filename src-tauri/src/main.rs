@@ -1,5 +1,5 @@
-// [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统及系统修改记录/恢复命令、固定网络资源导航、独立界面语言与本地 Token 统计命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
-// [OUTPUT]: Claude-Local 独立窗口及主窗口尺寸记忆、托盘、SQLite 本地身份暂存/恢复、用户触发的有界在线额度读取、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、系统修改历史与冲突检查恢复、固定网络入口与 CI 固定启动诊断；--quota-core 在 GUI 初始化前提供纯 JSON 额度合并。
+// [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统及系统修改记录/恢复命令、固定网络资源导航与风控 DNS/跨域名只读核验、独立界面语言与本地 Token 统计命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
+// [OUTPUT]: Claude-Local 独立窗口及主窗口尺寸记忆、托盘、SQLite 本地身份暂存/恢复、用户触发的有界在线额度读取、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、系统修改历史与冲突检查恢复、固定网络入口与风控核验及 CI 固定启动诊断；--quota-core 在 GUI 初始化前提供纯 JSON 额度合并。
 // [POS]: 应用编排层；setup注册唯一进程级唤醒owner，实际Exit停止；CloseRequested仅隐藏托盘。不读取翻译设置或API密钥。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -21,6 +21,7 @@ mod network_links;
 mod progress;
 mod quota_core;
 mod regions;
+mod risk_check;
 mod system;
 mod system_changes;
 mod ui_appearance;
@@ -189,6 +190,7 @@ fn main() {
             identities::online::identities_quota_revision,
             identities::online::identities_quota_batch_state,
             identities::online::identities_cancel_quota_batch,
+            identities::subscription::identities_set_subscription_expiry,
             browser::quota_bridge::identities_sync_subscription,
             identities::usage::usage_statistics_read,
             identities::usage::usage_attribution_read,
@@ -230,7 +232,9 @@ fn main() {
             browser::browser_default_read,
             browser::browser_set_default,
             browser::browser_open_usage,
-            network_links::network_diagnose_domains
+            network_links::network_diagnose_domains,
+            risk_check::risk_inspect_local_env,
+            risk_check::risk_probe_consistency
         ])
         .build(tauri::generate_context!())
         .expect("无法启动 Claude-Local")

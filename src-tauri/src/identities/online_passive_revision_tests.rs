@@ -55,6 +55,7 @@ impl Drop for Fixture {
             self.home.join(".claude/projects/unwatched.jsonl"),
             self.app.join("quota_ledger.json"),
             self.app.join("identity-vault/quota_web_metadata.json"),
+            self.app.join("identity-vault/manual_subscriptions.json"),
         ] {
             let _ = fs::remove_file(path);
         }
@@ -103,7 +104,14 @@ fn passive_quota_revision_watches_only_fixed_files_without_parsing_contents() {
         b"synthetic metadata",
     )
     .unwrap();
-    assert_ne!(ledger_revision, f.revision());
+    let web_revision = f.revision();
+    assert_ne!(ledger_revision, web_revision);
+    private::write(
+        &f.app.join("identity-vault/manual_subscriptions.json"),
+        b"synthetic manual subscriptions",
+    )
+    .unwrap();
+    assert_ne!(web_revision, f.revision());
 }
 
 #[test]

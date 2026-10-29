@@ -24,7 +24,7 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
 
   // Verify alignment and initial overview structure
   await page.locator('.quick-overview[aria-busy="false"]').waitFor();
-  assert.equal(await page.locator('[data-quick-destination]').count(), 7, 'Must render exactly 7 destination cards');
+  assert.equal(await page.locator('[data-quick-destination]').count(), 8, 'Must render exactly 8 destination cards');
   const quickAlignment = await page.locator('.quick-page').evaluate(node => ({
     title: node.querySelector('h1').getBoundingClientRect().left,
     card: node.querySelector('.quick-overview').getBoundingClientRect().left,
@@ -129,9 +129,10 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
   await page.locator('.quick-overview[aria-busy="false"]').waitFor();
   assert.equal(await page.locator('.quick-page [role="alert"]').count(), 0, 'Late resolved response from unmounted cycle must not leave error alerts');
 
-  // 6. Six destinations navigation without confirmation dialog
+  // 6. Seven destinations navigation without confirmation dialog
   for (const [dest, title] of [
     ['vps', '网络环境'],
+    ['risk', '风控验证'],
     ['cleaner', '身份管理'],
     ['browser', '浏览环境'],
     ['system', '电脑环境'],
@@ -304,6 +305,7 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
     'identities_backup_location',
     'ui_appearance_read',
     'ui_wallpaper_read',
+    'risk_inspect_local_env',
   ]);
   const disallowed = commands.filter(item => !allowedCommands.has(item.command));
   assert.deepEqual(disallowed, [], `All invoked commands must be within read-only allowlist: ${disallowed.map(d => d.command).join(', ')}`);

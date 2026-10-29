@@ -315,6 +315,12 @@ pub struct WebMetadata {
     pub billing_observed_at_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manual_resets_observed_at_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subscription_expiry_ymd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subscription_recharge_ymd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subscription_date_source: Option<String>,
 }
 
 fn valid_account(account: &str) -> bool {
@@ -338,6 +344,7 @@ fn quota_revision(root: &Path, home: &Path) -> Result<String, String> {
     for path in [
         root.join("quota_ledger.json"),
         root.join("identity-vault/quota_web_metadata.json"),
+        root.join("identity-vault/manual_subscriptions.json"),
         home.join(".claude.json"),
     ] {
         match fs::symlink_metadata(&path) {
@@ -1470,6 +1477,9 @@ fn metadata_entry(root: &Value, identity: &str, now_ms: u64) -> Option<WebMetada
     data.metadata_observed_at_ms = data
         .billing_observed_at_ms
         .max(data.manual_resets_observed_at_ms);
+    data.subscription_expiry_ymd = None;
+    data.subscription_recharge_ymd = None;
+    data.subscription_date_source = data.billing_date.map(|_| "browser".into());
     Some(data)
 }
 

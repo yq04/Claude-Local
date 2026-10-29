@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生身份命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
- * [OUTPUT]: 身份工牌、本地/云端授权分层状态、紧凑28px响应式主从工具栏操作组、可换行的单账号唤醒计划与一次验证、独立网页修复及严格指纹绑定批次。
+ * [INPUT]: 原生身份命令、手动/自动订阅到期与充值日命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
+ * [OUTPUT]: 身份工牌（含 PRO/MAX 右侧紧凑 MM/DD 订阅到期标签与手动充值/到期设置弹窗）、本地/云端授权分层状态、紧凑28px响应式主从工具栏操作组、可换行的单账号唤醒计划与一次验证、独立网页修复及严格指纹绑定批次。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -8,7 +8,7 @@ import {useEffect, useRef, useState, useSyncExternalStore, type ReactNode} from 
 import {Button, Checkbox, Disclosure, Input, Switch, useReducedMotionConfig, useSpring} from 'cromma-ui';
 import {DropdownMenu} from 'radix-ui';
 import {listen} from '@tauri-apps/api/event';
-import {formatOnlineQuotaStatus, formatSubscriptionAndResets, ForegroundQuotaScheduler, isExpectedCurrentTarget, isExpectedSavedTarget, buildBatchTargets, generateBatchRequestId, formatBatchProgress, isSuccessfulOnlineResult, aggregateBatchProgress, summarizeBatchResult, isTerminalBatchState, isMatchingBatchTarget, readNativeWakeupSnapshot, subscribeNativeWakeup, configureNativeWakeup, resumeNativeWakeup, formatMinuteOfDay, parseMinuteOfDay, isConfirmedNewWakeup5h, type OnlineQuotaResult, type OnlineQuotaStatus, type BatchQuotaResult, type QuotaBatchProgress, type BatchProgressSummary, type QuotaBatchTarget, type AutoWakeupConfig} from './identity-online-quota';
+import {addOneCalendarMonthYmd, epochSecToCalendarYmd, formatOnlineQuotaStatus, formatSubscriptionAndResets, formatSubscriptionExpiryBadge, formatYmdAsShortMd, ForegroundQuotaScheduler, isExpectedCurrentTarget, isExpectedSavedTarget, isValidCalendarYmd, buildBatchTargets, generateBatchRequestId, formatBatchProgress, isSuccessfulOnlineResult, aggregateBatchProgress, summarizeBatchResult, isTerminalBatchState, isMatchingBatchTarget, readNativeWakeupSnapshot, subscribeNativeWakeup, configureNativeWakeup, resumeNativeWakeup, formatMinuteOfDay, parseMinuteOfDay, isConfirmedNewWakeup5h, type OnlineQuotaResult, type OnlineQuotaStatus, type BatchQuotaResult, type QuotaBatchProgress, type BatchProgressSummary, type QuotaBatchTarget, type AutoWakeupConfig, type SubscriptionExpiryBadge} from './identity-online-quota';
 import type {IdentitySubscriptionMetadata} from './identity-model';
 import {formatWakeupWait, presentWakeupAccount} from './wakeup-presentation';
 import {ShieldCheck, Refresh} from 'cromma-ui/pika';
@@ -104,15 +104,16 @@ function IdentityQuota({quota, display, nowSec, inDialog = false, t, onOpenDetai
   );
 }
 
-function SubscriptionAndResets({meta, locale, t}: {meta: IdentitySubscriptionMetadata | null | undefined; locale: string; t: (key: string, slots?: Record<string, string | number>) => string}) {
+function SubscriptionAndResets({meta, locale, showBilling = false, t}: {meta: IdentitySubscriptionMetadata | null | undefined; locale: string; showBilling?: boolean; t: (key: string, slots?: Record<string, string | number>) => string}) {
   const display = formatSubscriptionAndResets(meta, locale, t);
-  if (!display.hasAnyData) return null;
+  const billing = showBilling ? display.billing : null;
+  if (!billing && !display.manualResets) return null;
   return (
     <div className="identity-sub-resets-block">
-      {display.billing && (
+      {billing && (
         <div className="identity-sub-resets-row">
-          <strong>{display.billing.label}</strong>
-          <span>{display.billing.formattedDate}</span>
+          <strong>{billing.label}</strong>
+          <span>{billing.formattedDate}</span>
         </div>
       )}
       {display.manualResets && (
@@ -125,16 +126,43 @@ function SubscriptionAndResets({meta, locale, t}: {meta: IdentitySubscriptionMet
   );
 }
 
-function IdentityName({name, email, accountName, plan, privacyMask, saved = false, t}: {name: string; email?:string|null; accountName?: string | null; plan?: string | null; privacyMask: boolean; saved?: boolean; t: (key: string) => string}) {
+function IdentityName({name, email, accountName, plan, expiry = null, onEditExpiry, privacyMask, saved = false, t}: {name: string; email?:string|null; accountName?: string | null; plan?: string | null; expiry?: SubscriptionExpiryBadge | null; onEditExpiry?: () => void; privacyMask: boolean; saved?: boolean; t: (key: string, slots?: Record<string, string | number>) => string}) {
   const shownName = maskDisplayName(name, email, privacyMask);
   const description = !privacyMask && accountName && accountName !== name ? `${t('identityCard.accountName')}: ${accountName}` : undefined;
-  const hasPlan = plan && plan.trim().length > 0;
+  const hasPlan = Boolean(plan && plan.trim().length > 0);
+  const expiryTooltip = expiry
+    ? expiry.rechargeYmd
+      ? t('identityCard.expiryTooltipWithRecharge', {expiry: expiry.fullYmd, recharge: expiry.rechargeYmd})
+      : t('identityCard.expiryTooltip', {expiry: expiry.fullYmd})
+    : undefined;
   return (
     <h3 className="identity-name-with-label" data-identity-name data-identity-username={!saved || undefined} data-identity-saved-name={saved || undefined} aria-label={shownName} aria-description={description}>
       <strong title={description ? `${shownName}\n${description}` : shownName}>{shownName}</strong>
-      {hasPlan && <span className={`identity-plan-pill plan-${plan.toLowerCase()}`}>{plan}</span>}
+      {hasPlan && <span className={`identity-plan-pill plan-${plan!.toLowerCase()}`}>{plan}</span>}
+      {expiry && (
+        <span
+          className={`identity-expiry-tag${onEditExpiry ? ' is-clickable' : ''}`}
+          data-identity-expiry
+          title={expiryTooltip}
+          onClick={onEditExpiry ? e => { e.stopPropagation(); onEditExpiry(); } : undefined}
+        >
+          {expiry.shortMd}
+        </span>
+      )}
     </h3>
   );
+}
+
+interface ExpiryEditorState {
+  accountId: string;
+  expectedIdentity: string | null;
+  label: string;
+  email: string | null;
+  plan: string | null;
+  rechargeYmd: string;
+  expiryYmd: string;
+  hasManual: boolean;
+  error: string;
 }
 
 export function IdentityPanel({onBusy, initialEmpty = false, identityReviewRequest = null, onIdentityReviewConsumed}: {onBusy?: (busy: boolean) => void; initialEmpty?: boolean; identityReviewRequest?: IdentityReviewRequest | null; onIdentityReviewConsumed?: (requestId: number) => void}) {
@@ -155,6 +183,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [name, setName] = useState(t('当前身份'));
   const [rename, setRename] = useState<Identity | null>(null),
     [renameValue, setRenameValue] = useState('');
+  const [expiryEditor, setExpiryEditor] = useState<ExpiryEditorState | null>(null);
   const [deleteBrowser, setDeleteBrowser] = useState(false);
   const [deletion, setDeletion] = useState<Identity | 'current' | null>(null),
     [accepted, setAccepted] = useState(false);
@@ -211,8 +240,8 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const reduceMotion = useReducedMotionConfig() ?? false;
   const scrollSpring = useSpring(0, {stiffness: 170, damping: 25, mass: 0.8});
   const scrollTarget = useRef(0);
-  const locked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!deletion || browserReview !== null || quotaDetails !== null;
-  const actionLocked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!deletion || browserReview !== null;
+  const locked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!expiryEditor || !!deletion || browserReview !== null || quotaDetails !== null;
+  const actionLocked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!expiryEditor || !!deletion || browserReview !== null;
   lockedRef.current = locked;
   busyRef.current = busy;
   const actionLockedRef = useRef(false);
@@ -1110,6 +1139,62 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       setBusy(false);
     }
   }
+  function openExpiryEditor(
+    accountId: string,
+    label: string,
+    meta: (IdentitySubscriptionMetadata & {quota_identity?: string | null; email?: string | null; plan?: string | null; subscription_expires_at?: number | null}) | null | undefined,
+  ) {
+    const badge = formatSubscriptionExpiryBadge(meta);
+    setQuotaDetails(null);
+    setExpiryEditor({
+      accountId,
+      expectedIdentity: meta?.quota_identity ?? null,
+      label,
+      email: meta?.email ?? null,
+      plan: meta?.plan ?? null,
+      rechargeYmd: badge?.rechargeYmd ?? '',
+      expiryYmd: badge?.fullYmd ?? '',
+      hasManual: meta?.subscription_date_source === 'manual',
+      error: '',
+    });
+    setError('');
+  }
+  async function saveSubscriptionExpiry(clear = false) {
+    if (!expiryEditor || busy) return;
+    const rechargeTrimmed = clear ? '' : expiryEditor.rechargeYmd.trim();
+    const expiryTrimmed = clear ? '' : expiryEditor.expiryYmd.trim();
+    if (!clear) {
+      if (rechargeTrimmed && !isValidCalendarYmd(rechargeTrimmed)) {
+        setExpiryEditor(prev => (prev ? {...prev, error: 'identityCard.invalidSubscriptionDate'} : prev));
+        return;
+      }
+      const effectiveExpiry = expiryTrimmed || (rechargeTrimmed ? addOneCalendarMonthYmd(rechargeTrimmed) ?? '' : '');
+      if (!effectiveExpiry || !isValidCalendarYmd(effectiveExpiry)) {
+        setExpiryEditor(prev => (prev ? {...prev, error: 'identityCard.invalidSubscriptionDate'} : prev));
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      const next = await invoke<IdentityState>('identities_set_subscription_expiry', {
+        accountId: expiryEditor.accountId,
+        expectedIdentity: expiryEditor.expectedIdentity,
+        expiryYmd: clear ? null : expiryTrimmed || null,
+        rechargeYmd: clear ? null : rechargeTrimmed || null,
+      });
+      if (mountedRef.current) {
+        setState(next);
+        setExpiryEditor(null);
+        setError('');
+      }
+    } catch (e) {
+      if (mountedRef.current) {
+        setExpiryEditor(prev => (prev ? {...prev, error: String(e)} : prev));
+      }
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
+  }
 
   const options = (
     <div className="identity-policy-body">
@@ -1522,6 +1607,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                       <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={() => void syncSubscription()}>
                         {t('identityCard.syncSubscription')}
                       </DropdownMenu.Item>
+                      <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={() => openExpiryEditor('current', currentName, current)}>
+                        {t('identityCard.setSubscriptionExpiry')}
+                      </DropdownMenu.Item>
                       <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={openSnapshot}>
                         {t(active ? '更新备份' : '保存备份')}
                       </DropdownMenu.Item>
@@ -1533,7 +1621,16 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
-              <IdentityName name={currentName} email={current?.email} accountName={current?.display_name} plan={current?.plan} privacyMask={prefs.privacyMask} t={t} />
+              <IdentityName
+                name={currentName}
+                email={current?.email}
+                accountName={current?.display_name}
+                plan={current?.plan}
+                expiry={formatSubscriptionExpiryBadge(current)}
+                onEditExpiry={blocked ? undefined : () => openExpiryEditor('current', currentName, current)}
+                privacyMask={prefs.privacyMask}
+                t={t}
+              />
               <div className="identity-account identity-email-line">
                 {current?.email ? (
                   <span className="identity-email" title={maskEmailAddress(current.email, prefs.privacyMask)}>{maskEmailAddress(current.email, prefs.privacyMask)}</span>
@@ -1575,6 +1672,13 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                         <DropdownMenu.Item
                           className="identity-menu-item"
                           disabled={blocked}
+                          onSelect={() => openExpiryEditor(row.id, row.name, summary)}
+                        >
+                          {t('identityCard.setSubscriptionExpiry')}
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item
+                          className="identity-menu-item"
+                          disabled={blocked}
                           onSelect={() => {
                             setRename(row);
                             setRenameValue(row.name);
@@ -1591,7 +1695,17 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
                 </div>
-                <IdentityName name={row.name} email={summary?.email} accountName={summary?.display_name} plan={summary?.plan} privacyMask={prefs.privacyMask} saved t={t} />
+                <IdentityName
+                  name={row.name}
+                  email={summary?.email}
+                  accountName={summary?.display_name}
+                  plan={summary?.plan}
+                  expiry={formatSubscriptionExpiryBadge(summary)}
+                  onEditExpiry={blocked ? undefined : () => openExpiryEditor(row.id, row.name, summary)}
+                  privacyMask={prefs.privacyMask}
+                  saved
+                  t={t}
+                />
                 <div className="identity-account identity-email-line saved">
                   {summary?.email ? <span className="identity-email" title={maskEmailAddress(summary.email, prefs.privacyMask)}>{maskEmailAddress(summary.email, prefs.privacyMask)}</span> : <span className="identity-account-unknown">{t('identityCard.emailUnavailable')}</span>}
                 </div>
@@ -1703,9 +1817,24 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             <span>{t('quota.resetSchedule')}</span>
             <strong>
               {detailsSummary?.billing_date && (detailsSummary.billing_date_kind === 'next_renewal' || detailsSummary.billing_date_kind === 'access_until') ? (
-                `${formatSubscriptionAndResets(detailsSummary, locale, t).billing?.label || t('identityCard.nextRenewal')}: ${new Date(detailsSummary.billing_date * 1000).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {year: 'numeric', month: 'short', day: 'numeric'})}`
+                <>
+                  <span>{`${formatSubscriptionAndResets(detailsSummary, locale, t).billing?.label || t('identityCard.nextRenewal')}: ${new Date(detailsSummary.billing_date * 1000).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {year: 'numeric', month: 'short', day: 'numeric'})}`}</span>
+                  {detailsSummary.subscription_recharge_ymd && (
+                    <small className="identity-observation-age"> · {t('identityCard.rechargedNote', {date: formatYmdAsShortMd(detailsSummary.subscription_recharge_ymd) || detailsSummary.subscription_recharge_ymd})}</small>
+                  )}
+                </>
               ) : (
-                t('identityCard.notProvided')
+                <span>{t('identityCard.notProvided')}</span>
+              )}
+              {quotaDetails && (
+                <button
+                  type="button"
+                  className="identity-expiry-inline-edit"
+                  disabled={busy || loading || !!state?.recovery}
+                  onClick={() => openExpiryEditor(detailsAreCurrent ? 'current' : quotaDetails.id, quotaDetails.name, detailsSummary)}
+                >
+                  {t('identityCard.editExpiryShort')}
+                </button>
               )}
             </strong>
           </div>
@@ -2015,6 +2144,119 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       >
         <Input aria-label={t('身份名称')} maxLength={64} value={renameValue} onChange={e => setRenameValue(e.target.value)} />
         {error && <p role="alert">{t(error)}</p>}
+      </AppDialog>
+      <AppDialog
+        open={expiryEditor !== null}
+        onOpenChange={open => {
+          if (!open && !busy) setExpiryEditor(null);
+        }}
+        title={t('identityCard.expiryDialogTitle', {name: maskDisplayName(expiryEditor?.label, expiryEditor?.email, prefs.privacyMask)})}
+        description={t('identityCard.expiryDialogDesc')}
+        footer={
+          <>
+            {expiryEditor?.hasManual && (
+              <Button variant="secondary" disabled={busy} onClick={() => void saveSubscriptionExpiry(true)}>
+                {t('identityCard.clearManualExpiry')}
+              </Button>
+            )}
+            <Button variant="secondary" disabled={busy} onClick={() => setExpiryEditor(null)}>
+              {t('取消')}
+            </Button>
+            <Button
+              variant="secondary"
+              loading={busy}
+              disabled={busy || (!expiryEditor?.expiryYmd.trim() && !expiryEditor?.rechargeYmd.trim())}
+              onClick={() => void saveSubscriptionExpiry(false)}
+            >
+              {t('保存')}
+            </Button>
+          </>
+        }
+      >
+        {expiryEditor && (() => {
+          const previewExpiryYmd = expiryEditor.expiryYmd.trim() || addOneCalendarMonthYmd(expiryEditor.rechargeYmd.trim());
+          const previewShort = formatYmdAsShortMd(previewExpiryYmd);
+          const previewName = maskDisplayName(expiryEditor.label, expiryEditor.email, prefs.privacyMask);
+          const previewPlan = expiryEditor.plan && expiryEditor.plan.trim() ? expiryEditor.plan : 'Pro';
+          return (
+            <div className="identity-expiry-dialog">
+              <div className="identity-expiry-field">
+                <label htmlFor="identity-recharge-date">{t('identityCard.rechargeDateLabel')}</label>
+                <div className="identity-expiry-date-row">
+                  <input
+                    id="identity-recharge-date"
+                    type="date"
+                    min="2020-01-01"
+                    max="2100-12-31"
+                    className="identity-expiry-date-input"
+                    value={expiryEditor.rechargeYmd}
+                    onChange={e => {
+                      const nextRecharge = e.target.value;
+                      const computedExpiry = addOneCalendarMonthYmd(nextRecharge);
+                      setExpiryEditor(prev =>
+                        prev
+                          ? {
+                              ...prev,
+                              rechargeYmd: nextRecharge,
+                              expiryYmd: computedExpiry ?? prev.expiryYmd,
+                              error: '',
+                            }
+                          : prev,
+                      );
+                    }}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    disabled={busy}
+                    onClick={() => {
+                      const today = epochSecToCalendarYmd(Math.floor(Date.now() / 1000)) ?? '';
+                      const computedExpiry = addOneCalendarMonthYmd(today) ?? '';
+                      setExpiryEditor(prev =>
+                        prev
+                          ? {
+                              ...prev,
+                              rechargeYmd: today,
+                              expiryYmd: computedExpiry,
+                              error: '',
+                            }
+                          : prev,
+                      );
+                    }}
+                  >
+                    {t('identityCard.rechargedToday')}
+                  </Button>
+                </div>
+              </div>
+              <div className="identity-expiry-field">
+                <label htmlFor="identity-expiry-date">{t('identityCard.expiryDateLabel')}</label>
+                <div className="identity-expiry-date-row">
+                  <input
+                    id="identity-expiry-date"
+                    type="date"
+                    min="2020-01-01"
+                    max="2100-12-31"
+                    className="identity-expiry-date-input"
+                    value={expiryEditor.expiryYmd}
+                    onChange={e => {
+                      const nextExpiry = e.target.value;
+                      setExpiryEditor(prev => (prev ? {...prev, expiryYmd: nextExpiry, error: ''} : prev));
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="identity-expiry-preview">
+                <span>{t('identityCard.cardPreviewLabel')}</span>
+                <span className="identity-expiry-preview-badge">
+                  <span>{previewName}</span>
+                  <span className={`identity-plan-pill plan-${previewPlan.toLowerCase()}`}>{previewPlan}</span>
+                  {previewShort && <span className="identity-expiry-tag">{previewShort}</span>}
+                </span>
+              </div>
+              {expiryEditor.error && <p role="alert" className="cleanup-feedback error">{t(expiryEditor.error)}</p>}
+            </div>
+          );
+        })()}
       </AppDialog>
     </section>
   );

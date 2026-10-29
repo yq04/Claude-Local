@@ -46,6 +46,8 @@ mockIPC((command,args)=>{
   if(command==='identities_wakeup_state')return {enabled:false,window_enabled:false,window_start:'08:00',window_end:'23:00',prewarm_threshold:20,accounts:{},scope_changed:false,runtime_available:true};
   if(command==='ui_appearance_read')return null;
   if(command==='ui_wallpaper_read')return null;
+  if(command==='risk_inspect_local_env')return {browser:{proxy_configured:true,proxy_scheme:'socks5',proxy_local_port:7899,remote_dns_locked:true,target_country:'US',target_timezone:'America/Los_Angeles',target_language:'en-US'},mihomo:{detected:true,client_kind:'clash-verge-rev',mixed_port:7897,allow_lan:false,tun_enabled:true,tun_strict_route:true,dns_enabled:true,dns_enhanced_mode:'fake-ip',dns_respect_rules:true,dns_has_remote_doh:true,dns_has_domestic_plain:false,dns_has_nameserver_policy:true,has_claude_rules:true,has_persona_rules:true,has_quic_reject:true,has_geoip_cn:true,dedicated_listener_port:7899},system:{tun_adapter_active:true,secondary_plaintext_dns_active:false,lan_ipv4_candidates:['192.168.31.10'],public_wan_detected:false}};
+  if(command==='risk_probe_consistency')return {claude:{domain:'claude.ai',ok:true,country:'US',colo:'LAX',ip:'198.51.100.24',latency_ms:180,error:null},persona:{domain:'withpersona.com',ok:true,country:'US',colo:'LAX',ip:'198.51.100.24',latency_ms:184,error:null},unlisted_dns:{domain:'cloudflare-dns.com',ok:true,country:'US',colo:'LAX',ip:'198.51.100.24',latency_ms:179,error:null},exit_isp:{ip:'198.51.100.24',country:'US',city:'Los Angeles',timezone:'America/Los_Angeles',isp:'Synthetic Residential Fiber',hosting:false},same_country:true,same_exit_ip:true,unlisted_same_country:true};
   if(command==='monitor_live_telemetry')return {observedAtMs:now*1000,running:true,sessionCount:1,clientLabel:'Claude CLI',activeId:id(1),activeName:'Studio account',current:structuredClone(current),metrics:{available:window.__monitorUsageAvailable!==false,tokens5hTotal:148500,input5h:10000,output5h:8500,cacheWrite5h:10000,cacheRead5h:120000,requests5h:42,tokensPerMin:1840,cacheHitPct:86,latestModel:'claude-opus-4-6',latestTurnAtSec:now-18,jsonlRevision:'1'},routeProtected:true,window:window.__monitorWin||{open:true,alwaysOnTop:true,compact:false,collapsed:false,locked:false,autoHide:false,dockedEdge:'right'}};
   if(command==='monitor_window_set_collapsed'){window.__monitorWin={...(window.__monitorWin||{open:true,alwaysOnTop:true,compact:false,locked:false,autoHide:true,dockedEdge:'right'}),collapsed:!!args.collapsed};return window.__monitorWin;}
   if(command==='monitor_window_set_compact'){window.__monitorWin={...(window.__monitorWin||{open:true,alwaysOnTop:true,collapsed:false,locked:false,autoHide:false,dockedEdge:'right'}),compact:!!args.compact};return window.__monitorWin;}
@@ -84,7 +86,7 @@ try{
  await page.goto(base+'/__local-preview.html');
  await page.evaluate(async()=>{const prefs=await import('/src/settings-model.ts');await prefs.synchronizePrivacyPreference(false);});
  await page.getByRole('group',{name:'本地版本信息',exact:true}).waitFor();
- assert.deepEqual((await page.locator('.workspace-nav').allTextContents()).map(value=>value.trim()),['快速配置','浏览环境','电脑环境','网络环境','身份管理','用量分析','使用说明','软件设置']);
+ assert.deepEqual((await page.locator('.workspace-nav').allTextContents()).map(value=>value.trim()),['快速配置','浏览环境','电脑环境','网络环境','风控验证','身份管理','用量分析','使用说明','软件设置']);
  await page.getByRole('button',{name:'快速配置',exact:true}).click();
  await page.locator('.quick-overview[aria-busy="false"]').waitFor();
  await page.mouse.move(2,2);

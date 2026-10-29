@@ -743,3 +743,96 @@ test('auto-wakeup progressive same-account backoff, cross-account spacing and st
   expect(evalPrewarm.waitRemainingSec).toBe(90);
 });
 
+import {
+  addOneCalendarMonthYmd,
+  epochSecToCalendarYmd,
+  formatSubscriptionExpiryBadge,
+  formatYmdAsShortMd,
+  isValidCalendarYmd,
+} from './identity-online-quota';
+
+test('subscription calendar helpers compute +1 month, clamp month ends and format MM/DD badges', () => {
+  expect(isValidCalendarYmd('2026-10-05')).toBe(true);
+  expect(isValidCalendarYmd('2026-02-29')).toBe(false);
+  expect(isValidCalendarYmd('2028-02-29')).toBe(true);
+  expect(isValidCalendarYmd('1999-05-01')).toBe(false);
+  expect(isValidCalendarYmd('not-a-date')).toBe(false);
+
+  expect(addOneCalendarMonthYmd('2026-10-08')).toBe('2026-11-08');
+  expect(addOneCalendarMonthYmd('2026-01-31')).toBe('2026-02-28');
+  expect(addOneCalendarMonthYmd('2028-01-31')).toBe('2028-02-29');
+  expect(addOneCalendarMonthYmd('2026-03-31')).toBe('2026-04-30');
+  expect(addOneCalendarMonthYmd('2026-12-20')).toBe('2027-01-20');
+
+  expect(formatYmdAsShortMd('2026-11-08')).toBe('11/08');
+  expect(formatYmdAsShortMd('invalid')).toBeNull();
+
+  // UTC noon anchor (2026-11-08T12:00:00Z = 1794139200) resolves to 2026-11-08 in local timezones
+  const utcNoonSec = Math.floor(Date.UTC(2026, 10, 8, 12, 0, 0) / 1000);
+  expect(epochSecToCalendarYmd(utcNoonSec)).toBe('2026-11-08');
+
+  expect(formatSubscriptionExpiryBadge(null)).toBeNull();
+  expect(formatSubscriptionExpiryBadge({ billing_date_kind: 'unknown', billing_date: utcNoonSec })).toBeNull();
+
+  const manualBadge = formatSubscriptionExpiryBadge({
+    subscription_expiry_ymd: '2026-11-08',
+    subscription_recharge_ymd: '2026-10-08',
+    subscription_date_source: 'manual',
+    billing_date_kind: 'next_renewal',
+    billing_date: utcNoonSec,
+  });
+  expect(manualBadge).toEqual({
+    shortMd: '11/08',
+    fullYmd: '2026-11-08',
+    rechargeYmd: '2026-10-08',
+    rechargeShortMd: '10/08',
+    source: 'manual',
+  });
+
+  const browserBadge = formatSubscriptionExpiryBadge({
+    billing_date_kind: 'next_renewal',
+    billing_date: utcNoonSec,
+  });
+  expect(browserBadge).toEqual({
+    shortMd: '11/08',
+    fullYmd: '2026-11-08',
+    rechargeYmd: null,
+    rechargeShortMd: null,
+    source: 'browser',
+  });
+
+  const summaryBadge = formatSubscriptionExpiryBadge({
+    subscription_expires_at: utcNoonSec,
+  });
+  expect(summaryBadge?.shortMd).toBe('11/08');
+  expect(summaryBadge?.source).toBe('summary');
+
+  for (const lang of ['zh', 'en'] as const) {
+    setLocale(lang);
+    const keys = [
+      ['identityCard.setSubscriptionExpiry', undefined],
+      ['identityCard.expiryDialogTitle', { name: 'Synthetic Account' }],
+      ['identityCard.expiryDialogDesc', undefined],
+      ['identityCard.rechargeDateLabel', undefined],
+      ['identityCard.expiryDateLabel', undefined],
+      ['identityCard.rechargedToday', undefined],
+      ['identityCard.cardPreviewLabel', undefined],
+      ['identityCard.clearManualExpiry', undefined],
+      ['identityCard.expiryTooltip', { expiry: '2026-11-08' }],
+      ['identityCard.expiryTooltipWithRecharge', { expiry: '2026-11-08', recharge: '2026-10-08' }],
+      ['identityCard.rechargedNote', { date: '10/08' }],
+      ['identityCard.editExpiryShort', undefined],
+      ['identityCard.invalidSubscriptionDate', undefined],
+      ['无法保存订阅到期设置。', undefined],
+    ] as const;
+    for (const [key, slots] of keys) {
+      const rendered = translate(key, slots);
+      expect(rendered.length).toBeGreaterThan(0);
+      expect(rendered).not.toContain('{');
+      expect(rendered).not.toBe('identityCard.' + key.split('.')[1]);
+    }
+  }
+  setLocale('zh');
+});
+
+

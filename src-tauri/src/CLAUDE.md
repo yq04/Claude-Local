@@ -4,6 +4,7 @@ identities/wakeup.rs: setup创建唯一进程级自动续杯owner；Root前端�
 清理在本机执行；网络页仅提供用户触发的固定 Claude 服务连通性诊断，没有供应商导航或 Skill 依赖。生产命令提供身份压缩暂存、空身份切换、恢复、独立确认的直接删除及当前默认 Claude 文件残留维护。用户选择保留或随身份暂存，文件残留另经扫描和选择清理，系统设置独立。
 identities/ - SQLite 身份目录、用户保留策略、加密压缩暂存、空身份切换、恢复、选择性直接删除与独立本地 Token 统计账本；见其 CLAUDE.md。
 identities/online.rs - 固定端点在线额度与账号绑定的网页元数据桥，原生仅编排隐藏Python进程并读取白名单摘要；前台近实时需用户显式开启，后台不轮询。
+identities/subscription.rs - 独立于 SQLite user_version=3 与 Python quota_ledger 的手动订阅到期/充值日私有原子存储（identity-vault/manual_subscriptions.json），支持按 +1 自然月安全推算到期日、UTC 正午跨时区无偏移时间戳与较新网页账单优先合并，绝不终止运行中的 claude.exe。
 identities/backup.rs / backup_tests.rs: 口令派生（ring PBKDF2/AES-GCM）身份全量与救援备份/恢复、SQLite 在线快照、归档清单与记录强校验（version=1、id/HMAC 强一致、data/n 完整性）、有界解包防护。
 identities/quota_connection.rs: 集中连接与路由修复队列；打开独立绑定浏览器登录，不切换全局 CLI，不重放未经验证路由。
 identities/online_native_chain_tests.rs: 真实原生编排核心、资源解析、系统 Python、回环接收器与单写者账本的闭环测试夹具。
@@ -38,4 +39,5 @@ cleaner_tests.rs: 临时白名单/快照/日志验证，覆盖超过 30,000 文�
 regions.rs: 地区编号到语言、区域格式和代表时区的唯一白名单与目标语言前缀/美国多时区地区匹配；供前端选择与系统/浏览器快捷操作共用，包含目录与本机时区验证。
 linux.rs: Linux procfs 当前用户进程、zoneinfo/timedatectl、GNOME 定位偏好、GNOME/KDE 设置入口与 Wayland/X11 剪贴板；LC_MESSAGES/LC_TIME 分别读取会话语言/区域格式，不匹配时先报手动操作再改时区；未知定位为 null，Linux 钥匙串明确不可用；不将系统代理凭据序列化给 WebView。
 network_links.rs: 用户手动触发的固定四域名并发只读 HTTP 探针（downloads 验证安装器公开版本号，Cloudflare 浏览器质询标为可达），优先显式或系统脱敏代理、不携带认证、不跟随重定向、校验目标域、八秒超时，真实连接对端不冒充出口；不接收任意 URL、不打开外部资源、不依赖 Skill 或供应商配置；离线回环测试覆盖域名、响应和注册边界。
+risk_check.rs: 风控验证只读原生命令（risk_inspect_local_env 与 risk_probe_consistency）；仅扫描浏览器代理协议特征、Mihomo YAML 分流/DNS/独立监听布尔结构（显式跳过 proxies/authentication/secret 等敏感块）及本机带默认网关的 RFC1918 私有局域网 IPv4（排除公网 WAN、WSL/Hyper-V 虚拟交换机与 198.18 Fake-IP），并按用户点击并发探测 claude.ai、withpersona.com 与未列举域名的边缘 trace 出口一致性。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
