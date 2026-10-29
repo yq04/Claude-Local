@@ -166,13 +166,13 @@ Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **W
 
 | 发行资产 | 适用系统 | 文件大小 | SHA-256 校验和 |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,550,954` 字节 (134.04 MiB) | `1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51` |
+| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,697,822` 字节 (134.18 MiB) | `981b26f6cec183cabf58baefe8bb8184a4d9d647eb30cc65570dd3e111838617` |
 
 下载后在 PowerShell 中计算 SHA-256，并与 [v0.2.2 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2) 公布的校验值比对：
 
 ```powershell
 Get-FileHash .\Claude-Local_0.2.2_x64-setup.exe -Algorithm SHA256
-# 预期 SHA-256：1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51
+# 预期 SHA-256：981b26f6cec183cabf58baefe8bb8184a4d9d647eb30cc65570dd3e111838617
 ```
 
 ### 2. 安装与无损升级说明
@@ -185,7 +185,7 @@ Get-FileHash .\Claude-Local_0.2.2_x64-setup.exe -Algorithm SHA256
 
 | 版本 | 发布日期 | 核心演进内容 | 详细文档 |
 | :--- | :--- | :--- | :--- |
-| **`v0.2.2`** *(Latest)* | 2026-10-29 | 统计身份独立登记与受控续聊归属、四类 Token 构成、会话与活跃天数、全部模型分布、简洁动态账号筛选，以及共享账号账本的滚动窗口 HUD | [发布说明](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
+| **`v0.2.2`** *(Latest)* | 2026-10-29 | 身份卡片 `PRO`/`MAX` 右侧 `MM/DD` 订阅到期显示与手动充值补录、「风控验证」跨域出口与手机同住宅出口 KYC 桥接、统计身份独立登记与受控续聊归属、四类 Token 构成与共享账本 HUD | [发布说明](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
 | **`v0.2.0`** | 2026-10-26 | **Token Monitor 风格多模态悬浮监控小窗（置顶/锁定/磁吸/贴边隐藏/透明度/主题联动）**、**官方 API 美元等效花费与缓存节省分析（历史功能）**、**勾选联动浏览器切号自动弹出验证页**、全工作区界面减负与导航栏美化 | [更新说明](docs/UI_MONITOR_0.2.0.md) · [发布说明](docs/RELEASE_NOTES_0.2.0.md) · [交付核验](docs/RELEASE_VERIFICATION_0.2.0.md) |
 | **`v0.1.5`** | 2026-10-26 | 五大核心页面冗余说明精简、身份与用量工具栏分组重构、隔离演示数据预览重拍与已安装生产包 20 项浏览器核验 | [界面精简说明](docs/UI_POLISH_0.1.5.md) · [交付核验](docs/RELEASE_VERIFICATION_0.1.5_UI.md) |
 | **`v0.1.4`** | 2026-10-26 | 伴侣浏览器同 IP 机房分类查询生产环境 CSP（`api.ipquery.io`）完整闭环与回归验证 | [浏览器 CSP 修复](docs/BROWSER_CSP_0.1.4.md) · [交付核验](docs/RELEASE_VERIFICATION_0.1.4_BROWSER.md) |

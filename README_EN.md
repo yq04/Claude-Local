@@ -157,13 +157,13 @@ While preserving compatibility with existing vaults and browser profiles, Claude
 
 | Asset | Platform | File Size | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,550,954` bytes (134.04 MiB) | `1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51` |
+| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,697,822` bytes (134.18 MiB) | `981b26f6cec183cabf58baefe8bb8184a4d9d647eb30cc65570dd3e111838617` |
 
 Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.2.2 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2):
 
 ```powershell
 Get-FileHash .\Claude-Local_0.2.2_x64-setup.exe -Algorithm SHA256
-# Expected SHA-256: 1a121cb4c1c6f1fc19b5825375dfd741de85bb81f6848aea05586d51852d0e51
+# Expected SHA-256: 981b26f6cec183cabf58baefe8bb8184a4d9d647eb30cc65570dd3e111838617
 ```
 
 ### 2. Installation & Non-Disruptive Upgrade Notes
@@ -176,7 +176,7 @@ Get-FileHash .\Claude-Local_0.2.2_x64-setup.exe -Algorithm SHA256
 
 | Version | Date | Highlights | Documentation |
 | :--- | :--- | :--- | :--- |
-| **`v0.2.2`** *(Latest)* | 2026-10-29 | Independent statistics identities and controlled resumed-session attribution, four-part token composition, sessions and active days, all-model distribution, simple dynamic account filters, and a shared account-ledger HUD with rolling windows | [Release Notes](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
+| **`v0.2.2`** *(Latest)* | 2026-10-29 | Identity card `MM/DD` subscription expiry badges & manual recharge entry, Risk & KYC exit-consistency & mobile residential bridge, independent statistics identities, four-part token analytics, and shared account-ledger HUD | [Release Notes](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
 | **`v0.2.0`** | 2026-10-26 | **Token Monitor-style multi-mode Floating HUD (Pin/Lock/Snap/Auto-Hide/Opacity/Theme Sync)**, **official API USD cost & cache savings analytics (historical feature)**, **auto-launch linked browser on account switch**, and global UI/sidebar polish | [UI & HUD Note](docs/UI_MONITOR_0.2.0.md) · [Release Notes](docs/RELEASE_NOTES_0.2.0.md) · [Verification](docs/RELEASE_VERIFICATION_0.2.0.md) |
 | **`v0.1.5`** | 2026-10-26 | Five-page copy & toolbar refinement, synthetic preview refresh, and 20-check isolated production browser verification | [UI Polish Note](docs/UI_POLISH_0.1.5.md) · [Verification](docs/RELEASE_VERIFICATION_0.1.5_UI.md) |
 | **`v0.1.4`** | 2026-10-26 | Production CSP (`api.ipquery.io`) completion for same-IP hosting classification in the companion browser | [Browser CSP Note](docs/BROWSER_CSP_0.1.4.md) · [Verification](docs/RELEASE_VERIFICATION_0.1.4_BROWSER.md) |
