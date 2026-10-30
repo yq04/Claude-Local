@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 目录、用户策略、白名单源、已验收归档代次、认证加密与平台凭据桥。
-// [OUTPUT]: 有界主密钥读取、已验证身份归档、先暂存后切换、幂等统计边界与受控空身份登录回执、原始历史保留、持久恢复与真实阶段进度。
+// [OUTPUT]: 有界主密钥读取、先暂存后切换、独立养号转正草稿保护与提交后清理、幂等统计边界、持久恢复与真实阶段进度。
 // [POS]: 身份的文件事务；SQLite 与文件系统由恢复日志协调，不能假装是同一原子事务。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -24,6 +24,7 @@ pub struct Store {
     pub(super) home: PathBuf,
     pub(super) key: Zeroizing<Vec<u8>>,
     pub(super) db: Database,
+    pub(super) suppress_browser_draft: bool,
     process_check: std::cell::Cell<std::time::Instant>,
     #[cfg(test)]
     pub(super) fail_after_clear: bool,
@@ -94,6 +95,7 @@ impl Store {
             home: home.into(),
             key,
             db,
+            suppress_browser_draft: false,
             process_check: std::cell::Cell::new(std::time::Instant::now()),
             #[cfg(test)]
             fail_after_clear: false,
@@ -504,6 +506,7 @@ impl Store {
             &super::profile::summarize_stage_with_ledger(&stage, &self.vault),
         );
         self.db.complete(&record.id)?;
+        self.finish_warming_promotion(&record.id)?;
         self.db.compact()?;
         super::usage::commit_switch_boundary(
             &self.vault,
@@ -565,7 +568,14 @@ impl Store {
             );
             Some(stage)
         };
-        let (record, outgoing) = self.save(name, policy, reporter)?;
+        // The outgoing account may be an unsaved Pro account while promotion has
+        // reserved a warming ID. Never assign that reservation to the outgoing archive.
+        self.suppress_browser_draft = self.suppress_browser_draft
+            || (self.db.get("browser.promotion")?.is_some()
+                && self.db.get("active")?.as_deref() != Some("empty"));
+        let outgoing_result = self.save(name, policy, reporter);
+        self.suppress_browser_draft = false;
+        let (record, outgoing) = outgoing_result?;
         let previous = self.db.get("active")?.unwrap_or_else(|| "current".into());
         self.db.pending(&record, target)?;
         let current = Self::selected(&outgoing, policy);
@@ -647,7 +657,11 @@ impl Store {
             if target == "empty" {
                 super::usage::commit_empty_login_boundary(&self.vault, &self.home);
             } else {
-                super::usage::commit_switch_boundary(&self.vault, &self.home, next_account.as_deref());
+                super::usage::commit_switch_boundary(
+                    &self.vault,
+                    &self.home,
+                    next_account.as_deref(),
+                );
             }
             if !record.empty {
                 let _ = self.db.set_summary(
@@ -708,6 +722,9 @@ impl Store {
             return Err(format!("{error} 原身份已暂存，请使用恢复操作。"));
         }
         self.db.compact()?;
+        if !record.empty {
+            self.finish_warming_promotion(&record.id)?;
+        }
         // 目录已提交后才回收旧代次；回收失败保留加密文件，不把成功切换报为失败。
         let _ = self.collect_generations();
         reporter.log(
@@ -718,6 +735,12 @@ impl Store {
             Some(1),
         );
         Ok(())
+    }
+    fn finish_warming_promotion(&mut self, id: &str) -> Result<(), String> {
+        // The archive/index is already committed. Keep inherited subscriptions and
+        // browser bindings intact; a failed JSON cleanup is retried by State reads.
+        super::warming::remove_card(&self.vault, id)?;
+        self.db.clear_warming_promotion(id)
     }
     pub fn recover(&mut self, name: &str, reporter: &Reporter) -> Result<(), String> {
         let id = self.db.get("recovery")?.ok_or("没有需要恢复的身份事务。")?;

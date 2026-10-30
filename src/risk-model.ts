@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生只读环境快照（浏览器远程 DNS 锁、Mihomo 结构特征、网卡 RFC1918 候选）与三路边缘 trace 一致性实测结果。
- * [OUTPUT]: 六项风控与 DNS 泄露诊断评估、严格 RFC1918 校验、内存一次性桥接凭据、四端手机防泄露配置与双语 AI 根治提示词。
+ * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属、严格 RFC1918 校验、Mihomo strict-route 覆写片段、安全随机源缺失即失败的内存桥接凭据与双语提示词。
  * [POS]: 风控验证纯模型层；不持有上游家宽密码、不落盘临时口令、不向公网暴露任何监听配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -18,6 +18,11 @@ export type BrowserDnsGuard = {
 };
 
 export type MihomoAudit = {
+  config_source?: 'running_core' | 'candidate_file' | null;
+  config_source_status?: 'confirmed' | 'not_running' | 'process_unavailable' | 'ambiguous' | 'unreadable' | 'unsupported' | null;
+  dns_projection_complete?: boolean;
+  dns_has_encrypted_resolver?: boolean;
+  dns_has_domestic_encrypted?: boolean;
   detected: boolean;
   client_kind: string | null;
   mixed_port: number | null;
@@ -45,6 +50,8 @@ export type SystemNetworkAudit = {
 };
 
 export type LocalRiskSnapshot = {
+  context_id?: string | null;
+  browser_identity?: {name: string | null; email: string | null; status: string} | null;
   browser: BrowserDnsGuard;
   mihomo: MihomoAudit;
   system: SystemNetworkAudit;
@@ -61,6 +68,7 @@ export type TraceEndpointResult = {
 };
 
 export type ConsistencyProbeReport = {
+  context_id?: string | null;
   claude: TraceEndpointResult;
   persona: TraceEndpointResult;
   unlisted_dns: TraceEndpointResult;
@@ -86,7 +94,24 @@ export type RiskCheckItem = {
   titleKey: string;
   summaryKey: string;
   summaryParams?: Record<string, string | number>;
+  detailKeys?: string[];
 };
+
+export function compareProbeExits(probe: ConsistencyProbeReport): 'same_ip' | 'same_country' | 'different_country' | 'unknown' {
+  const a = probe.claude;
+  const b = probe.persona;
+  if (!a.ok || !b.ok || !a.country?.trim() || !b.country?.trim()) return 'unknown';
+  const sameCountry = a.country.trim().toUpperCase() === b.country.trim().toUpperCase();
+  if (!sameCountry && probe.same_country === false) return 'different_country';
+  if (!sameCountry || probe.same_country !== true || !a.ip?.trim() || !b.ip?.trim()) return 'unknown';
+  if (probe.same_exit_ip === true && a.ip.trim() === b.ip.trim()) return 'same_ip';
+  if (probe.same_exit_ip === false && a.ip.trim() !== b.ip.trim()) return 'same_country';
+  return 'unknown';
+}
+
+export function isCurrentRiskProbe(local: LocalRiskSnapshot | null, probe: ConsistencyProbeReport | null): boolean {
+  return Boolean(local?.context_id && probe?.context_id && local.context_id === probe.context_id);
+}
 
 export type MobileClientId = 'shadowrocket' | 'clash-mi' | 'stash' | 'sing-box';
 export type MobileBridgeMode = 'lan' | 'standalone';
@@ -157,10 +182,11 @@ export function maskIpAddress(ip: string | null | undefined, mask: boolean): str
 export function generateBridgeCredentials(randomBytes?: Uint8Array): {username: string; password: string} {
   const buf = randomBytes && randomBytes.length >= 22 ? randomBytes : new Uint8Array(22);
   if (!randomBytes || randomBytes.length < 22) {
-    if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    try {
+      if (typeof globalThis.crypto?.getRandomValues !== 'function') throw new Error('risk_secure_random_unavailable');
       globalThis.crypto.getRandomValues(buf);
-    } else {
-      for (let i = 0; i < buf.length; i++) buf[i] = (i * 73 + 41) & 0xff;
+    } catch {
+      throw new Error('risk_secure_random_unavailable');
     }
   }
   const pick = (offset: number, length: number) => {
@@ -198,7 +224,7 @@ export function evaluateRiskChecks(
       titleKey: 'risk.check.claudeExit.title',
       summaryKey: 'risk.check.claudeExit.pending',
     });
-  } else if (!probe.claude.ok || !probe.claude.country) {
+  } else if (!probe.claude.ok) {
     checks.push({
       id: 'claude_exit',
       status: 'fail',
@@ -206,6 +232,8 @@ export function evaluateRiskChecks(
       summaryKey: 'risk.check.claudeExit.fail',
       summaryParams: {error: probe.claude.error || 'timeout'},
     });
+  } else if (!probe.claude.country?.trim()) {
+    checks.push({id: 'claude_exit', status: 'pending', titleKey: 'risk.check.claudeExit.title', summaryKey: 'risk.check.claudeExit.unknown'});
   } else {
     const targetCountry = local?.browser.target_country?.trim().toUpperCase();
     const actualCountry = probe.claude.country.trim().toUpperCase();
@@ -251,7 +279,7 @@ export function evaluateRiskChecks(
       titleKey: 'risk.check.personaConsistency.title',
       summaryKey: 'risk.check.personaConsistency.unreachable',
     });
-  } else if (probe.same_country === false) {
+  } else if (compareProbeExits(probe) === 'different_country') {
     checks.push({
       id: 'persona_consistency',
       status: 'fail',
@@ -263,7 +291,7 @@ export function evaluateRiskChecks(
         personaIp: maskIpAddress(probe.persona.ip, privacyMask),
       },
     });
-  } else if (probe.same_exit_ip === false) {
+  } else if (compareProbeExits(probe) === 'same_country') {
     checks.push({
       id: 'persona_consistency',
       status: 'warn',
@@ -275,7 +303,7 @@ export function evaluateRiskChecks(
         personaIp: maskIpAddress(probe.persona.ip, privacyMask),
       },
     });
-  } else {
+  } else if (compareProbeExits(probe) === 'same_ip') {
     checks.push({
       id: 'persona_consistency',
       status: 'ok',
@@ -286,6 +314,8 @@ export function evaluateRiskChecks(
         ip: maskIpAddress(probe.persona.ip, privacyMask),
       },
     });
+  } else {
+    checks.push({id: 'persona_consistency', status: 'pending', titleKey: 'risk.check.personaConsistency.title', summaryKey: 'risk.check.personaConsistency.unknown'});
   }
 
   // 3. 绑定浏览器远程 DNS 强锁（MAP * ~NOTFOUND）
@@ -332,76 +362,42 @@ export function evaluateRiskChecks(
     });
   }
 
-  // 4. 本机 Mihomo / 系统 DNS 泄露隐患审计
+  // 4. Configuration evidence and HTTP routing samples; neither measures DNS packets.
   if (!local) {
+    checks.push({id: 'mihomo_dns_leak', status: 'pending', titleKey: 'risk.check.mihomoDnsLeak.title', summaryKey: 'risk.check.mihomoDnsLeak.pending'});
+  } else {
+    const m = local.mihomo;
+    const issues: string[] = [];
+    const unknowns: string[] = [];
+    const add = (reason: string) => issues.push(`risk.check.mihomoDnsLeak.${reason}`);
+    const unknown = (reason: string) => unknowns.push(`risk.check.mihomoDnsLeak.${reason}`);
+    if (probe?.unlisted_same_country === false && probe.claude.ok && probe.unlisted_dns.ok) add('unlistedMismatch');
+    if (!m.detected) {
+      unknown('notDetected');
+    } else {
+      if (m.config_source !== 'running_core' || m.config_source_status !== 'confirmed') unknown('unconfirmedSource');
+      if (m.dns_enabled === false) add('dnsDisabled');
+      else if (m.dns_enabled !== true) unknown('dnsUnknown');
+      if (m.tun_enabled === true) {
+        if (m.tun_strict_route === false) add('strictRouteDisabled');
+        else if (m.tun_strict_route !== true) unknown('strictRouteUnknown');
+      } else if (m.tun_enabled !== false) unknown('tunUnknown');
+      if (m.dns_respect_rules === false) add(m.dns_has_domestic_plain && m.has_geoip_cn ? 'failDomesticLeak' : 'respectRulesDisabled');
+      else if (m.dns_respect_rules !== true) unknown('respectRulesUnknown');
+      if (m.dns_projection_complete !== true) unknown('projectionIncomplete');
+      else if (m.dns_has_encrypted_resolver !== true) add('noEncryptedDns');
+      else if (!m.dns_has_remote_doh && m.dns_has_domestic_encrypted) add('domesticEncryptedDns');
+    }
+    if (local.system.secondary_plaintext_dns_active && local.system.tun_adapter_active && m.tun_strict_route !== true) add('warnSecondaryDns');
+    const reasons = [...issues, ...unknowns];
     checks.push({
       id: 'mihomo_dns_leak',
-      status: 'pending',
+      status: issues.length ? 'warn' : unknowns.length ? 'pending' : 'ok',
       titleKey: 'risk.check.mihomoDnsLeak.title',
-      summaryKey: 'risk.check.mihomoDnsLeak.pending',
+      summaryKey: reasons[0] ?? 'risk.check.mihomoDnsLeak.ok',
+      summaryParams: {claudeCountry: probe?.claude.country || '?', dnsCountry: probe?.unlisted_dns.country || '?'},
+      detailKeys: reasons.slice(1),
     });
-  } else if (!local.mihomo.detected) {
-    if (probe?.unlisted_same_country === false) {
-      checks.push({
-        id: 'mihomo_dns_leak',
-        status: 'fail',
-        titleKey: 'risk.check.mihomoDnsLeak.title',
-        summaryKey: 'risk.check.mihomoDnsLeak.unlistedMismatch',
-        summaryParams: {
-          claudeCountry: probe.claude.country || '?',
-          dnsCountry: probe.unlisted_dns.country || '?',
-        },
-      });
-    } else if (local.system.secondary_plaintext_dns_active && local.system.tun_adapter_active) {
-      checks.push({
-        id: 'mihomo_dns_leak',
-        status: 'warn',
-        titleKey: 'risk.check.mihomoDnsLeak.title',
-        summaryKey: 'risk.check.mihomoDnsLeak.warnSecondaryDns',
-      });
-    } else {
-      checks.push({
-        id: 'mihomo_dns_leak',
-        status: 'warn',
-        titleKey: 'risk.check.mihomoDnsLeak.title',
-        summaryKey: 'risk.check.mihomoDnsLeak.notDetected',
-      });
-    }
-  } else {
-    const domesticPlainLeak =
-      local.mihomo.dns_has_domestic_plain &&
-      local.mihomo.has_geoip_cn &&
-      local.mihomo.dns_respect_rules !== true;
-    const unlistedProbeLeak = probe?.unlisted_same_country === false;
-    const noRemoteDoh = !local.mihomo.dns_has_remote_doh;
-    const looseStrictRoute = local.mihomo.tun_enabled === true && local.mihomo.tun_strict_route === false;
-    const multiHomedWarn =
-      local.system.secondary_plaintext_dns_active &&
-      local.system.tun_adapter_active &&
-      local.mihomo.tun_strict_route !== true;
-
-    if (domesticPlainLeak || unlistedProbeLeak) {
-      checks.push({
-        id: 'mihomo_dns_leak',
-        status: 'fail',
-        titleKey: 'risk.check.mihomoDnsLeak.title',
-        summaryKey: 'risk.check.mihomoDnsLeak.failDomesticLeak',
-      });
-    } else if (noRemoteDoh || looseStrictRoute || multiHomedWarn) {
-      checks.push({
-        id: 'mihomo_dns_leak',
-        status: 'warn',
-        titleKey: 'risk.check.mihomoDnsLeak.title',
-        summaryKey: 'risk.check.mihomoDnsLeak.warnPartial',
-      });
-    } else {
-      checks.push({
-        id: 'mihomo_dns_leak',
-        status: 'ok',
-        titleKey: 'risk.check.mihomoDnsLeak.title',
-        summaryKey: 'risk.check.mihomoDnsLeak.ok',
-      });
-    }
   }
 
   // 5. KYC 身份核验域名分流与 QUIC/独立监听加固
@@ -413,7 +409,7 @@ export function evaluateRiskChecks(
       summaryKey: 'risk.check.kycRoutingRules.pending',
     });
   } else if (!local.mihomo.detected) {
-    if (probe?.same_exit_ip === true) {
+    if (probe && compareProbeExits(probe) === 'same_ip') {
       checks.push({
         id: 'kyc_routing_rules',
         status: 'ok',
@@ -428,10 +424,12 @@ export function evaluateRiskChecks(
         summaryKey: 'risk.check.kycRoutingRules.notDetected',
       });
     }
+  } else if (local.mihomo.config_source !== 'running_core' || local.mihomo.config_source_status !== 'confirmed') {
+    checks.push({id: 'kyc_routing_rules', status: 'pending', titleKey: 'risk.check.kycRoutingRules.title', summaryKey: 'risk.check.kycRoutingRules.unconfirmedSource'});
   } else if (!local.mihomo.has_persona_rules) {
     checks.push({
       id: 'kyc_routing_rules',
-      status: 'fail',
+      status: 'warn',
       titleKey: 'risk.check.kycRoutingRules.title',
       summaryKey: 'risk.check.kycRoutingRules.missingPersona',
     });
@@ -886,4 +884,8 @@ export function buildStandaloneMobilePrompt(opts: {
     `2. 按 ${clientLabel} 原生语法生成完整可导入的配置文件：使用链式代理（dialer-proxy / underlying-proxy / detour）串联「前置节点 -> 静态家宽」，开启全局 TUN 接管，确保 claude.ai 与 withpersona.com 等全部流量统一走该静态家宽出口，启用纯 IP 远程加密 DoH（https://1.1.1.1/dns-query、https://8.8.8.8/dns-query）防 DNS 泄露，并显式拦截 UDP 443（QUIC，防纯 TCP 家宽卡死）及 UDP 3478/19302（防 WebRTC STUN 穿透）。`,
     `3. 给出手机端导入步骤，并提醒我在开启飞行模式仅连 Wi-Fi、手动将手机时区对齐为 ${tzHint} 后，先用手机无痕浏览器访问 https://claude.ai/cdn-cgi/trace 与 https://withpersona.com/cdn-cgi/trace 核对 ip= 与电脑完全一致且 http=http/2 再扫 KYC 二维码。`,
   ].join('\n');
+}
+
+export function buildMihomoStrictRouteSnippet(): string {
+  return ['tun:', '  enable: true', '  strict-route: true'].join('\n');
 }

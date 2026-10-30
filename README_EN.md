@@ -15,7 +15,7 @@
 
 Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://github.com/liseami)) and independently maintained, retaining the original contributors' copyright and [MIT license](LICENSE) · Local-First · Zero Cloud Credential Hosting · Never Force-Kills Running `claude.exe` Sessions
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.2.2-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2)
+[![Latest Release](https://img.shields.io/badge/Release-v0.2.3-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.3)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@ Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://git
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe"><strong>⬇️ Download v0.2.2 Installer (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.3/Claude-Local_0.2.3_x64-setup.exe"><strong>⬇️ Download v0.2.3 Installer (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.2"><strong>✨ v0.2.2 Release Page</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.3"><strong>✨ v0.2.3 Release Page</strong></a>
   ·
   <a href="#-visual-tour--core-capabilities"><strong>🖼️ Visual Tour</strong></a>
   ·
@@ -153,30 +153,31 @@ While preserving compatibility with existing vaults and browser profiles, Claude
 
 ## 📦 Download, Installation & Release History
 
-### 1. Latest Windows x64 Installer (`v0.2.2`)
+### 1. Latest Windows x64 Installer (`v0.2.3`)
 
 | Asset | Platform | File Size | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,697,822` bytes (134.18 MiB) | `981b26f6cec183cabf58baefe8bb8184a4d9d647eb30cc65570dd3e111838617` |
+| **[Claude-Local_0.2.3_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.3/Claude-Local_0.2.3_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,883,227` bytes (134.36 MiB) | `fa122f952b9a0a7987e51047eb3b341171820e58823a4b15380cd85d362b3e31` |
 
-Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.2.2 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2):
+Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.2.3 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.3):
 
 ```powershell
-Get-FileHash .\Claude-Local_0.2.2_x64-setup.exe -Algorithm SHA256
-# Expected SHA-256: 981b26f6cec183cabf58baefe8bb8184a4d9d647eb30cc65570dd3e111838617
+Get-FileHash .\Claude-Local_0.2.3_x64-setup.exe -Algorithm SHA256
+# Expected SHA-256: fa122f952b9a0a7987e51047eb3b341171820e58823a4b15380cd85d362b3e31
 ```
 
 ### 2. Installation & Non-Disruptive Upgrade Notes
 
 1. **Install Location & Identifiers**: Per-user NSIS installer defaulting to `%LOCALAPPDATA%\Programs\Claude-Local`; main executable `claude-local.exe`, bundle identifier `ai.local.claude-local`, companion browser registration `Claude-Local-Browser`.
 2. **User Data Root**: All encrypted vaults, master keys, quota/usage ledgers, appearance settings, and browser profiles live under `%APPDATA%\ai.local.claude-local`.
-3. **Seamless Upgrades**: Upgrading from `0.1.x` or `0.2.0` to `0.2.2` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
+3. **Seamless Upgrades**: Upgrading from `0.1.x`, `0.2.0`, or `0.2.2` to `0.2.3` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
 
-### 3. Public Release Series (`0.1.0` – `0.2.2`)
+### 3. Public Release Series (`0.1.0` – `0.2.3`)
 
 | Version | Date | Highlights | Documentation |
 | :--- | :--- | :--- | :--- |
-| **`v0.2.2`** *(Latest)* | 2026-10-29 | Identity card `MM/DD` subscription expiry badges & manual recharge entry, Risk & KYC exit-consistency & mobile residential bridge, independent statistics identities, four-part token analytics, and shared account-ledger HUD | [Release Notes](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
+| **`v0.2.3`** *(Latest)* | 2026-10-30 | On-demand non-blocking Companion Browser Kill-Switch, layered `strict-route` remediation guide, warming card country/timezone lock & pre-open drift check, stage SOP reference, pace hints, and full-chain encrypted backup extension | [Release Notes](docs/RELEASE_NOTES_0.2.3_SECURITY.md) · [Verification](docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md) |
+| **`v0.2.2`** | 2026-10-29 | Identity card `MM/DD` subscription expiry badges & manual recharge entry, Risk & KYC exit-consistency & mobile residential bridge, independent statistics identities, four-part token analytics, and shared account-ledger HUD | [Release Notes](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
 | **`v0.2.0`** | 2026-10-26 | **Token Monitor-style multi-mode Floating HUD (Pin/Lock/Snap/Auto-Hide/Opacity/Theme Sync)**, **official API USD cost & cache savings analytics (historical feature)**, **auto-launch linked browser on account switch**, and global UI/sidebar polish | [UI & HUD Note](docs/UI_MONITOR_0.2.0.md) · [Release Notes](docs/RELEASE_NOTES_0.2.0.md) · [Verification](docs/RELEASE_VERIFICATION_0.2.0.md) |
 | **`v0.1.5`** | 2026-10-26 | Five-page copy & toolbar refinement, synthetic preview refresh, and 20-check isolated production browser verification | [UI Polish Note](docs/UI_POLISH_0.1.5.md) · [Verification](docs/RELEASE_VERIFICATION_0.1.5_UI.md) |
 | **`v0.1.4`** | 2026-10-26 | Production CSP (`api.ipquery.io`) completion for same-IP hosting classification in the companion browser | [Browser CSP Note](docs/BROWSER_CSP_0.1.4.md) · [Verification](docs/RELEASE_VERIFICATION_0.1.4_BROWSER.md) |

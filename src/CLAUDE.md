@@ -1,4 +1,13 @@
 # src/
+身份/养号统一呈现：两栏复用identity-head-title和identity-card-count数量标签，分别显示张身份卡/张养号卡；养号四步使用短动作，邮箱行复用正式浅底saved颜色与主题规则，隐私遮罩不变。所涉状态、地区和标题使用自然短句，避免装饰性中点分隔。
+browser-runtime.ts / use-browser-runtime.ts: 仅当前槽位的轻量进程/窗口运行三态与可见页面3秒采样；持久选择和窗口运行分开，隐藏/卸载/忙碌/换槽位使旧响应失效，不轮询身份、凭据、缓存或在线额度。
+identities.tsx / warming-cards.tsx / browser.tsx: 养号关闭后显示已选资料/已关闭，只有实际窗口运行显示运行样式；当前CLI卡和浏览环境均有冻结身份确认后的仅浏览器返回核验，成功同步新槽位配置草稿。Pro用量页使用详情打开时冻结的账号指纹，明确当前CLI与浏览器各自归属。
+risk-model.ts / risk-verification.tsx / browser-start.tsx: 风控快照可选同context_id遮罩浏览器归属；核验页明确养号环境与20项测量范围，不代表CLI授权或真实请求出口。
+risk-model.ts / risk-verification.tsx: 临时桥接口令只用安全随机源，缺失或异常即固定错误并局部停用桥接提示词/配置/二维码；风险诊断和独立手动上游配置继续可用，不采用可预测回退。
+risk-model.ts / risk-verification.tsx: 六项配置/HTTP出口检查与浏览环境20项严格分开；DNS原因独立列出、缺项/来源未确认保持未知，不把HTTP跨域差异说成DNS抓包泄露；绿色仅表示已匹配运行核心配置文件的可识别特征。原生context_id冻结前后核对，刷新/焦点/隐藏/卸载清除过时探针，异步请求有忙碌/序号/存活守卫，中英文提示均限制核验范围。
+identities.tsx: 普通CLI身份切换确认在当前浏览器属于养号卡且无转正/恢复时明确提示浏览器保持打开；显式养号转正与恢复仍使用关闭重开提示，与原生共存策略保持一致。
+warming-cards.tsx / warming-model.ts: 独立养号卡轨道位于 CLI 身份库之后、保留策略之前；精简「养号」标题与无加号新建按钮、空状态复用UI字体；四阶段、按本地自然日计数与今日打开状态、独立种子/地区/代理摘要与注册国家漂移提示、预打开出口IP国家一致性核验弹窗、编辑窗折叠防封SOP指南与注册国家/时区维护、隐私遮罩、28px按钮及180×286工牌。新建默认switch_only，七项菜单仅走warming命令；订阅复用既有日期编辑器，转正复用显式进程/身份确认后才stop与promote；普通浏览器操作不调用CLI save/switch/stop。State 新字段可选以兼容旧合成fixture。
+browser.tsx / browser-start.tsx / browser-model.ts: warming为独立浏览器绑定状态，控制台显示遮罩名称与CLI零干扰提示，支持防IP泄露断路器保护关闭横幅与高级设置开关；核验页识别养号槽位为已绑定；未知检测结果仍保持未知。
 > L2 | 父级: ../CLAUDE.md
 0.1.5界面精简：Quick四个状态卡之后不再重复浏览器目标配置；浏览器绑定/引擎合入顶部，未检测时省略指引条，实际未完成/冲突/过时仍明确提示；网络页只保留一处检测范围说明。身份工具栏按主次操作分组且标准28px/窄屏换行；用量更新指示与导出/刷新分组，日期范围和简写时区常驻，IANA/跟踪起点保留提示及方法说明，查询和TSV语义不变。browser-page以实际内容宽度容器响应数据/高级设置单列，避免侧栏挤压。
 原生自动续杯接线：main.tsx常驻bridge只初始化一次旧localStorage迁移和native快照订阅；identity-online-quota.ts保留旧纯模型兼容但不调度请求，快照由Rust独占；identities.tsx只显示native计划/能力/最近尝试/等待原因、逐账号暂停和一次授权恢复。原身份页15秒唤醒timer和localStorage运行writer已删除，切页不取消原生工作；配置保存确认前不更新开关，普通fixture不触发后台scheduler IPC。

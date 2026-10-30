@@ -1,5 +1,7 @@
 # identities/
+profile.rs 浏览器复核边界：quota_identity纯派生在crate内部复用，避免浏览器动作复制账号指纹算法或调用读取凭据/账本/会话的全量身份摘要；持久格式与HMAC规则不变。
 > L2 | 父级: ../CLAUDE.md
+warming.rs: 128 KiB/128张上限的私有原子养号元数据、四阶段验证、注册国家/时区锁定与最近出口探针记录、浏览器独立 CRUD/视图与六个命令（含 `identities_warming_probe_check` 出口国家与配置时区一致性探针）；Cleaner短门串行，普通操作不停止或切换CLI，只有显式Pro转正经强制浏览器协调入口复用受控empty事务。转正前旧CLI归档禁用养号草稿，失败撤销预留；成功复用永久ID/slot/seed并保留订阅日期，State读取修复提交后重复卡。删除当前浏览器卡先正常退出并切到全新空白槽位，多文件失败补偿且损坏订阅文件不覆盖。合成测试覆盖真实Store的CLI切换/新身份保存/失败回滚/重开恢复/空身份/删除与养号profile配置/数据/seed共存，以及转正/回滚、订阅继承、国家/时区归一化与探针判定及唯一活跃卡删除，不读真实账号。
 wakeup.rs / wakeup_tests.rs: Windows进程唯一owner；私有schema=1配置/计划/派发前unknown日志，固定冻结指纹集、每分钟本地摘要（跳过active_sessions扫描），15秒判断已存计划。切页/托盘隐藏不停止，真正Exit停止。人工/自动共用audited collect、6–13分钟单次抽样错峰和周额度/CLI/排除/401门禁；3–10分钟→25–60分钟→主力阈值按需待命。未知POST不重启重发，仅同指纹新鲜可信5h被动锚点解除unknown；不解除messages授权阻断，显式恢复仅许可一次尝试。开启先无账号Python导入探针和HTTP CONNECT类型投影，不代表联网可达、不返回原值/凭据。白名单IPC迁移旧localStorage只保留守门时间/失败，不继承旧空转轮数。Python独占quota账本，合成测试无真实账号/网络/系统修改。
 人工唤醒未派发时返回stage=scheduler、固定reason和仍生效的账号/全局最大retry_at_ms；不消耗恢复许可、不伪造POST未知/成功、不绕过429或unknown。统一查询的browser_fallback_status独立保留浏览器未运行/身份/页面授权/超时/响应/无窗口失败，OAuth原状态与阶段保持；只有实际browser 5h/7d更新才能替换查询失败，不能解除messages授权阻断。online_native_chain_tests.rs将真实installed Python auth cooldown接入同一fallback编排、loopback接收、授权提交与账本/摘要读取，所有账号/文件均临时合成。
 本地readiness独立于automatic开关，禁用时仍每分钟及显式读取/配置时同步account能力和decision但绝不派发；读取/恢复的本地摘要工作在blocking线程。恢复先核对当前绑定目标并初始化缺失状态，仅释放last_status=auth_required且auth_blocked的账号授权退避，授予一次受控验证/唤醒链；profile401消耗许可，明确本地probe/启动/不支持代理失败保留许可与尝试间隔。全局错峰、429和未知POST门禁保持；execute超时/协议异常仍按未知保护。新归档代次或网页额度成功不自动释放messages授权阻断。
@@ -10,7 +12,7 @@ online.rs runtime probe: 每候选最多10秒，真实 cryptography/AES-GCM 冷�
 wakeup_audit.rs: 原生唤醒结果的私有本地审计，仅保留随机request ID、trigger、独立域匿名slot、阶段/状态/时间与旧新reset；30天/200条上限、原子私有写入与并发锁，不存账号标识/路由/请求内容，也不接触额度账本。
 online.rs: 用户触发的固定端点额度读取、5h重置窗口唤醒（identities_wakeup_quota_window）与网页摘要导入；唤醒结果区分普通updated_windows与严格新5h确认/请求未知，传入trigger和过期reset，出口错误受限国家代码契约。批量命令最多256个冻结指纹目标、共享Cleaner事务锁、双worker、按quota_identity去重（current优先）、逐账号quota-batch-progress事件与独立结果，重入固定busy；冻结State预校验一次，Python按expected指纹重新解析并提交校验。隐藏Python子进程、每子进程30s、有界stdin/stdout和固定错误状态，不输出凭据、不轮换授权、不切换身份。结果source接受oauth/browser，透传当前/旧真实观测时间。显式allow_browser_fallback=true时仅AuthRequired/Unavailable/NetworkError尝试已运行绑定资料，Python确认browser成功才覆盖OAuth结果；默认关闭。只读按quota_identity重建网页订阅/手动重置及逐字段观测时间，不继承未验证的旧缓存字段；Python保持所有额度/网页元数据文件唯一写入者。
 mod.rs: 当前/空/已保存身份（读取时经 Store::open 完成旧版索引、孤儿摘要清理、摘要离线额度惰性回填、只读 quota_ledger.json 跨账号同步、逐窗更新与可信服务端重置后的明确推定、死锁垃圾清理）、无需目录扫描的进程停止与切换/恢复/重命名/直接删除 Tauri 命令，复用 Cleaner 全局事务锁；进程停止通道可选且报告开始/真实完成/失败，兼容旧调用；UI 只接收目录和允许的账号显示字段及离线额度百分比。
-backup.rs / backup_tests.rs: PBKDF2-HMAC-SHA256 派生口令密钥并用现有 AES-GCM 帧格式加密限额流；常规副本通过 SQLite online backup 快照索引且仅打包主密钥与被索引引用的归档。救援模式只打包白名单直系证据文件并标记未验证，检查后恢复到新的私有隔离目录，不替换活动身份库；synthetic tests 覆盖认证/损坏拒绝、WAL 快照、目标冲突与新副本隔离，不访问真实身份。
+backup.rs / backup_tests.rs: PBKDF2-HMAC-SHA256 派生口令密钥并用现有 AES-GCM 帧格式加密限额流；常规副本通过 SQLite online backup 快照索引且打包主密钥、被索引引用的归档及可选已校验的 warming_cards.json 与 manual_subscriptions.json（恢复前额外核验每张养号卡在 SQLite 内的浏览器绑定槽位与种子完整性，向后兼容无此二文件的旧备份）。救援模式只打包白名单直系证据文件并标记未验证，检查后恢复到新的私有隔离目录，不替换活动身份库；synthetic tests 覆盖认证/损坏拒绝、WAL 快照、养号卡/手动订阅全链路往返、缺失绑定拒绝、目标冲突与新副本隔离，不访问真实身份。
 备份验证/快照暂存由独占创建的ScratchGuard持有：普通失败和unwind清理当前操作目录，后续恢复失败也收尾，不扫描历史目录；成功副本保留验证状态，清理失败以可选staging_cleanup_failed诊断提示，失败链追加无路径提示。Drop兜底不输出资料或路径。
 usage.rs / usage_tests.rs: 独立私有 SQLite Token 账本；JSONL完整行游标与同事务推理档位上下文、解析器v2一次重读旧版本补显式sessionId的域哈希（不凭路径猜会话）、8KiB头部/边界采样哈希、时间/回放索引。跨文件去重与累计值合并，同strong key的parent优先于sidechain，upsert补会话证据而不改已有HMAC归属。all包含所有四类Token，unknown包含NULL和无法映射的旧owner，账户/趋势/模型与unattributed范围守恒；会话字段仅在所选scope证据齐全时提供，activity按事件本地日历统计。命名IANA时区支持23/25小时及半小时转换，旧offset兼容。HUD复用当前live HMAC的精确5h/10min账本查询，每30秒最多共享增量采集一次；不读取归档、不写Claude配置或Python额度账本。
 usage_attribution.rs / usage_reliability_tests.rs: usage-only HMAC身份registry与白名单显示元数据让未归档新登录可稳定登记；当前摘要读取只做轻量观察。显式empty成功后的独立回执证明旧CLI已停止，允许唯一随后登录的session新turn接力；普通外部登录只接受观察后明确root user的新session，旧/恢复session保留unknown，不将普通NULL gap当受控登录证据。历史fallback首次冻结截止时间，后续unknown不吸入旧账号；旧归属和账号HMAC规则不变。同账号shortcut补边界，已提交边界幂等。合成测试覆盖直接登录、旧会话歧义、历史迁移、四类守恒、parent优先和fallback截止；不访问真实身份或停止进程。
@@ -29,8 +31,8 @@ codec.rs: 压缩流与 ring AES-256-GCM 帧，独立归档密钥和认证结尾�
 archive_limits.rs / archive_limits_tests.rs: 普通加载的有界tar读取，先于GNU/PAX元数据分配检查成员/路径/声明大小，兼容GNU长路径和PAX size；成员内容8GiB与有tar开销余量的实际展开流独立限额，清单1MiB/键控配置64MiB；末尾排空仍验证完整认证，不将超限视为EOF。所有回归仅使用合成归档与注入小预算。
 private.rs: POSIX 0700/0600 与 Windows 创建时指定当前用户所有者/独占 DACL、原子写入；提供原子独占私有目录创建与子目录可继承所有者访问控制自愈（ensure_owner_dacl，保留 Chromium AppContainer SID），拒绝所有者变化、链接和特殊文件。
 tests.rs: 临时账号/会话样本的空身份、恢复、配置保留、损坏/链接拒绝、选择删除、跨策略恢复和缺失主密钥拒绝；验证完成源计数、压缩/归档/提交先后与显式回滚，覆盖标准库默认写入（含 Windows 管理员默认所有者）与私有创建层，不接触真实账号。
-browser_link.rs: 回环页有界身份摘要（含当前本地 CLI 代理回传供不一致比对）、绑定不匹配/未知状态且无凭据输出；SQLite 身份到独占浏览器资料的绑定、身份 ID 派生非零种子与碰撞登记；选择指针随切换/回滚同事务提交，旧卡合并保留当前资料。
-browser_link_tests.rs: 默认勾选/显式关闭保留与身份摘要无令牌/不冒充网站账号；临时目录验证 A/B 复用、空资料轮换、迁移、种子碰撞与数据库拒绝不提交；无真实账号。
+browser_link.rs: 回环页有界身份摘要及warming状态、SQLite身份到独占浏览器资料的绑定、ID派生非零种子与碰撞登记；以真实养号卡成员与未转正独占绑定确认养号槽位，普通CLI pending/complete/save/delete保留browser.active并为CLI单独维护绑定，checkpoint提交/回滚均保留养号选择。显式promotion标记仍控制资料转交，仅在active=empty且无recovery且成员/槽位匹配时授权草稿复用；失败恢复之前浏览器选择并清除预留，旧卡合并保留当前资料。
+browser_link_tests.rs: 默认联动/显式关闭、无令牌身份摘要、A/B复用、空资料轮换/迁移/碰撞与事务拒绝；养号独立选择、CLI实际数据库事务提交/重开回滚/同号保存/删除共存、稳定ID/slot/seed、受控转正草稿、回滚/取消测试，全用临时合成数据。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 Quota reset recovery: 已到期的可信服务端窗口以 reset_inferred 保留过去边界与真实观测，允许界面明确显示预计恢复；无证据或纯本地估算到期仍未知。profile 从严格匹配账号/组织的原始锚点恢复旧版已清空的摘要，不推进 reset，不覆盖有效新窗口。quota_regression_tests.rs 覆盖到期、旧账本恢复、隔离和新观测优先；Python 仍为额度账本唯一写入者。

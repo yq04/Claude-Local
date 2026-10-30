@@ -4,11 +4,14 @@ import {encodeQrMatrix, renderQrSvgPath} from './qrcode-svg';
 import {
   buildCloseLanBridgePrompt,
   buildDesktopDnsFixPrompt,
+  buildMihomoStrictRouteSnippet,
   buildMobileBridgeConfig,
   buildShadowrocketSocksQrUri,
   buildShadowrocketUniversalAntiLeakConf,
   buildStandaloneMobilePrompt,
   evaluateRiskChecks,
+  compareProbeExits,
+  isCurrentRiskProbe,
   generateBridgeCredentials,
   isValidBridgePort,
   isValidRfc1918Ipv4,
@@ -18,6 +21,7 @@ import {
   type ConsistencyProbeReport,
   type LocalRiskSnapshot,
 } from './risk-model';
+import {createWarmingDraft, editWarmingDraft, warmingStageSopKey} from './warming-model';
 
 test('RFC1918 validator strictly accepts private LAN hosts and rejects WAN, loopback, WSL network base and Fake-IP', () => {
   expect(isValidRfc1918Ipv4('192.168.1.25')).toBe(true);
@@ -54,7 +58,20 @@ test('ephemeral bridge credentials contain only unambiguous URL-safe characters'
   expect(creds.password).toMatch(/^[A-HJ-NP-Za-km-z2-9]{16}$/);
 });
 
-test('evaluateRiskChecks catches KYC split-routing (US != JP) and domestic plaintext DNS leaks', () => {
+test('bridge credentials fail closed when secure randomness is unavailable or throws', () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  try {
+    Object.defineProperty(globalThis, 'crypto', {configurable: true, value: undefined});
+    expect(() => generateBridgeCredentials()).toThrow('risk_secure_random_unavailable');
+    Object.defineProperty(globalThis, 'crypto', {configurable: true, value: {getRandomValues() {throw new Error('synthetic RNG failure');}}});
+    expect(() => generateBridgeCredentials()).toThrow('risk_secure_random_unavailable');
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, 'crypto', descriptor);
+    else Reflect.deleteProperty(globalThis, 'crypto');
+  }
+});
+
+test('evaluateRiskChecks distinguishes HTTP country split from static domestic DNS risk', () => {
   const leakyLocal: LocalRiskSnapshot = {
     browser: {
       proxy_configured: false,
@@ -110,8 +127,8 @@ test('evaluateRiskChecks catches KYC split-routing (US != JP) and domestic plain
   expect(byId.persona_consistency.status).toBe('fail');
   expect(byId.persona_consistency.summaryKey).toBe('risk.check.personaConsistency.countryMismatch');
   expect(byId.browser_dns_lock.status).toBe('warn');
-  expect(byId.mihomo_dns_leak.status).toBe('fail');
-  expect(byId.kyc_routing_rules.status).toBe('fail');
+  expect(byId.mihomo_dns_leak.status).toBe('warn');
+  expect(byId.kyc_routing_rules.status).toBe('pending');
   expect(byId.exit_isp_kind.status).toBe('fail');
 });
 
@@ -128,6 +145,10 @@ test('evaluateRiskChecks passes all 6 checks when hardened residential listener 
     },
     mihomo: {
       detected: true,
+      config_source: 'running_core',
+      config_source_status: 'confirmed',
+      dns_projection_complete: true,
+      dns_has_encrypted_resolver: true,
       client_kind: 'clash-verge-rev',
       mixed_port: 7897,
       allow_lan: false,
@@ -167,6 +188,37 @@ test('evaluateRiskChecks passes all 6 checks when hardened residential listener 
   expect(summarizeRiskChecks(checks)).toBe('ok');
   for (const item of checks) {
     expect(item.status).toBe('ok');
+  }
+
+  const dnsCheck = (changes: Partial<LocalRiskSnapshot['mihomo']>, report = alignedProbe) => evaluateRiskChecks(
+    {...hardenedLocal, mihomo: {...hardenedLocal.mihomo, ...changes}}, report,
+  ).find(item => item.id === 'mihomo_dns_leak')!;
+  const strictOnly = dnsCheck({tun_strict_route: false});
+  expect(strictOnly.status).toBe('warn');
+  expect(strictOnly.summaryKey).toBe('risk.check.mihomoDnsLeak.strictRouteDisabled');
+  expect(strictOnly.detailKeys).toEqual([]);
+  expect(dnsCheck({tun_strict_route: null}).status).toBe('pending');
+  expect(dnsCheck({dns_respect_rules: null}).status).toBe('pending');
+  expect(dnsCheck({dns_enabled: false}).status).toBe('warn');
+  expect(dnsCheck({dns_has_encrypted_resolver: false, dns_has_remote_doh: false}).summaryKey).toBe('risk.check.mihomoDnsLeak.noEncryptedDns');
+  expect(dnsCheck({dns_has_remote_doh: false, dns_has_domestic_encrypted: true}).summaryKey).toBe('risk.check.mihomoDnsLeak.domesticEncryptedDns');
+  expect(dnsCheck({dns_projection_complete: false}).status).toBe('pending');
+  expect(dnsCheck({config_source: 'candidate_file', config_source_status: 'not_running'}).status).toBe('pending');
+  expect(dnsCheck({config_source: undefined, config_source_status: undefined}).status).toBe('pending');
+  const unknown = {...alignedProbe, same_country: null, same_exit_ip: null};
+  expect(compareProbeExits(unknown)).toBe('unknown');
+  expect(evaluateRiskChecks(hardenedLocal, unknown).find(item => item.id === 'persona_consistency')?.status).toBe('pending');
+  expect(evaluateRiskChecks(hardenedLocal, {...alignedProbe, claude: {...alignedProbe.claude, country: null}}).find(item => item.id === 'claude_exit')?.status).toBe('pending');
+  const diffIp = {...alignedProbe, persona: {...alignedProbe.persona, ip: '198.51.100.25'}, same_exit_ip: false};
+  expect(compareProbeExits(diffIp)).toBe('same_country');
+  expect(evaluateRiskChecks(hardenedLocal, diffIp).find(item => item.id === 'persona_consistency')?.status).toBe('warn');
+  expect(isCurrentRiskProbe({...hardenedLocal, context_id: 'slot-a'}, {...alignedProbe, context_id: 'slot-b'})).toBe(false);
+  expect(isCurrentRiskProbe({...hardenedLocal, context_id: 'slot-a'}, {...alignedProbe, context_id: 'slot-a'})).toBe(true);
+  expect(isCurrentRiskProbe(hardenedLocal, alignedProbe)).toBe(false);
+  for (const item of [strictOnly, dnsCheck({tun_strict_route: null}), dnsCheck({dns_respect_rules: null}), dnsCheck({dns_enabled: false}), dnsCheck({dns_projection_complete: false}), dnsCheck({dns_has_remote_doh: false, dns_has_domestic_encrypted: true}), dnsCheck({dns_has_encrypted_resolver: false, dns_has_remote_doh: false})]) {
+    for (const locale of ['zh', 'en'] as const) {
+      for (const key of [item.summaryKey, ...(item.detailKeys ?? [])]) expect(translate(key, {}, locale)).not.toBe(key);
+    }
   }
 });
 
@@ -332,4 +384,87 @@ test('all dynamic diagnostic keys resolve in both zh and en without unresolved p
       expect(summary).not.toMatch(/\{\w+\}/);
     }
   }
+});
+
+test('buildMihomoStrictRouteSnippet and strict-route detection flag tun_strict_route === false', () => {
+  const snippet = buildMihomoStrictRouteSnippet();
+  expect(snippet).toBe('tun:\n  enable: true\n  strict-route: true');
+
+  const checks = evaluateRiskChecks(
+    {
+      browser: {
+        proxy_configured: true,
+        proxy_scheme: 'socks5',
+        proxy_local_port: 17899,
+        remote_dns_locked: true,
+        target_country: 'US',
+        target_timezone: 'America/Los_Angeles',
+        target_language: 'en-US',
+      },
+      mihomo: {
+        config_source: 'running_core',
+        config_source_status: 'confirmed',
+        dns_projection_complete: true,
+        dns_has_encrypted_resolver: true,
+        dns_has_domestic_encrypted: false,
+        detected: true,
+        client_kind: 'Clash Verge Rev',
+        mixed_port: 7897,
+        allow_lan: false,
+        tun_enabled: true,
+        tun_strict_route: false,
+        dns_enabled: true,
+        dns_enhanced_mode: 'fake-ip',
+        dns_respect_rules: true,
+        dns_has_remote_doh: true,
+        dns_has_domestic_plain: false,
+        dns_has_nameserver_policy: true,
+        has_claude_rules: true,
+        has_persona_rules: true,
+        has_quic_reject: true,
+        has_geoip_cn: true,
+        dedicated_listener_port: 17899,
+      },
+      system: {
+        tun_adapter_active: true,
+        secondary_plaintext_dns_active: false,
+        lan_ipv4_candidates: ['192.168.1.10'],
+        public_wan_detected: false,
+      },
+    },
+    null,
+    false,
+  );
+  const dnsCheck = checks.find(item => item.id === 'mihomo_dns_leak');
+  expect(dnsCheck?.status).toBe('warn');
+  expect(dnsCheck?.summaryKey).toBe('risk.check.mihomoDnsLeak.strictRouteDisabled');
+
+  expect(warmingStageSopKey('unregistered', 1)).toBe('identities.warming.sop.unregistered');
+  expect(warmingStageSopKey('kyc_passed', 2)).toBe('identities.warming.sop.kycEarly');
+  expect(warmingStageSopKey('kyc_passed', 5)).toBe('identities.warming.sop.kycPassed');
+  expect(warmingStageSopKey('warming_free', 3)).toBe('identities.warming.sop.kycEarly');
+  expect(warmingStageSopKey('warming_free', 6)).toBe('identities.warming.sop.warmingFree');
+  expect(warmingStageSopKey('pro_ready', 10)).toBe('identities.warming.sop.proReady');
+
+  const draft = createWarmingDraft('2026-10-30');
+  expect(draft.registeredCountry).toBe('');
+  expect(draft.registeredTimezone).toBe('');
+  const edited = editWarmingDraft({
+    id: '10000000000000000000000000000001',
+    name: 'Test Card',
+    email: 'a@b.c',
+    note: null,
+    stage: 'warming_free',
+    created_ymd: '2026-10-25',
+    last_warmed_ymd: '2026-10-30',
+    created_at: 1,
+    updated_at: 2,
+    slot: 'warming-slot-1',
+    seed: 1234,
+    browser_active: false,
+    registered_country: 'JP',
+    registered_timezone: 'Asia/Tokyo',
+  });
+  expect(edited.registeredCountry).toBe('JP');
+  expect(edited.registeredTimezone).toBe('Asia/Tokyo');
 });

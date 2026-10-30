@@ -1,9 +1,10 @@
 // [INPUT]: 当前身份的浏览器资料、配置、原生引擎与进度通道；调用方已持有 Browser gate。
-// [OUTPUT]: 唯一启动过程，验证实际进程和回环会话，失败不冒充成功。
+// [OUTPUT]: 唯一启动过程，验证实际进程和回环会话并重置断流急停告警，失败不冒充成功。
 // [POS]: 身份联动和手动启动共用的同步核心，避免重复锁和不同资料路径。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
 pub(super) fn launch_locked(app: &tauri::AppHandle, log: &Reporter) -> Result<Snapshot, String> {
+    super::kill_switch::clear_alert(app);
     launch_with_urls_locked(app, log, &[])
 }
 
@@ -12,6 +13,7 @@ pub(super) fn launch_with_urls_locked(
     log: &Reporter,
     urls: &[&str],
 ) -> Result<Snapshot, String> {
+    super::kill_switch::clear_alert(app);
     let state = app.state::<Browser>();
     workspaces::ready(&root(app)?)?;
     workspaces::ensure(&root(app)?)?;

@@ -3,8 +3,13 @@
 CCBaga-derived, independently maintained Windows desktop application: Tauri/Rust native operations, React/TypeScript UI, encrypted local identity storage and an optional isolated browser. Preserve the original attribution; independent maintenance does not mean entirely original code. Project rules live in AGENTS.md. No upstream synchronization or official updater exists.
 
 <directory>
+src/browser-runtime.ts / use-browser-runtime.ts - Slot-scoped process/window presentation and visible-page-only lightweight sampling; selected profiles persist after windows close and unknown observations never imply liveness.
+src-tauri/src/browser/lifecycle.rs - Read-only selected-profile runtime, masked CLI binding proof, confirmed browser-only return with compensation and fixed account-bound usage-page routing; no CLI stop or identity switch.
+src-tauri/src/browser/kill_switch.rs - On-demand companion browser Kill-Switch monitor when managed profiles are running, multi-slot browser quit on confirmed TUN drop or exit country drift, red tray alert icon and zero-roadblock auto-clear on dismiss or browser relaunch.
 src/ - Main application, browser verification page, shared UI and bilingual catalogs.
 src/identities.tsx - Pinned current card and saved-record order without search/sort controls, independent quota/observation ages, allowlisted diagnostic copy and review-only shell requests; local revision changes are acknowledged only after successful summary reads.
+src/warming-cards.tsx / warming-model.ts - Browser-only Free warming cards below the CLI library, local-calendar progress, isolated profile actions, pre-open country/timezone drift confirmation, editor SOP guidance, manual subscription dates and explicitly confirmed Pro promotion that retains browser ID/slot/seed.
+src-tauri/src/identities/warming.rs - Private bounded browser-only metadata, country/timezone lock & preflight probe check, and six warming commands; ordinary actions preserve running CLI, while explicit promotion uses the existing identity transaction and compensating cleanup.
 src/quick-actions.tsx - On-demand independent environment reads, scoped recovery and seven configuration destinations using shared page icons and no duplicate browser-target footer.
 src/usage-statistics.tsx - Scoped token analytics, current-snapshot TSV copy/download and real IANA/DST intervals; responsive trend/model panels and visible-page refresh remain separate from hourly quota refresh.
 src/main.tsx / command-palette.tsx / task-handoff.tsx - Guarded Ctrl+K navigation/refresh/review and an in-memory manual handoff form with explicit preview/copy/download; no automatic identity actions or session reads.
@@ -18,6 +23,8 @@ browser-runtime/ - Pinned browser metadata, licenses and ignored local engine fi
 assets/ - Independent CL marks and retained third-party notices.
 vendor/ - Existing UI components with separate attribution/license boundaries in NOTICE.md.
 docs/ - Local development, data boundaries and distribution documentation.
+docs/plans/2026-10-30-multi-account-optimization/ - Owner-requested research on dismissible scoped feedback, account-bound subscription sync, profile actions, backup coverage and future parallel verification; source evidence and pinned public comparisons, with no implementation or deployment.
+docs/plans/2026-10-30-security-and-warming-enhancement/ - Source-calibrated security and warming enhancement research and implementation roadmap (F1–F7): 10+ GitHub comparisons, 6 X anti-ban posts 3-tier verification, corrected runtime/warming gaps (G1–G7), and implemented source verification for F1–F6.
 docs/plans/2026-10-22-identity-quota.md - Owner-requested online quota/card implementation scope, foreground refresh opt-in and synthetic verification boundaries; no installed/released update claim.
 docs/plans/2026-10-23-functional-review/ - Read-only Astra software review: independent quota and product evidence, public-source constraints, and a phased functional reliability/improvement plan; no implementation or release performed by the review.
 docs/plans/2026-10-25-functional-audit/ - Redacted runtime evidence, source-backed defects, pinned GitHub comparisons, the Astra scheme and owner-authorized execution receipts; product deployment remains separate.
@@ -26,6 +33,7 @@ docs/PUBLIC_PREPARATION.md - Release series from 0.1.0, owner-managed publicatio
 docs/PROJECT_ORIGIN.md - Explicit CCBaga secondary-development provenance, retained upstream work, local changes and attribution/maintenance boundaries.
 docs/RELEASE_POLICY.md - Public version/tag/topic conventions, immutable artifacts and backed-up explicit reference cleanup.
 docs/CONNECTION_RECOVERY.md - Website quota recovery versus CLI wakeup authorization, explicit browser fallback failures and truthful admission feedback.
+docs/FEATURE_NOTES_WARMING_CARDS.md - Browser-only Free warming cards, local-day progress, stable promotion, deletion/backup boundaries and local-only delivery.
 docs/RELEASE_VERIFICATION_0.1.0.md - Exact versioned release URL/installer SHA, passing CI, neutral 109-file/13-probe package audit and 102-file local NSS-host alignment; no real installer execution.
 docs/RELEASE_NOTES_0.1.0.md - Initial 0.1.0 product release, baseline features, unchanged data formats and explicit verification limits.
 docs/plans/2026-10-21-usage-account-safety/ - Historical development proposal and source evidence; not a separate public release timeline.
@@ -63,6 +71,8 @@ docs/UI_MONITOR_0.2.0.md - Version 0.2.0 nine-point UI/UX refinement, Token Moni
 docs/USAGE_RELIABILITY_0.2.1.md - Local maintenance candidate: independent statistics identities, controlled new-login/session attribution, historical fallback cutoff, conserved unknown totals, verified activity, token composition and account-isolated shared HUD; public v0.2.0 artifacts stay immutable.
 docs/RELEASE_NOTES_0.2.2_USAGE.md - Public bilingual 0.2.2 release notes for reliable account statistics, ordinary account-only filters and token-focused analytics/shared HUD; no private account or workstation receipts.
 docs/RELEASE_VERIFICATION_0.2.2_USAGE.md - Fixed 0.2.2 source/CI, neutral NSIS payload/privacy checks, GitHub asset digest and backed-up local GUI update; no real-account switching or installer lifecycle claim.
+docs/RELEASE_NOTES_0.2.3_SECURITY.md - Public bilingual 0.2.3 release notes for on-demand non-blocking Companion Browser Kill-Switch, layered strict-route remediation guide, warming card country/timezone lock & pre-open drift check, stage SOP reference, pace hints, full-chain encrypted backup extension and multi-account workflow polish.
+docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md - Fixed 0.2.3 source/tag, neutral NSIS payload/privacy audit (109 files, 29 external private probes, 0 findings), GitHub Release asset digest and backed-up local GUI update preserving running CLI sessions.
 README_EN.md - Full English companion README linked bidirectionally with README.md, using synthetic English 1280x900 screenshots and identical safety/attribution boundaries.
 docs/screenshots/ - README screenshots of the actual frontend with synthetic data, masked reserved-domain emails, no real identity/network/path information or embedded text/EXIF metadata; see its source and privacy notes.
 

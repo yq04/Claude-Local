@@ -221,13 +221,19 @@ fn sync(app: &tauri::AppHandle, account_id: String, quota_identity: String) -> R
     super::workspaces::ready(&root)?;
     let db = super::workspaces::database(&root)?;
     let slot = db.browser_for(&account_id)?;
-    if !db.browser_link()?.enabled || slot.as_deref() != Some(db.browser_slot()?.as_str()) {
+    let active_slot = db.browser_slot()?;
+    if !db.browser_link()?.enabled || slot.is_none() {
         return Err("quotaOnline.unavailable".into());
     }
+    let is_active_slot = slot.as_deref() == Some(active_slot.as_str());
 
     // This is the explicit user action: it may open the already-bound isolated browser.
     let reporter = crate::progress::Reporter::channel(None);
-    super::launch_locked(app, &reporter)?;
+    if is_active_slot {
+        super::launch_locked(app, &reporter)?;
+    } else {
+        super::ensure_session_locked(app)?;
+    }
     let (fresh_id, fresh_quota_identity) = crate::identities::online::current_browser_binding(app)?;
     if fresh_id != account_id || fresh_quota_identity != quota_identity {
         return Err("quotaOnline.accountMismatch".into());
@@ -254,7 +260,17 @@ fn sync(app: &tauri::AppHandle, account_id: String, quota_identity: String) -> R
         reply,
     });
     let target = format!("http://127.0.0.1:{port}/{session_token}/browser.html#quota-sync={nonce}&quota_identity={quota_identity}");
-    if let Err(error) = super::launch_with_urls_locked(app, &reporter, &[target.as_str()]) {
+    let launch_res = if is_active_slot {
+        super::launch_with_urls_locked(app, &reporter, &[target.as_str()]).map(|_| ())
+    } else {
+        super::quota_connection::launch_bound_profile_url_locked(
+            app,
+            "current",
+            &quota_identity,
+            &target,
+        )
+    };
+    if let Err(error) = launch_res {
         let mut pending = browser.quota_sync.lock().unwrap();
         if pending.as_ref().is_some_and(|ticket| ticket.nonce == nonce) {
             *pending = None;

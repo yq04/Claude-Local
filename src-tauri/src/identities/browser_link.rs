@@ -1,5 +1,5 @@
 // [INPUT]: 身份 SQLite 事务、本软件随机身份 ID、浏览器资料槽位及只读有界本地账号显示字段。
-// [OUTPUT]: 身份到独占浏览器资料的绑定、稳定非零种子、同步提交的选择指针与不含凭据的绑定身份摘要。
+// [OUTPUT]: CLI/养号独占绑定与稳定种子、CLI事务保留真实养号选择、受控转正草稿及回滚和无凭据身份摘要。
 // [POS]: 浏览器联动的持久元数据；不读取 Cookie，不保存网站凭据，不把账号 UUID 暴露给引擎。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -47,6 +47,26 @@ pub fn seed(id: &str, attempt: u32) -> u32 {
         format!("CCBaga/browser/{id}/{attempt}").as_bytes(),
     );
     u32::from_be_bytes(digest.as_ref()[..4].try_into().unwrap())
+}
+/// A dangling binding or an unbound draft is not a warming workspace. Require
+/// both the private card and a binding that has not become a CLI identity.
+fn warming_slot(connection: &rusqlite::Connection, slot: &str) -> Result<bool, String> {
+    let owner: Option<String> = connection
+        .query_row(
+            "SELECT identity FROM browser_bindings WHERE slot=?1 AND identity NOT IN (SELECT id FROM identities)",
+            [slot],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(error)?;
+    let Some(owner) = owner else {
+        return Ok(false);
+    };
+    let vault = connection
+        .path()
+        .and_then(|p| std::path::Path::new(p).parent())
+        .ok_or("身份库目录不可用。")?;
+    super::warming::contains(vault, &owner)
 }
 fn bind(tx: &Transaction<'_>, id: &str, preferred: Option<&str>) -> Result<String, String> {
     if !valid_id(id) {
@@ -108,16 +128,43 @@ pub(super) fn pending(tx: &Transaction<'_>, record: &Record, target: &str) -> Re
     if !valid_slot(&previous) {
         return Err("浏览器资料选择无效。".into());
     }
+    // Database::pending has already installed the CLI recovery checkpoint in
+    // this transaction. Promotion explicitly owns browser selection; ordinary
+    // CLI work leaves an independently selected warming workspace in place.
+    let keep_warming = get(tx, "browser.promotion")?.is_none() && warming_slot(tx, &previous)?;
     if !record.empty {
-        bind(tx, &record.id, Some(&previous))?;
+        // Promotion has already selected the warming slot; never assign it to outgoing CLI.
+        let outgoing = if get(tx, "browser.promotion")?.is_some() {
+            get(tx, "browser.promotion.previous")?
+        } else if !keep_warming {
+            Some(previous.clone())
+        } else {
+            None
+        };
+        bind(tx, &record.id, outgoing.as_deref())?;
     }
     let next = if target == "empty" {
-        super::new_id()?
+        match get(tx, "browser.promotion")? {
+            Some(id) if get(tx, "browser.draft")?.as_deref() == Some(id.as_str()) => tx
+                .query_row(
+                    "SELECT slot FROM browser_bindings WHERE identity=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(error)?
+                .ok_or("养号浏览器绑定已变化。")?,
+            _ => super::new_id()?,
+        }
     } else {
         bind(tx, target, None)?
     };
     set(tx, "browser.previous", &previous)?;
-    set(tx, "browser.next", &next)
+    set(
+        tx,
+        "browser.next",
+        if keep_warming { &previous } else { &next },
+    )
 }
 pub(super) fn complete(tx: &Transaction<'_>, active: &str) -> Result<(), String> {
     if let Some(previous) = get(tx, "browser.previous")? {
@@ -135,9 +182,23 @@ pub(super) fn complete(tx: &Transaction<'_>, active: &str) -> Result<(), String>
             [],
         )
         .map_err(error)?;
+    } else if get(tx, "recovery")?.is_none()
+        && get(tx, "browser.enabled")?.as_deref() == Some("1")
+        && get(tx, "browser.promotion")?.is_none()
+        && get(tx, "browser.active")?
+            .map(|slot| warming_slot(tx, &slot))
+            .transpose()?
+            .unwrap_or(false)
+    {
+        // Save/current-account shortcut/delete has no pending browser state.
+        // Maintain a separate CLI binding without adopting the warming slot.
+        if valid_id(active) {
+            bind(tx, active, None)?;
+        }
     } else if active == "empty"
         && get(tx, "recovery")?.is_none()
         && get(tx, "browser.enabled")?.as_deref() == Some("1")
+        && get(tx, "browser.promotion")?.is_none()
     {
         // 直接删除当前身份后，使用全新空资料；旧资料由独立删除选择决定。
         set(tx, "browser.active", &super::new_id()?)?;
@@ -150,6 +211,25 @@ pub(super) fn complete(tx: &Transaction<'_>, active: &str) -> Result<(), String>
         let slot = bind(tx, active, previous.as_deref())?;
         set(tx, "browser.active", &slot)?;
     }
+    if active != "empty" && get(tx, "browser.promotion")?.is_some() {
+        if get(tx, "target")?
+            .as_deref()
+            .is_some_and(|target| target != active)
+        {
+            if let Some(previous) = get(tx, "browser.promotion.previous")?.filter(|s| valid_slot(s))
+            {
+                set(tx, "browser.active", &previous)?;
+                let enabled = get(tx, "browser.promotion.enabled")?.unwrap_or_else(|| "0".into());
+                set(tx, "browser.enabled", &enabled)?;
+            }
+        }
+        clear_promotion(tx)?;
+    }
+    Ok(())
+}
+fn clear_promotion(tx: &Transaction<'_>) -> Result<(), String> {
+    tx.execute("DELETE FROM state WHERE key IN ('browser.draft','browser.promotion','browser.promotion.previous','browser.promotion.enabled')", [])
+        .map_err(error)?;
     Ok(())
 }
 pub(super) fn merge(tx: &Transaction<'_>, old: &str, retained: &str) -> Result<(), String> {
@@ -183,15 +263,183 @@ pub(super) fn merge(tx: &Transaction<'_>, old: &str, retained: &str) -> Result<(
     Ok(())
 }
 impl Database {
+    fn browser_vault(&self) -> Result<&std::path::Path, String> {
+        self.connection
+            .path()
+            .and_then(|p| std::path::Path::new(p).parent())
+            .ok_or_else(|| "身份库目录不可用。".into())
+    }
+    pub(crate) fn bind_warming(&mut self, id: &str) -> Result<(String, u32), String> {
+        if self.get("recovery")?.is_some() {
+            return Err("请先恢复未完成的身份切换。".into());
+        }
+        let tx = self.connection.transaction().map_err(error)?;
+        let occupied: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM identities WHERE id=?1)",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(error)?;
+        if occupied {
+            return Err("身份编号已用于 CLI 身份。".into());
+        }
+        let slot = bind(&tx, id, None)?;
+        let seed = tx
+            .query_row(
+                "SELECT seed FROM browser_bindings WHERE identity=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(error)?;
+        tx.commit().map_err(error)?;
+        Ok((slot, seed))
+    }
+    pub(crate) fn current_browser_is_warming(&self) -> Result<bool, String> {
+        if !self.browser_link()?.enabled {
+            return Ok(false);
+        }
+        warming_slot(&self.connection, &self.browser_slot()?)
+    }
+    pub(crate) fn switch_browser_slot_only(&mut self, slot: &str) -> Result<(), String> {
+        if self.get("recovery")?.is_some() {
+            return Err("请先恢复未完成的身份切换。".into());
+        }
+        if !valid_slot(slot) {
+            return Err("浏览器资料选择无效。".into());
+        }
+        let tx = self.connection.transaction().map_err(error)?;
+        if let Some(id) = get(&tx, "browser.promotion")? {
+            let promotion_slot: Option<String> = tx
+                .query_row(
+                    "SELECT slot FROM browser_bindings WHERE identity=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(error)?;
+            if promotion_slot.as_deref() != Some(slot) {
+                clear_promotion(&tx)?;
+            }
+        }
+        set(&tx, "browser.enabled", "1")?;
+        set(&tx, "browser.active", slot)?;
+        tx.commit().map_err(error)
+    }
+    pub(crate) fn prepare_warming_promotion(&mut self, id: &str, slot: &str) -> Result<(), String> {
+        if self.get("recovery")?.is_some() {
+            return Err("请先恢复未完成的身份切换。".into());
+        }
+        if !valid_id(id)
+            || !valid_slot(slot)
+            || !super::warming::contains(self.browser_vault()?, id)?
+        {
+            return Err("养号身份不存在。".into());
+        }
+        let tx = self.connection.transaction().map_err(error)?;
+        let bound: Option<String> = tx.query_row("SELECT slot FROM browser_bindings WHERE identity=?1 AND identity NOT IN (SELECT id FROM identities)", [id], |r| r.get(0)).optional().map_err(error)?;
+        if bound.as_deref() != Some(slot) {
+            return Err("养号浏览器绑定已变化。".into());
+        }
+        if get(&tx, "browser.promotion")?.is_some() {
+            return Err("请先完成或取消已有养号转正。".into());
+        }
+        let previous = get(&tx, "browser.active")?.ok_or("浏览器资料选择无效。")?;
+        let enabled = get(&tx, "browser.enabled")?.unwrap_or_else(|| "0".into());
+        set(&tx, "browser.promotion.previous", &previous)?;
+        set(&tx, "browser.promotion.enabled", &enabled)?;
+        set(&tx, "browser.promotion", id)?;
+        set(&tx, "browser.draft", id)?;
+        set(&tx, "browser.enabled", "1")?;
+        set(&tx, "browser.active", slot)?;
+        tx.commit().map_err(error)
+    }
+    pub(crate) fn clear_warming_promotion(&mut self, id: &str) -> Result<(), String> {
+        let tx = self.connection.transaction().map_err(error)?;
+        if get(&tx, "browser.promotion")?.as_deref() == Some(id)
+            || get(&tx, "browser.draft")?.as_deref() == Some(id)
+        {
+            clear_promotion(&tx)?;
+        }
+        tx.commit().map_err(error)
+    }
+    pub(crate) fn rollback_warming_promotion(&mut self, id: &str) -> Result<(), String> {
+        let tx = self.connection.transaction().map_err(error)?;
+        if get(&tx, "browser.promotion")?.as_deref() == Some(id) {
+            if get(&tx, "recovery")?.is_none() {
+                if let Some(previous) =
+                    get(&tx, "browser.promotion.previous")?.filter(|s| valid_slot(s))
+                {
+                    set(&tx, "browser.active", &previous)?;
+                    let enabled =
+                        get(&tx, "browser.promotion.enabled")?.unwrap_or_else(|| "0".into());
+                    set(&tx, "browser.enabled", &enabled)?;
+                }
+            }
+            clear_promotion(&tx)?;
+        }
+        tx.commit().map_err(error)
+    }
+    pub(crate) fn remove_warming_binding(&mut self, id: &str) -> Result<(), String> {
+        if !valid_id(id) {
+            return Err("身份编号无效。".into());
+        }
+        if self.get("recovery")?.is_some() {
+            return Err("请先恢复未完成的身份切换。".into());
+        }
+        let tx = self.connection.transaction().map_err(error)?;
+        let occupied: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM identities WHERE id=?1)",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(error)?;
+        if occupied {
+            return Err("身份已转正，不能删除养号绑定。".into());
+        }
+        let slot: Option<String> = tx
+            .query_row(
+                "SELECT slot FROM browser_bindings WHERE identity=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(error)?;
+        if slot.is_some() && slot == get(&tx, "browser.active")? {
+            return Err("请先切换到其他浏览器槽位，再删除养号卡。".into());
+        }
+        if get(&tx, "browser.promotion")?.as_deref() == Some(id) {
+            clear_promotion(&tx)?;
+        }
+        tx.execute("DELETE FROM browser_bindings WHERE identity=?1", [id])
+            .map_err(error)?;
+        tx.commit().map_err(error)
+    }
     pub(crate) fn browser_draft(&self) -> Result<Option<String>, String> {
         if !self.browser_link()?.enabled {
             return Ok(None);
         }
         let slot = self.browser_slot()?;
+        if let Some(id) = self.get("browser.promotion")? {
+            if self.get("active")?.as_deref() == Some("empty")
+                && self.get("recovery")?.is_none()
+                && self.get("browser.draft")?.as_deref() == Some(id.as_str())
+                && self.browser_for(&id)?.as_deref() == Some(slot.as_str())
+                && !self.records()?.iter().any(|r| r.id == id)
+                && super::warming::contains(self.browser_vault()?, &id)?
+            {
+                return Ok(Some(id));
+            }
+            return Ok(None);
+        }
         let draft = if valid_id(&slot) {
             slot.clone()
         } else {
-            self.get("browser.draft")?.ok_or("浏览器资料选择无效。")?
+            match self.get("browser.draft")? {
+                Some(id) => id,
+                None => return Ok(None),
+            }
         };
         if !valid_id(&draft) {
             return Err("浏览器资料选择无效。".into());
@@ -216,7 +464,21 @@ impl Database {
             });
         }
         let slot = self.browser_slot()?;
-        let bound=self.connection.query_row("SELECT i.id,i.name FROM browser_bindings b JOIN identities i ON i.id=b.identity WHERE b.slot=?1",[slot],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional().map_err(error)?;
+        let bound=self.connection.query_row("SELECT i.id,i.name FROM browser_bindings b JOIN identities i ON i.id=b.identity WHERE b.slot=?1",[&slot],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional().map_err(error)?;
+        if bound.is_none() {
+            for card in super::warming::read_cards(vault)? {
+                if self.browser_for(&card.id)?.as_deref() == Some(slot.as_str()) {
+                    return Ok(BrowserIdentity {
+                        linked,
+                        status: "warming",
+                        name: Some(card.name),
+                        email: card.email,
+                        organization: None,
+                        cli_proxy: None,
+                    });
+                }
+            }
+        }
         let current = super::profile::read(home);
         let local = super::catalog::current_id(vault, home, self);
         let unavailable = current.unavailable || local.is_err();

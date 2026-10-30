@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生身份命令、手动/自动订阅到期与充值日命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
- * [OUTPUT]: 身份工牌（含 PRO/MAX 右侧紧凑 MM/DD 订阅到期标签与手动充值/到期设置弹窗）、本地/云端授权分层状态、紧凑28px响应式主从工具栏操作组、可换行的单账号唤醒计划与一次验证、独立网页修复及严格指纹绑定批次。
+ * [OUTPUT]: 同风格计数的CLI身份/养号工牌、资料选择与窗口运行三态、冻结账号的浏览器返回核验/用量页入口、用量详情抗封温和提示及原生额度批次。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -10,6 +10,10 @@ import {DropdownMenu} from 'radix-ui';
 import {listen} from '@tauri-apps/api/event';
 import {addOneCalendarMonthYmd, epochSecToCalendarYmd, formatOnlineQuotaStatus, formatSubscriptionAndResets, formatSubscriptionExpiryBadge, formatYmdAsShortMd, ForegroundQuotaScheduler, isExpectedCurrentTarget, isExpectedSavedTarget, isValidCalendarYmd, buildBatchTargets, generateBatchRequestId, formatBatchProgress, isSuccessfulOnlineResult, aggregateBatchProgress, summarizeBatchResult, isTerminalBatchState, isMatchingBatchTarget, readNativeWakeupSnapshot, subscribeNativeWakeup, configureNativeWakeup, resumeNativeWakeup, formatMinuteOfDay, parseMinuteOfDay, isConfirmedNewWakeup5h, type OnlineQuotaResult, type OnlineQuotaStatus, type BatchQuotaResult, type QuotaBatchProgress, type BatchProgressSummary, type QuotaBatchTarget, type AutoWakeupConfig, type SubscriptionExpiryBadge} from './identity-online-quota';
 import type {IdentitySubscriptionMetadata} from './identity-model';
+import {WarmingLibrary} from './warming-cards';
+import type {WarmingCard, WarmingFields, WarmingOpenMode} from './warming-model';
+import type {BrowserState} from './browser-model';
+import {useBrowserRuntime} from './use-browser-runtime';
 import {formatWakeupWait, presentWakeupAccount} from './wakeup-presentation';
 import {ShieldCheck, Refresh} from 'cromma-ui/pika';
 import {invoke} from '@tauri-apps/api/core';
@@ -107,7 +111,10 @@ function IdentityQuota({quota, display, nowSec, inDialog = false, t, onOpenDetai
 function SubscriptionAndResets({meta, locale, showBilling = false, t}: {meta: IdentitySubscriptionMetadata | null | undefined; locale: string; showBilling?: boolean; t: (key: string, slots?: Record<string, string | number>) => string}) {
   const display = formatSubscriptionAndResets(meta, locale, t);
   const billing = showBilling ? display.billing : null;
-  if (!billing && !display.manualResets) return null;
+  const manualResets = display.manualResets && !(typeof display.manualResets.validUntil === 'number' && display.manualResets.validUntil * 1000 <= Date.now() && display.manualResets.remaining > 0)
+    ? display.manualResets
+    : undefined;
+  if (!billing && !manualResets) return null;
   return (
     <div className="identity-sub-resets-block">
       {billing && (
@@ -116,10 +123,10 @@ function SubscriptionAndResets({meta, locale, showBilling = false, t}: {meta: Id
           <span>{billing.formattedDate}</span>
         </div>
       )}
-      {display.manualResets && (
+      {manualResets && (
         <div className="identity-sub-resets-row">
-          <strong>{display.manualResets.label}</strong>
-          <span>{t('identityCard.manualResetsCount', {count: display.manualResets.remaining, v0: display.manualResets.remaining})}</span>
+          <strong>{manualResets.label}</strong>
+          <span>{t('identityCard.manualResetsCount', {count: manualResets.remaining, v0: manualResets.remaining})}</span>
         </div>
       )}
     </div>
@@ -133,7 +140,9 @@ function IdentityName({name, email, accountName, plan, expiry = null, onEditExpi
   const expiryTooltip = expiry
     ? expiry.rechargeYmd
       ? t('identityCard.expiryTooltipWithRecharge', {expiry: expiry.fullYmd, recharge: expiry.rechargeYmd})
-      : t('identityCard.expiryTooltip', {expiry: expiry.fullYmd})
+      : expiry.source === 'browser'
+        ? t('identityCard.renewalTooltip', {expiry: expiry.fullYmd})
+        : t('identityCard.expiryTooltip', {expiry: expiry.fullYmd})
     : undefined;
   return (
     <h3 className="identity-name-with-label" data-identity-name data-identity-username={!saved || undefined} data-identity-saved-name={saved || undefined} aria-label={shownName} aria-description={description}>
@@ -179,6 +188,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [browserReview, setBrowserReview] = useState<boolean | null>(null),
     [useExisting, setUseExisting] = useState(false);
   const [review, setReview] = useState<Target | null>(initialEmpty ? 'empty' : null);
+  const [warmingPromotion, setWarmingPromotion] = useState<WarmingCard | null>(null);
+  const [warmingModalOpen, setWarmingModalOpen] = useState(false);
+  const [returnCliBrowser, setReturnCliBrowser] = useState<{expectedIdentity: string; name: string} | null>(null);
   const [snapshot, setSnapshot] = useState(false);
   const [name, setName] = useState(t('当前身份'));
   const [rename, setRename] = useState<Identity | null>(null),
@@ -187,7 +199,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [deleteBrowser, setDeleteBrowser] = useState(false);
   const [deletion, setDeletion] = useState<Identity | 'current' | null>(null),
     [accepted, setAccepted] = useState(false);
-  const [quotaDetails, setQuotaDetails] = useState<{id:string;name:string}|null>(null);
+  const [quotaDetails, setQuotaDetails] = useState<{id:string;name:string;expectedIdentity:string|null}|null>(null);
   const [quotaFeedback, setQuotaFeedback] = useState('');
   const [quotaSetup, setQuotaSetup] = useState<QuotaSetupStatus|null>(null);
   const [quotaSetupError, setQuotaSetupError] = useState(false);
@@ -240,8 +252,10 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const reduceMotion = useReducedMotionConfig() ?? false;
   const scrollSpring = useSpring(0, {stiffness: 170, damping: 25, mass: 0.8});
   const scrollTarget = useRef(0);
-  const locked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!expiryEditor || !!deletion || browserReview !== null || quotaDetails !== null;
-  const actionLocked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!expiryEditor || !!deletion || browserReview !== null;
+  const warmingBlocked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!expiryEditor || !!deletion || browserReview !== null || quotaDetails !== null || batchBusy || loading || !state || !!returnCliBrowser;
+  const locked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!expiryEditor || !!deletion || browserReview !== null || quotaDetails !== null || warmingModalOpen || !!returnCliBrowser;
+  const actionLocked = busy || cliBusy || residueBusy || !!review || snapshot || !!rename || !!expiryEditor || !!deletion || browserReview !== null || warmingModalOpen || !!returnCliBrowser;
+  const browserRuntime = useBrowserRuntime(state?.active_browser_slot || state?.warming_cards?.find(card => card.browser_active)?.slot, !!state && !busy);
   lockedRef.current = locked;
   busyRef.current = busy;
   const actionLockedRef = useRef(false);
@@ -1016,10 +1030,12 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   }
   async function openUsagePage() {
     if (busy || !detailsAreCurrent) return;
+    const expectedIdentity = quotaDetails?.expectedIdentity;
+    if (!expectedIdentity) { setQuotaFeedback('browser.cliIdentityUnavailable'); return; }
     setBusy(true);
     setQuotaFeedback('');
     try {
-      await invoke('browser_open_usage', {onProgress: activity.start('browser')});
+      await invoke('browser_open_usage', {expectedIdentity, onProgress: activity.start('browser')});
       activity.finish(true, 'quota.opened');
       setQuotaFeedback('quota.opened');
     } catch (reason) {
@@ -1030,7 +1046,32 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       setBusy(false);
     }
   }
+  async function returnToCliBrowser() {
+    if (!returnCliBrowser || busyRef.current) return;
+    const target = returnCliBrowser;
+    setReturnCliBrowser(null);
+    busyRef.current = true;
+    setBusy(true);
+    browserRuntime.invalidate();
+    setError('');
+    try {
+      const next = await invoke<BrowserState>('browser_return_to_cli', {expectedIdentity: target.expectedIdentity, onProgress: activity.start('browser')});
+      if (!mountedRef.current) return;
+      // Apply the returned slot locally; this action never switches, saves or stops the CLI.
+      setState(previous => previous ? {...previous, active_browser_slot: next.active_browser_slot,
+        warming_cards: previous.warming_cards?.map(card => ({...card, browser_active: card.slot === next.active_browser_slot}))} : previous);
+      setQuotaFeedback('');
+      activity.finish(true, 'browser.returnToCliDone');
+    } catch (reason) {
+      if (mountedRef.current) setError(String(reason));
+      activity.finish(false, String(reason));
+    } finally {
+      busyRef.current = false;
+      if (mountedRef.current) setBusy(false);
+    }
+  }
   function choose(target: Target) {
+    setWarmingPromotion(null);
     setName(target === 'recovery' ? t('恢复前状态') : (active?.name || currentName).slice(0, 64));
     if (target === 'recovery') {
       const previous = state?.records.find(row => row.id === state.recovery);
@@ -1069,6 +1110,13 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   }
   async function change() {
     if (!review || busy) return;
+    // Recheck the latest native snapshot before any CLI process is stopped.
+    if (warmingPromotion && stateRef.current?.warming_cards?.find(card => card.id === warmingPromotion.id)?.stage !== 'pro_ready') {
+      setError(t('warming.promoteStageRequired'));
+      setReview(null);
+      setWarmingPromotion(null);
+      return;
+    }
     const target = review;
     setReview(null);
     setBusy(true);
@@ -1076,7 +1124,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     const onProgress = activity.start('identity', target === 'recovery' ? '恢复原身份' : target === 'empty' ? '切换到空身份' : '切换身份');
     try {
       await stop();
-      const next = await invoke<IdentityState>('identities_switch', {
+      const next = warmingPromotion ? await invoke<IdentityState>('identities_warming_promote', {
+        id: warmingPromotion.id, currentName: name.trim(), policy, onProgress,
+      }) : await invoke<IdentityState>('identities_switch', {
         targetId: typeof target === 'object' ? target.id : 'empty',
         currentName: name.trim(),
         policy,
@@ -1084,6 +1134,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         onProgress,
       });
       setState(next);
+      setWarmingPromotion(null);
       setResidueRevision(value => value + 1);
       activity.finish(true, next.browser_warning || (target === 'recovery' ? '原身份已恢复。' : '身份切换完成。'));
     } catch (e) {
@@ -1093,6 +1144,31 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     } finally {
       setBusy(false);
     }
+  }
+  async function warmingAction(command: string, args: Record<string, unknown>, progress = true): Promise<boolean> {
+    if (busyRef.current || batchBusyRef.current) return false;
+    busyRef.current = true;
+    browserRuntime.invalidate();
+    setBusy(true);
+    setError('');
+    const onProgress = activity.start('browser');
+    try {
+      const next = await invoke<IdentityState>(command, {...args, ...(progress ? {onProgress} : {})});
+      setState(next);
+      activity.finish(true, t('warming.operationDone'));
+      return true;
+    } catch (e) {
+      setError(String(e));
+      activity.finish(false, String(e));
+      await refreshAfterError();
+      return false;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+  function saveWarming(fields: WarmingFields, id: string | undefined, openMode: WarmingOpenMode) {
+    return warmingAction(id ? 'identities_warming_update' : 'identities_warming_create', {...fields, ...(id ? {id} : {openMode})}, !id);
   }
   function confirmDelete(target: Identity | 'current') {
     setDeletion(target);
@@ -1516,7 +1592,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       {!quotaDetails && (quotaFeedback || batchSummary.completed > 0) && <p className="identity-online-feedback" role="status">{quotaFeedback || formatBatchProgress(batchSummary, t)}{unverifiedQuotaTargets > 0 && <> · {t('quotaOnline.unverifiedTargets', {count:unverifiedQuotaTargets})}</>}</p>}
       </AppDialog>
 
-      {!onlinePanelOpen && !quotaDetails && quotaFeedback && <p className="identity-online-feedback" role="status">{quotaFeedback}</p>}
+      {!onlinePanelOpen && !quotaDetails && quotaFeedback && <p className="identity-online-feedback" role="status"><span>{quotaFeedback}</span><Button variant="ghost" size="small" type="button" data-quota-feedback-dismiss="" onClick={() => setQuotaFeedback('')}>{t('取消')}</Button></p>}
 
       {error && (
         <p role="alert" className="cleanup-feedback error">
@@ -1536,8 +1612,8 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         <div className="identity-section-head">
           <div className="identity-head-title">
             <h2>{t('身份')}</h2>
-            <span className="identity-policy-mode">
-              {t('{v0} 个账号', {v0: totalIdentities})}
+            <span className="identity-policy-mode identity-card-count" data-card-count="identity">
+              {t('identity.count', {v0: totalIdentities})}
             </span>
           </div>
           <div className="identity-library-controls">
@@ -1604,6 +1680,11 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   </DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
                     <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
+                      <DropdownMenu.Item className="identity-menu-item" data-return-cli-browser disabled={blocked || !current?.quota_identity} onSelect={() => {
+                        if (current?.quota_identity) setReturnCliBrowser({expectedIdentity: current.quota_identity, name: maskDisplayName(currentName, current.email, prefs.privacyMask)});
+                      }}>
+                        {t('browser.returnToCli')}
+                      </DropdownMenu.Item>
                       <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={() => void syncSubscription()}>
                         {t('identityCard.syncSubscription')}
                       </DropdownMenu.Item>
@@ -1643,7 +1724,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   <span className="identity-meta-badge auth-expired">{t('identityCard.reauthRequired')}</span>
                 </div>
               )}
-              <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:active?.id || 'current', name:currentName});setQuotaFeedback('');}} />
+              <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:active?.id || 'current', name:currentName, expectedIdentity:current?.quota_identity || null});setQuotaFeedback('');}} />
               <SubscriptionAndResets meta={current} locale={locale} t={t} />
               <div className="identity-card-footer">
                 <Button variant="secondary" size="small" disabled={blocked} onClick={openSnapshot}>
@@ -1714,7 +1795,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                     <span className="identity-meta-badge auth-expired">{t('identityCard.reauthRequired')}</span>
                   </div>
                 )}
-                <IdentityQuota quota={savedQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:row.id, name:row.name});setQuotaFeedback('');}} />
+                <IdentityQuota quota={savedQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:row.id, name:row.name, expectedIdentity:summary?.quota_identity || null});setQuotaFeedback('');}} />
                 <SubscriptionAndResets meta={summary} locale={locale} t={t} />
                 <div className="identity-card-footer">
                   <Button variant="secondary" size="small" disabled={blocked} onClick={() => choose(row)}>
@@ -1727,6 +1808,28 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         </div>
         <IdentityOperationProgress activity={activity.state} />
       </section>
+      <WarmingLibrary
+        cards={state?.warming_cards ?? []} blocked={warmingBlocked} promotionBlocked={!!state?.recovery}
+        runtime={browserRuntime.runtime}
+        busy={busy} privacyMask={prefs.privacyMask} nowSec={nowSec} onModalChange={setWarmingModalOpen}
+        onOpen={(card, openMode) => warmingAction('identities_warming_open', {id: card.id, openMode})}
+        onProbeState={nextState => {
+          if (mountedRef.current && nextState && typeof nextState === 'object') {
+            setState(nextState as IdentityState);
+          }
+        }}
+        onSave={saveWarming}
+        onDelete={(card, deleteBrowser) => warmingAction('identities_warming_delete', {id: card.id, deleteBrowser}, false)}
+        onPromote={card => {
+          if (card.stage !== 'pro_ready' || stateRef.current?.warming_cards?.find(row => row.id === card.id)?.stage !== 'pro_ready' || stateRef.current?.recovery) {
+            setError(t('warming.promoteStageRequired'));
+            return;
+          }
+          choose('empty'); setWarmingPromotion(card);
+        }}
+        onExpiry={card => openExpiryEditor(card.id, card.name, {...card, plan: card.stage === 'pro_ready' ? 'PRO' : 'FREE'})}
+        renderName={card => <IdentityName name={card.name} email={card.email} plan={card.stage === 'pro_ready' ? 'PRO' : 'FREE'} expiry={formatSubscriptionExpiryBadge(card)} onEditExpiry={warmingBlocked ? undefined : () => openExpiryEditor(card.id, card.name, {...card, plan: card.stage === 'pro_ready' ? 'PRO' : 'FREE'})} privacyMask={prefs.privacyMask} saved t={t} />}
+      />
       <Disclosure
         className="identity-policy"
         triggerClassName="identity-policy-trigger"
@@ -1753,6 +1856,11 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         }}
       />
       <ClaudeCliPanel blocked={locked || loading || !!state?.recovery} onBusy={setCliBusy} />
+      <AppDialog alert open={!!returnCliBrowser} onOpenChange={open => {if (!open && !busy) setReturnCliBrowser(null);}}
+        title={t('browser.returnToCliConfirmTitle')} description={t('browser.returnToCliConfirm')}
+        footer={<><Button variant="secondary" data-dialog-cancel disabled={busy} onClick={() => setReturnCliBrowser(null)}>{t('取消')}</Button><Button variant="secondary" data-return-cli-confirm disabled={busy || !returnCliBrowser} onClick={() => void returnToCliBrowser()}>{t('browser.returnToCli')}</Button></>}>
+        <div data-return-cli-dialog className="identity-confirm"><strong>{returnCliBrowser?.name}</strong><p>{t('browser.verificationScope')}</p></div>
+      </AppDialog>
       <AppDialog
         open={quotaDetails !== null}
         onOpenChange={open => {if (!open && !busy) setQuotaDetails(null);}}
@@ -1776,7 +1884,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           {detailsAreCurrent && (
             <Button variant="secondary" disabled={busy || loading || !state?.browser.enabled} onClick={() => void syncSubscription()}>{t('quota.syncSubscription')}</Button>
           )}
-          <Button variant="secondary" loading={busy} disabled={busy || !detailsAreCurrent || !!state?.recovery} onClick={() => void openUsagePage()}>{t('quota.openOfficial')}</Button>
+          <Button variant="secondary" loading={busy} disabled={busy || !detailsAreCurrent || !quotaDetails?.expectedIdentity || !!state?.recovery} onClick={() => void openUsagePage()}>{t('quota.openOfficial')}</Button>
         </>}
       >
         <div className="identity-quota-details">
@@ -1795,6 +1903,12 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                     })}
               </strong>
             </div>
+          )}
+          {((detailsQuota?.known5h && detailsQuota.used5h >= 85) ||
+            (detailsQuota?.pace7d && !detailsQuota.pace7d.suppressed && detailsQuota.pace7d.deltaUsedPct >= 15)) && (
+            <p className="identity-quota-note" data-quota-pace-hint>
+              {t('identities.quotaPaceHint')}
+            </p>
           )}
           {(['5h', '7d'] as const).map(window => {
             const source = detailsQuota?.[window === '5h' ? 'source5h' : 'source7d'];
@@ -1946,13 +2060,13 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       <AppDialog
         open={!!review}
         onOpenChange={open => {
-          if (!open && !busy) setReview(null);
+          if (!open && !busy) {setReview(null); setWarmingPromotion(null);}
         }}
-        title={review === 'recovery' ? t('恢复原身份') : review === 'empty' ? t('切换到空身份') : t('切换身份')}
+        title={warmingPromotion ? t('warming.promote') : review === 'recovery' ? t('恢复原身份') : review === 'empty' ? t('切换到空身份') : t('切换身份')}
         description={t(review === 'recovery' ? 'identitySafety.recoveryHint' : '先压缩暂存当前 Claude Code 与 Desktop 状态，再切换。将结束已识别的 Claude 进程，未保存任务会中断。')}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setReview(null)}>
+            <Button variant="secondary" onClick={() => {setReview(null); setWarmingPromotion(null);}}>
               {t('取消')}
             </Button>
             <Button variant="secondary" disabled={busy || loading || !state || !name.trim() || (review !== 'recovery' && !!state.recovery)} onClick={() => void change()}>
@@ -1962,6 +2076,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         }
       >
         <div className="identity-confirm">
+          {warmingPromotion && <div className="identity-confirm-target"><span>{t('warming.promoteHint')}</span><strong>{maskDisplayName(warmingPromotion.name, warmingPromotion.email, prefs.privacyMask)}</strong><p>{t('warming.promotionContinuity')}</p></div>}
           <label htmlFor="identity-current-name">{t('当前身份保存为')}</label>
           <Input id="identity-current-name" maxLength={64} value={name} onChange={e => setName(e.target.value)} />
           {review === 'recovery' && <div className="identity-confirm-target"><span>{t('identitySafety.restoreIdentity')}</span><strong>{maskDisplayName(recoveryRecord?.name, undefined, prefs.privacyMask) || t('identitySafety.originalUnavailable')}</strong></div>}
@@ -2038,7 +2153,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             </div>
           )}
           {proxyChanged && <p className="identity-proxy-notice">{t('代理环境提醒：目标身份与当前身份的独立代理配置不同，请确认出口 IP 与目标账号一致。')}</p>}
-          {state?.browser.enabled && <p>{t('将关闭并重开关联浏览器，请先保存网页任务。')}</p>}
+          {state?.browser.enabled && <p>{t(state.warming_cards?.some(card => card.browser_active) && !warmingPromotion && review !== 'recovery' && !state.recovery ? 'warming.cliSwitchKeepsBrowser' : '将关闭并重开关联浏览器，请先保存网页任务。')}</p>}
         </div>
       </AppDialog>
       <AppDialog

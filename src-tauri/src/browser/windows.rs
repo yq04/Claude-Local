@@ -1,5 +1,5 @@
 // [INPUT]: Windows Chromium 引擎、资源目录、共用资料/随机令牌会话与独立 Claude-Local-Browser 注册名称空间。
-// [OUTPUT]: 本地引擎发现与启动、用户主动注册本地版默认浏览器及纯内存名称空间回归。
+// [OUTPUT]: 本地引擎发现/启动、严格授权链接的独立CLI资料分流与可见失败提示、用户主动默认浏览器注册。
 // [POS]: browser 编排的 Windows 平台实现；只接收 URL/文件入口，不执行用户提供的 shell。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use std::os::windows::process::CommandExt;
@@ -113,6 +113,9 @@ pub fn open_urls(app: tauri::AppHandle, args: Vec<String>) {
         .collect::<Vec<_>>();
     std::thread::spawn(move || {
         if let Err(error) = start_windows_companion(&app, &urls) {
+            if oauth_route::needs_identity_guard(&urls) {
+                show_oauth_route_failure(&app);
+            }
             eprintln!("Claude-Local-Browser: {error}");
         }
     });
@@ -120,8 +123,19 @@ pub fn open_urls(app: tauri::AppHandle, args: Vec<String>) {
 
 fn start_windows_companion(app: &tauri::AppHandle, urls: &[String]) -> Result<(), String> {
     crate::startup_trace("companion entry");
+    // Authorization routing shares identity mutators' Cleaner -> Browser order.
+    let _identity_guard = if oauth_route::needs_identity_guard(urls) {
+        Some(oauth_route::IdentityGuard::acquire(app)?)
+    } else {
+        None
+    };
     let state = app.state::<Browser>();
     let _guard = state.gate.lock().unwrap();
+    let ordinary_urls = oauth_route::route_external_urls_locked(app, urls)?;
+    if !urls.is_empty() && ordinary_urls.is_empty() {
+        return Ok(());
+    }
+    let urls = ordinary_urls.as_slice();
     let engine = prepare_engine(app)?;
     crate::startup_trace("engine ready");
     let root = root(app)?;
@@ -158,11 +172,34 @@ fn start_windows_companion(app: &tauri::AppHandle, urls: &[String]) -> Result<()
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| "无法启动 Windows Chromium 浏览器。请检查引擎文件与依赖。".to_string())?;
+    kill_switch::clear_alert(app);
     crate::startup_trace("companion spawned");
     std::thread::spawn(move || {
         let _ = child.wait();
     });
     Ok(())
+}
+
+fn show_oauth_route_failure(app: &tauri::AppHandle) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONWARNING, MB_OK};
+    let message = if crate::ui_language::ui_language_read(app.clone()) == "en" {
+        "The authorization link could not be opened safely. Select the intended CLI identity in Claude-Local and open its browser before retrying. No account was automatically authorized."
+    } else {
+        "无法安全打开授权链接。请在 Claude-Local 中选择要使用的 CLI 身份并打开其浏览器，再重试授权。软件未自动授权任何账号。"
+    };
+    let message = message.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    let title = "Claude-Local"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            message.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONWARNING,
+        );
+    }
 }
 
 fn default_associations_match(http: &str, https: &str) -> bool {

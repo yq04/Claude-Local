@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务门与显式身份写入代次、Tauri 进度通道。
-// [OUTPUT]: 有界归档加载、身份/网页摘要与手动订阅到期补充管理命令、轻量usage身份观察登记、跳过活动session扫描的原生调度摘要入口及唯一进程级唤醒owner。
+// [OUTPUT]: 有界归档加载、身份/网页摘要、浏览器独立养号卡及受控转正、手动订阅到期管理命令、轻量usage身份观察登记与唯一进程级唤醒owner。
 // [POS]: GUI 身份管理的原生入口；在线子模块仅允许固定额度端点和白名单回执，不提供凭据读取或任意文件/网络接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 mod archive;
@@ -16,7 +16,6 @@ pub(crate) mod database;
 #[cfg(test)]
 mod database_tests;
 pub(crate) mod online;
-pub(crate) mod wakeup;
 #[cfg(test)]
 mod optimization_tests;
 pub(crate) mod private;
@@ -28,6 +27,8 @@ mod tests;
 pub(crate) mod usage;
 #[cfg(test)]
 mod usage_tests;
+pub(crate) mod wakeup;
+pub(crate) mod warming;
 use crate::progress::{Progress, Reporter};
 use serde::{Deserialize, Serialize};
 use tauri::{ipc::Channel, Manager};
@@ -81,6 +82,8 @@ impl Policy {
 }
 #[derive(Serialize)]
 pub struct State {
+    pub warming_cards: Vec<warming::WarmingCardView>,
+    pub active_browser_slot: String,
     pub browser: browser_link::BrowserLink,
     pub browser_warning: Option<String>,
     pub records: Vec<database::Record>,
@@ -124,7 +127,7 @@ fn state(app: &tauri::AppHandle) -> Result<State, String> {
 fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, String> {
     let vault_path = vault(app)?;
     let root_path = crate::cleaner::identity::root()?;
-    let db = database::Database::open(&vault_path)?;
+    let mut db = database::Database::open(&vault_path)?;
     let _ = db.prune_orphan_summaries();
     let mut records: Vec<_> = db.records()?.into_iter().filter(|r| !r.empty).collect();
     let mut summaries = db.summaries()?;
@@ -197,7 +200,17 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
             &mut summary.subscription_expires_at,
         );
     }
+    // Read commands opportunistically repair an interrupted promotion cleanup.
+    // Command-owned gates already run their own cleanup; never reverse lock order.
+    let cleaner = app.state::<crate::cleaner::Cleaner>();
+    if cleaner.enter().is_ok() {
+        let cleanup = warming::cleanup_promoted(&vault_path, &mut db);
+        cleaner.leave();
+        cleanup?;
+    }
     Ok(State {
+        warming_cards: warming::views(&vault_path, &db)?,
+        active_browser_slot: db.browser_slot()?,
         browser: db.browser_link()?,
         browser_warning: app
             .state::<crate::browser::Browser>()
@@ -207,7 +220,11 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
             .clone(),
         records,
         summaries,
-        sessions: if include_sessions { profile::active_sessions(&root_path) } else { Vec::new() },
+        sessions: if include_sessions {
+            profile::active_sessions(&root_path)
+        } else {
+            Vec::new()
+        },
         active,
         recovery: db.get("recovery")?,
         running: crate::cleaner::identity::processes_running()?,
@@ -368,8 +385,7 @@ pub async fn identities_delete(
         let reporter = Reporter::channel(Some(on_progress));
         let action = || {
             let vault_path = vault(&worker)?;
-            let mut store =
-                store::Store::open(&vault_path, &crate::cleaner::identity::root()?)?;
+            let mut store = store::Store::open(&vault_path, &crate::cleaner::identity::root()?)?;
             store.delete(&id, &policy, &reporter)?;
             if id != "current" {
                 subscription::remove_record_entry(&vault_path, &id);

@@ -1,4 +1,5 @@
 # src-tauri/
+浏览器状态/归属接线：main.rs注册browser_runtime_read和browser_return_to_cli；browser_open_usage要求冻结expected_identity并按当前CLI已有绑定打开独立用量页，不沿用养号槽位。版本仍为0.2.2，只有本地维护交付。
 > L2 | 父级: ../CLAUDE.md
 main.rs: 本地版 Tauri 生命周期、主窗口尺寸记忆接线、双语托盘和命令注册；--quota-core 在启动诊断与单实例之前执行纯 JSON 合并；普通启动不打开浏览器，发布必须 custom-protocol；无官方应用更新或重启插件。
 window_state.rs: 仅 main 窗口的私有 app_data/window-state.json 尺寸/最大化状态、显示前恢复、当前工作区限制与居中、防抖 resize/move 保存及 Close/Exit 刷新；不保存最小化/隐藏状态，不涉及浏览器或账号数据。
@@ -18,6 +19,7 @@ tauri.conf.json: 本地独立产品名 Claude-Local、先隐藏以供尺寸恢�
 tauri.macos.conf.json / tauri.linux.conf.json / tauri.windows.conf.json: 分平台资源与打包配置；macOS 保持双应用归档，Linux 使用 PNG 和 /usr/libexec/Claude-Local Browser 隔离引擎，防止 linuxdeploy 递归改写厂商 ELF；默认 Tauri 构建 deb/AppImage，RPM 配置的依赖由原生 rpmbuild 消费；Windows 使用当前用户 NSIS、内嵌浏览器引擎、独立 Claude-Local-Browser 启动项，无自动更新；build.rs 只在 macOS 编译 Objective-C。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
-Release metadata: 0.1.5 is synchronized across package.json, tauri.conf.json, Cargo.toml and Cargo.lock. Main-window entries in the base/Windows/Linux configs begin hidden and the native size restore explicitly shows the window.
+Release metadata: 0.2.2 is synchronized across package.json, tauri.conf.json, Cargo.toml and Cargo.lock; local warming-card development does not publish or replace release assets. Main-window entries in the base/Windows/Linux configs begin hidden and the native size restore explicitly shows the window.
 
 Timezone analytics: chrono0.4.45与chrono-tz0.10.4使用内嵌IANA数据，查询时区由前端明确传入；不修改系统时区、不联网查时区。NOTICE保留本版实际静态查找依赖的许可与版权。
+Warming calendar: chrono 的 clock 功能只读取系统本地自然日，供养号互动日期与前端本地日期对齐；订阅日期仍锚定 UTC 正午，不更改系统时区。

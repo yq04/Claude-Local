@@ -1,6 +1,6 @@
 /**
  * [INPUT]: style.css 主题令牌、毛玻璃表面变量与 Cromma UI 基础控件几何。
- * [OUTPUT]: 风控验证页响应式双栏诊断矩阵、离线二维码桥接工作台、五重隐私徽章与 KYC 六步飞行清单布局。
+ * [OUTPUT]: 风控验证页双栏诊断、未知比较与有界核验来源说明、Mihomo strict-route 闭环修复向导、离线二维码桥接及 KYC 六步清单布局。
  * [POS]: 仅作用于 .risk-page 命名空间，保持明暗双主题、六色强调色与紧凑侧栏零横溢。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -167,6 +167,18 @@
 .risk-trace-verdict.fail {
   background: color-mix(in srgb, var(--error-foreground) 15%, transparent);
   color: var(--error-foreground);
+}
+
+.risk-trace-verdict.pending {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.risk-audit-scope {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .risk-checks-grid {
@@ -686,4 +698,40 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+.risk-strict-route-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.risk-strict-route-steps {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--foreground);
+}
+
+.risk-strict-route-status {
+  margin: 2px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.risk-strict-route-status.ok {
+  color: #059669;
+}
+:root.dark .risk-strict-route-status.ok {
+  color: #34d399;
+}
+
+.risk-strict-route-status.warn {
+  color: #b45309;
+}
+:root.dark .risk-strict-route-status.warn {
+  color: #fbbf24;
 }

@@ -1,11 +1,13 @@
-// [INPUT]: 当前绑定浏览器的脱敏代理/地区配置、本机活跃网卡只读快照、常见 Mihomo/Clash 运行态结构特征与用户手动触发的三路边缘 trace 探针。
-// [OUTPUT]: 本机 DNS 泄露隐患结构化诊断、RFC1918 安全内网 IPv4 候选（排除公网/WSL/Fake-IP）及 claude.ai vs withpersona.com 跨域名出口一致性核验结果。
+// [INPUT]: 当前绑定浏览器快照、本机网卡、当前用户已知代理内核的只读配置投影与手动触发的三路 trace。
+// [OUTPUT]: 带配置来源/解析不确定性的 DNS 结构诊断、本机 TUN/明文 DNS 布尔状态、同上下文的遮罩浏览器归属、安全内网候选与绑定上下文一致的跨域出口结果。
 // [POS]: 风控验证原生只读边界；绝不读取或输出任何代理密码、节点域名、订阅地址或账号凭据，不修改系统设置或中断运行进程。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
+#[path = "risk_config_source.rs"]
+mod config_source;
 
 const TRACE_BODY_LIMIT: usize = 4096;
 
@@ -23,6 +25,11 @@ pub struct BrowserDnsGuard {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct MihomoAudit {
     pub detected: bool,
+    pub config_source: Option<String>,
+    pub config_source_status: Option<String>,
+    pub dns_projection_complete: bool,
+    pub dns_has_encrypted_resolver: bool,
+    pub dns_has_domestic_encrypted: bool,
     pub client_kind: Option<String>,
     pub mixed_port: Option<u16>,
     pub allow_lan: Option<bool>,
@@ -50,7 +57,17 @@ pub struct SystemNetworkAudit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct RiskBrowserIdentity {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct LocalRiskSnapshot {
+    pub context_id: Option<String>,
+    #[serde(default)]
+    pub browser_identity: Option<RiskBrowserIdentity>,
     pub browser: BrowserDnsGuard,
     pub mihomo: MihomoAudit,
     pub system: SystemNetworkAudit,
@@ -69,6 +86,7 @@ pub struct TraceEndpointResult {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ConsistencyProbeReport {
+    pub context_id: Option<String>,
     pub claude: TraceEndpointResult,
     pub persona: TraceEndpointResult,
     pub unlisted_dns: TraceEndpointResult,
@@ -188,11 +206,86 @@ fn parse_yaml_u16(raw: &str) -> Option<u16> {
         .filter(|p| *p > 0)
 }
 
+// A deliberately narrow YAML projection: unsupported aliases/maps stay uncertain.
+fn yaml_without_comment(line: &str) -> &str {
+    let mut quote = None;
+    let mut previous = ' ';
+    for (i, ch) in line.char_indices() {
+        if matches!(ch, '\'' | '"') && previous != '\\' {
+            if quote == Some(ch) {
+                quote = None;
+            } else if quote.is_none() {
+                quote = Some(ch);
+            }
+        }
+        if ch == '#' && quote.is_none() && previous.is_whitespace() {
+            return &line[..i];
+        }
+        previous = ch;
+    }
+    line
+}
+
+fn project_resolvers(raw: &str, audit: &mut MihomoAudit) {
+    let raw = raw.trim().trim_start_matches('-').trim();
+    if raw.is_empty() {
+        return;
+    }
+    if raw.contains(['{', '}', '&', '*', '|', '>']) {
+        audit.dns_projection_complete = false;
+        return;
+    }
+    // Resolver URI query fragments are retained; only resulting booleans escape this function.
+    for item in raw.trim_matches(['[', ']']).split(',') {
+        let value = item.trim().trim_matches(['\'', '"']).to_ascii_lowercase();
+        if value.is_empty() {
+            continue;
+        }
+        let encrypted = ["https://", "tls://", "quic://", "h3://"]
+            .iter()
+            .any(|s| value.starts_with(s));
+        let host = if value.contains("://") {
+            reqwest::Url::parse(&value)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+        } else {
+            Some(value.split(['#', ':']).next().unwrap_or("").to_owned())
+        };
+        let Some(host) = host else {
+            audit.dns_projection_complete = false;
+            continue;
+        };
+        let domestic = matches!(
+            host.as_str(),
+            "223.5.5.5"
+                | "223.6.6.6"
+                | "119.29.29.29"
+                | "114.114.114.114"
+                | "180.76.76.76"
+                | "dns.alidns.com"
+                | "doh.pub"
+                | "dot.pub"
+                | "dns.pub"
+        );
+        if encrypted {
+            audit.dns_has_encrypted_resolver = true;
+            audit.dns_has_domestic_encrypted |= domestic;
+            audit.dns_has_remote_doh |= !domestic;
+        } else if value == "system" || domestic {
+            audit.dns_has_domestic_plain = true;
+        } else if host.parse::<IpAddr>().is_err() {
+            // Unknown plaintext/system transports cannot establish a hardened DNS setup.
+            audit.dns_projection_complete = false;
+        }
+    }
+}
+
 /// 仅对 Mihomo/Clash 配置做纯布尔/端口/规则命中特征扫描；跳过 proxies / proxy-providers 等敏感段落，零秘密提取。
 pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> MihomoAudit {
     let mut audit = MihomoAudit {
         detected: true,
         client_kind: client_kind.map(str::to_string),
+        dns_projection_complete: true,
         ..Default::default()
     };
 
@@ -208,21 +301,21 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
 
     let mut section = Section::Root;
     let mut dns_subkey = "";
+    let mut dns_child_indent = None;
+    let mut tun_child_indent = None;
     let mut current_listener_port: Option<u16> = None;
     let mut current_listener_has_proxy = false;
     let mut current_listener_is_proxy_type = false;
 
-    let flush_listener = |audit: &mut MihomoAudit,
-                          port: Option<u16>,
-                          has_proxy: bool,
-                          is_proxy_type: bool| {
-        if audit.dedicated_listener_port.is_none() && has_proxy && is_proxy_type {
-            audit.dedicated_listener_port = port;
-        }
-    };
+    let flush_listener =
+        |audit: &mut MihomoAudit, port: Option<u16>, has_proxy: bool, is_proxy_type: bool| {
+            if audit.dedicated_listener_port.is_none() && has_proxy && is_proxy_type {
+                audit.dedicated_listener_port = port;
+            }
+        };
 
     for raw_line in content.lines() {
-        let trimmed_comment = raw_line.split('#').next().unwrap_or("").trim_end();
+        let trimmed_comment = yaml_without_comment(raw_line).trim_end();
         if trimmed_comment.trim().is_empty() {
             continue;
         }
@@ -241,6 +334,8 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                 current_listener_is_proxy_type = false;
             }
             dns_subkey = "";
+            dns_child_indent = None;
+            tun_child_indent = None;
             if let Some((key, rest)) = line.split_once(':') {
                 let key = key.trim();
                 let rest = rest.trim();
@@ -261,8 +356,18 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                         audit.allow_lan = parse_yaml_bool(rest);
                         section = Section::Root;
                     }
-                    "tun" => section = Section::Tun,
-                    "dns" => section = Section::Dns,
+                    "tun" => {
+                        section = Section::Tun;
+                        if !rest.is_empty() {
+                            audit.dns_projection_complete = false;
+                        }
+                    }
+                    "dns" => {
+                        section = Section::Dns;
+                        if !rest.is_empty() {
+                            audit.dns_projection_complete = false;
+                        }
+                    }
                     "listeners" => section = Section::Listeners,
                     "rules" => section = Section::Rules,
                     // 显式跳过可能包含节点域名、密码、订阅链接与认证口令的所有段落。
@@ -278,6 +383,11 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
         match section {
             Section::IgnoredSecretSection | Section::Root => {}
             Section::Tun => {
+                let child_indent = *tun_child_indent.get_or_insert(indent);
+                if indent != child_indent {
+                    audit.dns_projection_complete = false;
+                    continue;
+                }
                 if let Some((k, v)) = line.split_once(':') {
                     match k.trim() {
                         "enable" => audit.tun_enabled = parse_yaml_bool(v),
@@ -287,7 +397,8 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                 }
             }
             Section::Dns => {
-                if indent <= 2 && !line.starts_with('-') {
+                let child_indent = *dns_child_indent.get_or_insert(indent);
+                if indent == child_indent && !line.starts_with('-') {
                     if let Some((k, v)) = line.split_once(':') {
                         let k = k.trim();
                         let v = v.trim();
@@ -303,44 +414,32 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                             "enable" => audit.dns_enabled = parse_yaml_bool(v),
                             "enhanced-mode" => {
                                 let mode = v.trim_matches(['"', '\'']);
-                                if !mode.is_empty() {
+                                if matches!(mode, "fake-ip" | "redir-host" | "normal") {
                                     audit.dns_enhanced_mode = Some(mode.to_ascii_lowercase());
+                                } else {
+                                    audit.dns_projection_complete = false;
                                 }
                             }
                             "respect-rules" => audit.dns_respect_rules = parse_yaml_bool(v),
                             "nameserver-policy" => audit.dns_has_nameserver_policy = true,
                             _ => {}
                         }
-                    }
-                } else {
-                    let lower = line.to_ascii_lowercase();
-                    if matches!(dns_subkey, "nameserver" | "fallback" | "nameserver-policy") {
-                        if (lower.contains("https://")
-                            || lower.contains("tls://")
-                            || lower.contains("quic://"))
-                            && (lower.contains("1.1.1.1")
-                                || lower.contains("cloudflare")
-                                || lower.contains("8.8.8.8")
-                                || lower.contains("dns.google")
-                                || lower.contains("9.9.9.9")
-                                || lower.contains("quad9")
-                                || lower.contains("opendns")
-                                || lower.contains("adguard"))
-                        {
-                            audit.dns_has_remote_doh = true;
+                        if matches!(dns_subkey, "nameserver" | "fallback") {
+                            project_resolvers(v, &mut audit);
+                        }
+                        if dns_subkey == "nameserver-policy" && !v.is_empty() {
+                            audit.dns_projection_complete = false;
                         }
                     }
-                    if dns_subkey == "nameserver"
-                        && (lower.contains("system")
-                            || lower.contains("223.5.5.5")
-                            || lower.contains("223.6.6.6")
-                            || lower.contains("119.29.29.29")
-                            || lower.contains("114.114.114.114")
-                            || lower.contains("180.76.76.76")
-                            || lower.contains("alidns")
-                            || lower.contains("doh.pub"))
-                    {
-                        audit.dns_has_domestic_plain = true;
+                } else {
+                    if matches!(dns_subkey, "nameserver" | "fallback" | "nameserver-policy") {
+                        let resolver =
+                            if dns_subkey == "nameserver-policy" && !line.starts_with('-') {
+                                line.split_once(": ").map(|(_, v)| v).unwrap_or("")
+                            } else {
+                                line
+                            };
+                        project_resolvers(resolver, &mut audit);
                     }
                     if dns_subkey == "nameserver-policy" {
                         audit.dns_has_nameserver_policy = true;
@@ -443,22 +542,49 @@ fn candidate_mihomo_paths() -> Vec<(&'static str, PathBuf)> {
     paths
 }
 
-fn read_bounded_utf8(path: &Path, max_bytes: u64) -> Option<String> {
-    let meta = std::fs::symlink_metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > max_bytes {
-        return None;
-    }
-    std::fs::read_to_string(path).ok()
-}
-
 fn inspect_local_mihomo() -> MihomoAudit {
+    let discovery = config_source::running_core_configs();
+    if discovery.status == "confirmed" {
+        if let Some(content) = discovery
+            .paths
+            .first()
+            .and_then(|path| config_source::read_bounded_utf8(path, 2 * 1024 * 1024))
+        {
+            let after = config_source::running_core_configs();
+            let mut audit = audit_mihomo_yaml_structure(&content, Some("mihomo"));
+            audit.config_source = Some("running_core".into());
+            audit.config_source_status = Some(
+                if after.status == "confirmed"
+                    && after.paths == discovery.paths
+                    && after.process_stamps == discovery.process_stamps
+                {
+                    "confirmed"
+                } else {
+                    "ambiguous"
+                }
+                .into(),
+            );
+            return audit;
+        }
+        return MihomoAudit {
+            config_source: Some("running_core".into()),
+            config_source_status: Some("unreadable".into()),
+            ..Default::default()
+        };
+    }
     for (kind, path) in candidate_mihomo_paths() {
         // 限制最大读取 2 MiB，拒绝超大异常文件或符号链接。
-        if let Some(content) = read_bounded_utf8(&path, 2 * 1024 * 1024) {
-            return audit_mihomo_yaml_structure(&content, Some(kind));
+        if let Some(content) = config_source::read_bounded_utf8(&path, 2 * 1024 * 1024) {
+            let mut audit = audit_mihomo_yaml_structure(&content, Some(kind));
+            audit.config_source = Some("candidate_file".into());
+            audit.config_source_status = Some(discovery.status.into());
+            return audit;
         }
     }
-    MihomoAudit::default()
+    MihomoAudit {
+        config_source_status: Some(discovery.status.into()),
+        ..Default::default()
+    }
 }
 
 fn is_virtual_switch_name(header_lower: &str) -> bool {
@@ -601,9 +727,7 @@ pub fn parse_windows_ipconfig_utf8(output: &str) -> SystemNetworkAudit {
                     block.ipv4s.push(ip);
                 }
             } else if key.contains("default gateway") || key.contains("默认网关") {
-                if extract_first_ipv4(val).is_some()
-                    || (!val.is_empty() && val.contains(':'))
-                {
+                if extract_first_ipv4(val).is_some() || (!val.is_empty() && val.contains(':')) {
                     block.has_gateway = true;
                 }
                 in_gateway_continuation = true;
@@ -640,11 +764,7 @@ pub fn parse_windows_ipconfig_utf8(output: &str) -> SystemNetworkAudit {
         let is_tun = is_tun_adapter_name(&block.header)
             || block.has_tun_ipv6_dns
             || block.ipv4s.iter().copied().any(is_fake_ip_or_tun_ipv4)
-            || block
-                .dns_ipv4s
-                .iter()
-                .copied()
-                .any(is_fake_ip_or_tun_ipv4);
+            || block.dns_ipv4s.iter().copied().any(is_fake_ip_or_tun_ipv4);
 
         if is_tun {
             audit.tun_adapter_active = true;
@@ -729,6 +849,14 @@ fn inspect_system_network() -> SystemNetworkAudit {
     audit
 }
 
+pub(crate) fn system_tun_and_dns_status() -> (bool, bool) {
+    let audit = inspect_system_network();
+    (
+        audit.tun_adapter_active,
+        audit.secondary_plaintext_dns_active,
+    )
+}
+
 pub fn parse_cloudflare_trace(domain: &str, body: &str, latency_ms: u64) -> TraceEndpointResult {
     let mut ip: Option<String> = None;
     let mut country: Option<String> = None;
@@ -749,9 +877,7 @@ pub fn parse_cloudflare_trace(domain: &str, body: &str, latency_ms: u64) -> Trac
                     }
                 }
                 "colo" => {
-                    if !v.is_empty()
-                        && v.len() <= 8
-                        && v.bytes().all(|b| b.is_ascii_alphanumeric())
+                    if !v.is_empty() && v.len() <= 8 && v.bytes().all(|b| b.is_ascii_alphanumeric())
                     {
                         colo = Some(v.to_ascii_uppercase());
                     }
@@ -890,6 +1016,7 @@ pub(crate) async fn probe_consistency_urls(
                 error: Some("client_error".into()),
             };
             return ConsistencyProbeReport {
+                context_id: None,
                 claude: fail("claude.ai"),
                 persona: fail("withpersona.com"),
                 unlisted_dns: fail("cloudflare-dns.com"),
@@ -913,11 +1040,8 @@ pub(crate) async fn probe_consistency_urls(
         "withpersona.com",
         p_url,
     ));
-    let t_unlisted = tauri::async_runtime::spawn(fetch_trace_endpoint(
-        client,
-        "cloudflare-dns.com",
-        u_url,
-    ));
+    let t_unlisted =
+        tauri::async_runtime::spawn(fetch_trace_endpoint(client, "cloudflare-dns.com", u_url));
     let t_isp = if include_isp {
         Some(tauri::async_runtime::spawn(async move {
             crate::browser::network::probe(&proxy_owned).await.ok()
@@ -969,6 +1093,7 @@ pub(crate) async fn probe_consistency_urls(
     };
 
     ConsistencyProbeReport {
+        context_id: None,
         claude,
         persona,
         unlisted_dns,
@@ -983,6 +1108,15 @@ pub(crate) async fn probe_consistency_urls(
 pub async fn risk_inspect_local_env(app: tauri::AppHandle) -> Result<LocalRiskSnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let ctx = crate::browser::current_risk_browser_context(&app);
+        let expected = ctx.clone();
+        let browser_identity =
+            crate::browser::risk_browser_identity(&app, &ctx.context_id).map(|identity| {
+                RiskBrowserIdentity {
+                    name: identity.name,
+                    email: identity.email,
+                    status: identity.status.to_string(),
+                }
+            });
         let browser = parse_browser_dns_guard(
             &ctx.configured_proxy,
             ctx.target_country,
@@ -991,34 +1125,53 @@ pub async fn risk_inspect_local_env(app: tauri::AppHandle) -> Result<LocalRiskSn
         );
         let mihomo = inspect_local_mihomo();
         let system = inspect_system_network();
-        LocalRiskSnapshot {
+        if expected != crate::browser::current_risk_browser_context(&app) {
+            return Err("risk_context_changed".to_string());
+        }
+        Ok(LocalRiskSnapshot {
+            context_id: ctx.context_id,
+            browser_identity,
             browser,
             mihomo,
             system,
-        }
+        })
     })
     .await
-    .map_err(|_| "风控环境读取被中断。".to_string())
+    .map_err(|_| "风控环境读取被中断。".to_string())?
 }
 
 #[tauri::command]
 pub async fn risk_probe_consistency(
     app: tauri::AppHandle,
 ) -> Result<ConsistencyProbeReport, String> {
-    let proxy = tauri::async_runtime::spawn_blocking(move || {
-        crate::browser::configured_or_system_proxy(&app)
+    let before_app = app.clone();
+    let context = tauri::async_runtime::spawn_blocking(move || {
+        crate::browser::current_risk_browser_context(&before_app)
     })
     .await
-    .unwrap_or_default();
+    .map_err(|_| "risk_context_unavailable".to_string())?;
+    if context.context_id.is_none() {
+        return Err("risk_context_unavailable".into());
+    }
 
-    Ok(probe_consistency_urls(
-        &proxy,
+    let mut report = probe_consistency_urls(
+        &context.effective_proxy,
         "https://claude.ai/cdn-cgi/trace",
         "https://withpersona.com/cdn-cgi/trace",
         "https://cloudflare-dns.com/cdn-cgi/trace",
         true,
     )
-    .await)
+    .await;
+    let after = tauri::async_runtime::spawn_blocking(move || {
+        crate::browser::current_risk_browser_context(&app)
+    })
+    .await
+    .map_err(|_| "risk_context_unavailable".to_string())?;
+    if context != after {
+        return Err("risk_context_changed".into());
+    }
+    report.context_id = context.context_id;
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -1026,6 +1179,35 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn mihomo_inline_resolvers_distinguish_domestic_encryption_and_plaintext() {
+        let audit = audit_mihomo_yaml_structure("dns:\n    enable: true\n    nameserver: [https://dns.alidns.com/dns-query, tls://dot.pub, h3://resolver.example.invalid/dns-query#RULES]\ntun:\n    enable: true\n    strict-route: true\n", None);
+        assert!(audit.dns_has_encrypted_resolver);
+        assert!(audit.dns_has_domestic_encrypted);
+        assert!(audit.dns_has_remote_doh);
+        assert!(!audit.dns_has_domestic_plain);
+        assert!(audit.dns_projection_complete);
+        assert_eq!(audit.tun_strict_route, Some(true));
+        let plain = audit_mihomo_yaml_structure("dns:\n  nameserver: [223.5.5.5, system]\n", None);
+        assert!(plain.dns_has_domestic_plain);
+        assert!(!plain.dns_has_encrypted_resolver);
+        let serialized = serde_json::to_string(&audit).unwrap();
+        assert!(!serialized.contains("resolver.example.invalid"));
+        assert!(!serialized.contains("RULES"));
+    }
+
+    #[test]
+    fn mihomo_projection_marks_unsupported_maps_aliases_and_nested_flags_uncertain() {
+        for sample in ["dns: {enable: true, nameserver: [https://dns.google/dns-query]}", "dns:\n  nameserver: *resolvers\n", "dns:\n  nameserver: [https://dns.google/dns-query]\ntun:\n  options:\n    strict-route: true\n"] {
+            let audit = audit_mihomo_yaml_structure(sample, None);
+            assert!(!audit.dns_projection_complete);
+            assert_eq!(audit.tun_strict_route, None);
+        }
+        let audit = audit_mihomo_yaml_structure("dns:\n  nameserver:\n    - 'https://custom.example.invalid/dns-query#RULES' # comment\n  enhanced-mode: fake-ip\nproxies:\n  - dns:\n      nameserver: system\n", None);
+        assert!(audit.dns_has_remote_doh);
+        assert!(!audit.dns_has_domestic_plain);
+    }
 
     #[test]
     fn mihomo_audit_extracts_dns_and_persona_gaps_without_leaking_secrets() {
@@ -1162,7 +1344,10 @@ Wireless LAN adapter Wi-Fi:
         assert!(parsed.tun_adapter_active);
         assert!(parsed.public_wan_detected);
         assert!(parsed.secondary_plaintext_dns_active);
-        assert_eq!(parsed.lan_ipv4_candidates, vec!["192.168.31.88".to_string()]);
+        assert_eq!(
+            parsed.lan_ipv4_candidates,
+            vec!["192.168.31.88".to_string()]
+        );
     }
 
     #[test]
@@ -1187,7 +1372,10 @@ Windows IP 配置
 "#;
         let parsed = parse_windows_ipconfig_utf8(campus_and_hotspot);
         assert!(parsed.public_wan_detected);
-        assert_eq!(parsed.lan_ipv4_candidates, vec!["192.168.137.1".to_string()]);
+        assert_eq!(
+            parsed.lan_ipv4_candidates,
+            vec!["192.168.137.1".to_string()]
+        );
     }
 
     #[test]

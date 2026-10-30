@@ -76,7 +76,7 @@ export function CleanupActivity({ activity,identity=false }: {
     identity?:boolean;
 }) {
     const {t}=useI18n();
-    const [open, setOpen] = useState(false);
+    const [open, setOpen] = useState(false); const [dismissed, setDismissed] = useState(false);
     const [now, setNow] = useState(performance.now());
     const logBox = useRef<HTMLDivElement>(null);
     const panel = useRef<HTMLDivElement>(null);
@@ -84,7 +84,7 @@ export function CleanupActivity({ activity,identity=false }: {
     useEffect(() => {
         if (!activity)
             return;
-        setOpen(false);
+        setOpen(false); setDismissed(false);
         follow.current = true;
         if (identity || activity.kind === 'clean' || activity.kind === 'system')
             panel.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -99,6 +99,7 @@ export function CleanupActivity({ activity,identity=false }: {
         logBox.current.scrollTop = logBox.current.scrollHeight; }, [activity?.entries.length, open]);
     if (!activity)
         return null;
+    if (!activity.running && dismissed) return <div className="activity-reopen-bar"><Button variant="ghost" size="small" type="button" data-activity-reopen="" onClick={() => setDismissed(false)}>{t("查看上次记录")}</Button></div>;
     const last = activity.entries.at(-1);
     const elapsed = activity.running ? Math.max(0, now - activity.started) : last?.elapsed_ms || 0;
     const lastStage = last?.stage === 'done' ? [...activity.entries].reverse().find(e => e.stage !== 'done')?.stage : last?.stage;
@@ -109,7 +110,7 @@ export function CleanupActivity({ activity,identity=false }: {
     for(const entry of activity.entries){if(entry.stage==='done')continue;if(steps.at(-1)?.stage===entry.stage)steps[steps.length-1]=entry;else steps.push(entry);}
     const status=activity.running?'running':activity.failed?'error':activity.warning?'warning':'ok';
     return <Panel flat ref={panel} data-status={status} className={cn('cleanup-activity',identity&&'identity-operation', activity.running && 'activity-running', activity.failed && 'activity-failed',activity.warning&&'activity-warning')} aria-label={t(identity?'当前操作进度':"操作活动日志")}>
-    <div className="activity-header"><div>{activity.running ? <ArrowClockwiseIcon className="spin" size={17}/> : <span className="activity-result-symbol">{activity.failed||activity.warning ? '!' : '✓'}</span>}<strong>{activity.title?t(activity.title):activity.kind === 'clean' ? t("清理执行记录") : activity.kind === 'stop' ? t("进程操作记录") : activity.kind === 'system' ? t("电脑设置记录") : activity.kind === 'browser' ? t("浏览器操作记录") : activity.kind === 'identity' ? t("身份操作记录") : activity.kind === 'cli' ? t("CLI 安装记录") : t("扫描记录")}</strong><span className="activity-state">{activity.running ? t("运行中") : activity.failed ? t("已停止 · 请检查") : activity.warning?t('已完成 · 有提示'):t("已完成")}</span></div><div><time>{(elapsed / 1000).toFixed(1)} s</time><Button variant="ghost" size="small" type="button" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? t("收起日志") : t("展开日志")} [{activity.entries.length}]</Button></div></div>
+    <div className="activity-header"><div>{activity.running ? <ArrowClockwiseIcon className="spin" size={17}/> : <span className="activity-result-symbol">{activity.failed||activity.warning ? '!' : '✓'}</span>}<strong>{activity.title?t(activity.title):activity.kind === 'clean' ? t("清理执行记录") : activity.kind === 'stop' ? t("进程操作记录") : activity.kind === 'system' ? t("电脑设置记录") : activity.kind === 'browser' ? t("浏览器操作记录") : activity.kind === 'identity' ? t("身份操作记录") : activity.kind === 'cli' ? t("CLI 安装记录") : t("扫描记录")}</strong><span className="activity-state">{activity.running ? t("运行中") : activity.failed ? t("已停止 · 请检查") : activity.warning?t('已完成 · 有提示'):t("已完成")}</span></div><div><time>{(elapsed / 1000).toFixed(1)} s</time><Button variant="ghost" size="small" type="button" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? t("收起日志") : t("展开日志")} [{activity.entries.length}]</Button>{!activity.running && <Button variant="ghost" size="small" type="button" data-activity-dismiss="" onClick={() => setDismissed(true)}>{t("关闭记录")}</Button>}</div></div>
     {identity&&<ol className="identity-operation-steps" aria-label={t('实际执行阶段')}>{steps.map((step,index)=><li key={index} className={`identity-operation-step step-${step.status}${activity.running&&index===steps.length-1?' step-current':''}`} data-stage={step.stage} data-status={step.status} aria-current={activity.running&&index===steps.length-1?'step':undefined}><span className="identity-operation-dot" aria-hidden="true">{step.status==='ok'?'✓':step.status==='error'?'!':''}</span><span>{t(phaseLabels[step.stage]||step.stage)}</span>{step.total!==null&&<code>{step.current}/{step.total}</code>}</li>)}</ol>}
     <div className={`activity-progress ${activity.running && !determinate ? 'indeterminate' : ''}`} role="progressbar" aria-label={identity?t('当前阶段进度'):t(labels[lastStage || 'scan'] || "操作进度")} aria-valuetext={identity?(count||t(activity.running?'处理中，尚无总量':'操作已结束')):undefined} aria-valuemin={0} aria-valuemax={100} aria-valuenow={determinate ? Math.round(fraction) : !activity.running && !activity.failed ? 100 : undefined}><span style={determinate ? { width: `${fraction}%` } : !activity.running && !activity.failed ? { width: '100%' } : { width: 0 }}/></div>
     <div className="activity-current" role="status" aria-live="polite"><span>{t(last?.message || "准备中…")}{activity.running && <i className="activity-cursor">_</i>}</span>{count && <strong>{count}</strong>}</div>

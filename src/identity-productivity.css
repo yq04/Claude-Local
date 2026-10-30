@@ -1,9 +1,44 @@
-/* [INPUT]: Identity workbench online quota dialog, 5h auto-wakeup panel, compact card MM/DD subscription expiry badge + manual recharge/expiry dialog, observation age, weekly pace tick, sync feedback and recovery queue.
+/* [INPUT]: Identity/warming shared count headers, readable saved-profile email, selected-slot/runtime state, short onboarding, expiry, quota and wakeup state.
  * [OUTPUT]: Accessible ⋯ dropdown menu, Pro/Max pill + right-hand MM/DD subscription expiry tag, manual recharge/expiry date editor dialog, compact primary auto-wake and secondary HUD/sync/menu header action groups with uniform 28px controls, header auto-wakeup pill, auto-wakeup time-window & status panel with compact wrap-safe 4-zone account blocks, quota estimation track with 7d pace tick, sync confirmation pill, result ages and centralized connection recovery styling without changing card geometry.
  * [POS]: Identity productivity presentation; the 180×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
  */
 .identity-observation-age { color: var(--muted-foreground); font-size: 10px; font-weight: 400; }
+
+/* Browser-only warming cards share the fixed identity badge geometry. */
+.identity-library .identity-head-title { min-width: 0; flex-wrap: wrap; }
+.identity-library .identity-card-count { flex: 0 0 auto; }
+/* Warming email lines use .saved to share the ordinary identity card's theme-aware color and opacity. */
+.identity-warming-library .identity-section-head { flex-wrap: wrap; gap: 8px; }
+.identity-warming-library .identity-onboarding-steps { flex-wrap: wrap; overflow: visible; }
+.identity-warming-library .warming-step { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; }
+.identity-warming-library .identity-onboarding-chip { flex-shrink: 1; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.identity-warming-library .warming-empty { color: var(--muted-foreground); margin: 8px 0; font: 400 12px/1.6 var(--font-sans); }
+.identity-card.warming-card::before { background: #22a8b9; }
+.identity-card.warming-card.pro-ready::before { background: #d59b26; }
+.identity-card.warming-card.browser-active { border-color: #22a8b9; }
+.warming-card.browser-active .identity-live-badge { color: var(--identity-good); }
+.warming-card.browser-selected:not(.browser-active) { border-color: var(--identity-line); }
+.warming-card.browser-selected:not(.browser-active) .identity-live-badge { color: var(--identity-muted); }
+.warming-card .identity-live-badge { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 10px; }
+.warming-card .identity-quota-stack { margin-top: 8px; gap: 6px; }
+.warming-card .identity-quota-window { min-height: 62px; padding: 5px; gap: 3px; }
+.warming-card .identity-quota-copy { font-size: 11px; }
+.warming-card .identity-quota-copy > strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.warming-card .identity-quota-reset { font-size: 10px; }
+.warming-card .warming-region, .warming-card .warming-note { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 10px; line-height: 14px; color: var(--identity-muted); }
+.warming-card .identity-card-footer > button { height: 28px; }
+.identity-warming-library .identity-section-head > button { height: 28px; }
+.warming-editor { display: grid; gap: 6px; }
+.warming-editor > label { margin-top: 5px; font-size: 12px; font-weight: 550; }
+.warming-editor > select, .warming-editor > input[type="date"] { min-width: 0; width: 100%; min-height: 28px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font: inherit; font-size: 12px; }
+.warming-editor > select:focus-visible, .warming-editor > input:focus-visible { outline: 2px solid var(--local-accent); outline-offset: 1px; }
+.warming-card .warming-region[data-region-drift="true"] { color: #d97706; }
+:root.dark .warming-card .warming-region[data-region-drift="true"] { color: #fbbf24; }
+.warming-sop-disclosure { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+.warming-sop-body { display: grid; gap: 6px; margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--foreground); }
+.warming-sop-body > p { margin: 0; }
+.warming-sop-disclaimer { font-size: 11px; color: var(--muted-foreground); }
 
 /* ⋯ 菜单触发器与下拉菜单 */
 .identity-menu-trigger {

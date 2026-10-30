@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生只读环境快照（risk_inspect_local_env）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好与双语文案。
- * [OUTPUT]: 电脑 DNS 泄露与 KYC 跨域一致性诊断卡、四端手机防泄露同源桥接工作台（含校园网/公网独立双跳回退）与 6 步实拍飞行清单。
+ * [OUTPUT]: 明确所选浏览器范围的六项配置与HTTP出口诊断、Mihomo strict-route 闭环修复向导、过期结果隔离；桥接安全随机源缺失时局部停用。
  * [POS]: 风控验证主页面；零上游凭据读取、零临时口令落盘、严格拦截非 RFC1918 内网暴露，所有修复通过可审计 AI 提示词或用户显式下载完成。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -9,18 +9,22 @@ import {CheckTickCircle, Refresh} from 'cromma-ui/pika';
 import {useCallback, useEffect, useId, useMemo, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {usePageRefresh} from './app-events';
+import {AppDialog} from './dialog';
 import {useI18n} from './i18n';
 import type {Page} from './navigation';
 import {encodeQrMatrix, renderQrSvgPath} from './qrcode-svg';
 import {
   buildCloseLanBridgePrompt,
   buildDesktopDnsFixPrompt,
+  buildMihomoStrictRouteSnippet,
   buildMobileBridgeConfig,
   buildShadowrocketSocksQrUri,
   buildShadowrocketUniversalAntiLeakConf,
   buildStandaloneMobilePrompt,
   DEFAULT_DEDICATED_LISTENER_PORT,
   evaluateRiskChecks,
+  compareProbeExits,
+  isCurrentRiskProbe,
   generateBridgeCredentials,
   isValidBridgePort,
   isValidRfc1918Ipv4,
@@ -33,7 +37,7 @@ import {
   type MobileClientId,
   type RiskCheckStatus,
 } from './risk-model';
-import {usePreferences} from './settings-model';
+import {maskDisplayName, usePreferences} from './settings-model';
 import './risk-verification.css';
 
 const MOBILE_CLIENTS: readonly {id: MobileClientId; label: string}[] = [
@@ -50,6 +54,14 @@ function statusSymbol(status: RiskCheckStatus): string {
   if (status === 'warn') return '!';
   if (status === 'fail') return '×';
   return '·';
+}
+
+function tryBridgeCredentials(): ReturnType<typeof generateBridgeCredentials> | null {
+  try {
+    return generateBridgeCredentials();
+  } catch {
+    return null;
+  }
 }
 
 export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) => void}) {
@@ -77,7 +89,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
   const [lanIpTouched, setLanIpTouched] = useState(false);
   const [portInput, setPortInput] = useState(String(DEFAULT_DEDICATED_LISTENER_PORT));
   const [portTouched, setPortTouched] = useState(false);
-  const [creds, setCreds] = useState(() => generateBridgeCredentials());
+  const [creds, setCreds] = useState(tryBridgeCredentials);
 
   // 独立模式下纯内存小火箭静态家宽离线生码字段（绝不落盘、不发网络、组件卸载即销毁）
   const [srHost, setSrHost] = useState('');
@@ -87,39 +99,82 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
   const [showSrConfText, setShowSrConfText] = useState(false);
 
   const [checkedSteps, setCheckedSteps] = useState<Record<string, boolean>>({});
+  const [strictRouteGuideOpen, setStrictRouteGuideOpen] = useState(false);
   const [copiedId, setCopiedId] = useState('');
   const [copyingId, setCopyingId] = useState('');
   const [copyError, setCopyError] = useState(false);
   const copyTimer = useRef<number | undefined>(undefined);
+  const live = useRef(false);
+  const request = useRef(0);
+  const operationBusy = useRef(false);
+  const contextInvalidated = useRef(false);
+  const touched = useRef({lanIpTouched, portTouched, modeTouched});
+  touched.current = {lanIpTouched, portTouched, modeTouched};
 
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
 
   const refreshLocalSnapshot = useCallback(async () => {
+    if (operationBusy.current) return;
+    operationBusy.current = true;
+    contextInvalidated.current = false;
+    const id = ++request.current;
+    const current = () => live.current && request.current === id && !contextInvalidated.current;
     setInspecting(true);
     setInspectError('');
+    setLocal(null);
+    setProbe(null);
+    setProbeError('');
     try {
       const snap = await invoke<LocalRiskSnapshot>('risk_inspect_local_env');
+      if (!current()) return;
       setLocal(snap);
-      if (!lanIpTouched) {
+      if (!touched.current.lanIpTouched) {
         setLanIp(snap.system.lan_ipv4_candidates[0] ?? '');
       }
-      if (!portTouched && snap.mihomo.dedicated_listener_port) {
+      if (!touched.current.portTouched && snap.mihomo.dedicated_listener_port) {
         setPortInput(String(snap.mihomo.dedicated_listener_port));
       }
-      if (!modeTouched) {
+      if (!touched.current.modeTouched) {
         const shouldStandalone =
           snap.system.lan_ipv4_candidates.length === 0 || snap.system.public_wan_detected;
         setBridgeMode(shouldStandalone ? 'standalone' : 'lan');
       }
     } catch (err) {
-      setInspectError(err instanceof Error ? err.message : String(err));
+      if (current()) setInspectError(err instanceof Error ? err.message : String(err));
     } finally {
-      setInspecting(false);
+      if (request.current === id) operationBusy.current = false;
+      if (live.current && request.current === id) {
+        setInspecting(false);
+        if (contextInvalidated.current) void refreshLocalSnapshot();
+      }
     }
-  }, [lanIpTouched, modeTouched, portTouched]);
+  }, []);
 
   useEffect(() => {
+    live.current = true;
     void refreshLocalSnapshot();
+    const revalidate = () => {
+      setProbe(null);
+      if (operationBusy.current) {
+        contextInvalidated.current = true;
+        setLocal(null);
+      } else void refreshLocalSnapshot();
+    };
+    const visibility = () => {
+      if (document.visibilityState === 'hidden') {
+        setProbe(null);
+        if (operationBusy.current) contextInvalidated.current = true;
+      } else revalidate();
+    };
+    window.addEventListener('focus', revalidate);
+    document.addEventListener('visibilitychange', visibility);
+    return () => {
+      live.current = false;
+      request.current++;
+      operationBusy.current = false;
+      window.removeEventListener('focus', revalidate);
+      document.removeEventListener('visibilitychange', visibility);
+    };
   }, [refreshLocalSnapshot]);
 
   usePageRefresh(() => {
@@ -129,20 +184,37 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
   });
 
   async function runConsistencyProbe() {
-    if (probing) return;
+    if (operationBusy.current) return;
+    operationBusy.current = true;
+    contextInvalidated.current = false;
+    const id = ++request.current;
+    const current = () => live.current && request.current === id && !contextInvalidated.current;
     setProbing(true);
     setProbeError('');
+    setProbe(null);
+    setLocal(null);
+    setInspectError('');
     try {
-      const [freshLocal, freshProbe] = await Promise.all([
-        invoke<LocalRiskSnapshot>('risk_inspect_local_env').catch(() => local),
-        invoke<ConsistencyProbeReport>('risk_probe_consistency'),
-      ]);
-      if (freshLocal) setLocal(freshLocal);
+      const before = await invoke<LocalRiskSnapshot>('risk_inspect_local_env');
+      if (!current()) return;
+      const freshProbe = await invoke<ConsistencyProbeReport>('risk_probe_consistency');
+      if (!current()) return;
+      const freshLocal = await invoke<LocalRiskSnapshot>('risk_inspect_local_env');
+      if (!current()) return;
+      setLocal(freshLocal);
+      if (!isCurrentRiskProbe(before, freshProbe) || !isCurrentRiskProbe(freshLocal, freshProbe)) {
+        setProbeError('risk.contextChanged');
+        return;
+      }
       setProbe(freshProbe);
     } catch (err) {
-      setProbeError(err instanceof Error ? err.message : String(err));
+      if (current()) setProbeError(err instanceof Error ? err.message : String(err));
     } finally {
-      setProbing(false);
+      if (request.current === id) operationBusy.current = false;
+      if (live.current && request.current === id) {
+        setProbing(false);
+        if (contextInvalidated.current) void refreshLocalSnapshot();
+      }
     }
   }
 
@@ -190,9 +262,10 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
     [local, probe, privacyMask],
   );
   const overallStatus = useMemo(() => summarizeRiskChecks(checks), [checks]);
+  const comparison = probe ? compareProbeExits(probe) : 'unknown';
 
   const bridgeArtifact = useMemo(() => {
-    if (!validLanIp || !validPort) return null;
+    if (!creds || !validLanIp || !validPort) return null;
     return buildMobileBridgeConfig({
       client,
       lanIp,
@@ -200,7 +273,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
       username: creds.username,
       password: creds.password,
     });
-  }, [client, creds.password, creds.username, lanIp, parsedPort, validLanIp, validPort]);
+  }, [client, creds, lanIp, parsedPort, validLanIp, validPort]);
 
   const qrSvg = useMemo(() => {
     if (!bridgeArtifact) return null;
@@ -226,7 +299,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
 
   const openLanBridgePrompt = useMemo(
     () =>
-      buildDesktopDnsFixPrompt({
+      creds ? buildDesktopDnsFixPrompt({
         locale,
         dedicatedPort: safePort,
         enableLanBridge: true,
@@ -234,8 +307,8 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
         lanPassword: creds.password,
         clientKind: local?.mihomo.client_kind,
         targetTimezone,
-      }),
-    [creds.password, creds.username, local?.mihomo.client_kind, locale, safePort, targetTimezone],
+      }) : '',
+    [creds, local?.mihomo.client_kind, locale, safePort, targetTimezone],
   );
 
   const closeLanBridgePrompt = useMemo(
@@ -311,6 +384,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
             variant="secondary"
             size="small"
             loading={probing}
+            disabled={inspecting}
             leftIcon={<Refresh size={14} className={probing ? 'spin' : ''} aria-hidden="true" />}
             onClick={() => void runConsistencyProbe()}
           >
@@ -346,13 +420,13 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                   <small>{maskIpAddress(probe.claude.ip, privacyMask)}</small>
                 </span>
                 <span
-                  className={`risk-trace-verdict ${probe.same_country && probe.same_exit_ip ? 'ok' : 'fail'}`}
+                  className={`risk-trace-verdict ${comparison === 'same_ip' ? 'ok' : comparison === 'different_country' ? 'fail' : 'pending'}`}
                 >
-                  {probe.same_country && probe.same_exit_ip
+                  {comparison === 'same_ip'
                     ? t('risk.compare.sameIp')
-                    : probe.same_country
+                    : comparison === 'same_country'
                       ? t('risk.compare.sameCountryDiffIp')
-                      : t('risk.compare.splitLeak')}
+                      : comparison === 'different_country' ? t('risk.compare.splitLeak') : t('risk.compare.unknown')}
                 </span>
                 <span className="risk-trace-chip">
                   <strong>withpersona.com</strong>
@@ -362,6 +436,13 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               </div>
             )}
           </div>
+
+          <p className="risk-audit-scope">{t('risk.audit.scope')}</p>
+          <p className="risk-audit-scope" data-browser-owner-scope>{t('risk.browserOwnerScope')}</p>
+          {local?.browser_identity && <p className="risk-audit-scope" data-risk-browser-identity={local.browser_identity.status}>
+            {t(local.browser_identity.status === 'warming' ? 'browser.verificationWarmingOwner' : 'browser.verificationOwner', {name: maskDisplayName(local.browser_identity.name, local.browser_identity.email, privacyMask)})}
+          </p>}
+          {local && <p className="risk-audit-scope">{t(local.mihomo.config_source === 'running_core' && local.mihomo.config_source_status === 'confirmed' ? 'risk.audit.runningSource' : local.mihomo.config_source === 'candidate_file' ? 'risk.audit.candidateSource' : 'risk.audit.unknownSource')}</p>}
 
           {(inspectError || probeError) && (
             <div role="alert" className="system-feedback error">
@@ -378,6 +459,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                 <div className="risk-check-body">
                   <strong>{t(item.titleKey)}</strong>
                   <p>{t(item.summaryKey, item.summaryParams)}</p>
+                  {item.detailKeys?.map(key => <p key={key}>{t(key, item.summaryParams)}</p>)}
                 </div>
               </article>
             ))}
@@ -389,6 +471,16 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               {local && !local.browser.remote_dns_locked && onNavigate && (
                 <Button variant="secondary" size="small" onClick={() => onNavigate('browser')}>
                   {t('risk.action.openBrowserSettings')}
+                </Button>
+              )}
+              {local?.mihomo.tun_enabled === true && local?.mihomo.tun_strict_route === false && (
+                <Button
+                  variant="secondary"
+                  size="small"
+                  data-open-strict-route-guide
+                  onClick={() => setStrictRouteGuideOpen(true)}
+                >
+                  {t('risk.action.openStrictRouteGuide')}
                 </Button>
               )}
               <Button
@@ -530,17 +622,19 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                 <div className="risk-cred-box">
                   <div className="risk-cred-tokens">
                     <span>{t('risk.mobile.ephemeralCreds')}</span>
-                    <code>{creds.username}</code>
-                    <code>{privacyMask ? '••••••••••••' : creds.password}</code>
+                    <code>{creds?.username || '—'}</code>
+                    <code>{creds ? (privacyMask ? '••••••••••••' : creds.password) : '—'}</code>
                   </div>
                   <Button
                     variant="secondary"
                     size="small"
-                    onClick={() => setCreds(generateBridgeCredentials())}
+                    onClick={() => setCreds(tryBridgeCredentials())}
                   >
                     {t('risk.action.rotateCreds')}
                   </Button>
                 </div>
+
+                {!creds && <p className="risk-field-error" role="alert">{t('risk_secure_random_unavailable')}</p>}
 
                 <div className="risk-step-actions">
                   <div className="risk-step-line">
@@ -551,7 +645,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                     <Button
                       variant="secondary"
                       size="small"
-                      disabled={copyingId !== '' || !validPort}
+                      disabled={copyingId !== '' || !validPort || !creds}
                       leftIcon={copiedId === 'open-bridge' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
                       onClick={() => void copyText('open-bridge', openLanBridgePrompt)}
                     >
@@ -876,6 +970,77 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
           </ol>
         </section>
       </div>
+
+      <AppDialog
+        open={strictRouteGuideOpen}
+        onOpenChange={setStrictRouteGuideOpen}
+        title={t('risk.strictRouteGuide.title')}
+        description={t('risk.strictRouteGuide.subtitle')}
+        width={620}
+        footer={
+          <>
+            <Button variant="secondary" data-dialog-cancel onClick={() => setStrictRouteGuideOpen(false)}>
+              {t('取消')}
+            </Button>
+            <Button
+              variant="secondary"
+              data-reverify-strict-route
+              disabled={inspecting || probing}
+              loading={inspecting}
+              leftIcon={<Refresh size={14} className={inspecting ? 'spin' : ''} aria-hidden />}
+              onClick={() => void refreshLocalSnapshot()}
+            >
+              {t('risk.strictRouteGuide.reverify')}
+            </Button>
+          </>
+        }
+      >
+        <div className="risk-strict-route-guide" data-strict-route-guide>
+          <div className="risk-callout">
+            <strong>{t('risk.strictRouteGuide.whyNotEnoughTitle')}</strong>
+            <span>{t('risk.strictRouteGuide.whyNotEnough')}</span>
+          </div>
+          <ol className="risk-strict-route-steps">
+            <li>{t('risk.strictRouteGuide.step1')}</li>
+            <li>{t('risk.strictRouteGuide.step2')}</li>
+            <li>{t('risk.strictRouteGuide.step3')}</li>
+          </ol>
+          <pre className="risk-conf-preview" data-strict-route-snippet>
+            {buildMihomoStrictRouteSnippet()}
+          </pre>
+          <div className="risk-action-group">
+            <Button
+              variant="secondary"
+              size="small"
+              data-copy-strict-route-snippet
+              disabled={copyingId !== ''}
+              leftIcon={copiedId === 'strict-route-snippet' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
+              onClick={() => void copyText('strict-route-snippet', buildMihomoStrictRouteSnippet())}
+            >
+              {t('risk.strictRouteGuide.copySnippet')}
+            </Button>
+            <Button
+              variant="secondary"
+              size="small"
+              disabled={copyingId !== ''}
+              leftIcon={copiedId === 'desktop-fix' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
+              onClick={() => void copyText('desktop-fix', desktopFixPrompt)}
+            >
+              {t('risk.action.copyDesktopFix')}
+            </Button>
+          </div>
+          <p
+            className={`risk-strict-route-status ${local?.mihomo.tun_strict_route === true ? 'ok' : 'warn'}`}
+            data-strict-route-live-status={local?.mihomo.tun_strict_route === true ? 'ok' : 'pending'}
+          >
+            {t(
+              local?.mihomo.tun_strict_route === true
+                ? 'risk.strictRouteGuide.verifiedOk'
+                : 'risk.strictRouteGuide.verifiedPending',
+            )}
+          </p>
+        </div>
+      </AppDialog>
     </section>
   );
 }

@@ -1,5 +1,5 @@
 // [INPUT]: Win32 Toolhelp/进程句柄、当前用户 SID、精确 CLI 入口与独立浏览器资料路径。
-// [OUTPUT]: Claude 进程零侵入识别（优先 PROCESS_QUERY_LIMITED_INFORMATION + (pid, created) 缓存）、创建时间/所有权复核后的结束，以及按完整资料参数正常关闭浏览器。
+// [OUTPUT]: Claude 进程零侵入识别（优先 PROCESS_QUERY_LIMITED_INFORMATION + (pid, created) 缓存）、创建时间/所有权复核后的结束、按完整资料参数正常关闭浏览器及只读可见窗口采样。
 // [POS]: Windows 进程边界；原生二进制免 PROCESS_VM_READ/ReadProcessMemory；参数仅用于 node/bun/chrome 判定，不返回 UI。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{current_sid, input, process_sid, response};
@@ -29,7 +29,9 @@ use windows_sys::Win32::{
     },
     UI::{
         Shell::CommandLineToArgvW,
-        WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE},
+        WindowsAndMessaging::{
+            EnumWindows, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, WM_CLOSE,
+        },
     },
 };
 struct Handle(HANDLE);
@@ -515,6 +517,122 @@ pub unsafe fn rf_browser_running(profile: *const c_char) -> *mut c_char {
 pub unsafe fn rf_browser_quit(profile: *const c_char) -> *mut c_char {
     response(browser(input(profile), true).map(|_| json!({"ok":true})))
 }
+
+struct BrowserWindowProbe {
+    // Keep process handles alive throughout the window enumeration. Only this
+    // already-proven profile's Chrome processes may own an observed window.
+    processes: Vec<(u32, u64, String, Handle)>,
+    visible: bool,
+    uncertain: bool,
+}
+fn visible_profile_window(
+    owner: u32,
+    visible: bool,
+    proven: impl IntoIterator<Item = u32>,
+) -> bool {
+    visible && proven.into_iter().any(|pid| pid == owner)
+}
+unsafe extern "system" fn inspect_browser_window(window: HWND, state: LPARAM) -> i32 {
+    let probe = &mut *(state as *mut BrowserWindowProbe);
+    let mut owner = 0;
+    GetWindowThreadProcessId(window, &mut owner);
+    if !visible_profile_window(
+        owner,
+        IsWindowVisible(window) != 0,
+        probe.processes.iter().map(|(pid, _, _, _)| *pid),
+    ) {
+        return 1;
+    }
+    let Some((_, created, image, _)) = probe.processes.iter().find(|(pid, _, _, _)| *pid == owner)
+    else {
+        return 1;
+    };
+    // A PID observed in the Toolhelp snapshot is insufficient after process
+    // exit/reuse. Reopen and compare its creation time and exact executable.
+    match Handle::open_limited(owner) {
+        Some(handle)
+            if handle.created() == Some(*created)
+                && handle.image().as_deref() == Some(image.as_str()) =>
+        {
+            probe.visible = true;
+        }
+        _ => probe.uncertain = true,
+    }
+    1
+}
+
+/// Read-only current-user Chrome/profile observation. This deliberately avoids
+/// `processes()`: it never opens a Claude/node/bun process or reads its arguments.
+/// An inspection failure is unknown to callers, never evidence of a closed UI.
+pub(crate) fn browser_runtime(profile: &Path) -> Result<(bool, bool), String> {
+    const UNKNOWN: &str = "无法检查浏览器窗口状态。";
+    if !profile.is_absolute() {
+        return Err("资料路径无效。".into());
+    }
+    let profile = profile.to_str().ok_or(UNKNOWN)?;
+    let sid = current_sid().ok_or(UNKNOWN)?;
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(UNKNOWN.into());
+    }
+    let snapshot = Handle(snapshot);
+    let mut entry = unsafe { std::mem::zeroed::<PROCESSENTRY32W>() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut has = unsafe { Process32FirstW(snapshot.0, &mut entry) };
+    if has == 0 {
+        return Err(UNKNOWN.into());
+    }
+    let mut probe = BrowserWindowProbe {
+        processes: Vec::new(),
+        visible: false,
+        uncertain: false,
+    };
+    while has != 0 {
+        let name = String::from_utf16_lossy(&entry.szExeFile)
+            .trim_end_matches('\0')
+            .to_lowercase();
+        if name == "chrome.exe" && entry.th32ProcessID > 1 {
+            let raw =
+                unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, entry.th32ProcessID) };
+            if raw.is_null() {
+                return Err(UNKNOWN.into());
+            }
+            let limited = Handle(raw);
+            let owner = unsafe { process_sid(limited.0) }.ok_or(UNKNOWN)?;
+            if &owner == sid {
+                let image = limited.image().ok_or(UNKNOWN)?;
+                if normalized(&image).ends_with("\\chrome.exe") {
+                    let created = limited.created().ok_or(UNKNOWN)?;
+                    let handle = Handle::open(entry.th32ProcessID, false).ok_or(UNKNOWN)?;
+                    if handle.created() != Some(created) {
+                        return Err(UNKNOWN.into());
+                    }
+                    let args = arguments(&handle).ok_or(UNKNOWN)?;
+                    if profile_matches(&args, profile) {
+                        probe
+                            .processes
+                            .push((entry.th32ProcessID, created, image, handle));
+                    }
+                }
+            }
+        }
+        has = unsafe { Process32NextW(snapshot.0, &mut entry) };
+    }
+    if probe.processes.is_empty() {
+        return Ok((false, false));
+    }
+    if unsafe {
+        EnumWindows(
+            Some(inspect_browser_window),
+            (&mut probe as *mut BrowserWindowProbe) as LPARAM,
+        )
+    } == 0
+        || probe.uncertain
+    {
+        return Err(UNKNOWN.into());
+    }
+    Ok((true, probe.visible))
+}
 // ----- 本次安装子进程树：超时和宿主退出都不会留下后台安装器 -----
 pub(crate) struct ChildJob(Handle);
 impl ChildJob {
@@ -551,6 +669,14 @@ impl ChildJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runtime_window_requires_visibility_and_proven_profile_pid() {
+        let selected_profile_pids = [101, 103];
+        assert!(visible_profile_window(101, true, selected_profile_pids));
+        assert!(!visible_profile_window(101, false, selected_profile_pids));
+        assert!(!visible_profile_window(102, true, selected_profile_pids));
+        assert!(!visible_profile_window(101, true, []));
+    }
     #[test]
     fn exact_arguments_reject_substrings_and_unrelated_scripts() {
         assert!(official_cli(&[

@@ -1,11 +1,15 @@
 # src/
+browser/lifecycle.rs: 当前槽位只读SQLite快照与精确资料进程/窗口三态；窄读公开账号元数据并以既有HMAC证明当前CLI，提供遮罩摘要、确认后的仅浏览器返回核验与失败补偿，不调用CLI停止/身份切换或全量摘要读取。
+windows_process.rs / windows.rs: 精确当前用户Chrome资料进程和可见顶层窗口的只读状态；后台进程与用户窗口分开，保留原进程占用保护与原生Claude零VM_READ边界。
+risk_check.rs: 本地快照可携带同context_id核对后的遮罩浏览器归属，旧快照字段缺失仍兼容；不改变配置/HTTP采样的核验范围。
 > L2 | 父级: ../CLAUDE.md
 identities/wakeup.rs: setup创建唯一进程级自动续杯owner；Root前端仅迁移/订阅，切页/托盘隐藏不中断，实际Exit停止。与手动入口共用既有collect门禁与预算，不添加服务、计划任务或新HTTP。
 清理在本机执行；网络页仅提供用户触发的固定 Claude 服务连通性诊断，没有供应商导航或 Skill 依赖。生产命令提供身份压缩暂存、空身份切换、恢复、独立确认的直接删除及当前默认 Claude 文件残留维护。用户选择保留或随身份暂存，文件残留另经扫描和选择清理，系统设置独立。
 identities/ - SQLite 身份目录、用户保留策略、加密压缩暂存、空身份切换、恢复、选择性直接删除与独立本地 Token 统计账本；见其 CLAUDE.md。
+identities/warming.rs - 独立私有 warming_cards.json 与 Free 浏览器养号卡命令（含注册国家/时区锁定、出口国家与配置时区一致性探针 `identities_warming_probe_check`），普通操作不停止 CLI、不更改 CLI 身份；显式转正继承原 ID/槽位/种子与手动订阅到期日，当前卡删除先脱离到全新空白浏览器槽位。
 identities/online.rs - 固定端点在线额度与账号绑定的网页元数据桥，原生仅编排隐藏Python进程并读取白名单摘要；前台近实时需用户显式开启，后台不轮询。
 identities/subscription.rs - 独立于 SQLite user_version=3 与 Python quota_ledger 的手动订阅到期/充值日私有原子存储（identity-vault/manual_subscriptions.json），支持按 +1 自然月安全推算到期日、UTC 正午跨时区无偏移时间戳与较新网页账单优先合并，绝不终止运行中的 claude.exe。
-identities/backup.rs / backup_tests.rs: 口令派生（ring PBKDF2/AES-GCM）身份全量与救援备份/恢复、SQLite 在线快照、归档清单与记录强校验（version=1、id/HMAC 强一致、data/n 完整性）、有界解包防护。
+identities/backup.rs / backup_tests.rs: 口令派生（ring PBKDF2/AES-GCM）身份全量与救援备份/恢复、SQLite 在线快照、归档清单与记录强校验（version=1、id/HMAC 强一致、data/n 完整性、可选 warming_cards.json 与 manual_subscriptions.json 全链路打包及浏览器绑定/种子校验）、有界解包防护。
 identities/quota_connection.rs: 集中连接与路由修复队列；打开独立绑定浏览器登录，不切换全局 CLI，不重放未经验证路由。
 identities/online_native_chain_tests.rs: 真实原生编排核心、资源解析、系统 Python、回环接收器与单写者账本的闭环测试夹具。
 
@@ -19,6 +23,7 @@ ui_language.rs: 受 zh/en 白名单限制的界面偏好，原子持久化后发
 ui_appearance.rs: 界面外观偏好（主题、6 色强调色、字体栈、五层光学毛玻璃无级参数与 8 款壁纸画布）及自定义壁纸 Data URI 的原生白名单校验、Win32 私有 ACL 原子落盘（ui-appearance.json / ui-wallpaper.json）与主窗口原生标题栏明暗主题同步（set_theme）。
 monitor_window.rs: 独立可开关无边框「实时额度悬浮监控窗」（monitor）生命周期、三态尺寸（340×258 / 340×152 / 52×138）、置顶/位置锁定/边缘磁吸/贴边隐藏与透明度机制；复用 identities::usage 的节流增量采集和严格当前账号账本查询，展示5h四类Token、去重响应、固定近10分钟均值速率、缓存命中及最近实际模型。无可靠账号证据显示未确认，不借用全库或历史fallback；不独立扫描JSONL、不猜成本或上下文上限，5h/7d配额与倒计时保留。
 browser/: 指纹浏览器、资料与缓存边界、真实浏览器回报及目标地区环境核验；见其 CLAUDE.md。
+risk_check.rs / risk_config_source.rs: 只读六项风险审计，受限已知核心配置来源证据、有界无链接文件投影、加密DNS与明文分开、解析不完整保持未知；HTTP出口探针冻结浏览器槽位/配置/有效路由，变化拒收，不读取或轮换凭据、不修改系统设置。
 windows.rs: Win32 剪贴板、当前用户 TokenUser/TokenOwner/管理员组文件所有权与权限保留回退、Win32 与注册表读取时区/首选语言/定位偏好/系统代理（跳过空白环境变量并区分 SOCKS4/5）、缓存系统版本与用户触发设置；控制台工具隐藏窗口，外部链接；拒绝凭据管理器自动读取和 SSH 操作。
 windows_tests.rs: 临时文件所有者/长路径、虚构输入的空白代理回退与 SOCKS 协议回归；本机不修改系统设置，时区还原测试仅允许一次性 CI。
 windows_timezones.rs: CLDR 48 固定全量 Windows/IANA 映射与目录别名，无运行时下载或猜测；原始许可证作为 Windows 资源交付。

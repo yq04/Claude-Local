@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 随机令牌回环服务上下文、浏览器原生 navigator/Intl/Permissions/WebRTC/WebGL/Canvas/Audio/UA-CH 与实际 HTTPS 出口与服务备援目录与宿主界面语言。
- * [OUTPUT]: 单项未知与整体未完成保持黄色待测，明确机房分类来源和无STUN分阶段耗时，已知冲突红叉；顶部身份工牌、紧凑 20 项防封实测页（内建 Ping0/CheckCC/BrowserScan/IPHey 核心检测算法：ISP/ASN 纯净度、时区偏移、Canvas/音频指纹与客户端提示），同步宿主双语及通讯/回报时间。
+ * [OUTPUT]: 明确被测养号/CLI浏览器归属与仅环境范围的20项实测页；未知保持待测，分类来源和WebRTC耗时可追溯。
  * [POS]: 独立 Chromium 入口，复用工具箱控件；成功状态只由真实观测决定，不接入 Tauri 权限，不伪造地理位置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -223,8 +223,8 @@ function Start() {
     const title=phase==='checking'?'检测中':phase==='passed'?'检测通过':phase==='incomplete'?'检测未完成':'检测未通过';
     const identity=context?.identity;
     const identityName=identity?.name||t(identity?.status==='empty'?'空身份':identity?.status==='unlinked'?'通用浏览器资料':'当前身份');
-    const identityStatus=!context&&busy?'正在读取身份':!linked?'主应用未连接':!identity?'身份待核对':identity.status==='unlinked'?'未联动':identity.status==='mismatch'?'身份待同步':identity.status==='unknown'?'身份待核对':'身份已联动';
-    const identityReady=linked&&!!identity?.linked&&['linked','draft','empty'].includes(identity.status);
+    const identityStatus=!context&&busy?'正在读取身份':!linked?'主应用未连接':!identity?'身份待核对':identity.status==='warming'?'warming.verificationOwner':identity.status==='unlinked'?'未联动':identity.status==='mismatch'?'身份待同步':identity.status==='unknown'?'身份待核对':'身份已联动';
+    const identityReady=linked&&!!identity?.linked&&['linked','draft','empty','warming'].includes(identity.status);
     const ispKind = classifyExitIsp(report?.exit);
 
     return <div className={`browser-verification-page is-${phase}`} data-verification={phase}>
@@ -232,9 +232,10 @@ function Start() {
       <header className="verification-brand"><div><img src={browserLogo} width={28} height={28} alt=""/><strong>Claude-Local Browser</strong></div><span>Chromium {context?.engine_version||'—'}</span></header>
       <section className={`verification-identity${identityReady?' linked':''}`} aria-label={t('浏览器身份')} data-identity={identity?.status||'unknown'}>
        <div className="verification-identity-avatar" aria-hidden="true">{identity?.status==='empty'?'∅':Array.from(identityName)[0]?.toUpperCase()||'?'}</div>
-       <div className="verification-identity-account"><span>Claude · {t('本地身份')}</span><h2>{identityName}</h2><div>{identity?.email&&identity.email!==identityName&&<span>{identity.email}</span>}{identity?.organization&&<span>{identity.organization}</span>}</div></div>
+       <div className="verification-identity-account"><span>{t(identity?.status==='warming'?'warming.verificationOwner':'浏览器身份')}</span><h2>{identityName}</h2><div>{identity?.email&&identity.email!==identityName&&<span>{identity.email}</span>}{identity?.organization&&<span>{identity.organization}</span>}</div></div>
        <span className={`verification-identity-state${identity?.status==='mismatch'||identity?.status==='unknown'?' attention':''}`} role="status">{t(identityStatus)}</span>
       </section>
+      <p className="verification-scope" data-browser-verification-scope>{t('browser.verificationScope')}</p>
       <section className="verification-banner" aria-labelledby="verification-title" aria-busy={busy}>
        <div className="verification-signal" aria-hidden="true"><i/><i/><svg viewBox="0 0 96 96"><circle cx="48" cy="48" r="44" fill="currentColor"/>{phase==='passed'?<path d="m27 49 14 14 28-31"/>:phase==='failed'?<path d="m34 34 28 28m0-28L34 62"/>:<><path d="M48 27v23"/><circle cx="48" cy="65" r="3" fill="white" stroke="none"/></>}</svg></div>
        <div className="verification-title" aria-live="polite"><span>{t('浏览器环境')}</span><h1 id="verification-title">{t(title)}</h1>{!busy&&<span>{t('已通过 {v0} / {v1} 项',{v0:checks.filter(check=>check.ok).length,v1:checks.length})}</span>}</div>

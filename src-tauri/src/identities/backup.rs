@@ -1,6 +1,6 @@
-// [INPUT]: 固定 app_data_dir 下的身份保险库、SQLite online backup、ring PBKDF2/AES-GCM 与用户明确选择的备份文件。
-// [OUTPUT]: 口令认证加密备份、脱敏预览/验收及保留源的全新私有恢复副本；独占暂存目录在失败/展开时回收，成功清理异常显式诊断。
-// [POS]: 身份数据管理边界；只封装 identities.sqlite、key.bin 和数据库引用的 .baga 归档，不触碰工作区/浏览器/Claude 配置。
+// [INPUT]: 固定 app_data_dir 下的身份保险库（含可选 warming_cards.json 与 manual_subscriptions.json）、SQLite online backup、ring PBKDF2/AES-GCM 与用户明确选择的备份文件。
+// [OUTPUT]: 口令认证加密备份、脱敏预览/验收（含养号卡槽位/种子与手动订阅强校验）及保留源的全新私有恢复副本；独占暂存目录在失败/展开时回收，成功清理异常显式诊断。
+// [POS]: 身份数据管理边界；只封装 identities.sqlite、key.bin、数据库引用的 .baga 归档及可选养号卡/手动订阅元数据，不触碰工作区/浏览器/Claude 配置。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{codec, private};
 use ring::pbkdf2;
@@ -416,7 +416,7 @@ fn collect_files(
     catalog: &Catalog,
     snapshot: &Path,
 ) -> Result<Vec<(String, PathBuf, u64, String)>, String> {
-    let mut files = Vec::with_capacity(catalog.archives.len() + 2);
+    let mut files = Vec::with_capacity(catalog.archives.len() + 4);
     files.push((
         "identity-vault/identities.sqlite".into(),
         snapshot.to_path_buf(),
@@ -424,6 +424,16 @@ fn collect_files(
     files.push(("identity-vault/key.bin".into(), vault.join("key.bin")));
     for name in &catalog.archives {
         files.push((format!("identity-vault/{name}"), vault.join(name)));
+    }
+    let warming_path = vault.join(super::warming::FILE_NAME);
+    if fs::symlink_metadata(&warming_path).is_ok_and(|meta| meta.is_file()) {
+        super::warming::read_cards(vault)?;
+        files.push(("identity-vault/warming_cards.json".into(), warming_path));
+    }
+    let sub_path = vault.join(super::subscription::FILE_NAME);
+    if fs::symlink_metadata(&sub_path).is_ok_and(|meta| meta.is_file()) {
+        super::subscription::read_store_checked(vault)?;
+        files.push(("identity-vault/manual_subscriptions.json".into(), sub_path));
     }
     let mut total = 0u64;
     let mut checked = Vec::with_capacity(files.len());
@@ -477,6 +487,14 @@ fn rescue_files(
         }
     }
     let mut candidates = vec![db.clone(), key.clone(), wal.clone()];
+    for optional_name in [super::warming::FILE_NAME, super::subscription::FILE_NAME] {
+        let optional_path = vault.join(optional_name);
+        if fs::symlink_metadata(&optional_path)
+            .is_ok_and(|meta| meta.is_file() && !crate::cleaner::linked(&meta))
+        {
+            candidates.push(optional_path);
+        }
+    }
     let entries = fs::read_dir(vault).map_err(|_| "身份保险库目录无法只读检查。".to_string())?;
     let mut archive_candidates = 0usize;
     for item in entries {
@@ -488,7 +506,7 @@ fn rescue_files(
             continue;
         }
         archive_candidates += 1;
-        if archive_candidates > MAX_MEMBERS - 3 {
+        if archive_candidates > MAX_MEMBERS - 5 {
             return Err("身份归档数量超过救援副本上限。".into());
         }
         candidates.push(entry.path());
@@ -809,6 +827,10 @@ fn verify_staged(
                     .map(|name| format!("identity-vault/{name}")),
             )
             .collect();
+    let optional_allowed = [
+        "identity-vault/warming_cards.json",
+        "identity-vault/manual_subscriptions.json",
+    ];
     let mut got = std::collections::BTreeSet::new();
     let mut total = 0u64;
     for file in &manifest.files {
@@ -817,7 +839,7 @@ fn verify_staged(
                 .path
                 .split('/')
                 .any(|part| part.is_empty() || part == "." || part == "..")
-            || !expected.contains(&file.path)
+            || (!expected.contains(&file.path) && !optional_allowed.contains(&file.path.as_str()))
             || !got.insert(file.path.clone())
             || file.sha256.len() != 64
         {
@@ -833,7 +855,7 @@ fn verify_staged(
             return Err("备份成员哈希与清单不符。".into());
         }
     }
-    if got != expected {
+    if !expected.is_subset(&got) {
         return Err("备份缺少必要身份文件或归档。".into());
     }
     let db = Connection::open_with_flags(
@@ -855,6 +877,24 @@ fn verify_staged(
             &record_id,
             record_account_key.as_deref(),
         )?;
+    }
+    if got.contains("identity-vault/warming_cards.json") {
+        let warming_cards = super::warming::read_cards(&vault)?;
+        let db_check = super::database::Database { connection: db };
+        for c in &warming_cards {
+            let slot = db_check
+                .browser_for(&c.id)?
+                .ok_or("备份中的养号卡缺少浏览器槽位绑定。")?;
+            if !super::browser_link::valid_slot(&slot) {
+                return Err("备份中的养号卡缺少浏览器槽位绑定。".into());
+            }
+            db_check
+                .browser_seed(&slot)?
+                .ok_or("备份中的养号卡缺少浏览器指纹种子。")?;
+        }
+    }
+    if got.contains("identity-vault/manual_subscriptions.json") {
+        super::subscription::read_store_checked(&vault)?;
     }
     Ok((catalog, manifest))
 }
@@ -891,7 +931,11 @@ fn verify_rescue_staged(root: &Path) -> Result<Manifest, String> {
             .ok_or_else(error)?;
         if !matches!(
             relative,
-            "identities.sqlite" | "identities.sqlite-wal" | "key.bin"
+            "identities.sqlite"
+                | "identities.sqlite-wal"
+                | "key.bin"
+                | "warming_cards.json"
+                | "manual_subscriptions.json"
         ) && !archive_filename(relative)
         {
             return Err("加密救援包包含不允许的证据文件。".into());
@@ -1197,93 +1241,93 @@ pub async fn identities_backup_export(
     cleaner.enter()?;
     let _guard = CleanerGuard(app.clone());
     tauri::async_runtime::spawn_blocking(move || {
-        let vault = app
+        let root = app
             .path()
             .app_data_dir()
-            .map_err(|_| "产品资料目录无法定位。")?
-            .join("identity-vault");
-        let parent = app
-            .path()
-            .app_data_dir()
-            .map_err(|_| "产品资料目录无法定位。")?
-            .join("backup-staging");
-        let (files, manifest, mut scratch) = if rescue_mode {
-            let (files, mut diagnostics) = rescue_files(&vault, true)?;
-            if files.is_empty() {
-                return Err("没有可读的身份保险库证据，无法创建救援副本。".into());
-            }
-            let (saved_identities, recovery) =
-                database_counts(&vault.join("identities.sqlite")).unwrap_or((0, false));
-            if recovery && !diagnostics.iter().any(|value| value == "recovery_pending") {
-                diagnostics.push("recovery_pending".into());
-            }
-            let archives = files
-                .iter()
-                .filter(|(name, _, _, _)| name.ends_with(".baga"))
-                .count() as u64;
-            (
-                files.clone(),
-                make_rescue_manifest(saved_identities, archives, diagnostics, &files),
-                None,
-            )
-        } else {
-            let catalog = source_catalog(&vault, true)?;
-            let mut scratch = ScratchGuard::create(&parent, "snapshot")?;
-            let snapshot_result = (|| {
-                let snapshot = scratch.join("identities.sqlite");
-                backup_snapshot(&vault.join("identities.sqlite"), &snapshot)?;
-                let files = collect_files(&vault, &catalog, &snapshot)?;
-                let manifest = make_manifest(&catalog, &files)?;
-                Ok((files, manifest))
-            })();
-            let (files, manifest) =
-                snapshot_result.map_err(|failure| scratch.cleanup_error(failure))?;
-            (files, manifest, Some(scratch))
-        };
-        let result = (|| {
-            let output = private::create(&path)?;
-            let sealed = write_envelope(output, password.as_slice())?;
-            let sealed = write_tar(sealed, &manifest, &files)?;
-            let output = sealed.finish().map_err(|_| error())?;
-            output.sync_all().map_err(|_| error())?;
-            drop(output);
-            let stage_parent = app
-                .path()
-                .app_data_dir()
-                .map_err(|_| "产品资料目录无法定位。")?
-                .join("backup-staging");
-            let (mut verified_stage, verified_manifest, _) =
-                stage_archive(&path, &stage_parent, password.as_slice(), rescue_mode)?;
-            let mut diagnostics = Vec::new();
-            verified_stage.cleanup_diagnostic(&mut diagnostics);
-            let length = fs::metadata(&path).map_err(|_| error())?.len();
-            Ok(BackupReceipt {
-                path: path.to_string_lossy().into_owned(),
-                saved_identities: verified_manifest.saved_identities,
-                archives: verified_manifest.archives,
-                bytes: length,
-                encrypted: true,
-                verified: !rescue_mode,
-                rescue_copy: rescue_mode,
-                source_preserved: true,
-                diagnostics,
-            })
-        })();
-        match result {
-            Ok(mut receipt) => {
-                if let Some(scratch) = &mut scratch {
-                    scratch.cleanup_diagnostic(&mut receipt.diagnostics);
-                }
-                Ok(receipt)
-            }
-            Err(failure) => Err(match &mut scratch {
-                Some(scratch) => scratch.cleanup_error(failure),
-                None => failure,
-            }),
-        }
+            .map_err(|_| "产品资料目录无法定位。")?;
+        export_from_root(&root, &path, password.as_slice(), rescue_mode)
     })
     .await
     .map_err(|_| "加密备份任务中断；源保险库未修改。".to_string())?
+}
+pub(super) fn export_from_root(
+    root: &Path,
+    path: &Path,
+    password: &[u8],
+    rescue_mode: bool,
+) -> Result<BackupReceipt, String> {
+    let vault = root.join("identity-vault");
+    let parent = root.join("backup-staging");
+    let (files, manifest, mut scratch) = if rescue_mode {
+        let (files, mut diagnostics) = rescue_files(&vault, true)?;
+        if files.is_empty() {
+            return Err("没有可读的身份保险库证据，无法创建救援副本。".into());
+        }
+        let (saved_identities, recovery) =
+            database_counts(&vault.join("identities.sqlite")).unwrap_or((0, false));
+        if recovery && !diagnostics.iter().any(|value| value == "recovery_pending") {
+            diagnostics.push("recovery_pending".into());
+        }
+        let archives = files
+            .iter()
+            .filter(|(name, _, _, _)| name.ends_with(".baga"))
+            .count() as u64;
+        (
+            files.clone(),
+            make_rescue_manifest(saved_identities, archives, diagnostics, &files),
+            None,
+        )
+    } else {
+        let catalog = source_catalog(&vault, true)?;
+        let mut scratch = ScratchGuard::create(&parent, "snapshot")?;
+        let snapshot_result = (|| {
+            let snapshot = scratch.join("identities.sqlite");
+            backup_snapshot(&vault.join("identities.sqlite"), &snapshot)?;
+            let files = collect_files(&vault, &catalog, &snapshot)?;
+            let manifest = make_manifest(&catalog, &files)?;
+            Ok((files, manifest))
+        })();
+        let (files, manifest) =
+            snapshot_result.map_err(|failure| scratch.cleanup_error(failure))?;
+        (files, manifest, Some(scratch))
+    };
+    let result = (|| {
+        let output = private::create(path)?;
+        let sealed = write_envelope(output, password)?;
+        let sealed = write_tar(sealed, &manifest, &files)?;
+        let output = sealed.finish().map_err(|_| error())?;
+        output.sync_all().map_err(|_| error())?;
+        drop(output);
+        let stage_parent = root.join("backup-staging");
+        let (mut verified_stage, verified_manifest, _) =
+            stage_archive(path, &stage_parent, password, rescue_mode)?;
+        let mut diagnostics = Vec::new();
+        verified_stage.cleanup_diagnostic(&mut diagnostics);
+        let length = fs::metadata(path).map_err(|_| error())?.len();
+        Ok(BackupReceipt {
+            path: path.to_string_lossy().into_owned(),
+            saved_identities: verified_manifest.saved_identities,
+            archives: verified_manifest.archives,
+            bytes: length,
+            encrypted: true,
+            verified: !rescue_mode,
+            rescue_copy: rescue_mode,
+            source_preserved: true,
+            diagnostics,
+        })
+    })();
+    match result {
+        Ok(mut receipt) => {
+            if let Some(scratch) = &mut scratch {
+                scratch.cleanup_diagnostic(&mut receipt.diagnostics);
+            }
+            Ok(receipt)
+        }
+        Err(failure) => Err(match &mut scratch {
+            Some(scratch) => scratch.cleanup_error(failure),
+            None => failure,
+        }),
+    }
 }
 #[tauri::command]
 pub async fn identities_backup_inspect(
@@ -1332,12 +1376,14 @@ pub async fn identities_backup_restore_new(
         .path()
         .app_data_dir()
         .map_err(|_| "产品资料目录无法定位。")?;
-    let (mut stage, manifest, _) = stage_archive(
-        &path,
-        &root.join("backup-staging"),
-        password.as_slice(),
-        true,
-    )?;
+    restore_from_archive(&path, &root, password.as_slice())
+}
+pub(super) fn restore_from_archive(
+    path: &Path,
+    root: &Path,
+    password: &[u8],
+) -> Result<RestoreReceipt, String> {
+    let (mut stage, manifest, _) = stage_archive(&path, &root.join("backup-staging"), password, true)?;
     let result = (|| {
         let target_parent = root.join("restored-vaults");
         let destination = new_private_dir(&target_parent, "verified-copy")?;
@@ -1385,7 +1431,11 @@ pub async fn identities_backup_restore_new(
             if let Some(name) = rel
                 .file_name()
                 .and_then(|name| name.to_str())
-                .filter(|name| name.ends_with(".baga"))
+                .filter(|name| {
+                    name.ends_with(".baga")
+                        || *name == super::warming::FILE_NAME
+                        || *name == super::subscription::FILE_NAME
+                })
             {
                 copy_private(&stage.join(rel), &copy_vault.join(name))?;
             }
@@ -1415,6 +1465,18 @@ pub async fn identities_backup_restore_new(
             let (bytes, hash) = digest(&copy_vault.join(&name))?;
             if expected_hashes
                 .get(relative.as_str())
+                .is_none_or(|expected| expected.0 != bytes || expected.1 != hash)
+            {
+                return Err("新恢复副本的哈希校验失败；原文件与备份均保留。".into());
+            }
+        }
+        for file in &manifest.files {
+            let Some(name) = file.path.strip_prefix("identity-vault/") else {
+                return Err("新恢复副本的哈希校验失败；原文件与备份均保留。".into());
+            };
+            let (bytes, hash) = digest(&copy_vault.join(name))?;
+            if expected_hashes
+                .get(file.path.as_str())
                 .is_none_or(|expected| expected.0 != bytes || expected.1 != hash)
             {
                 return Err("新恢复副本的哈希校验失败；原文件与备份均保留。".into());

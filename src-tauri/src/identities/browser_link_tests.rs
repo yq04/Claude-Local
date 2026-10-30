@@ -1,5 +1,5 @@
 // [INPUT]: 临时 SQLite 目录、虚构身份 ID 与可注入的数据库拒绝。
-// [OUTPUT]: 默认勾选、显式关闭保留、摘要脱敏与绑定不匹配、A/B 绑定复用、空资料轮换、稳定种子冲突、回滚/重开与旧目录迁移回归。
+// [OUTPUT]: 默认联动与脱敏、CLI事务/回滚保留养号选择与独占槽位、受控转正同 ID/种子及失败草稿清理回归。
 // [POS]: 浏览器选择与身份事务同提交的证明，不读取真实账号或钥匙串。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -14,6 +14,12 @@ fn record(id: &str) -> database::Record {
         empty: false,
         account_key: Some(id.into()),
     }
+}
+fn warming_card(vault: &std::path::Path, id: &str) {
+    private::write(&vault.join("warming_cards.json"), &serde_json::to_vec(&serde_json::json!({
+        "version": 1, "cards": [{ "id": id, "name": "Warming sample", "email": "warming@example.invalid", "note": null,
+        "stage": "pro_ready", "created_ymd": "2026-10-01", "last_warmed_ymd": null, "created_at": 1, "updated_at": 1 }]
+    })).unwrap()).unwrap();
 }
 struct Fixture(std::path::PathBuf);
 impl Fixture {
@@ -225,4 +231,177 @@ fn browser_card_uses_only_bound_display_fields_and_never_renames_old_browser_for
     let snapshot = db.browser_identity(&f.0, &home).unwrap();
     assert_eq!(snapshot.status, "unlinked");
     assert!(snapshot.name.is_none());
+}
+
+#[test]
+fn warming_browser_only_selection_keeps_cli_state_and_has_independent_bound_seed() {
+    let f = Fixture::new();
+    let mut db = f.db();
+    let a = record(&new_id().unwrap());
+    db.remember(&a).unwrap();
+    db.complete(&a.id).unwrap();
+    let active = db.get("active").unwrap();
+    let since = db.get("active_since").unwrap();
+    let cli_slot = db.browser_slot().unwrap();
+    let w = new_id().unwrap();
+    let (slot, seed) = db.bind_warming(&w).unwrap();
+    assert_ne!(slot, cli_slot);
+    assert_eq!(db.bind_warming(&w).unwrap(), (slot.clone(), seed));
+    let other = db.bind_warming(&new_id().unwrap()).unwrap();
+    assert_ne!(other.0, slot);
+    assert_ne!(other.1, seed);
+    db.switch_browser_slot_only(&slot).unwrap();
+    assert_eq!(db.get("active").unwrap(), active);
+    assert_eq!(db.get("active_since").unwrap(), since);
+    assert_eq!(db.browser_slot().unwrap(), slot);
+    assert_eq!(
+        db.browser_for(&a.id).unwrap().as_deref(),
+        Some(cli_slot.as_str())
+    );
+    assert_eq!(db.records().unwrap().len(), 1);
+    assert!(db.browser_draft().unwrap().is_none());
+    assert!(db.switch_browser_slot_only("../escape").is_err());
+    assert!(db.remove_warming_binding(&w).is_err());
+    db.switch_browser_slot_only(&cli_slot).unwrap();
+    db.remove_warming_binding(&w).unwrap();
+    assert!(db.browser_for(&w).unwrap().is_none());
+    db.pending(&a, "empty").unwrap();
+    assert!(db.switch_browser_slot_only(&other.0).is_err());
+    assert!(db.bind_warming(&new_id().unwrap()).is_err());
+}
+
+#[test]
+fn warming_promotion_requires_controlled_empty_and_keeps_id_slot_seed_across_reopen() {
+    let f = Fixture::new();
+    let mut db = f.db();
+    let a = record(&new_id().unwrap());
+    db.remember(&a).unwrap();
+    db.complete(&a.id).unwrap();
+    let cli_slot = db.browser_slot().unwrap();
+    let w = new_id().unwrap();
+    warming_card(&f.0, &w);
+    let (slot, seed) = db.bind_warming(&w).unwrap();
+    db.prepare_warming_promotion(&w, &slot).unwrap();
+    assert_eq!(db.get("active").unwrap().as_deref(), Some(a.id.as_str()));
+    assert!(
+        db.browser_draft().unwrap().is_none(),
+        "outgoing Pro cannot reuse warming ID"
+    );
+    db.pending(&a, "empty").unwrap();
+    assert!(db.browser_draft().unwrap().is_none());
+    db.complete("empty").unwrap();
+    assert_eq!(db.browser_slot().unwrap(), slot);
+    assert_eq!(
+        db.browser_for(&a.id).unwrap().as_deref(),
+        Some(cli_slot.as_str())
+    );
+    drop(db);
+    let mut db = f.db();
+    assert_eq!(db.browser_draft().unwrap().as_deref(), Some(w.as_str()));
+    let identity = db
+        .browser_identity(&f.0, &f.0.join("unavailable-home"))
+        .unwrap();
+    assert_eq!(identity.status, "warming");
+    assert_eq!(identity.name.as_deref(), Some("Warming sample"));
+    assert_eq!(identity.email.as_deref(), Some("warming@example.invalid"));
+    assert!(identity.cli_proxy.is_none());
+    db.remember(&record(&w)).unwrap();
+    db.complete(&w).unwrap();
+    assert_eq!(db.browser_for(&w).unwrap().as_deref(), Some(slot.as_str()));
+    assert_eq!(db.browser_seed(&slot).unwrap(), Some(seed));
+    assert!(db.get("browser.promotion").unwrap().is_none());
+    assert!(db.browser_draft().unwrap().is_none());
+}
+
+#[test]
+fn warming_promotion_cancel_or_rollback_cannot_reuse_reserved_id() {
+    let f = Fixture::new();
+    let mut db = f.db();
+    let a = record(&new_id().unwrap());
+    db.remember(&a).unwrap();
+    db.complete(&a.id).unwrap();
+    let original = db.browser_slot().unwrap();
+    let w = new_id().unwrap();
+    warming_card(&f.0, &w);
+    let (slot, seed) = db.bind_warming(&w).unwrap();
+    db.prepare_warming_promotion(&w, &slot).unwrap();
+    db.rollback_warming_promotion(&w).unwrap();
+    assert_eq!(db.browser_slot().unwrap(), original);
+    assert!(db.get("browser.promotion").unwrap().is_none());
+    db.prepare_warming_promotion(&w, &slot).unwrap();
+    db.pending(&a, "empty").unwrap();
+    db.complete(&a.id).unwrap();
+    assert_eq!(db.browser_slot().unwrap(), original);
+    assert!(db.browser_draft().unwrap().is_none());
+    assert_eq!(db.browser_seed(&slot).unwrap(), Some(seed));
+    db.prepare_warming_promotion(&w, &slot).unwrap();
+    db.pending(&a, "empty").unwrap();
+    db.complete("empty").unwrap();
+    db.switch_browser_slot_only(&original).unwrap();
+    assert!(db.get("browser.promotion").unwrap().is_none());
+    assert!(db.browser_draft().unwrap().is_none());
+}
+
+#[test]
+fn cli_database_transactions_keep_warming_selection_across_commit_reopen_rollback_and_delete() {
+    let f = Fixture::new();
+    let mut db = f.db();
+    let a = record(&new_id().unwrap());
+    let b = record(&new_id().unwrap());
+    let w = new_id().unwrap();
+    warming_card(&f.0, &w);
+    let (slot, seed) = db.bind_warming(&w).unwrap();
+    db.switch_browser_slot_only(&slot).unwrap();
+    // Neither outgoing nor incoming CLI identity has an existing browser slot.
+    db.remember(&a).unwrap();
+    db.remember(&b).unwrap();
+    db.pending(&a, &b.id).unwrap();
+    let cli_a = db.browser_for(&a.id).unwrap().unwrap();
+    let cli_b = db.browser_for(&b.id).unwrap().unwrap();
+    assert_ne!(cli_a, slot);
+    assert_ne!(cli_b, slot);
+    assert_ne!(cli_a, cli_b);
+    assert_eq!(db.get("browser.previous").unwrap(), Some(slot.clone()));
+    assert_eq!(db.get("browser.next").unwrap(), Some(slot.clone()));
+    drop(db);
+    let mut db = f.db();
+    assert!(db.get("recovery").unwrap().is_some());
+    db.complete(&a.id).unwrap();
+    assert_eq!(
+        db.browser_slot().unwrap(),
+        slot,
+        "rollback preserves the selected warming card"
+    );
+    db.pending(&a, &b.id).unwrap();
+    db.complete(&b.id).unwrap();
+    assert_eq!(db.get("active").unwrap(), Some(b.id.clone()));
+    assert_eq!(db.browser_slot().unwrap(), slot);
+    db.complete(&b.id).unwrap();
+    assert_eq!(
+        db.browser_slot().unwrap(),
+        slot,
+        "same-account shortcut does not steal the browser"
+    );
+    db.complete("empty").unwrap();
+    assert_eq!(
+        db.browser_slot().unwrap(),
+        slot,
+        "direct current deletion preserves warming"
+    );
+    let c = record(&new_id().unwrap());
+    db.remember(&c).unwrap();
+    db.complete(&c.id).unwrap();
+    assert_ne!(db.browser_for(&c.id).unwrap(), Some(slot.clone()));
+    assert_eq!(
+        db.browser_slot().unwrap(),
+        slot,
+        "saving a new CLI identity keeps warming"
+    );
+    db.forget(&b.id).unwrap();
+    assert_eq!(db.browser_for(&w).unwrap(), Some(slot.clone()));
+    assert_eq!(db.browser_seed(&slot).unwrap(), Some(seed));
+    assert!(db.current_browser_is_warming().unwrap());
+    assert!(db.get("recovery").unwrap().is_none());
+    assert!(db.get("browser.previous").unwrap().is_none());
+    assert!(db.get("browser.next").unwrap().is_none());
 }

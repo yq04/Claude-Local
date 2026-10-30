@@ -1,7 +1,7 @@
 /**
  * [INPUT]: Node.js 标准管道、已锁定 playwright-core、固定引擎、Vite 与 tests/ 的虚构 Tauri IPC。
  * [OUTPUT]: 单行本地保存名与长名称重命名、隐私提示、工牌/离线额度、浏览器/网络与清理确认、真实阶段动画及额度重置推定恢复的双语 DOM 验收。
- * [POS]: 发布前无头行为回归；无截图、无真实账号/文件修改，不加载原生宿主，不允许外网请求。支持 --quota-reset-only、--passive-only、--wakeup-only 与 --verification-only 聚焦验证。
+ * [POS]: 发布前无头行为回归；无真实账号/文件修改，不加载原生宿主，不允许外网请求。支持 --quota-reset-only、--passive-only、--wakeup-only、--verification-only 与 --warming-only；养号预览仅存 ignored .local/。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {strict as assert} from 'node:assert';
@@ -20,6 +20,8 @@ import {testQuotaReset} from './test-quota-reset.ts';
 import {testIdentityOnline} from './test-identity-online.ts';
 import {testIdentityPassive} from './test-identity-passive.ts';
 import {testNativeWakeup} from './test-native-wakeup.ts';
+import {testWarmingUi} from './test-warming-ui.ts';
+const warmingOnly=process.argv.includes('--warming-only');
 const wakeupOnly=process.argv.includes('--wakeup-only');
 const verificationOnly=process.argv.includes('--verification-only');
 const quotaResetOnly=process.argv.includes('--quota-reset-only');
@@ -45,7 +47,10 @@ try{browser=await chromium.launch({executablePath:resolve('browser-runtime',engi
 catch(error){await server.close();await rm(temporary,{recursive:true,force:true});throw error;}
 let checks=0;
 try{
- if(verificationOnly){
+ if(warmingOnly){
+  checks+=await testWarmingUi(browser,base);
+  console.log(`${checks} warming UI checks passed; synthetic context only.`);
+ }else if(verificationOnly){
   checks+=await testBrowserVerification(browser,base);
   console.log(`${checks} browser verification UI checks passed; synthetic context only.`);
  }else if(wakeupOnly){
@@ -76,7 +81,7 @@ try{
  assert.equal(await cards.filter({has:page.getByRole('heading',{name:'Identity 1',exact:true})}).count(),1);
  assert.equal(await page.locator('.identity-card.current h3[data-identity-name] > strong').innerText(),'Identity 1','The current identity must prefer its local saved name');
  assert.equal(await cards.locator('.identity-user-name,.identity-saved-name').count(),0,'Account names must not add a second visible title row');
- assert.match(await page.locator('.identity-onboarding-bar').innerText(),/添加新号 3 步法/);checks++;
+ assert.match(await page.locator('.identity-library:not(.identity-warming-library) .identity-onboarding-bar').innerText(),/添加新号 3 步法/);checks++;
  const geometry=await cards.evaluateAll(nodes=>nodes.slice(0,3).map(node=>{const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}));
  assert.equal(geometry[0].y,geometry[2].y);assert(geometry[2].x+geometry[2].width<1040-150);assert(Math.abs(geometry[0].width/geometry[0].height-54/85.6)<.01);checks++;
  assert.equal(await page.getByRole('checkbox',{name:'联动浏览器',exact:true}).isChecked(),true);
@@ -197,7 +202,7 @@ try{
  await dialog.getByRole('button',{name:'确认直接删除'}).click();await renamed.waitFor({state:'detached'});
  assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);checks++;
  await page.evaluate(()=>{(window as any).identityFixture.language('en');});
- await page.getByRole('button',{name:'New identity',exact:true}).waitFor();assert.match(await page.locator('.identity-onboarding-bar').innerText(),/Add a new account in 3 steps/);checks++;
+ await page.getByRole('button',{name:'New identity',exact:true}).waitFor();assert.match(await page.locator('.identity-library:not(.identity-warming-library) .identity-onboarding-bar').innerText(),/Add a new account in 3 steps/);checks++;
  await page.evaluate(()=>{(window as any).identityFixture.setFailure('identities_switch');});
  await page.getByRole('button',{name:'New identity',exact:true}).click();
  await page.getByRole('dialog').getByRole('button',{name:'Archive & switch'}).click();

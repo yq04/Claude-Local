@@ -1,17 +1,26 @@
 /**
- * [INPUT]: 原生浏览器配置、机器快照和起始页实际观测。
- * [OUTPUT]: 不含令牌的绑定身份摘要、有效时区/语言、出口分类来源与受控失败原因、有界 WebRTC 原因/耗时、共享观测契约与三平台设备核验。
+ * [INPUT]: 原生浏览器配置、网络防漏断路器状态、机器快照和起始页实际观测。
+ * [OUTPUT]: 不含令牌的浏览器/CLI 归属摘要、冻结回切账号与当前槽位、有效时区/语言、出口分类来源、断路器契约与有界观测契约。
  * [POS]: 浏览器页面与宿主的边界，不持有凭据或执行清理。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 export type BrowserConfig={seed:number;proxy:string;follow_machine:boolean;language:string;timezone:string;native_graphics:boolean};
+export interface KillSwitchState {
+  enabled: boolean;
+  triggered: boolean;
+  reason_code?: string | null;
+  expected_country?: string | null;
+  observed_country?: string | null;
+  triggered_at?: number | null;
+  closed_slots: string[];
+}
 export type Machine={platform:string;version:string;cores:number;timezone:string;languages:string[];locale:string;locale_country?:string;location_enabled:boolean|null;timezones:string[]};
 export type HostingError='rate_limited'|'timeout'|'http_error'|'network_error'|'invalid_response'|'ip_mismatch'|'response_too_large';
 export type Exit={ip:string;country:string;city:string;timezone:string;isp:string;asn?:string;hosting?:boolean;hosting_source?:'ipquery';hosting_error?:HostingError};
 export type Report={schema_version?:number;language:string;languages:string[];timezone:string;platform:string;cores:number;user_agent:string;platform_version:string;browser_version:string;geolocation:string;exit:Exit|null;error:string;webrtc_ok?:boolean|null;webrtc_detail?:string;webrtc_reason?:'complete'|'non_local_candidate'|'constructor_error'|'setup_error'|'offer_error'|'description_error'|'negotiation_timeout'|'gathering_timeout';webrtc_elapsed_ms?:number;webdriver?:boolean;graphics_ok?:boolean;webgl_renderer?:string;tz_offset_ok?:boolean|null;tz_offset_detail?:string;media_fingerprint_ok?:boolean|null;media_fingerprint_detail?:string;client_hints_ok?:boolean|null;client_hints_detail?:string};
-export type BrowserIdentity={linked:boolean;status:'linked'|'draft'|'empty'|'unlinked'|'mismatch'|'unknown';name:string|null;email:string|null;organization:string|null;cli_proxy?:string|null};
+export type BrowserIdentity={linked:boolean;status:'linked'|'draft'|'empty'|'unlinked'|'mismatch'|'unknown'|'warming';name:string|null;email:string|null;organization:string|null;cli_proxy?:string|null};
 export type BrowserContext={identity?:BrowserIdentity;ui_language:'zh'|'en';exit_services:string[];exit_classification_service?:string;region:{id:string;label:string;country:string;language:string;locale:string;timezone:string}|null;config:BrowserConfig;machine:Machine;engine_version:string};
-export type BrowserState=BrowserContext&{engine_ready:boolean;running:boolean;profile:string;identity_linked?:boolean;cache:{path:string;bytes:number;login:boolean}[];cache_error:string;report:Report|null;report_received_at:number|null;machine_exit:Exit|null;checks:{id:string;title:string;status:'ok'|'mismatch'|'pending';detail:string}[]};
+export type BrowserState=BrowserContext&{engine_ready:boolean;running:boolean;profile:string;active_browser_slot?:string;cli_identity?:BrowserIdentity|null;cli_expected_identity?:string|null;identity_linked?:boolean;cache:{path:string;bytes:number;login:boolean}[];cache_error:string;report:Report|null;report_received_at:number|null;machine_exit:Exit|null;checks:{id:string;title:string;status:'ok'|'mismatch'|'pending';detail:string}[]};
 export type DefaultBrowser={is_default:boolean;http:string;https:string;installed:boolean;app:string};
 
 const HOSTING_ISP_RE = /\b(amazon|aws|google\s*cloud|gcp|microsoft|azure|digitalocean|linode|akamai|vultr|choopa|constant\s*company|hetzner|ovh|m247|contabo|leaseweb|datacamp|cdn77|cloudflare|fastly|oracle\s*cloud|alibaba|aliyun|tencent|zenlayer|sharktech|multacom|psychz|quadranet|colocrossing|nocix|wholesale\s*internet|scaleway|upcloud|kamatera|bandwagon|it7\s*networks|hostwinds|racknerd|buyvm|frantech|dmit|cloudie|v\.ps|xtom|kurun|cera|ceranetworks|datacenter|data\s*center|hosting|vps|cloud\s*server)\b/i;

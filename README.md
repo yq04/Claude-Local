@@ -15,7 +15,7 @@
 
 基于开源项目 [CCBaga](https://github.com/liseami/CCBaga)（[@liseami](https://github.com/liseami)）二次开发并独立维护，保留原贡献者版权与 [MIT 许可](LICENSE) · 纯本地单机优先（Local-First） · 零云端凭据托管 · 绝不强杀运行中的 `claude.exe`
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.2.2-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2)
+[![Latest Release](https://img.shields.io/badge/Release-v0.2.3-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.3)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe"><strong>⬇️ 下载 v0.2.2 安装包 (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.3/Claude-Local_0.2.3_x64-setup.exe"><strong>⬇️ 下载 v0.2.3 安装包 (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.2"><strong>✨ v0.2.2 Release 页面</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.3"><strong>✨ v0.2.3 Release 页面</strong></a>
   ·
   <a href="#-界面与核心功能全览"><strong>🖼️ 界面预览</strong></a>
   ·
@@ -154,7 +154,7 @@ Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **W
 
 ### 维护与边界声明
 
-- **独立演进与独立发行**：Claude-Local 在本仓库独立维护，发行版本号从 **`0.1.0`** 起算（当前最新版为 **`0.2.2`**）。本项目未配置针对上游仓库的自动代码同步，不接入任何外部自动更新端点，亦不依赖上游发行流水线。
+- **独立演进与独立发行**：Claude-Local 在本仓库独立维护，发行版本号从 **`0.1.0`** 起算（当前最新版为 **`0.2.3`**）。本项目未配置针对上游仓库的自动代码同步，不接入任何外部自动更新端点，亦不依赖上游发行流水线。
 - **开源许可边界**：完整保留原 CCBaga 贡献者版权与 MIT 声明（见 [LICENSE](LICENSE)）；其他第三方组件与图标资产按各自许可证条款管理（详见 [NOTICE.md](NOTICE.md) 与 [分发说明](docs/DISTRIBUTION.md)）。
 - **非官方声明**：本项目为独立开源辅助工具，非 Anthropic 或 CCBaga 官方产品，不代表任何官方背书或商业支持承诺。
 
@@ -162,30 +162,31 @@ Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **W
 
 ## 📦 获取、安装与版本记录
 
-### 1. 下载最新安装包（`v0.2.2`）
+### 1. 下载最新安装包（`v0.2.3`）
 
 | 发行资产 | 适用系统 | 文件大小 | SHA-256 校验和 |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.2.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.2/Claude-Local_0.2.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,697,822` 字节 (134.18 MiB) | `981b26f6cec183cabf58baefe8bb8184a4d9d647eb30cc65570dd3e111838617` |
+| **[Claude-Local_0.2.3_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.3/Claude-Local_0.2.3_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,883,227` 字节 (134.36 MiB) | `fa122f952b9a0a7987e51047eb3b341171820e58823a4b15380cd85d362b3e31` |
 
-下载后在 PowerShell 中计算 SHA-256，并与 [v0.2.2 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.2) 公布的校验值比对：
+下载后在 PowerShell 中计算 SHA-256，并与 [v0.2.3 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.3) 公布的校验值比对：
 
 ```powershell
-Get-FileHash .\Claude-Local_0.2.2_x64-setup.exe -Algorithm SHA256
-# 预期 SHA-256：981b26f6cec183cabf58baefe8bb8184a4d9d647eb30cc65570dd3e111838617
+Get-FileHash .\Claude-Local_0.2.3_x64-setup.exe -Algorithm SHA256
+# 预期 SHA-256：fa122f952b9a0a7987e51047eb3b341171820e58823a4b15380cd85d362b3e31
 ```
 
 ### 2. 安装与无损升级说明
 
 1. **安装位置与标识**：采用当前用户模式 NSIS 安装程序，默认安装至 `%LOCALAPPDATA%\Programs\Claude-Local`；主程序为 `claude-local.exe`，应用包标识为 `ai.local.claude-local`，伴侣浏览器注册名为 `Claude-Local-Browser`。
 2. **用户数据目录**：所有加密身份库、主密钥、额度/用量账本、外观壁纸配置与隔离浏览器个人资料均独立保存在 `%APPDATA%\ai.local.claude-local`。
-3. **平滑升级**：从 `0.1.x` 或 `0.2.0` 升级至 `0.2.2` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
+3. **平滑升级**：从 `0.1.x`、`0.2.0` 或 `0.2.2` 升级至 `0.2.3` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
 
 ### 3. 发行版本演进记录
 
 | 版本 | 发布日期 | 核心演进内容 | 详细文档 |
 | :--- | :--- | :--- | :--- |
-| **`v0.2.2`** *(Latest)* | 2026-10-29 | 身份卡片 `PRO`/`MAX` 右侧 `MM/DD` 订阅到期显示与手动充值补录、「风控验证」跨域出口与手机同住宅出口 KYC 桥接、统计身份独立登记与受控续聊归属、四类 Token 构成与共享账本 HUD | [发布说明](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
+| **`v0.2.3`** *(Latest)* | 2026-10-30 | 伴生浏览器按需无阻断防泄露断路器（Kill-Switch）、Mihomo `strict-route` 分层闭环修复向导、养号卡片国家/时区锁定与打开前防漂移核验、阶段防封 SOP 指南、高负荷速率提示与全链路加密备份扩展 | [发布说明](docs/RELEASE_NOTES_0.2.3_SECURITY.md) · [交付核验](docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md) |
+| **`v0.2.2`** | 2026-10-29 | 身份卡片 `PRO`/`MAX` 右侧 `MM/DD` 订阅到期显示与手动充值补录、「风控验证」跨域出口与手机同住宅出口 KYC 桥接、统计身份独立登记与受控续聊归属、四类 Token 构成与共享账本 HUD | [发布说明](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
 | **`v0.2.0`** | 2026-10-26 | **Token Monitor 风格多模态悬浮监控小窗（置顶/锁定/磁吸/贴边隐藏/透明度/主题联动）**、**官方 API 美元等效花费与缓存节省分析（历史功能）**、**勾选联动浏览器切号自动弹出验证页**、全工作区界面减负与导航栏美化 | [更新说明](docs/UI_MONITOR_0.2.0.md) · [发布说明](docs/RELEASE_NOTES_0.2.0.md) · [交付核验](docs/RELEASE_VERIFICATION_0.2.0.md) |
 | **`v0.1.5`** | 2026-10-26 | 五大核心页面冗余说明精简、身份与用量工具栏分组重构、隔离演示数据预览重拍与已安装生产包 20 项浏览器核验 | [界面精简说明](docs/UI_POLISH_0.1.5.md) · [交付核验](docs/RELEASE_VERIFICATION_0.1.5_UI.md) |
 | **`v0.1.4`** | 2026-10-26 | 伴侣浏览器同 IP 机房分类查询生产环境 CSP（`api.ipquery.io`）完整闭环与回归验证 | [浏览器 CSP 修复](docs/BROWSER_CSP_0.1.4.md) · [交付核验](docs/RELEASE_VERIFICATION_0.1.4_BROWSER.md) |

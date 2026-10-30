@@ -1,5 +1,5 @@
 // [INPUT]: 身份 SQLite 绑定、独立浏览器根目录、受限配置和用户确认后的切换事务。
-// [OUTPUT]: 每身份独占资料/配置选择、初始稳定种子、安全退出/重开与崩溃时启动阻断；退出成功与随后同步各自发出真实阶段事件。
+// [OUTPUT]: CLI/养号独占资料与稳定种子、只读槽位查询、普通CLI事务保留养号会话、显式返回/转正/恢复启动阻断。
 // [POS]: 身份与浏览器的协调边界；资料不压缩、不复制、不合并 Cookie，失败状态如实返回。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -27,6 +27,92 @@ pub(super) fn slot_path(root: &Path, slot: &str) -> Result<PathBuf, String> {
 }
 pub(super) fn scope(root: &Path) -> Result<PathBuf, String> {
     slot_path(root, &database(root)?.browser_slot()?)
+}
+/// Runtime sampling must not call Database::open: it initializes schemas and
+/// ACLs. Read the two selection fields from one read-only SQLite snapshot.
+pub(super) fn selected_slot_readonly(root: &Path) -> Result<String, String> {
+    use rusqlite::OptionalExtension;
+    let vault = root
+        .parent()
+        .ok_or("应用目录不可用。")?
+        .join("identity-vault");
+    let path = vault.join("identities.sqlite");
+    private::parents(&vault)?;
+    private::safe(&path)?;
+    let mut connection = rusqlite::Connection::open_with_flags(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| "无法读取浏览器选择。")?;
+    connection
+        .busy_timeout(std::time::Duration::from_millis(100))
+        .map_err(|_| "无法读取浏览器选择。")?;
+    let tx = connection
+        .transaction()
+        .map_err(|_| "无法读取浏览器选择。")?;
+    let read = |key: &str| {
+        tx.query_row("SELECT value FROM state WHERE key=?1", [key], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .map_err(|_| "无法读取浏览器选择。".to_string())
+    };
+    let slot = if read("browser.enabled")?.as_deref() == Some("1") {
+        read("browser.active")?.ok_or("浏览器资料选择无效。")?
+    } else {
+        "legacy".to_string()
+    };
+    if !browser_link::valid_slot(&slot) {
+        return Err("浏览器资料选择无效。".into());
+    }
+    Ok(slot)
+}
+/// Existing-profile return/rollback changes only the selection, never enabled,
+/// draft, promotion, CLI active, bindings or seeds. Compare the old pointer in
+/// the same transaction so a later native selection is not overwritten.
+pub(super) fn select_existing_slot(root: &Path, expected: &str, next: &str) -> Result<(), String> {
+    use rusqlite::OptionalExtension;
+    if !browser_link::valid_slot(expected) || !browser_link::valid_slot(next) {
+        return Err("浏览器资料选择无效。".into());
+    }
+    let vault = root
+        .parent()
+        .ok_or("应用目录不可用。")?
+        .join("identity-vault");
+    let path = vault.join("identities.sqlite");
+    private::parents(&vault)?;
+    private::safe(&path)?;
+    let mut connection = rusqlite::Connection::open_with_flags(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| "无法更新浏览器选择。")?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| "无法更新浏览器选择。")?;
+    let tx = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|_| "无法更新浏览器选择。")?;
+    let read = |key: &str| {
+        tx.query_row("SELECT value FROM state WHERE key=?1", [key], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .map_err(|_| "无法更新浏览器选择。".to_string())
+    };
+    if read("recovery")?.is_some()
+        || read("browser.promotion")?.is_some()
+        || read("browser.enabled")?.as_deref() != Some("1")
+        || read("browser.active")?.as_deref() != Some(expected)
+    {
+        return Err("浏览器资料选择已变化，请刷新后重试。".into());
+    }
+    tx.execute(
+        "UPDATE state SET value=?1 WHERE key='browser.active'",
+        [next],
+    )
+    .map_err(|_| "无法更新浏览器选择。")?;
+    tx.commit().map_err(|_| "无法更新浏览器选择。".into())
 }
 pub(super) fn ready(root: &Path) -> Result<(), String> {
     if database(root)?.get("recovery")?.is_some() {
@@ -67,7 +153,7 @@ pub(super) fn ensure(root: &Path) -> Result<PathBuf, String> {
     private::directory(&path.join("profile"))?;
     Ok(path)
 }
-fn block(app: &tauri::AppHandle, root: &Path) -> Result<(), String> {
+pub(super) fn block(app: &tauri::AppHandle, root: &Path) -> Result<(), String> {
     private::directory(root)?;
     private::write(&root.join("identity-switch.pending"), b"1")?;
     *app.state::<Browser>().session.lock().unwrap() = None;
@@ -100,6 +186,132 @@ pub(crate) fn switch_identity(
     action: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     transition(app, reporter, false, true, action)
+}
+/// Promotion deliberately transfers the warming browser into the CLI workflow.
+/// Force coordination before prepare_warming_promotion installs its marker.
+pub(crate) fn promote_warming_identity(
+    app: &tauri::AppHandle,
+    reporter: &Reporter,
+    action: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    transition(app, reporter, true, true, action)
+}
+/// Caller holds Cleaner short gate; lock order is always Cleaner -> Browser.
+pub(crate) fn switch_warming_browser(
+    app: &tauri::AppHandle,
+    reporter: &Reporter,
+    slot: &str,
+    open_mode: &str,
+) -> Result<(), String> {
+    validate_warming_open_mode(open_mode)?;
+    if !browser_link::valid_slot(slot) {
+        return Err("浏览器资料选择无效。".into());
+    }
+    let browser = app.state::<Browser>();
+    let _guard = browser.gate.lock().unwrap();
+    switch_browser_locked(app, reporter, slot, open_mode, false)
+}
+/// Detach a selected warming card before deletion, retaining its data until the
+/// separately confirmed delete_saved action. Caller owns Cleaner short gate.
+pub(crate) fn detach_warming_browser(
+    app: &tauri::AppHandle,
+    reporter: &Reporter,
+) -> Result<(), String> {
+    let browser = app.state::<Browser>();
+    let _guard = browser.gate.lock().unwrap();
+    let root = root(app)?;
+    ready(&root)?;
+    let db = database(&root)?;
+    let slot = fresh_browser_slot(&root, &db)?;
+    switch_browser_locked(app, reporter, &slot, "switch_only", true)
+}
+pub(super) fn fresh_browser_slot(root: &Path, db: &Database) -> Result<String, String> {
+    if db.get("recovery")?.is_some() {
+        return Err("请先恢复未完成的身份切换。".into());
+    }
+    for _ in 0..128 {
+        let slot = crate::identities::new_id()?;
+        if slot == db.browser_slot()? || db.browser_seed(&slot)?.is_some() {
+            continue;
+        }
+        match fs::symlink_metadata(slot_path(root, &slot)?) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(slot),
+            Ok(_) => continue,
+            Err(_) => return Err("无法检查新浏览器资料目录。".into()),
+        }
+    }
+    Err("无法分配新的空浏览器资料。".into())
+}
+/// Browser gate is already held; both paths perform identical process/session
+/// transitions. Fresh detach slots must be unbound and absent before old quit.
+fn switch_browser_locked(
+    app: &tauri::AppHandle,
+    reporter: &Reporter,
+    slot: &str,
+    open_mode: &str,
+    fresh: bool,
+) -> Result<(), String> {
+    let browser = app.state::<Browser>();
+    let root = root(app)?;
+    ready(&root)?;
+    let mut db = database(&root)?;
+    // Refuse an unbound scope before stopping the existing browser.
+    if fresh {
+        if !crate::identities::valid_id(slot) || db.browser_seed(slot)?.is_some() {
+            return Err("新浏览器资料选择无效。".into());
+        }
+        match fs::symlink_metadata(slot_path(&root, slot)?) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            _ => return Err("新浏览器资料目录已存在或无法检查。".into()),
+        }
+    } else if db.browser_seed(slot)?.is_none() {
+        return Err("养号浏览器绑定不存在。".into());
+    }
+    let previous = db.browser_slot()?;
+    if previous != slot {
+        let old_profile = slot_path(&root, &previous)?.join("profile");
+        block(app, &root)?;
+        reporter.log("browser", "running", "正在正常退出旧浏览器资料。", 0, None);
+        if let Err(error) = profile::quit(&old_profile) {
+            let _ = refresh_launch_args(app);
+            return Err(error);
+        }
+        reporter.log("browser", "ok", "旧浏览器资料已退出。", 1, Some(1));
+    }
+    if let Err(error) = db.switch_browser_slot_only(slot) {
+        let _ = refresh_launch_args(app);
+        return Err(error);
+    }
+    *browser.warning.lock().unwrap() = None;
+    super::kill_switch::clear_alert(app);
+    ensure(&root)?;
+    refresh_launch_args(app)?;
+    match open_mode {
+        "claude_ai" => {
+            launch_with_urls_locked(app, reporter, &["https://claude.ai/new"])?;
+        }
+        "verify" => {
+            launch_locked(app, reporter)?;
+        }
+        "switch_only" => {
+            renew_session(app);
+        }
+        _ => unreachable!(),
+    }
+    reporter.log(
+        "browser",
+        "ok",
+        "养号浏览器资料已同步，CLI 身份保持不变。",
+        1,
+        Some(1),
+    );
+    Ok(())
+}
+pub(super) fn validate_warming_open_mode(open_mode: &str) -> Result<(), String> {
+    match open_mode {
+        "claude_ai" | "verify" | "switch_only" => Ok(()),
+        _ => Err("养号浏览器打开方式无效。".into()),
+    }
 }
 pub(crate) fn delete_saved(
     app: &tauri::AppHandle,
@@ -142,6 +354,26 @@ pub(crate) fn delete_saved(
     }
     Ok(())
 }
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum TransitionMode {
+    Unlinked,
+    PreserveWarming,
+    Coordinate,
+}
+/// This is the production decision, also exercised with synthetic databases.
+/// Recovery and explicit promotion/configuration never bypass browser safety.
+pub(super) fn transition_mode(db: &Database, force: bool) -> Result<TransitionMode, String> {
+    if force || db.get("recovery")?.is_some() || db.get("browser.promotion")?.is_some() {
+        return Ok(TransitionMode::Coordinate);
+    }
+    if !db.browser_link()?.enabled {
+        return Ok(TransitionMode::Unlinked);
+    }
+    if db.current_browser_is_warming()? {
+        return Ok(TransitionMode::PreserveWarming);
+    }
+    Ok(TransitionMode::Coordinate)
+}
 pub(super) fn transition(
     app: &tauri::AppHandle,
     reporter: &Reporter,
@@ -152,8 +384,30 @@ pub(super) fn transition(
     let browser = app.state::<Browser>();
     let _guard = browser.gate.lock().unwrap();
     let root = root(app)?;
-    if !force && !database(&root)?.browser_link()?.enabled {
-        return action();
+    match transition_mode(&database(&root)?, force)? {
+        TransitionMode::Unlinked => return action(),
+        TransitionMode::PreserveWarming => {
+            let selected = scope(&root)?;
+            let result = action();
+            // Successful CLI work leaves the browser session, launch.args and
+            // live profile untouched. An unresolved failure still quarantines
+            // the browser until the existing recovery transaction is resolved.
+            let safety: Result<(), String> = (|| {
+                if database(&root)?.get("recovery")?.is_some() {
+                    block(app, &root)?;
+                    *browser.warning.lock().unwrap() =
+                        Some("浏览器保持关闭，请先恢复身份切换。".into());
+                    reporter.log("browser", "running", "正在正常退出关联浏览器。", 0, None);
+                    profile::quit(&selected.join("profile"))?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = &safety {
+                reporter.log("browser", "error", error, 0, None);
+            }
+            return result.and(safety);
+        }
+        TransitionMode::Coordinate => (),
     }
     *browser.warning.lock().unwrap() = None;
     let profile = scope(&root)?.join("profile");

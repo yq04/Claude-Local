@@ -1,5 +1,5 @@
-// [INPUT]: Synthetic private vaults, encrypted backup streams and owned scratch directories.
-// [OUTPUT]: Backup compatibility, source preservation and stage lifecycle regression checks.
+// [INPUT]: Synthetic private vaults (including warming_cards.json and manual_subscriptions.json), encrypted backup streams and owned scratch directories.
+// [OUTPUT]: Backup compatibility, warming/subscription chain verification, source preservation and stage lifecycle regression checks.
 // [POS]: Isolated backup tests; never reads live identities or changes the active vault.
 // [PROTOCOL]: Update this header and check CLAUDE.md when behavior changes.
 use super::*;
@@ -547,4 +547,129 @@ fn inner_archive_corrupt_swapped_id_and_missing_data_are_refused() {
         false
     )
     .is_err());
+}
+
+#[test]
+fn warming_cards_and_manual_subscriptions_roundtrip_export_verify_and_restore_new() {
+    let fixture = Fixture::new();
+    let card_id = crate::identities::new_id().unwrap();
+    let mut db = crate::identities::database::Database::open(&fixture.vault).unwrap();
+    let (slot, seed) = db.bind_warming(&card_id).unwrap();
+    drop(db);
+
+    let cards_json = serde_json::json!({
+        "version": 1,
+        "cards": [{
+            "id": card_id,
+            "name": "Warming Backup Sample",
+            "email": "warming-backup@example.invalid",
+            "note": "full-chain backup",
+            "stage": "warming_free",
+            "created_ymd": "2026-10-25",
+            "last_warmed_ymd": "2026-10-29",
+            "created_at": 1000,
+            "updated_at": 2000,
+            "registered_country": "US",
+            "registered_timezone": "America/Los_Angeles",
+            "last_probe_country": "US",
+            "last_probe_timezone": "America/Los_Angeles",
+            "last_probe_at": 2000
+        }]
+    });
+    private::write(
+        &fixture.vault.join(super::super::warming::FILE_NAME),
+        &serde_json::to_vec_pretty(&cards_json).unwrap(),
+    )
+    .unwrap();
+
+    let mut subs = super::super::subscription::ManualSubscriptionsFile {
+        version: 1,
+        ..Default::default()
+    };
+    subs.by_record.insert(
+        card_id.clone(),
+        super::super::subscription::ManualSubscriptionEntry {
+            expiry_ymd: "2026-11-25".into(),
+            recharge_ymd: Some("2026-10-25".into()),
+            expiry_epoch_sec: super::super::subscription::ymd_to_utc_noon_sec("2026-11-25")
+                .unwrap(),
+            updated_at_ms: 5000,
+        },
+    );
+    super::super::subscription::write_store(&fixture.vault, &subs).unwrap();
+
+    let warming_before = digest(&fixture.vault.join(super::super::warming::FILE_NAME)).unwrap();
+    let subs_before = digest(&fixture.vault.join(super::super::subscription::FILE_NAME)).unwrap();
+
+    let pkg_path = fixture.package_path();
+    let receipt = export_from_root(&fixture.root, &pkg_path, b"synthetic passphrase", false).unwrap();
+    assert!(receipt.verified);
+    assert!(!receipt.rescue_copy);
+    assert_eq!(receipt.saved_identities, 1);
+
+    let restored =
+        restore_from_archive(&pkg_path, &fixture.root, b"synthetic passphrase").unwrap();
+    assert!(restored.verified);
+    let restored_vault = PathBuf::from(&restored.path).join("identity-vault");
+    assert_eq!(
+        digest(&restored_vault.join(super::super::warming::FILE_NAME)).unwrap(),
+        warming_before
+    );
+    assert_eq!(
+        digest(&restored_vault.join(super::super::subscription::FILE_NAME)).unwrap(),
+        subs_before
+    );
+    let restored_cards = super::super::warming::read_cards(&restored_vault).unwrap();
+    assert_eq!(restored_cards.len(), 1);
+    assert_eq!(restored_cards[0].id, card_id);
+    assert_eq!(
+        restored_cards[0].registered_country.as_deref(),
+        Some("US")
+    );
+    let restored_db = crate::identities::database::Database::open(&restored_vault).unwrap();
+    assert_eq!(restored_db.browser_for(&card_id).unwrap(), Some(slot));
+    assert_eq!(
+        restored_db
+            .browser_seed(restored_db.browser_for(&card_id).unwrap().as_deref().unwrap())
+            .unwrap(),
+        Some(seed)
+    );
+    drop(restored_db);
+}
+
+#[test]
+fn verify_staged_rejects_warming_card_missing_browser_binding() {
+    let fixture = Fixture::new();
+    let unbound_card_id = crate::identities::new_id().unwrap();
+    let cards_json = serde_json::json!({
+        "version": 1,
+        "cards": [{
+            "id": unbound_card_id,
+            "name": "Unbound Warming Card",
+            "email": null,
+            "note": null,
+            "stage": "unregistered",
+            "created_ymd": "2026-10-25",
+            "last_warmed_ymd": null,
+            "created_at": 100,
+            "updated_at": 100
+        }]
+    });
+    private::write(
+        &fixture.vault.join(super::super::warming::FILE_NAME),
+        &serde_json::to_vec_pretty(&cards_json).unwrap(),
+    )
+    .unwrap();
+    let pkg_path = fixture.package_path();
+    fixture.package(&pkg_path, b"synthetic passphrase", 1, false);
+    let err = stage_archive(
+        &pkg_path,
+        &fixture.stage_parent(),
+        b"synthetic passphrase",
+        false,
+    )
+    .err()
+    .expect("missing browser binding must be rejected");
+    assert!(err.contains("缺少浏览器槽位绑定"));
+    assert_eq!(fs::read_dir(fixture.stage_parent()).unwrap().count(), 0);
 }

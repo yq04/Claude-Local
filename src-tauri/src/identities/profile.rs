@@ -1,12 +1,14 @@
 // [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话账单增量、本地 settings.json 代理环境变量、只读外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据；当前无可信订阅到期来源。
-// [OUTPUT]: 当前/保存身份的脱敏摘要与一致的OAuth有效期/刷新存在性投影、逐窗额度和有界活动会话；不输出令牌、不联网验证账号。
+// [OUTPUT]: 当前/保存身份的脱敏摘要与一致的OAuth有效期/刷新存在性投影、逐窗额度和有界活动会话；共享纯账号指纹派生供浏览器绑定复核，不输出令牌、不联网验证账号。
 // [POS]: 身份卡片的只读展示边界；账号匹配与旧格式适配留在此处，逐窗合并/过期/推定恢复/聚合复用 quota_core；归档时间不代表额度新鲜度，账本只读且不匹配项不污染摘要。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+pub use crate::quota_core::QuotaSource;
+use crate::quota_core::{
+    aggregate_source, expire_window, max_observation, merge_window, WindowState,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, fs, io::Read, path::Path};
-pub use crate::quota_core::QuotaSource;
-use crate::quota_core::{aggregate_source, expire_window, max_observation, merge_window, WindowState};
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Account {
@@ -132,10 +134,20 @@ impl Summary {
             self.quota_7d_observed_at_ms =
                 self.quota_7d_observed_at_ms.or(self.quota_observed_at_ms);
         }
-        expire_window(&mut self.quota_7d_used, &mut self.quota_7d_reset_at,
-            &mut self.quota_7d_source, self.quota_7d_observed_at_ms, now_sec);
-        expire_window(&mut self.quota_5h_used, &mut self.quota_5h_reset_at,
-            &mut self.quota_5h_source, self.quota_5h_observed_at_ms, now_sec);
+        expire_window(
+            &mut self.quota_7d_used,
+            &mut self.quota_7d_reset_at,
+            &mut self.quota_7d_source,
+            self.quota_7d_observed_at_ms,
+            now_sec,
+        );
+        expire_window(
+            &mut self.quota_5h_used,
+            &mut self.quota_5h_reset_at,
+            &mut self.quota_5h_source,
+            self.quota_5h_observed_at_ms,
+            now_sec,
+        );
         if self.quota_5h_source.is_some() || self.quota_7d_source.is_some() {
             self.quota_source = aggregate_source(self.quota_5h_source, self.quota_7d_source);
         }
@@ -746,8 +758,7 @@ fn extract_quota(
             .filter(|(ts, _)| *ts >= floor_7d)
             .map(|(_, c)| *c)
             .sum();
-        (cost_7d > 0.0)
-            .then(|| ((cost_7d / usd_per_pct_7d).round() as i64).clamp(0, 100) as u8)
+        (cost_7d > 0.0).then(|| ((cost_7d / usd_per_pct_7d).round() as i64).clamp(0, 100) as u8)
     };
 
     let mut eff_reset_5h = reset_5h;
@@ -815,7 +826,7 @@ fn extract_quota(
         local_7d_observed_at_ms,
     }
 }
-fn quota_identity(cj: &Value) -> Option<String> {
+pub(crate) fn quota_identity(cj: &Value) -> Option<String> {
     let account = cj.get("oauthAccount")?;
     let field = |name| {
         account
@@ -879,11 +890,19 @@ fn ledger_account<'a>(ledger: &'a Value, email: &str, identity: Option<&str>) ->
     let accounts = ledger.get("accounts")?;
     let primary = accounts.get(email);
     let qualified = identity.and_then(|id| accounts.get(format!("{email}#{id}")));
-    let primary_matches = primary.is_some_and(|entry| ledger_identity(entry, email).as_deref() == identity);
-    let qualified_matches = qualified.is_some_and(|entry| ledger_identity(entry, email).as_deref() == identity);
+    let primary_matches =
+        primary.is_some_and(|entry| ledger_identity(entry, email).as_deref() == identity);
+    let qualified_matches =
+        qualified.is_some_and(|entry| ledger_identity(entry, email).as_deref() == identity);
     if primary_matches && qualified_matches {
-        let p_ms = primary.and_then(|e| e.get("quota_observed_at_ms")).and_then(Value::as_u64).unwrap_or(0);
-        let q_ms = qualified.and_then(|e| e.get("quota_observed_at_ms")).and_then(Value::as_u64).unwrap_or(0);
+        let p_ms = primary
+            .and_then(|e| e.get("quota_observed_at_ms"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let q_ms = qualified
+            .and_then(|e| e.get("quota_observed_at_ms"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         return if q_ms > p_ms { qualified } else { primary };
     }
     if primary_matches {
@@ -964,7 +983,10 @@ fn set_quota_evidence(cj: &Value, result: &ExtractedQuota, now_sec: u64, current
         quota_window_observed_at(cj, "seven_day"),
         result.local_7d_observed_at_ms,
     );
-    if !result.used_5h.is_some_and(|_| result.reset_5h.is_some_and(|r| r > now_sec)) {
+    if !result
+        .used_5h
+        .is_some_and(|_| result.reset_5h.is_some_and(|r| r > now_sec))
+    {
         if let Some((reset, observed)) = cached_reset_inference(cj, "five_hour", now_sec) {
             current.quota_5h_used = Some(0);
             current.quota_5h_reset_at = Some(reset);
@@ -972,7 +994,10 @@ fn set_quota_evidence(cj: &Value, result: &ExtractedQuota, now_sec: u64, current
             current.quota_5h_observed_at_ms = Some(observed);
         }
     }
-    if !result.used_7d.is_some_and(|_| result.reset_7d.is_some_and(|r| r > now_sec)) {
+    if !result
+        .used_7d
+        .is_some_and(|_| result.reset_7d.is_some_and(|r| r > now_sec))
+    {
         if let Some((reset, observed)) = cached_reset_inference(cj, "seven_day", now_sec) {
             current.quota_7d_used = Some(0);
             current.quota_7d_reset_at = Some(reset);
@@ -1016,7 +1041,10 @@ fn set_summary_quota_evidence(
         quota_window_observed_at(cj, "seven_day"),
         result.local_7d_observed_at_ms,
     );
-    if !result.used_5h.is_some_and(|_| result.reset_5h.is_some_and(|r| r > now_sec)) {
+    if !result
+        .used_5h
+        .is_some_and(|_| result.reset_5h.is_some_and(|r| r > now_sec))
+    {
         if let Some((reset, observed)) = cached_reset_inference(cj, "five_hour", now_sec) {
             summary.quota_5h_used = Some(0);
             summary.quota_5h_reset_at = Some(reset);
@@ -1024,7 +1052,10 @@ fn set_summary_quota_evidence(
             summary.quota_5h_observed_at_ms = Some(observed);
         }
     }
-    if !result.used_7d.is_some_and(|_| result.reset_7d.is_some_and(|r| r > now_sec)) {
+    if !result
+        .used_7d
+        .is_some_and(|_| result.reset_7d.is_some_and(|r| r > now_sec))
+    {
         if let Some((reset, observed)) = cached_reset_inference(cj, "seven_day", now_sec) {
             summary.quota_7d_used = Some(0);
             summary.quota_7d_reset_at = Some(reset);
@@ -1327,7 +1358,10 @@ fn merge_summary_window(
         observed_at_ms: *observed,
     };
     let candidate = candidate.map(|(used, reset, observed, source)| WindowState {
-        used: Some(used), reset_at: Some(reset), source, observed_at_ms: Some(observed),
+        used: Some(used),
+        reset_at: Some(reset),
+        source,
+        observed_at_ms: Some(observed),
     });
     let result = merge_window(current, candidate, now_sec);
     let changed = result != current;

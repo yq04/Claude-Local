@@ -1,16 +1,23 @@
 // [INPUT]: 本机指纹引擎（优先 /Applications/Claude-Local Browser.app，回退 ~/Applications）、本地版浏览器包标识、配置/资料边界、真实浏览器观测、宿主界面语言与共享操作日志。
-// [OUTPUT]: 有界绑定身份上下文、固定出口地理/分类服务目录、只读风控核验浏览器摘要与浏览器设置/启动/清理/核验及显式资料桥；账号连接不改全局 slot、launch.args 或系统注册。
+// [OUTPUT]: 有界 CLI/养号绑定上下文、只读所选资料窗口状态、伴生浏览器异常断流急停状态、冻结CLI归属的返回/用量页及转正/恢复编排。
 // [POS]: 独立浏览器模块的唯一编排入口；改变资料前必须退出浏览器；不自行改系统默认浏览器，只发起系统确认。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub(crate) mod config;
+pub(crate) mod kill_switch;
 mod launch;
+pub(crate) mod lifecycle;
 pub(crate) mod network;
+#[cfg(target_os = "windows")]
+mod oauth_route;
 mod profile;
 mod workspaces;
 use launch::{launch_locked, launch_with_urls_locked};
 pub(crate) use workspaces::delete_saved;
+pub(crate) use workspaces::detach_warming_browser;
 pub(crate) use workspaces::identity_action;
+pub(crate) use workspaces::promote_warming_identity;
 pub(crate) use workspaces::switch_identity;
+pub(crate) use workspaces::switch_warming_browser;
 pub(crate) fn configure_identity(
     app: &tauri::AppHandle,
     reporter: &Reporter,
@@ -73,6 +80,7 @@ pub struct Browser {
     session: Mutex<Option<Session>>,
     quota_sync: Mutex<Option<quota_bridge::Ticket>>,
     host: Mutex<Option<Exit>>,
+    pub(crate) kill_switch: Mutex<kill_switch::KillSwitchState>,
 }
 struct Session {
     token: String,
@@ -109,8 +117,11 @@ pub struct Snapshot {
     engine_ready: bool,
     running: bool,
     profile: String,
+    active_browser_slot: String,
     identity_linked: bool,
     identity: Option<crate::identities::browser_link::BrowserIdentity>,
+    cli_identity: Option<crate::identities::browser_link::BrowserIdentity>,
+    cli_expected_identity: Option<String>,
     cache: Vec<profile::CacheItem>,
     cache_error: String,
     report: Option<Report>,
@@ -149,9 +160,11 @@ pub(crate) fn configured_or_system_proxy(app: &tauri::AppHandle) -> String {
     })
 }
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RiskBrowserContext {
+    pub context_id: Option<String>,
     pub configured_proxy: String,
+    pub effective_proxy: String,
     pub target_country: Option<String>,
     pub target_timezone: String,
     pub target_language: String,
@@ -159,16 +172,92 @@ pub(crate) struct RiskBrowserContext {
 
 pub(crate) fn current_risk_browser_context(app: &tauri::AppHandle) -> RiskBrowserContext {
     let machine = config::machine().ok();
-    let cfg = root(app)
-        .and_then(|r| workspaces::scope(&r))
-        .and_then(|s| config::load(&s))
-        .ok();
+    let settings = root(app).and_then(|r| risk_browser_settings(&r)).ok();
+    risk_browser_context(settings, machine)
+}
+
+/// Manual audit only: attach ownership to the same frozen selected browser
+/// context. No desktop CLI fingerprint is added to the loopback Context.
+pub(crate) fn risk_browser_identity(
+    app: &tauri::AppHandle,
+    expected_context_id: &Option<String>,
+) -> Option<crate::identities::browser_link::BrowserIdentity> {
+    expected_context_id.as_ref()?;
+    let browser = app.state::<Browser>();
+    let _guard = browser.gate.try_lock().ok()?;
+    if current_risk_browser_context(app).context_id != *expected_context_id {
+        return None;
+    }
+    let mut identity = identity_context(app).ok()?;
+    identity.cli_proxy = None;
+    if current_risk_browser_context(app).context_id != *expected_context_id {
+        return None;
+    }
+    Some(mask_browser_identity(
+        identity,
+        crate::ui_privacy::effective_privacy_mask(app),
+    ))
+}
+
+/// One slot/config read; metadata must remain stable across the config read.
+/// The revision contains no personal path or account/authorization identifier.
+fn risk_browser_settings(root: &Path) -> Result<(Config, String), String> {
+    let db = workspaces::database(root)?;
+    let slot = db.browser_slot()?;
+    let scope = workspaces::slot_path(root, &slot)?;
+    let path = scope.join("config.json");
+    profile::check_path(root, &path)?;
+    let revision = || -> Result<(u64, u128), String> {
+        let meta = fs::metadata(&path).map_err(|_| "浏览器配置修订不可用。")?;
+        if !meta.is_file() {
+            return Err("浏览器配置修订不可用。".into());
+        }
+        let modified = meta
+            .modified()
+            .map_err(|_| "浏览器配置修订不可用。")?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "浏览器配置修订不可用。")?
+            .as_nanos();
+        Ok((meta.len(), modified))
+    };
+    let before = revision()?;
+    let cfg = config::load(&scope)?;
+    if before != revision()? {
+        return Err("浏览器配置已变化，请重新检查。".into());
+    }
+    let bytes = serde_json::to_vec(&("Claude-Local/risk-browser-revision/v1", slot, before, &cfg))
+        .map_err(|_| "浏览器配置修订不可用。")?;
+    Ok((cfg, risk_context_hash(&bytes)))
+}
+
+fn risk_context_hash(bytes: &[u8]) -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, bytes);
+    let mut id = String::from("brc1-");
+    for byte in &digest.as_ref()[..12] {
+        use std::fmt::Write;
+        let _ = write!(id, "{byte:02x}");
+    }
+    id
+}
+
+fn risk_browser_context(
+    settings: Option<(Config, String)>,
+    machine: Option<Machine>,
+) -> RiskBrowserContext {
+    let cfg = settings.as_ref().map(|(cfg, _)| cfg);
     let configured_proxy = cfg
-        .as_ref()
         .map(|c| c.proxy.clone())
         .filter(|p| !p.is_empty())
         .unwrap_or_default();
-    let (target_country, target_timezone, target_language) = match (&cfg, &machine) {
+    let effective_proxy = if configured_proxy.is_empty() {
+        machine
+            .as_ref()
+            .map(|m| m.system_proxy.clone())
+            .unwrap_or_default()
+    } else {
+        configured_proxy.clone()
+    };
+    let (target_country, target_timezone, target_language) = match (cfg, &machine) {
         (Some(c), Some(m)) => (
             c.region(m).map(|r| r.country.to_string()),
             c.timezone(m),
@@ -186,8 +275,25 @@ pub(crate) fn current_risk_browser_context(app: &tauri::AppHandle) -> RiskBrowse
         ),
         (None, None) => (None, "America/New_York".into(), "en-US".into()),
     };
+    // With no machine snapshot an empty configured route is unknown, not proof
+    // of direct connectivity. Native probes require an actual frozen route.
+    let route_known = !configured_proxy.is_empty() || machine.is_some();
+    let context_id = settings.filter(|_| route_known).and_then(|(_, revision)| {
+        serde_json::to_vec(&(
+            "Claude-Local/risk-browser-context/v1",
+            revision,
+            &effective_proxy,
+            &target_country,
+            &target_timezone,
+            &target_language,
+        ))
+        .ok()
+        .map(|bytes| risk_context_hash(&bytes))
+    });
     RiskBrowserContext {
+        context_id,
         configured_proxy,
+        effective_proxy,
         target_country,
         target_timezone,
         target_language,
@@ -297,6 +403,19 @@ fn open_session(
     crate::identities::private::write(&root.join("start.url"), format!("{page}\n").as_bytes())?;
     Ok(page)
 }
+pub(crate) fn ensure_session_locked(app: &tauri::AppHandle) -> Result<(), String> {
+    if app.state::<Browser>().session.lock().unwrap().is_some() {
+        return Ok(());
+    }
+    let root = root(app)?;
+    let config = config::load(&workspaces::scope(&root)?)?;
+    let machine = config::machine()?;
+    config.validate(&machine)?;
+    let engine = engine(app)?;
+    open_session(app, &config, &machine, packaged_version(app, &engine))?;
+    Ok(())
+}
+
 /// 资料或配置变化使旧会话失效后，立即换新会话，保证 start.url 始终指向存活的起始页服务。
 fn renew_session(app: &tauri::AppHandle) {
     let result = (|| -> Result<(), String> {
@@ -529,6 +648,7 @@ fn snapshot(app: &tauri::AppHandle) -> Result<Snapshot, String> {
     let identity = identity_context(app)
         .ok()
         .map(|id| mask_browser_identity(id, crate::ui_privacy::effective_privacy_mask(app)));
+    let (cli_identity, cli_expected_identity) = lifecycle::snapshot_cli(app);
     Ok(Snapshot {
         ui_language: crate::ui_language::ui_language_read(app.clone()),
         exit_services: &network::SERVICES,
@@ -540,8 +660,11 @@ fn snapshot(app: &tauri::AppHandle) -> Result<Snapshot, String> {
         engine_version,
         running,
         profile: profile.to_string_lossy().into(),
+        active_browser_slot: workspaces::database(&root)?.browser_slot()?,
         identity_linked: workspaces::database(&root)?.browser_link()?.enabled,
         identity,
+        cli_identity,
+        cli_expected_identity,
         cache,
         cache_error,
         report,
@@ -862,16 +985,27 @@ const USAGE_SETTINGS_URL: &str = "https://claude.ai/settings/usage";
 pub async fn browser_open_usage(
     app: tauri::AppHandle,
     webview: tauri::Webview,
+    expected_identity: String,
     on_progress: Option<tauri::ipc::JavaScriptChannelId>,
 ) -> Result<Snapshot, String> {
     let on_progress = on_progress.map(|id| id.channel_on(webview));
     run(move || {
+        let _cleaner = lifecycle::IdentityGuard::acquire(&app)?;
         let state = app.state::<Browser>();
         let _guard = state.gate.lock().unwrap();
-        launch_with_urls_locked(&app, &Reporter::channel(on_progress), &[USAGE_SETTINGS_URL])
+        quota_connection::launch_identity_profile_locked(&app, "current", &expected_identity)?;
+        Reporter::channel(on_progress).log(
+            "browser",
+            "ok",
+            "已请求在当前 CLI 的独立资料中打开官方用量页。",
+            1,
+            Some(1),
+        );
+        snapshot(&app)
     })
     .await
 }
+
 
 #[cfg(target_os = "macos")]
 fn binary(engine: &Path) -> PathBuf {

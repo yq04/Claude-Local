@@ -1,6 +1,6 @@
 // [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统及系统修改记录/恢复命令、固定网络资源导航与风控 DNS/跨域名只读核验、独立界面语言与本地 Token 统计命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
-// [OUTPUT]: Claude-Local 独立窗口及主窗口尺寸记忆、托盘、SQLite 本地身份暂存/恢复、用户触发的有界在线额度读取、脱敏 Token 聚合、独立文件残留扫描/选择清理、身份进程停止和 CLI 管理、系统修改历史与冲突检查恢复、固定网络入口与风控核验及 CI 固定启动诊断；--quota-core 在 GUI 初始化前提供纯 JSON 额度合并。
-// [POS]: 应用编排层；setup注册唯一进程级唤醒owner，实际Exit停止；CloseRequested仅隐藏托盘。不读取翻译设置或API密钥。
+// [OUTPUT]: Claude-Local 独立窗口及尺寸记忆、托盘、SQLite 身份暂存/恢复、浏览器养号与出口一致性探针/只读运行状态/断流急停守护与冻结CLI归属返回、有界在线额度、脱敏 Token 聚合、文件残留清理、CLI 管理、系统恢复与风控核验；--quota-core 在 GUI 初始化前合并纯 JSON 额度。
+// [POS]: 应用编排层；setup注册唯一进程级唤醒owner与伴生浏览器断流急停监控，实际Exit停止；CloseRequested仅隐藏托盘。不读取翻译设置或API密钥。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 // ----- 发布包必须内嵌前端资源，禁止依赖开发服务 -----
@@ -20,6 +20,7 @@ mod native;
 mod network_links;
 mod progress;
 mod quota_core;
+mod quota_setup;
 mod regions;
 mod risk_check;
 mod system;
@@ -27,7 +28,6 @@ mod system_changes;
 mod ui_appearance;
 mod ui_language;
 mod ui_privacy;
-mod quota_setup;
 mod window_state;
 mod window_state_model;
 #[cfg(target_os = "windows")]
@@ -138,6 +138,7 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
+            browser::kill_switch::spawn_monitor(app.handle().clone());
             startup_trace("host ready");
             Ok(())
         })
@@ -180,6 +181,12 @@ fn main() {
             cleaner::residue::claude_residue_scan,
             cleaner::residue::claude_residue_clean,
             identities::identities_read,
+            identities::warming::identities_warming_create,
+            identities::warming::identities_warming_update,
+            identities::warming::identities_warming_open,
+            identities::warming::identities_warming_promote,
+            identities::warming::identities_warming_delete,
+            identities::warming::identities_warming_probe_check,
             identities::online::identities_refresh_quota,
             identities::online::identities_wakeup_quota_window,
             identities::wakeup::identities_wakeup_state,
@@ -223,6 +230,8 @@ fn main() {
             system::system_change_restore_plan,
             system::system_change_restore,
             browser::browser_read,
+            browser::lifecycle::browser_runtime_read,
+            browser::lifecycle::browser_return_to_cli,
             browser::browser_save,
             browser::browser_launch,
             browser::browser_quit,
@@ -232,6 +241,9 @@ fn main() {
             browser::browser_default_read,
             browser::browser_set_default,
             browser::browser_open_usage,
+            browser::kill_switch::browser_kill_switch_state,
+            browser::kill_switch::browser_kill_switch_dismiss,
+            browser::kill_switch::browser_kill_switch_set_enabled,
             network_links::network_diagnose_domains,
             risk_check::risk_inspect_local_env,
             risk_check::risk_probe_consistency
@@ -242,7 +254,9 @@ fn main() {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => show(app),
             tauri::RunEvent::Exit => {
-                if let Some(owner) = app.try_state::<identities::wakeup::WakeupOwner>() { owner.stop(); }
+                if let Some(owner) = app.try_state::<identities::wakeup::WakeupOwner>() {
+                    owner.stop();
+                }
                 window_state::flush(app);
                 browser::forget_start_url(app)
             }

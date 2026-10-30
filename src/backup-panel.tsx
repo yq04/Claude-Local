@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 固定 app_data_dir 预览、用户显式输入的备份文件路径/口令与原生加密备份命令。
- * [OUTPUT]: 身份保险库加密导出、备份检查与新私有恢复副本回执及清理待办提示；每次操作结束清除口令输入。
- * [POS]: 软件设置的数据管理区；只处理身份索引、主密钥和引用归档，不自动导出或接管当前身份。
+ * [OUTPUT]: 身份保险库加密导出（含 CLI 身份归档、养号卡片元数据与手动订阅日期）、备份检查与新私有恢复副本回执及清理待办提示；每次操作结束清除口令输入。
+ * [POS]: 软件设置的数据管理区；只处理身份索引、主密钥、引用归档与养号/订阅元数据，不自动导出或接管当前身份。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect, useRef, useState} from 'react';
@@ -16,7 +16,7 @@ type Preview = {valid: boolean; rescue_available: boolean; saved_identities: num
 
 const copy = {
   title: {zh: '身份备份与恢复', en: 'Identity backup and recovery'},
-  intro: {zh: '仅打包身份索引、保险库主密钥和已保存身份归档。不会包含浏览器资料、Claude 设置或尚未保存的当前身份内容。备份与恢复均由你手动启动。', en: 'Includes only the identity index, vault master key, and saved identity archives. Browser data, Claude settings, and unsaved current identity content are excluded. You start each action manually.'},
+  intro: {zh: '打包身份索引、保险库主密钥、已保存 CLI 身份归档，以及养号卡片元数据（warming_cards.json）与手动订阅日期（manual_subscriptions.json）。不会包含伴生浏览器配置目录（profile/ Cookie 与登录态）、Claude 设置或尚未保存的当前身份内容。备份与恢复均由你手动启动。', en: 'Includes the identity index, vault master key, saved CLI identity archives, warming card metadata (warming_cards.json), and manual subscription dates (manual_subscriptions.json). Companion browser profile directories (profile/ cookies and sessions), Claude settings, and unsaved current identity content remain local. You start each action manually.'},
   location: {zh: '产品资料目录', en: 'Product data folder'},
   copyLocation: {zh: '复制资料目录', en: 'Copy data folder'},
   openLocation: {zh: '在文件资源管理器中打开', en: 'Open in File Explorer'},
@@ -52,7 +52,7 @@ const copy = {
   copied: {zh: '已复制资料目录', en: 'Data folder copied'},
   targetResult: {zh: '新副本位置', en: 'New copy location'},
   evidenceOnly: {zh: '这是隔离的救援证据副本，不是已验证身份库，也不会合并为当前身份。', en: 'This is an isolated rescue evidence copy, not a verified identity vault, and it will not be merged into the active identity.'},
-  scope: {zh: '范围：身份 SQLite 索引、主密钥和身份归档。未保存的当前 Claude CLI 身份状态及浏览器资料不会包含在内。', en: 'Scope: identity SQLite index, master key, and identity archives. Unsaved current Claude CLI state and browser profiles are excluded.'},
+  scope: {zh: '范围：身份 SQLite 索引、主密钥、CLI 身份归档、养号卡片元数据（warming_cards.json）与手动订阅日期（manual_subscriptions.json）。未保存的当前 Claude CLI 身份状态及伴生浏览器配置目录（profile/ Cookie 与登录态）不会包含在内。', en: 'Scope: identity SQLite index, master key, CLI identity archives, warming card metadata (warming_cards.json), and manual subscription dates (manual_subscriptions.json). Unsaved current Claude CLI state and companion browser profile directories (profile/ cookies and sessions) remain local.'},
   bytes: {zh: '备份文件大小', en: 'Backup file size'},
   noInspection: {zh: '先完成备份检查，再创建恢复副本。', en: 'Inspect the backup before creating a recovery copy.'},
   confirmed: {zh: '请确认恢复范围。', en: 'Confirm the recovery scope.'},

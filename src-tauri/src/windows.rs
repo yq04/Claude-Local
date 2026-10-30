@@ -1,5 +1,5 @@
 // [INPUT]: Windows 当前用户/默认所有者 SID、时区、注册表状态、系统工具、受限进程接口与 Win32 文件路径。
-// [OUTPUT]: Windows 平台 JSON 桥；用户/实际默认所有者文件检查、长路径调用、会话首选语言和仅原生使用的系统代理（空白变量回退并区分 SOCKS 协议）。
+// [OUTPUT]: Windows 平台 JSON 桥；私有资料Chrome只读窗口状态、用户/默认所有者文件检查、长路径、会话语言和仅原生使用的系统代理。
 // [POS]: 仅原生识别与用户触发的系统操作；不含网络客户端，不向 UI 输出进程参数或代理秘密。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde_json::{json, Value};
@@ -19,7 +19,7 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 #[path = "windows_process.rs"]
 mod processes;
-pub(crate) use processes::ChildJob;
+pub(crate) use processes::{browser_runtime, ChildJob};
 pub use processes::{claude_processes, kill_process, rf_browser_quit, rf_browser_running};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;

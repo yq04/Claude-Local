@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Cromma UI、原生浏览器命令、带回报时间的真实观测事件、共用地区契约、共享活动日志、本地刷新事件和 YAML 文案。
- * [OUTPUT]: 使用统一中性操作按钮的浏览器环境控制台（启动内置浏览器与实测页、目标地区核验与对齐、缓存释放与排障重置）及默认折叠的高级设置；危险确认保留警告色。
+ * [INPUT]: 原生浏览器/CLI归属快照、网络防漏断路器状态与事件、轻量窗口采样、真实观测事件、共享活动日志和双语文案。
+ * [OUTPUT]: 明确所选浏览器/CLI与运行状态的环境控制台、断路器保护关闭横幅与开关、冻结账号确认后的浏览器返回核验、缓存与高级设置。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -11,28 +11,63 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AppDialog } from './dialog';
 import { CleanupActivity, useCleanupActivity } from './cleaner-activity';
-import { type BrowserConfig, type BrowserState } from './browser-model';
+import { type BrowserConfig, type BrowserState, type KillSwitchState } from './browser-model';
 import { formatBytes } from './cleaner-model';
 import { usePageRefresh } from './app-events';
+import {maskDisplayName, usePreferences} from './settings-model';
+import {useBrowserRuntime} from './use-browser-runtime';
 
 export function BrowserPanel({ onBusy }: {
     onBusy?: (busy: boolean) => void;
 }) {
     const { t, locale } = useI18n();
+    const prefs = usePreferences();
     const [state, setState] = useState<BrowserState | null>(null), [draft, setDraft] = useState<BrowserConfig | null>(null), [busy, setBusy] = useState(''), [error, setError] = useState(''), [confirm, setConfirm] = useState<'reset' | 'align' | null>(null);
-    const gate = useRef(false), live = useRef(true);
+    const [killSwitch, setKillSwitch] = useState<KillSwitchState | null>(null), [killSwitchBusy, setKillSwitchBusy] = useState(false);
+    const gate = useRef(false), live = useRef(true), snapshotSequence = useRef(0);
     const [accepted, setAccepted] = useState(false), [advancedOpen, setAdvancedOpen] = useState(false);
+    const [returnCliBrowser, setReturnCliBrowser] = useState<{expectedIdentity: string; name: string} | null>(null);
+    const browserRuntime = useBrowserRuntime(state?.active_browser_slot, !!state && !busy);
     const activity = useCleanupActivity();
     const [clock, setClock] = useState(Date.now);
     useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30000); return () => window.clearInterval(timer); }, []);
     useEffect(() => { onBusy?.(!!busy); return () => onBusy?.(false); }, [busy, onBusy]);
+    async function refreshKillSwitch() {
+        const ks = await invoke<KillSwitchState>('browser_kill_switch_state').catch(() => null);
+        if (live.current && ks) setKillSwitch(ks);
+    }
+    async function dismissKillSwitch() {
+        setKillSwitchBusy(true);
+        try {
+            const ks = await invoke<KillSwitchState>('browser_kill_switch_dismiss').catch(() => null);
+            if (live.current) {
+                if (ks) setKillSwitch(ks);
+                else setKillSwitch(prev => prev ? { ...prev, triggered: false } : prev);
+            }
+        } finally {
+            if (live.current) setKillSwitchBusy(false);
+        }
+    }
+    async function toggleKillSwitch(enabled: boolean) {
+        setKillSwitchBusy(true);
+        try {
+            const ks = await invoke<KillSwitchState>('browser_kill_switch_set_enabled', { enabled });
+            if (live.current && ks) setKillSwitch(ks);
+        } catch (e) {
+            if (live.current) setError(String(e));
+        } finally {
+            if (live.current) setKillSwitchBusy(false);
+        }
+    }
     async function read(initial = false) {
+        const sequence = ++snapshotSequence.current;
         const next = await invoke<BrowserState>('browser_read');
-        if (live.current) {
+        if (live.current && sequence === snapshotSequence.current) {
             setState(next);
             if (initial)
                 setDraft(next.config);
         }
+        void refreshKillSwitch();
         return next;
     }
     usePageRefresh(() => {
@@ -46,30 +81,38 @@ export function BrowserPanel({ onBusy }: {
             if (!gate.current)
                 void read().catch(e => setError(String(e)));
         });
-        const focus = () => {
-            if (!gate.current)
-                void read().catch(e => setError(String(e)));
-        };
-        window.addEventListener('focus', focus);
+        const ksStateEvent = listen<KillSwitchState>('kill-switch-state', e => {
+            if (live.current && e.payload) setKillSwitch(e.payload);
+        });
+        const ksTriggeredEvent = listen<KillSwitchState>('kill-switch-triggered', e => {
+            if (live.current && e.payload) setKillSwitch(e.payload);
+        });
         return () => {
             live.current = false;
-            window.removeEventListener('focus', focus);
+            snapshotSequence.current++;
             void event.then(f => f());
+            void ksStateEvent.then(f => f());
+            void ksTriggeredEvent.then(f => f());
         };
     }, []);
     async function act(command: string, args: Record<string, unknown> = {}) {
         if (gate.current)
             return;
         gate.current = true;
+        snapshotSequence.current++;
+        browserRuntime.invalidate();
         setBusy(command === 'browser_clear' && args.resetProfile ? 'browser_reset' : command);
         setError('');
         const onProgress = activity.start('browser');
         try {
-            const next = await invoke<BrowserState>(command, { ...args, ...(['browser_launch', 'browser_clear', 'browser_align'].includes(command) ? { onProgress } : {}) });
+            const next = await invoke<BrowserState>(command, { ...args, ...(['browser_launch', 'browser_clear', 'browser_align', 'browser_return_to_cli'].includes(command) ? { onProgress } : {}) });
+            if (!live.current) return;
             setState(next);
-            if (command === 'browser_save' || command === 'browser_align')
+            if (command === 'browser_save' || command === 'browser_align' || command === 'browser_return_to_cli')
                 setDraft(next.config);
-            activity.finish(true, command === 'browser_clear' ? (args.resetProfile ? "当前身份的浏览器资料已全清理，未保留副本。" : "清理完成，未保留副本。") : command === 'browser_check' ? "机器出口已检测；浏览器结果由实测页上报。" : "操作完成。");
+            if (command === 'browser_launch')
+                void refreshKillSwitch();
+            activity.finish(true, command === 'browser_clear' ? (args.resetProfile ? "当前身份的浏览器资料已全清理，未保留副本。" : "清理完成，未保留副本。") : command === 'browser_check' ? "机器出口已检测；浏览器结果由实测页上报。" : command === 'browser_return_to_cli' ? 'browser.returnToCliDone' : "操作完成。");
         }
         catch (e) {
             setError(String(e));
@@ -95,6 +138,8 @@ export function BrowserPanel({ onBusy }: {
     const isStale = !!state?.report_received_at && (clock - state.report_received_at > 10 * 60 * 1000);
     const hasObservation = Boolean(state?.report_received_at || state?.report);
     const showSummary = isStale || allChecksOk || hasMismatch || hasObservation;
+    const browserIdentityName = state?.identity ? maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask) : t('browser.identityUnknown');
+    const cliIdentityName = state?.cli_identity ? maskDisplayName(state.cli_identity.name, state.cli_identity.email, prefs.privacyMask) : t('browser.identityUnknown');
     function edit<K extends keyof BrowserConfig>(key: K, value: BrowserConfig[K]) { setDraft(old => old ? { ...old, [key]: value } : old); }
     return <section className="system-page browser-page">
         <div className="cleanup-title">
@@ -102,29 +147,60 @@ export function BrowserPanel({ onBusy }: {
             <Button size="small" variant="secondary" disabled={!!busy} onClick={() => void act('browser_read')}>{t("刷新状态")}</Button>
         </div>
         {error && <p role="alert" className="system-feedback error">{t(error)}</p>}
+        {killSwitch?.triggered && (
+            <div className="identity-recovery browser-kill-switch-banner" role="alert" data-kill-switch-banner>
+                <div>
+                    <strong>{t('browser.killSwitch.bannerTitle')}</strong>
+                    <p>
+                        {killSwitch.reason_code === 'tun_dropped'
+                            ? t('browser.killSwitch.reasonTunDropped')
+                            : killSwitch.reason_code === 'country_drift'
+                                ? t('browser.killSwitch.reasonCountryDrift', {
+                                      expected: killSwitch.expected_country || '-',
+                                      observed: killSwitch.observed_country || '-',
+                                  })
+                                : t('browser.killSwitch.reasonGeneric')}
+                    </p>
+                </div>
+                <Button size="small" variant="secondary" data-kill-switch-dismiss disabled={killSwitchBusy} onClick={() => void dismissKillSwitch()}>
+                    {t('browser.killSwitch.dismiss')}
+                </Button>
+            </div>
+        )}
         {!!changed && <p className="system-hint">{t("先保存指纹设置，再启动浏览器或对齐机器。")}</p>}
 
         <div className="browser-sections">
             <div className="network-action-card browser-hero-card">
                 <div className="browser-hero-top">
                     <div className="network-action-head">
-                        <h2>{t("启动内置浏览器与 CLI 授权联动")}</h2>
-                        <span className={`identity-policy-mode ${state?.running ? 'ok' : ''}`}>
-                            {state?.running ? t("运行中") : t("未运行")}
+                        <h2>{t('browser.environmentTitle')}</h2>
+                        <span data-browser-runtime={browserRuntime.status} className={`identity-policy-mode ${browserRuntime.status === 'running' ? 'ok' : ''}`}>
+                            {t(`browser.runtime${browserRuntime.status === 'running' ? 'Running' : browserRuntime.status === 'closed' ? 'Closed' : 'Unknown'}`)}
                         </span>
                     </div>
                     <div className="network-action-buttons">
                         <Button variant="secondary" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
-                            {state?.running ? t("重新打开实测页") : t("打开浏览器并实测")}
+                            {browserRuntime.status === 'running' ? t("重新打开实测页") : t("打开浏览器并实测")}
                         </Button>
+                        <Button variant="secondary" size="small" data-return-cli-browser disabled={disabled || !state?.engine_ready || !state?.cli_expected_identity || !!changed} onClick={() => {
+                            if (state?.cli_expected_identity) setReturnCliBrowser({expectedIdentity: state.cli_expected_identity, name: cliIdentityName});
+                        }}>{t('browser.returnToCli')}</Button>
                     </div>
+                </div>
+                <div className="browser-hero-body">
+                    <p className="identity-policy-hint" data-current-cli-identity>{t('browser.currentCliIdentity', {name: cliIdentityName})}</p>
+                    <p className="identity-policy-hint" data-current-browser-identity>{t(state?.identity?.status === 'warming' ? 'browser.currentWarmingIdentity' : 'browser.currentBrowserIdentity', {name: browserIdentityName})}</p>
+                    <p className="identity-policy-hint">{t('browser.verificationScope')}</p>
+                    {!!state && !state.cli_expected_identity && <p className="identity-policy-hint">{t('browser.cliIdentityUnavailable')}</p>}
                 </div>
                 {((state?.identity?.status && !['linked', 'draft'].includes(state.identity.status)) ||
                   (state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim())) && (
                     <div className="browser-hero-body">
                         {state?.identity?.status && !['linked', 'draft'].includes(state.identity.status) && (
                             <p className="identity-policy-hint">
-                                {t(`browserSafety.status_${state.identity.status}`)}
+                                {state.identity.status === 'warming'
+                                  ? t('warming.browserStatus', {name: maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask)})
+                                  : t(`browserSafety.status_${state.identity.status}`)}
                             </p>
                         )}
                         {state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim() && (
@@ -140,15 +216,15 @@ export function BrowserPanel({ onBusy }: {
             <div className="browser-checks">
                 <div className="browser-checks-head">
                     <div className="network-action-head">
-                        <h2>{t("{v0} · 实际观测", { v0: t(state?.region?.label || "自定义环境") })}</h2>
+                        <h2>{t('browser.observationTitle', {name: t(state?.region?.label || "自定义环境")})}</h2>
                         <span className={`identity-policy-mode ${isStale ? 'attention' : ''}`}>
                             {state?.report_received_at
                                 ? isStale
                                     ? t("browserSafety.reportStale", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') }) || `检测已过时（>10分钟）· 上次回报 ${new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US')}`
                                     : t("已连接 · 回报 {v0}", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })
-                                : state?.running
+                                : browserRuntime.status === 'running'
                                     ? t("等待浏览器回报")
-                                    : t("浏览器未运行")}
+                                    : t(browserRuntime.status === 'closed' ? 'browser.runtimeClosed' : 'browser.runtimeUnknown')}
                         </span>
                     </div>
                     <div className="network-action-buttons">
@@ -249,6 +325,7 @@ export function BrowserPanel({ onBusy }: {
                         <div className="browser-advanced-toggles">
                             <label className="browser-toggle"><Checkbox checked={draft?.follow_machine || false} disabled={disabled || state?.running} onCheckedChange={v => edit('follow_machine', v === true)} />{t("语言与时区跟随机器")}</label>
                             <label className="browser-toggle"><Checkbox checked={draft?.native_graphics || false} disabled={disabled || state?.running} onCheckedChange={v => edit('native_graphics', v === true)} />{t("使用真实设备指纹")}</label>
+                            <label className="browser-toggle" data-kill-switch-toggle><Checkbox checked={killSwitch?.enabled ?? true} disabled={disabled || killSwitchBusy} onCheckedChange={v => void toggleKillSwitch(v === true)} />{t('browser.killSwitch.toggleLabel')}</label>
                         </div>
                         <div className="system-card-actions">
                             <Button variant="secondary" size="small" disabled={disabled || state?.running || !changed} loading={busy === 'browser_save'} onClick={() => draft && void act('browser_save', { config: draft })}>{t("保存设置")}</Button>
@@ -259,6 +336,16 @@ export function BrowserPanel({ onBusy }: {
         </div>
 
         <CleanupActivity activity={activity.state} />
+        <AppDialog alert open={!!returnCliBrowser} onOpenChange={open => {if (!open && !busy) setReturnCliBrowser(null);}}
+            title={t('browser.returnToCliConfirmTitle')} description={t('browser.returnToCliConfirm')}
+            footer={<><Button variant="secondary" data-dialog-cancel disabled={!!busy} onClick={() => setReturnCliBrowser(null)}>{t('取消')}</Button><Button variant="secondary" data-return-cli-confirm disabled={!!busy || !returnCliBrowser} onClick={() => {
+                if (!returnCliBrowser) return;
+                const target = returnCliBrowser;
+                setReturnCliBrowser(null);
+                void act('browser_return_to_cli', {expectedIdentity: target.expectedIdentity});
+            }}>{t('browser.returnToCli')}</Button></>}>
+            <div className="identity-confirm" data-return-cli-dialog><strong>{returnCliBrowser?.name}</strong><p>{t('browser.verificationScope')}</p></div>
+        </AppDialog>
         <AppDialog alert={confirm === 'reset'} className={confirm === 'reset' ? 'identity-delete-alert' : undefined} open={confirm !== null} onOpenChange={v => { if (!v) { setConfirm(null); setAccepted(false); } }} title={confirm === 'reset' ? t("全清理浏览器") : t("对齐美国系统环境")} description={confirm === 'reset' ? t("永久删除当前身份的全部本地浏览器资料，不创建备份。") : t("先核验代理实际在美国，再将机器时区设为出口时区、首选语言设为 en-US、区域设为 en_US，并关闭系统定位。时区可能需要管理员授权。")} footer={<><Button variant="secondary" data-dialog-cancel onClick={() => { setConfirm(null); setAccepted(false); }}>{t("取消")}</Button><Button className={confirm === 'reset' ? 'identity-delete-button' : undefined} variant="secondary" disabled={!!busy || (confirm === 'reset' && !accepted)} onClick={() => { const action = confirm; if (action === 'reset' && !accepted) return; setConfirm(null); setAccepted(false); void act(action === 'reset' ? 'browser_clear' : 'browser_align', action === 'reset' ? { includeSiteData: true, resetProfile: true } : {}); }}>{confirm === 'reset' ? t("确认全清理") : t("检测并应用")}</Button></>}>
             {confirm === 'reset' ? <div className="identity-confirm"><div className="identity-delete-warning"><span aria-hidden="true">!</span><strong>{t("警告：此操作不可撤销，不会创建新备份。")}</strong></div><p>{t("登录状态、密码与密钥、书签、历史、扩展、设置和缓存将全部移除。")}</p><p>{t("其他身份的浏览器资料和身份保险库不受影响。")}</p><Checkbox checked={accepted} onCheckedChange={value => setAccepted(value === true)} label={t("我知道此操作无法撤销")} /></div> : <p>{t("不会修改代理节点。若机器与浏览器出口不同，需在代理工具中统一系统路由。更改系统语言后，部分应用需重新启动或注销。")}</p>}
         </AppDialog>

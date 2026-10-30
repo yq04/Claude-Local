@@ -1,8 +1,77 @@
 // [INPUT]: 临时样本、指纹参数、固定清理边界、托管扩展参数与注入地理/分类 HTTP 样本。
-// [OUTPUT]: 资料清理隔离、进程/链接阻断、地区/Host/framing、同 IP 布尔分类/失败保留地理与有界 WebRTC 诊断回归。
+// [OUTPUT]: 资料/风控修订上下文隔离、同快照有效代理、进程/链接阻断、地区/Host/framing及有界 WebRTC 诊断回归。
 // [POS]: 浏览器模块行为验证；不访问用户实际资料。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
+#[test]
+fn risk_browser_context_binds_slot_config_revision_and_effective_machine_route() {
+    let fixture = sample();
+    let root = fixture.join("browser");
+    let mut db = workspaces::database(&root).unwrap();
+    let scope_a = workspaces::ensure(&root).unwrap();
+    let mut m = machine();
+    m.system_proxy = "http://127.0.0.1:8123".into();
+    let snapshot =
+        |m: &Machine| risk_browser_context(risk_browser_settings(&root).ok(), Some(m.clone()));
+    let a = snapshot(&m);
+    assert_eq!(a, snapshot(&m));
+    assert_eq!(a.configured_proxy, "");
+    assert_eq!(a.effective_proxy, m.system_proxy);
+    let id = a.context_id.as_ref().unwrap();
+    assert!(id.starts_with("brc1-"));
+    assert_eq!(id.len(), 29);
+    assert!(id[5..].bytes().all(|byte| byte.is_ascii_hexdigit()));
+    m.system_proxy = "http://127.0.0.1:8124".into();
+    assert_ne!(a.context_id, snapshot(&m).context_id);
+    m.timezone = "America/Los_Angeles".into();
+    assert_ne!(a.context_id, snapshot(&m).context_id);
+    let cfg_a = config::load(&scope_a).unwrap();
+    assert!(
+        risk_browser_context(risk_browser_settings(&root).ok(), None)
+            .context_id
+            .is_none(),
+        "missing system route evidence must not become a direct probe"
+    );
+    let before_slot = snapshot(&m);
+    db.configure_browser(true, false, None).unwrap();
+    let scope_b = workspaces::ensure(&root).unwrap();
+    config::save(&scope_b, &cfg_a).unwrap();
+    assert_ne!(
+        before_slot.context_id,
+        snapshot(&m).context_id,
+        "identical configs in different slots stay distinct"
+    );
+    let mut cfg_b = cfg_a.clone();
+    cfg_b.proxy = "socks5://127.0.0.1:9123".into();
+    config::save(&scope_b, &cfg_b).unwrap();
+    let b = snapshot(&m);
+    assert!(
+        risk_browser_context(risk_browser_settings(&root).ok(), None)
+            .context_id
+            .is_some(),
+        "a configured explicit route does not require system proxy fallback"
+    );
+    assert_eq!(b.configured_proxy, cfg_b.proxy);
+    assert_eq!(
+        b.effective_proxy, cfg_b.proxy,
+        "explicit proxy wins in the same snapshot"
+    );
+    assert_ne!(b.context_id, a.context_id);
+    cfg_b.native_graphics = !cfg_b.native_graphics;
+    config::save(&scope_b, &cfg_b).unwrap();
+    assert_ne!(
+        b.context_id,
+        snapshot(&m).context_id,
+        "all config changes invalidate the revision"
+    );
+    fs::write(scope_b.join("config.json"), b"invalid synthetic config").unwrap();
+    assert!(risk_browser_settings(&root).is_err());
+    let unavailable = snapshot(&m);
+    assert!(unavailable.context_id.is_none());
+    assert_eq!(unavailable.effective_proxy, m.system_proxy);
+    drop(db);
+    fs::remove_dir_all(fixture).unwrap();
+}
 fn machine() -> Machine {
     Machine {
         platform: "macos".into(),

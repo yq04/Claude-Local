@@ -1,4 +1,4 @@
-// [INPUT]: 私有 identity-vault/manual_subscriptions.json、账号 HMAC 指纹（quota_identity 64-hex）或本地归档 ID（32-hex）、YYYY-MM-DD 充值/到期日历输入与 Cleaner 短事务门。
+// [INPUT]: 私有 manual_subscriptions.json、账号 HMAC 指纹或归档/养号卡 ID、ASCII YYYY-MM-DD 充值/到期日历与 Cleaner 短事务门。
 // [OUTPUT]: 独立于 SQLite user_version=3 与 Python quota_ledger 的手动订阅到期/充值日原子存储、按 +1 自然月安全推算到期日、UTC 正午跨时区无偏移时间戳及自动网页账单较新优先合并。
 // [POS]: 身份卡片订阅到期（MM/DD）的本地补充层；绝不终止运行中的 claude.exe，绝不修改 .claude.json 或抢占 Python 账本锁。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -59,7 +59,7 @@ fn days_in_month(year: i32, month: u32) -> u32 {
 
 pub fn parse_ymd(raw: &str) -> Result<(i32, u32, u32), String> {
     let trimmed = raw.trim();
-    if trimmed.len() != 10 {
+    if trimmed.len() != 10 || !trimmed.is_ascii() {
         return Err("identityCard.invalidSubscriptionDate".into());
     }
     let bytes = trimmed.as_bytes();
@@ -203,10 +203,52 @@ pub fn write_store(vault: &Path, store: &ManualSubscriptionsFile) -> Result<(), 
     super::private::directory(vault)?;
     let mut normalized = store.clone();
     normalized.version = 1;
-    let mut bytes = serde_json::to_vec_pretty(&normalized)
-        .map_err(|_| "无法保存订阅到期设置。".to_string())?;
+    let mut bytes =
+        serde_json::to_vec_pretty(&normalized).map_err(|_| "无法保存订阅到期设置。".to_string())?;
     bytes.push(b'\n');
     super::private::write(&vault.join(FILE_NAME), &bytes)
+}
+
+/// Mutations must not turn an unreadable/corrupt file into an empty store.
+/// Passive projections retain the existing tolerant read_store behavior.
+pub(crate) fn read_store_checked(vault: &Path) -> Result<ManualSubscriptionsFile, String> {
+    let path = vault.join(FILE_NAME);
+    match fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ManualSubscriptionsFile {
+                version: 1,
+                ..Default::default()
+            })
+        }
+        Err(_) => return Err("无法读取订阅到期设置。".into()),
+        Ok(meta) if !meta.is_file() || meta.len() > MAX_STORE_BYTES => {
+            return Err("订阅到期设置无效。".into())
+        }
+        Ok(_) => (),
+    }
+    super::private::safe(&path)?;
+    let mut bytes = Vec::new();
+    fs::File::open(&path)
+        .map_err(|_| "无法读取订阅到期设置。")?
+        .take(MAX_STORE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "无法读取订阅到期设置。")?;
+    if bytes.len() as u64 > MAX_STORE_BYTES {
+        return Err("订阅到期设置无效。".into());
+    }
+    let store: ManualSubscriptionsFile =
+        serde_json::from_slice(&bytes).map_err(|_| "订阅到期设置无效。")?;
+    if store.version != 1
+        || store.by_identity.iter().any(|(id, entry)| {
+            !valid_fingerprint(id) || sanitize_entry(entry.clone()).as_ref() != Some(entry)
+        })
+        || store.by_record.iter().any(|(id, entry)| {
+            !super::valid_id(id) || sanitize_entry(entry.clone()).as_ref() != Some(entry)
+        })
+    {
+        return Err("订阅到期设置无效。".into());
+    }
+    Ok(store)
 }
 
 pub fn remove_record_entry(vault: &Path, record_id: &str) {
@@ -353,7 +395,12 @@ pub async fn identities_set_subscription_expiry(
                 .then(|| current_state.active.clone());
                 (current_state.current.quota_identity.clone(), active_rec)
             } else {
-                if !current_state.records.iter().any(|r| r.id == account_id) {
+                if !current_state.records.iter().any(|r| r.id == account_id)
+                    && !current_state
+                        .warming_cards
+                        .iter()
+                        .any(|r| r.id == account_id)
+                {
                     return Err("身份不存在。".into());
                 }
                 let qi = current_state
@@ -374,7 +421,7 @@ pub async fn identities_set_subscription_expiry(
         }
 
         let vault_path = super::vault(&worker)?;
-        let mut store = read_store(&vault_path);
+        let mut store = read_store_checked(&vault_path)?;
 
         match resolved_entry {
             Some(entry) => {
@@ -449,7 +496,10 @@ mod tests {
         let sec = ymd_to_utc_noon_sec("2026-11-12").unwrap() as i64;
         // UTC+8 (Beijing), UTC, UTC-5 (New York EST), UTC-8 (Los Angeles PST)
         for offset_hours in [8, 0, -5, -8] {
-            let shifted = Utc.timestamp_opt(sec + offset_hours * 3600, 0).single().unwrap();
+            let shifted = Utc
+                .timestamp_opt(sec + offset_hours * 3600, 0)
+                .single()
+                .unwrap();
             assert_eq!(shifted.format("%m/%d").to_string(), "11/12");
         }
     }
@@ -471,7 +521,10 @@ mod tests {
         );
         write_store(&vault.0, &store).unwrap();
         let reloaded = read_store(&vault.0);
-        assert_eq!(reloaded.by_identity.get(&qi).unwrap().expiry_ymd, "2026-11-15");
+        assert_eq!(
+            reloaded.by_identity.get(&qi).unwrap().expiry_ymd,
+            "2026-11-15"
+        );
 
         // Manual newer than browser (or no browser observation): manual wins
         let mut web = super::super::online::WebMetadata {
