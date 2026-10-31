@@ -1,18 +1,20 @@
 <!--
-[INPUT]: Verified v0.2.3 security & warming enhancement implementation (F1–F6 + Stage A/B polish), neutral Windows NSIS build audit, backed-up local GUI deployment and GitHub Release v0.2.3.
-[OUTPUT]: Context-free handoff for a brand-new session covering task overview, completed v0.2.3 deliverables, current state/remaining boundaries, next steps and critical pitfalls to avoid.
+[INPUT]: Verified v0.2.3 security & warming enhancement implementation (F1–F6 + Stage A/B polish), neutral Windows NSIS build audit, GitHub Release v0.2.3, bilingual README/release presentation sync, and Clash Verge Service Mode runtime DNS/strict-route confirmation.
+[OUTPUT]: Context-free handoff for a brand-new session covering task overview, completed deliverables, current state/remaining boundaries, next steps and critical pitfalls to avoid.
 [POS]: Root maintenance handoff; real identities, IP/proxy values, process IDs, workstation paths and screenshots stay out of tracked files.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only updates do not build/deploy, reload proxies, operate accounts, package/upload or move release tags.
 -->
 # Claude-Local 新会话交接文档（无上下文直接接手）
 
-更新时间：2026-10-30 06:25 EDT（America/New_York）。当前最新已开发、已验证、已本机热更新并正式发布至 GitHub Release（Latest）的版本为 **`v0.2.3`**（源码标签 `v0.2.3` 指向提交 `dd25de8`）。
+更新时间：2026-10-30 23:15 EDT（America/New_York）。当前最新正式发布至 GitHub Release（Latest）的版本为 **`v0.2.3`**（源码标签 `v0.2.3` 指向提交 `dd25de8`），`main` 分支最新提交已同步双语旗舰介绍文档与 Clash Verge Rev 服务模式（`clash-verge-service`）运行期配置确认增强并完成本机热更新。
 
 > **给新会话的第一句话（必读）**：
-> 本次 `v0.2.3` 版本已将两套规划方案中的核心任务**全部编码落地、测试通过、更新至本机安装目录，并打包上传发布至 GitHub Release `v0.2.3`**：
+> 本次 `v0.2.3` 版本及后续收尾工作已**全部编码落地、测试通过、更新至本机安装目录、打包上传发布至 GitHub Release `v0.2.3`，并完成本机 Clash Verge / Mihomo `strict-route: true` 与服务模式运行期配置核验的全绿闭环**：
 > 1. `docs/plans/2026-10-30-security-and-warming-enhancement/` 中的 **F1–F6 全部完成并交付**（F1 伴生浏览器按需无阻断防泄露断路器 Kill-Switch、F2 Mihomo `strict-route` 分层闭环修复向导、F3 养号卡常驻国家/时区锁定与打开前防漂移确认、F4 养号编辑弹窗阶段防封 SOP 折叠指南、F5 额度详情高消耗速率温和提示、F6 全链路 `.clbackup` 覆盖 `warming_cards.json` 与 `manual_subscriptions.json`）。
 > 2. `docs/plans/2026-10-30-multi-account-optimization/` 中的 **阶段 A（操作进度日志关闭/重开、返回 CLI 浏览器自动清理陈旧提示、自动续订与手动到期悬停提示区分、过期重置次数防误导）** 与 **阶段 B（跨槽位绑定资料直接同步当前 CLI 订阅日期与重置次数）** 及 **阶段 D（即 F6 备份范围扩展）** 均已完成并随 `v0.2.3` 一起交付。
-> 3. **请勿重复实现上述已交付功能，也不要回退或移动 `v0.2.3` 标签及已上传安装包资产。**
+> 3. **双语介绍文档与发布页文案同步（`a26e91a`）**：`README.md`、`README_EN.md`、`docs/RELEASE_NOTES_0.2.3_SECURITY.md`、`docs/FEATURE_NOTES_WARMING_CARDS.md`、`docs/PROJECT_ORIGIN.md` 及 GitHub Release `v0.2.3` 页面正文已完整同步 `v0.2.3` 全量特性与 CCBaga 演进对比。
+> 4. **本机 DNS / `strict-route` 全链路配置与服务模式识别闭环（`bb47f9c`）**：已应用户要求将本机 Clash Verge 的 `config.yaml`、`profiles\Merge.yaml`、`clash-verge.yaml` 与 `clash-verge-service` 运行期 `config.yaml` 全部配置为 `tun.strict-route: true` 并通过控制命名管道无感热重载 `verge-mihomo`；同时在 `src-tauri/src/risk_config_source.rs` 与 `src-tauri/src/windows.rs` 中补齐对 `%PROGRAMDATA%\clash-verge-service\users\<64-hex>\runtime\config.yaml`（经 `active-owner.json` / `.runtime-manifest.json` 校验归属当前用户 `%APPDATA%`）的运行期配置确认并热更新至本机 `%LOCALAPPDATA%\Programs\Claude-Local`。
+> 5. **请勿重复实现上述已交付功能，也不要回退或移动 `v0.2.3` 标签及已上传安装包资产。**
 
 新会话接手时请依次阅读：本文（`HANDOFF.md`） → 根目录 `AGENTS.md`（切勿提交到 Git） → 根目录 `CLAUDE.md`；修改具体模块前先读对应子目录的 `CLAUDE.md` 与源文件头注释（`[INPUT]/[OUTPUT]/[POS]/[PROTOCOL]`）。本文受 Git 跟踪，**严禁写入任何真实账号、邮箱、身份指纹、真实 IP、代理凭据、个人绝对路径或真实截图**。
 
@@ -73,12 +75,20 @@
 3. **陈旧反馈自动清理与到期/重置语义精确化（阶段 A）**：
    - `src/identities.tsx`：`returnToCliBrowser()` 成功后自动清空陈旧的 `quotaFeedback`，并在主页面 `.identity-online-feedback` 旁提供手动关闭按钮（`[data-quota-feedback-dismiss]`）；`IdentityName` 区分浏览器自动续订日（`identityCard.renewalTooltip`）与手动设置到期日（`identityCard.expiryTooltip`）；`SubscriptionAndResets` 对已过 `validUntil` 有效期的正数重置次数不再展示为当前可用。
 
-### 2.4 已执行的验证、本机热更新与 `v0.2.3` 打包发布结果
+### 2.4 本机 DNS / `strict-route` 持久化配置与 `clash-verge-service` 运行期识别（`bb47f9c`）
+- **定位并解决 Clash Verge 订阅更新后 `strict-route` 回退 `false` 的根因**：
+  - Clash Verge Rev 在生成最终运行配置时，会在执行完订阅配置、`Merge.yaml` 与 `Script.js` **之后**，将 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev\config.yaml`（Clash Verge 内部基础 Clash 设置补丁）中的 `tun` 字段合并覆盖上去。由于此前 `config.yaml` 中存有 `strict-route: false`，导致每次订阅自动更新或重载配置时，`Script.js` 中的 `config.tun["strict-route"] = true` 都被覆盖回 `false`。
+  - 已先备份本机 4 份配置文件至 `.local/tasks/20261030-dns-config-backup/`，随后将 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev\config.yaml`、`profiles\Merge.yaml`、`clash-verge.yaml` 与 `clash-verge-service` 运行期 `config.yaml` 全部统一为 `strict-route: true`，并通过控制命名管道发送 `PATCH /configs`（`204 No Content`）实时热重载运行中的 `verge-mihomo` 内核，经 `GET /configs` 确认运行期 `"strict-route": true` 已生效。
+- **定位并解决 Clash Verge Rev 服务模式（`clash-verge-service`）下提示“仅发现候选文件，无法确认正在使用”的根因**：
+  - 在 Clash Verge Rev 2.x 服务模式下，`verge-mihomo.exe` 以 `LocalSystem`（`S-1-5-18`）运行，其 `-f` 参数指向 `%PROGRAMDATA%\clash-verge-service\users\<64位hex>\runtime\config.yaml`（文件所有者为 `BUILTIN\Administrators` 或 `NT AUTHORITY\SYSTEM`）。
+  - 已在 `src-tauri/src/risk_config_source.rs::clash_verge_service_runtime_allowed` 与 `src-tauri/src/windows.rs::service_or_user_owned` 中扩展服务配置校验：当路径位于 `%PROGRAMDATA%\clash-verge-service\users\<64位hex>\runtime\config.yaml`、无符号链接/重解析点、所有者为当前用户/`LocalSystem`/`Administrators`，且 `active-owner.json` 或 `.runtime-manifest.json` 确认其绑定当前用户的 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev` 时，将其认证为 `config_source = "running_core"`、`config_source_status = "confirmed"`，使「风控验证」页的本地配置检查直接全绿通过。
+
+### 2.5 已执行的验证、本机热更新与 `v0.2.3` 打包发布结果
 - **自动化测试全部通过**：
   - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml warming`：**17 passed, 0 failed**
   - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml backup`：**15 passed, 0 failed**
   - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml kill_switch`：**4 passed, 0 failed**
-  - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml risk_check`：**12 passed, 0 failed**
+  - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml risk_`：**13 passed, 0 failed**
   - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml quota_`：**42 passed, 0 failed**
   - `bun x tsc --noEmit`：**PASS（0 error）**
   - `bun test src/identity-online-quota.test.ts src/i18n.test.ts src/risk-model.test.ts src/backup-panel-workflow.test.ts`：**38 passed, 0 failed**
@@ -87,11 +97,10 @@
   - 构建脚本：`scripts/build-windows-share.ps1`（中性根目录 `D:\ClaudeLocalBuild\...`，`--features custom-protocol --bundles nsis`）。
   - 产出目录：`.local/artifacts/20261030T100102Z-91eca54b81ca417eb557ea43ede2e66f/`。
   - 安装包：`Claude-Local_0.2.3_x64-setup.exe`，大小 **`140,883,227` 字节（`134.36 MiB`）**，SHA-256 为 **`fa122f952b9a0a7987e51047eb3b341171820e58823a4b15380cd85d362b3e31`**。
-  - 未打包宿主 `claude-local.exe` SHA-256：**`6351891eb88ca76aa52716a971e0117a53de675f92b23850f2b57025aa451652`**；NSIS 内宿主 SHA-256：**`61305648ec4967ad155470968d633299be1972f0f7c90415628344037f1fdc50`**（仅偏移 `13418642` 处 `UNK` → `NSS` 三字节变换）。
   - 隐私审计：109 个解包文件全部匹配资源白名单，29 项本机外置隐私探针扫描 **`0` 命中**。
 - **本机安装目录安全热更新**：
-  - 更新前备份位于 `.local/tasks/20261030-v0.2.3-release/deployment-before-20261030T101644Z/`。
-  - 已将 `v0.2.3` 宿主与前端资源部署至 `%LOCALAPPDATA%\Programs\Claude-Local`，校验已安装 `claude-local.exe` SHA-256 与未打包宿主完全一致（`6351891eb88ca76aa52716a971e0117a53de675f92b23850f2b57025aa451652`），并通过标准 `Win32_Process` CIM `Create` 重启 GUI；**本机正在运行的 `claude.exe` 终端进程全程保持原 PID 无中断**。
+  - 更新前备份位于 `.local/tasks/20261030-v0.2.3-release/deployment-before-20261030T101644Z/` 及 `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe.backup-*`。
+  - 已将包含 `clash-verge-service` 运行期配置确认的最新宿主与前端资源部署至 `%LOCALAPPDATA%\Programs\Claude-Local`（当前本机已安装 `claude-local.exe` SHA-256 为 `1218fd8a03a322379deaa5922889321a6971df951b0e4ed4d5d4761825ab3105`），并通过标准 `Win32_Process` CIM `Create` 重启 GUI；**本机正在运行的 `claude.exe` 终端进程全程保持原 PID 与启动时间无中断**。
 - **GitHub Release 正式发布与双语介绍文档同步**：
   - 标签 `v0.2.3`（指向 `dd25de8`）及公开资产 `Claude-Local_0.2.3_x64-setup.exe`、`SHA256SUMS.txt` 已正式发布至 https://github.com/yq04/Claude-Local/releases/tag/v0.2.3 （`isDraft: false`、`isPrerelease: false`、Latest），GitHub 服务端返回 `digest` 与本地 SHA-256 完全一致。
   - `README.md`、`README_EN.md`、`docs/RELEASE_NOTES_0.2.3_SECURITY.md`、`docs/FEATURE_NOTES_WARMING_CARDS.md`、`docs/PROJECT_ORIGIN.md` 及 GitHub Release `v0.2.3` 页面正文已完整同步 `v0.2.3` 核心特性矩阵、与 CCBaga 的演进对比表、安全边界说明及安装包 SHA-256 校验指引（未移动 `v0.2.3` 标签，未替换已上传安装包资产）。
@@ -119,7 +128,7 @@
 
 1. **先听取用户的新指令**：
    - 若用户提出新的使用问题或新需求，先阅读相关模块的 `CLAUDE.md` 与源码头，按需复现并制定方案。
-   - 若用户希望验证本机 `strict-route` 修复，可引导用户在已更新的 `v0.2.3` 界面打开「风控验证」→ 点击「修复 Strict-Route」→ 复制 YAML 到 Clash Verge 全局扩展配置（Merge）保存重载 → 点击弹窗内「我已完成设置，立即复核」。
+   - 本机 Clash Verge `strict-route: true` 与服务模式运行期配置确认均已配置并热更新到位，用户在「风控验证」页可直接看到本地配置检查全绿通过，点击右上角「开始一致性实测」即可完成 6/6 全绿核验。
 2. **远期可选储备方向（仅在用户明确要求时再启动，切勿自行开工）**：
    - **可选方向 1（方案阶段 C / E：多槽位浏览器完整并行管理）**：将 `Browser.session` 升级为 `HashMap<String, SlotSession>`，允许已保存的非当前 CLI 身份卡在不切换 CLI 身份的前提下直接从卡片菜单打开各自绑定的浏览器实测页并独立回传报告。
    - **可选方向 2（方案 F7：`CLAUDE_CONFIG_DIR` 独立目录非破坏性试点）**：评估通过环境变量隔离配置目录的兼容性（注意目前用户仅顺序运行单个 CLI 会话，优先级为 P2 低优）。
@@ -151,12 +160,15 @@
    - `src-tauri/src/identities/backup.rs` 的 `verify_staged()` 采用了严格的文件路径白名单校验（未知文件直接报错拒绝恢复）。因此新增备份文件（如 `warming_cards.json`、`manual_subscriptions.json`）时，必须同步更新 `collect_files`、`rescue_files`、`verify_staged`、`verify_rescue_staged` 与 `identities_backup_restore_new` 五处，缺一不可。
 7. **订阅同步与过期重置次数坑：注意合成测试 Fixture 的字段省略习惯**：
    - `tests/identities-fixture.tsx` 在模拟 `identities_sync_subscription` 时只设置了 `manual_resets_remaining: 0` 而未设置 `manual_resets_valid_until`。因此前端过滤过期重置次数时，应仅针对 `typeof validUntil === 'number' && validUntil * 1000 <= Date.now() && remaining > 0`（明确带有过期时间戳的正数次数）做拦截，保留 `remaining === 0` 或无 `validUntil` 时的展示，确保真实场景与合成测试双向兼容。
-8. **Windows 构建与工具链坑**：
+8. **Clash Verge Rev 四层配置覆盖顺序坑与服务模式（`clash-verge-service`）路径确认坑**：
+   - **配置覆盖顺序坑**：Clash Verge Rev 在生成最终运行配置时，并非只合并订阅、`Merge.yaml` 与 `Script.js`；它在执行完 `Merge.yaml` 和 `Script.js` **之后**，还会把 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev\config.yaml`（Clash Verge 内部基础 Clash 设置补丁）中的 `tun` 字段覆盖上去。若 `config.yaml` 中存有 `strict-route: false`，即使 `Script.js` 设置了 `config.tun["strict-route"] = true`，每次订阅自动更新或重载后仍会被覆盖回 `false`。因此持久化开启 `strict-route: true` 必须同步修改 `config.yaml` 与 `profiles\Merge.yaml`。
+   - **服务模式运行配置路径坑**：Clash Verge Rev 2.x 开启服务模式（`clash-verge-service.exe`）后，`verge-mihomo.exe` 以 `LocalSystem`（`S-1-5-18`）运行，其 `-f` 参数指向 `%PROGRAMDATA%\clash-verge-service\users\<64位hex>\runtime\config.yaml`（文件所有者为 `BUILTIN\Administrators` 或 `NT AUTHORITY\SYSTEM`），而非 `%APPDATA%` 下的 `clash-verge.yaml`。`src-tauri/src/risk_config_source.rs` 现已通过校验 `active-owner.json` / `.runtime-manifest.json` 与当前用户 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev` 的归属绑定，安全确认服务模式下的运行期配置文件（提交 `bb47f9c`）。
+9. **Windows 构建与工具链坑**：
    - 在 Windows 下运行 `cargo test` 或 `cargo build` 前，务必设置 `$env:CARGO_INCREMENTAL="0"; $env:CARGO_BUILD_JOBS="1"` 并加 `-j 1`，避免 MSVC `link.exe` 并发争用或 PDB 锁死。
    - 生产构建与本地部署必须带 `--features custom-protocol`；否则 Tauri 宿主会尝试连 `http://localhost:1420` 导致白屏。
-   - `scripts/build-windows-share.ps1` 需要显式传入本机已有的 7-Zip 路径（`-SevenZipPath "D:\1_Research\AI_Workspace\Claude-Local\.local\build-tools\7zip-26.04-f4a03f7e\portable\7z.exe"`）。
+   - `scripts/build-windows-share.ps1` 需要显式传入本机已有的 7-Zip 路径（`-SevenZipPath "<repo>\.local\build-tools\7zip-26.04-f4a03f7e\portable\7z.exe"`）。
    - 在 PowerShell 工具调用中重启常驻 GUI 进程时，不要用 `Start-Process`（可能随命令会话结束被 Job Object 回收），应使用 `Invoke-CimMethod -ClassName Win32_Process -MethodName Create` 启动独立进程。
-   - 部分源码文件（如 `scripts/test-warming-ui.ts`、`src/cleaner-activity.tsx`）在 Windows 工作区中为 `CRLF` 行尾，使用 `edit_file` 替换多行块若报 `target content not found`，优先改用单行精确锚点替换。
+   - 部分源码文件（如 `scripts/test-warming-ui.ts`、`src/cleaner-activity.tsx`、`src-tauri/src/windows.rs`）在 Windows 工作区中为 `CRLF` 行尾，使用 `edit_file` 替换多行块若报 `target content not found`，优先改用单行精确锚点替换。
 
 ---
 
