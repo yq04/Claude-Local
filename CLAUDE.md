@@ -33,7 +33,7 @@ docs/PUBLIC_PREPARATION.md - Release series from 0.1.0, owner-managed publicatio
 docs/PROJECT_ORIGIN.md - Explicit CCBaga secondary-development provenance, retained upstream work, local changes and attribution/maintenance boundaries.
 docs/RELEASE_POLICY.md - Public version/tag/topic conventions, immutable artifacts and backed-up explicit reference cleanup.
 docs/CONNECTION_RECOVERY.md - Website quota recovery versus CLI wakeup authorization, explicit browser fallback failures and truthful admission feedback.
-docs/FEATURE_NOTES_WARMING_CARDS.md - Browser-only Free warming cards, local-day progress, stable promotion, deletion/backup boundaries and local-only delivery.
+docs/FEATURE_NOTES_WARMING_CARDS.md - Browser-only Free warming cards, local-day progress, country/timezone lock & pre-open drift check, stage SOP disclosure, stable promotion, deletion and full-chain .clbackup coverage.
 docs/RELEASE_VERIFICATION_0.1.0.md - Exact versioned release URL/installer SHA, passing CI, neutral 109-file/13-probe package audit and 102-file local NSS-host alignment; no real installer execution.
 docs/RELEASE_NOTES_0.1.0.md - Initial 0.1.0 product release, baseline features, unchanged data formats and explicit verification limits.
 docs/plans/2026-10-21-usage-account-safety/ - Historical development proposal and source evidence; not a separate public release timeline.

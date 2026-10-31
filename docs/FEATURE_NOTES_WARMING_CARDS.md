@@ -1,6 +1,6 @@
 <!--
-[INPUT]: Browser-only warming commands, private metadata, synthetic identity fixtures and the existing CLI transaction.
-[OUTPUT]: Warming-card behavior, selected-profile/window-state distinction, confirmed browser-only CLI return, account-bound usage pages, coexistence, context-bound diagnostics and local-only delivery boundaries.
+[INPUT]: Browser-only warming commands, country/timezone lock & preflight drift check, stage SOP disclosure, full-chain .clbackup extension, synthetic identity fixtures and the existing CLI transaction.
+[OUTPUT]: Warming-card behavior, selected-profile/window-state distinction, confirmed browser-only CLI return, account-bound usage/subscription pages, coexistence, context-bound diagnostics and delivery boundaries.
 [POS]: Feature record; no real account, proxy, identity hash or workstation receipt belongs here.
 [PROTOCOL]: Keep source headers, directory maps and both locale catalogs aligned. Local receipts stay ignored.
 -->
@@ -32,6 +32,12 @@ Windows 默认浏览器入口对明确的 Claude OAuth 授权链接增加私有�
 
 网页升级 Pro 后，先把卡片阶段改为「Pro 待转正」，再选择转正操作。此操作明确展示对运行中 CLI 的影响，并复用现有确认、进程检查、归档和失败回滚流程。确认后用户在终端完成 CLI 登录，再保存身份。保存后的正式 CLI 卡继承养号卡的 ID、浏览器槽位、指纹种子、原资料目录和手动订阅日期；程序不会复制、合并或重新生成养号浏览器资料。额外的转正标记区分受控转正与普通浏览器草稿，防止把切换前的 Pro 账号错误保存为养号卡。
 
-删除默认保留浏览器资料，删除资料需要另行勾选并确认。删除当前养号卡前，程序先正常退出该浏览器并转到全新空白槽位，因此只有一张养号卡时也可删除，且不需要切换 CLI。删除受既有进程、路径与私有目录检查约束；部分清理失败会明确报告。原有 CLI 加密导出备份仍只覆盖身份索引、密钥与 CLI 归档，养号元数据和浏览器资料不在该导出范围。
+删除默认保留浏览器资料，删除资料需要另行勾选并确认。删除当前养号卡前，程序先正常退出该浏览器并转到全新空白槽位，因此只有一张养号卡时也可删除，且不需要切换 CLI。删除受既有进程、路径与私有目录检查约束；部分清理失败会明确报告。
 
-验证使用临时目录、虚构账号、隔离浏览器与模拟 IPC，覆盖 CLI 指针/配置不变、槽位与种子稳定、转正/回滚、订阅继承、双语卡片和界面交互。本次交付仅进行有备份的本地 GUI 热更新，不生成安装包、不上传、不移动现有产品标签或替换已发布资产。实际注册、KYC、充值与真实账号转正由用户操作，自动化验证不调用这些服务。
+在 `v0.2.3` 中，养号卡片与安全边界进一步扩展：
+- **常驻国家/时区锁定与打开前防漂移确认（F3）**：首次通过伴生浏览器完成环境核验并锁定有效地区时，卡片自动记录 `registered_country` 与 `registered_timezone`；后续点击打开前若检测到当前出口国家与锁定国家不一致，弹出警示确认框（支持取消、仍要打开或更新锁定地区并打开），并在 `180×286` 卡片环境行内联显示紧凑漂移徽章。
+- **阶段防封 SOP 折叠指南（F4）**：新建/编辑弹窗底部内嵌默认收起的阶段化防封操作参考建议，不占用主界面卡片高度。
+- **跨槽位 CLI 订阅同步与断路器协同（F1 & 阶段 B）**：即使当前选中养号卡槽位，当前 CLI 身份也可直接定位并打开其已绑定的独立 CLI 浏览器资料完成「同步订阅日期与额外重置」；伴生浏览器按需断路器（Kill-Switch）在检测到系统 TUN 断开（5s 连续两次）或出口国家漂移（60s）时优雅关闭运行中的受管伴生浏览器并点亮红色提醒，恢复后一键重开零阻断，全程绝不中断 `claude.exe`。
+- **全链路 `.clbackup` 加密备份覆盖（F6）**：`identity-vault/warming_cards.json` 与 `identity-vault/manual_subscriptions.json` 已纳入 `.clbackup` 口令加密导出、完整性预检（含 `browser_bindings` 槽位与正整数种子校验）、启动前自动救援备份与隔离恢复副本；浏览器用户数据目录（`browser/contexts/*`）仍保持在归档体积之外。
+
+验证使用临时目录、虚构账号、隔离浏览器与模拟 IPC，覆盖 CLI 指针/配置不变、槽位与种子稳定、国家漂移拦截、SOP 折叠、转正/回滚、订阅继承、全链路备份恢复、双语卡片和界面交互。实际注册、KYC、充值与真实账号转正由用户操作，自动化验证不调用这些服务。

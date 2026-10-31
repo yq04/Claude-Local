@@ -23,9 +23,9 @@
 - **额度与用量工作流**：默认被动读取本地CLI观测，Python作为quota账本单写者，明确触发的在线查询冻结并验证账号/组织；见[claude_quota.py](../scripts/claude_quota.py)、[online.rs](../src-tauri/src/identities/online.rs)及[claude_quota_online.py](../scripts/claude_quota_online.py)。
 - **用量分析与导出**：Token、缓存、模型/Effort统计，IANA/DST日历区间和TSV导出；见[usage.rs](../src-tauri/src/identities/usage.rs)、[usage-statistics.tsx](../src/usage-statistics.tsx)及[usage-export.ts](../src/usage-export.ts)。
 - **原生唤醒调度与监控**：应用进程内的唯一调度器、错峰和未知结果保护、新鲜5h窗口确认、有限审计，以及可选HUD；见[wakeup.rs](../src-tauri/src/identities/wakeup.rs)、[wakeup_audit.rs](../src-tauri/src/identities/wakeup_audit.rs)及[monitor_window.rs](../src-tauri/src/monitor_window.rs)。唤醒发送真实请求并产生用量，不会增加订阅额度。
-- **全库口令备份与恢复校验**：CLBKUP01封装使用PBKDF2-HMAC-SHA256派生口令保护密钥，复用认证流并验收清单/SQLite/归档，恢复到新副本；见[backup.rs](../src-tauri/src/identities/backup.rs)。内部.baga保险库主密钥是既有随机密钥，不能把口令备份的派生机制写成所有归档的密钥来源。
+- **全库口令备份与恢复校验**：CLBKUP01封装使用PBKDF2-HMAC-SHA256派生口令保护密钥，复用认证流并验收清单/SQLite/归档及可选的养号卡片（`warming_cards.json`）与手动订阅记录（`manual_subscriptions.json`），恢复到新副本；见[backup.rs](../src-tauri/src/identities/backup.rs)。内部.baga保险库主密钥是既有随机密钥，不能把口令备份的派生机制写成所有归档的密钥来源。
 - **Windows与存储可靠性**：AppContainer缓存ACL继承修复、私有暂存生命周期、归档资源限额、进程检查和显式操作恢复；见[private.rs](../src-tauri/src/identities/private.rs)、[profile.rs](../src-tauri/src/browser/profile.rs)、[archive_limits.rs](../src-tauri/src/identities/archive_limits.rs)及[cleaner_transaction.rs](../src-tauri/src/cleaner_transaction.rs)。这些是实现增强，不承诺任意环境均无损或绝对安全。
-- **浏览器观测与交互**：有界无STUN本地候选测量、同IP分类补充、生产CSP回归、双语状态反馈与五页界面精简；见[浏览器修复](BROWSER_CSP_0.1.4.md)及[界面优化](UI_POLISH_0.1.5.md)。
+- **浏览器观测、防泄露断路器与养号/风控工作流**：有界无STUN本地候选测量、同IP分类补充、生产CSP回归、按需无阻断伴生浏览器防泄露断路器（Kill-Switch）、Free养号卡片全生命周期（常驻国家/时区锁定、防漂移确认、阶段SOP、零重绑转正Pro）及风控/KYC环境核验（含Mihomo `strict-route` 分层修复向导与手机同住宅出口LAN桥接）；见[kill_switch.rs](../src-tauri/src/browser/kill_switch.rs)、[warming.rs](../src-tauri/src/identities/warming.rs)、[risk_check.rs](../src-tauri/src/risk_check.rs)与[0.2.3发布说明](RELEASE_NOTES_0.2.3_SECURITY.md)。
 
 以上列出当前可核对的维护范围，不以代码百分比划分作者，也不将继承能力重新标为本项目独创。
 

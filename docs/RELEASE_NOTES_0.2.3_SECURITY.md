@@ -1,11 +1,28 @@
 <!--
-[INPUT]: Independent Windows x64 Claude-Local 0.2.3 security, anti-leak kill-switch, strict-route remediation, warming lifecycle protection, full-chain backup and multi-account UI polish.
-[OUTPUT]: Bilingual public release notes for v0.2.3.
-[POS]: Public release notes linked from README.md, README_EN.md and GitHub Releases.
-[PROTOCOL]: Keep free of personal paths, real accounts and unverified claims.
+[INPUT]: Independent Windows x64 Claude-Local 0.2.3 security, anti-leak kill-switch, strict-route remediation, warming lifecycle protection, full-chain backup, multi-account UI polish and audited installer receipts.
+[OUTPUT]: Bilingual public release notes for v0.2.3 without private runtime data or unverified artifact values.
+[POS]: Public release notes linked from README.md, README_EN.md and GitHub Releases; the older RELEASE_NOTES_0.2.3.md remains a historical development record.
+[PROTOCOL]: Retain CCBaga/MIT attribution and data-format compatibility; record artifact checksums only from the audited build.
 -->
 
 # Claude-Local 0.2.3 发布说明 / Release Notes
+
+**Claude-Local 基于 [CCBaga](https://github.com/liseami/CCBaga)（[@liseami](https://github.com/liseami) 及贡献者）二次开发并独立维护，保留原贡献者版权与 [MIT 许可](https://github.com/yq04/Claude-Local/blob/main/LICENSE)。** 第三方组件仍遵循各自许可，详见 [NOTICE](https://github.com/yq04/Claude-Local/blob/main/NOTICE.md)。
+
+Windows 10 / 11 x64 · [下载安装包 (Download Installer)](https://github.com/yq04/Claude-Local/releases/download/v0.2.3/Claude-Local_0.2.3_x64-setup.exe) · [交付核验 (Verification)](https://github.com/yq04/Claude-Local/blob/main/docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md)
+
+安装包 / Installer: `Claude-Local_0.2.3_x64-setup.exe` · `140,883,227` bytes (134.36 MiB)
+
+SHA-256: `fa122f952b9a0a7987e51047eb3b341171820e58823a4b15380cd85d362b3e31`
+
+源码 / Source: [`dd25de8432ccfa3609d40881c40b4fa60b038b24`](https://github.com/yq04/Claude-Local/commit/dd25de8432ccfa3609d40881c40b4fa60b038b24)
+
+```powershell
+Get-FileHash .\Claude-Local_0.2.3_x64-setup.exe -Algorithm SHA256
+# Expected SHA-256: fa122f952b9a0a7987e51047eb3b341171820e58823a4b15380cd85d362b3e31
+```
+
+---
 
 ## 简体中文
 
@@ -44,9 +61,16 @@
   - 当伴生浏览器当前选中养号卡槽位时，当前 CLI 身份的「同步订阅日期与额外重置」可直接定位并打开其已绑定的独立 CLI 浏览器资料完成同步，无需先手动切回槽位。
   - 操作进度面板完成后支持一键「关闭记录」与随时「查看上次记录」；返回 CLI 浏览器自动清理陈旧提示；区分自动续订日与手动到期日的悬停说明。
 
+### 6. 资料兼容与交付核验
+
+- **100% 向下兼容**：已有加密身份库（`BAGAID01` / `.baga`）、SQLite `user_version = 3`、主密钥、账号 HMAC、浏览器确定性种子与个人资料目录保持完全兼容；从 `0.1.x`、`0.2.0` 或 `0.2.2` 升级无需重建身份，亦不中断正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」导出一份 `.clbackup` 口令加密备份。
+- **解包与隐私审计**：本次安装包在独立中性目录构建，通过 109 个解包资源文件的白名单与哈希核对，29 项外置隐私探针扫描 `0` 命中（详见 [v0.2.3 交付核验](https://github.com/yq04/Claude-Local/blob/main/docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md)）。这些合成与静态核验不代表真实账号服务端授权或安装/卸载向导全生命周期验收。
+
 ---
 
 ## English
+
+**Claude-Local is derived from [CCBaga](https://github.com/liseami/CCBaga) by [@liseami](https://github.com/liseami) and contributors, and is maintained independently. The original contributors' copyright and [MIT license](https://github.com/yq04/Claude-Local/blob/main/LICENSE) are retained.** Third-party components remain subject to their own terms in [NOTICE](https://github.com/yq04/Claude-Local/blob/main/NOTICE.md).
 
 `Claude-Local 0.2.3` introduces an **On-Demand, Non-Blocking Companion Browser Kill-Switch**, a **Layered `strict-route` Remediation Guide & Live Re-verify Loop**, **Warming Card Country/Timezone Lock & Pre-open Drift Protection**, **Stage-Specific Anti-Ban SOP Reference**, **High-Load Quota Pace Hints**, **Full-Chain Encrypted Vault Backup Extension**, and **Multi-Account Workflow Polish**.
 
@@ -76,3 +100,8 @@
 
 - Extends `.clbackup` password-encrypted export, preflight verification (including `browser_bindings` slot/seed validation), automatic rescue backups, and isolated restore to include optional `identity-vault/warming_cards.json` and `identity-vault/manual_subscriptions.json`.
 - Enables account-bound subscription sync even when a warming card slot is selected, adds dismiss/reopen controls to the operation activity log, clears stale quota feedback on returning to the CLI browser, and distinguishes auto-renewal vs. manual expiry tooltips.
+
+### 6. Data Compatibility & Delivery Verification
+
+- **Full Backward Compatibility**: Existing encrypted vaults (`BAGAID01` / `.baga`), SQLite `user_version = 3`, master keys, account HMACs, deterministic browser seeds, and browser profiles remain 100% compatible. Upgrading from `0.1.x`, `0.2.0`, or `0.2.2` requires no identity recreation and never interrupts running `claude.exe` sessions. Export a password-encrypted `.clbackup` archive before upgrading.
+- **Payload & Privacy Audit**: Built in a fresh neutral staging directory, the NSIS installer passed an extracted-payload allowlist and hash audit across all 109 files, and all 29 external privacy probes returned 0 findings (see [v0.2.3 Delivery Verification](https://github.com/yq04/Claude-Local/blob/main/docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md)). Synthetic and static audits do not substitute for live account authorization or full installer/uninstaller lifecycle acceptance.

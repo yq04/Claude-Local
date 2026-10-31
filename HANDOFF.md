@@ -92,8 +92,9 @@
 - **本机安装目录安全热更新**：
   - 更新前备份位于 `.local/tasks/20261030-v0.2.3-release/deployment-before-20261030T101644Z/`。
   - 已将 `v0.2.3` 宿主与前端资源部署至 `%LOCALAPPDATA%\Programs\Claude-Local`，校验已安装 `claude-local.exe` SHA-256 与未打包宿主完全一致（`6351891eb88ca76aa52716a971e0117a53de675f92b23850f2b57025aa451652`），并通过标准 `Win32_Process` CIM `Create` 重启 GUI；**本机正在运行的 `claude.exe` 终端进程全程保持原 PID 无中断**。
-- **GitHub Release 正式发布**：
+- **GitHub Release 正式发布与双语介绍文档同步**：
   - 标签 `v0.2.3`（指向 `dd25de8`）及公开资产 `Claude-Local_0.2.3_x64-setup.exe`、`SHA256SUMS.txt` 已正式发布至 https://github.com/yq04/Claude-Local/releases/tag/v0.2.3 （`isDraft: false`、`isPrerelease: false`、Latest），GitHub 服务端返回 `digest` 与本地 SHA-256 完全一致。
+  - `README.md`、`README_EN.md`、`docs/RELEASE_NOTES_0.2.3_SECURITY.md`、`docs/FEATURE_NOTES_WARMING_CARDS.md`、`docs/PROJECT_ORIGIN.md` 及 GitHub Release `v0.2.3` 页面正文已完整同步 `v0.2.3` 核心特性矩阵、与 CCBaga 的演进对比表、安全边界说明及安装包 SHA-256 校验指引（未移动 `v0.2.3` 标签，未替换已上传安装包资产）。
 
 ---
 
