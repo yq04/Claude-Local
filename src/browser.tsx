@@ -188,19 +188,21 @@ export function BrowserPanel({ onBusy }: {
                     </div>
                 </div>
                 <div className="browser-hero-body">
-                    <p className="identity-policy-hint" data-current-cli-identity>{t('browser.currentCliIdentity', {name: cliIdentityName})}</p>
-                    <p className="identity-policy-hint" data-current-browser-identity>{t(state?.identity?.status === 'warming' ? 'browser.currentWarmingIdentity' : 'browser.currentBrowserIdentity', {name: browserIdentityName})}</p>
-                    <p className="identity-policy-hint">{t('browser.verificationScope')}</p>
+                    <div className="browser-hero-meta">
+                        <span className="browser-context-pill" data-current-cli-identity>{t('browser.currentCliIdentity', {name: cliIdentityName})}</span>
+                        <span className={`browser-context-pill ${state?.identity?.status === 'warming' ? 'is-warming' : 'is-cli'}`} data-current-browser-identity>
+                            {t(state?.identity?.status === 'warming' ? 'browser.currentWarmingIdentity' : 'browser.currentBrowserIdentity', {name: browserIdentityName})}
+                        </span>
+                        <span className="browser-scope-badge" data-browser-verification-scope>{t('browser.verificationScope')}</span>
+                    </div>
                     {!!state && !state.cli_expected_identity && <p className="identity-policy-hint">{t('browser.cliIdentityUnavailable')}</p>}
                 </div>
-                {((state?.identity?.status && !['linked', 'draft'].includes(state.identity.status)) ||
+                {((state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status)) ||
                   (state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim())) && (
                     <div className="browser-hero-body">
-                        {state?.identity?.status && !['linked', 'draft'].includes(state.identity.status) && (
+                        {state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status) && (
                             <p className="identity-policy-hint">
-                                {state.identity.status === 'warming'
-                                  ? t('warming.browserStatus', {name: maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask)})
-                                  : t(`browserSafety.status_${state.identity.status}`)}
+                                {t(`browserSafety.status_${state.identity.status}`)}
                             </p>
                         )}
                         {state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim() && (
@@ -338,7 +340,12 @@ export function BrowserPanel({ onBusy }: {
         <CleanupActivity activity={activity.state} />
         <AppDialog alert open={!!returnCliBrowser} onOpenChange={open => {if (!open && !busy) setReturnCliBrowser(null);}}
             title={t('browser.returnToCliConfirmTitle')} description={t('browser.returnToCliConfirm')}
-            footer={<><Button variant="secondary" data-dialog-cancel disabled={!!busy} onClick={() => setReturnCliBrowser(null)}>{t('取消')}</Button><Button variant="secondary" data-return-cli-confirm disabled={!!busy || !returnCliBrowser} onClick={() => {
+            footer={<><Button variant="secondary" data-dialog-cancel disabled={!!busy} onClick={() => setReturnCliBrowser(null)}>{t('取消')}</Button><Button variant="secondary" data-return-cli-claude disabled={!!busy || !returnCliBrowser} onClick={() => {
+                if (!returnCliBrowser) return;
+                const target = returnCliBrowser;
+                setReturnCliBrowser(null);
+                void act('browser_return_to_cli', {expectedIdentity: target.expectedIdentity, openMode: 'claude_ai'});
+            }}>{t('browser.enterClaudeAi')}</Button><Button variant="secondary" data-return-cli-confirm disabled={!!busy || !returnCliBrowser} onClick={() => {
                 if (!returnCliBrowser) return;
                 const target = returnCliBrowser;
                 setReturnCliBrowser(null);

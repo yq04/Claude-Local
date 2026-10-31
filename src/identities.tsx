@@ -32,6 +32,18 @@ import {formatObservationAge, quotaObservationAge} from './identity-list';
 import {serializeIdentityDiagnostic} from './identity-diagnostics';
 import {connectionHistory, IdentityConnections, isValidQuotaTargetSubset} from './identity-connections';
 import {MONITOR_BUS_CHANNEL, postMonitorBusMessage, type MonitorBusMessage, type MonitorWindowState} from './floating-monitor-model';
+import {
+  useSmartRelayConfig,
+  updateSmartRelayConfig,
+  resetSmartRelayConfig,
+  evaluateSmartRelay,
+  noteRelayAccountSwitch,
+  RELAY_STRATEGIES,
+  RELAY_RATE_LIMIT_MODES,
+  RELAY_AFFINITY_MODES,
+  RELAY_SPENT_THRESHOLDS,
+  type RelayAccountInput,
+} from './smart-relay-model';
 import './identity-productivity.css';
 import './floating-monitor.css';
 
@@ -208,6 +220,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [diagnosticVersion, setDiagnosticVersion] = useState<string|null>(null);
   const [foregroundAutoRefresh, setForegroundAutoRefresh] = useState(false);
   const [onlinePanelOpen, setOnlinePanelOpen] = useState(false);
+  const [relayPanelOpen, setRelayPanelOpen] = useState(false);
+  const [syncCliBrowserOnSwitch, setSyncCliBrowserOnSwitch] = useState(true);
+  const smartRelay = useSmartRelayConfig();
   const nativeWakeup = useSyncExternalStore(subscribeNativeWakeup, readNativeWakeupSnapshot);
   const autoWakeConfig = nativeWakeup.config;
   const autoWakeState = nativeWakeup;
@@ -248,6 +263,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const lockedRef = useRef(false);
   const busyRef = useRef(false);
   const activity = useCleanupActivity();
+  const warmingActivity = useCleanupActivity();
   const rail = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotionConfig() ?? false;
   const scrollSpring = useSpring(0, {stiffness: 170, damping: 25, mass: 0.8});
@@ -334,7 +350,50 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     }
     return best;
   }, null);
-  const recommendSaved = bestSaved && (!current?.present || (currentQuota && bestSaved.effectiveRem > currentQuota.effectiveRem)) ? bestSaved : null;
+  const relayAccounts: RelayAccountInput[] = [
+    ...(current?.present
+      ? [
+          {
+            id: state?.active || 'current',
+            name: currentName,
+            email: current?.email,
+            plan: current?.plan,
+            auth_status: current?.auth_status,
+            subscription_expires_at: current?.subscription_expires_at,
+            isCurrent: true,
+            listIndex: 0,
+            summary: current,
+          },
+        ]
+      : []),
+    ...saved.map((row, idx) => {
+      const sum = state?.summaries?.[row.id];
+      return {
+        id: row.id,
+        name: row.name,
+        email: sum?.email,
+        plan: sum?.plan,
+        auth_status: sum?.auth_status,
+        subscription_expires_at: sum?.subscription_expires_at,
+        isCurrent: false,
+        listIndex: idx + 1,
+        summary: sum,
+      };
+    }),
+  ];
+  const relayEval = evaluateSmartRelay(relayAccounts, smartRelay, nowSec);
+  const relayRecommendedSaved =
+    smartRelay.enabled && relayEval.recommended && !relayEval.recommended.isCurrent
+      ? (() => {
+          const row = saved.find(r => r.id === relayEval.recommended!.id);
+          return row ? {row, effectiveRem: relayEval.recommended.effectiveRem, inferred: relayEval.recommended.inferred} : null;
+        })()
+      : null;
+  const recommendSaved = smartRelay.enabled
+    ? relayRecommendedSaved
+    : bestSaved && (!current?.present || (currentQuota && bestSaved.effectiveRem > currentQuota.effectiveRem))
+      ? bestSaved
+      : null;
   const totalIdentities = (current?.present ? 1 : 0) + saved.length;
 
   useEffect(() => {
@@ -852,7 +911,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     }
   }
 
-  async function openAccountBrowser(target: QuotaBatchTarget): Promise<void> {
+  async function openAccountBrowser(target: QuotaBatchTarget, openMode?: 'usage' | 'claude_ai'): Promise<void> {
     if (actionLockedRef.current || batchBusyRef.current || busyRef.current) return;
     if (!isValidQuotaTargetSubset([target], buildBatchTargets(stateRef.current).targets)) {
       setQuotaFeedback(tRef.current('quotaOnline.accountMismatch'));
@@ -865,6 +924,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       await invoke('browser_open_identity_profile', {
         accountId: target.account_id,
         expectedIdentity: target.expected_identity,
+        ...(openMode ? {openMode} : {}),
       });
       setQuotaFeedback(tRef.current('quotaOnline.accountBrowserOpened'));
     } catch (error) {
@@ -1028,25 +1088,39 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       setBusy(false);
     }
   }
-  async function openUsagePage() {
-    if (busy || !detailsAreCurrent) return;
+  async function openUsagePage(openMode?: 'usage' | 'claude_ai') {
+    if (busy) return;
     const expectedIdentity = quotaDetails?.expectedIdentity;
-    if (!expectedIdentity) { setQuotaFeedback('browser.cliIdentityUnavailable'); return; }
+    if (!expectedIdentity) { setQuotaFeedback(tRef.current('browser.cliIdentityUnavailable')); return; }
+    if (!detailsAreCurrent && quotaDetails) {
+      await openAccountBrowser({account_id: quotaDetails.id, expected_identity: expectedIdentity}, openMode);
+      return;
+    }
     setBusy(true);
     setQuotaFeedback('');
     try {
-      await invoke('browser_open_usage', {expectedIdentity, onProgress: activity.start('browser')});
-      activity.finish(true, 'quota.opened');
-      setQuotaFeedback('quota.opened');
+      if (openMode === 'claude_ai') {
+        const next = await invoke<BrowserState>('browser_return_to_cli', {expectedIdentity, openMode: 'claude_ai', onProgress: activity.start('browser')});
+        if (mountedRef.current) {
+          setState(previous => previous ? {...previous, active_browser_slot: next.active_browser_slot,
+            warming_cards: previous.warming_cards?.map(card => ({...card, browser_active: card.slot === next.active_browser_slot}))} : previous);
+        }
+        activity.finish(true, 'browser.returnToCliDone');
+        setQuotaFeedback(tRef.current('browser.returnToCliDone'));
+      } else {
+        await invoke('browser_open_usage', {expectedIdentity, onProgress: activity.start('browser')});
+        activity.finish(true, 'quota.opened');
+        setQuotaFeedback(tRef.current('quota.opened'));
+      }
     } catch (reason) {
       const message = String(reason);
-      setQuotaFeedback(message);
+      setQuotaFeedback(tRef.current(message));
       activity.finish(false, message);
     } finally {
       setBusy(false);
     }
   }
-  async function returnToCliBrowser() {
+  async function returnToCliBrowser(openMode?: 'verify' | 'claude_ai') {
     if (!returnCliBrowser || busyRef.current) return;
     const target = returnCliBrowser;
     setReturnCliBrowser(null);
@@ -1055,7 +1129,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     browserRuntime.invalidate();
     setError('');
     try {
-      const next = await invoke<BrowserState>('browser_return_to_cli', {expectedIdentity: target.expectedIdentity, onProgress: activity.start('browser')});
+      const next = await invoke<BrowserState>('browser_return_to_cli', {expectedIdentity: target.expectedIdentity, ...(openMode ? {openMode} : {}), onProgress: activity.start('browser')});
       if (!mountedRef.current) return;
       // Apply the returned slot locally; this action never switches, saves or stops the CLI.
       setState(previous => previous ? {...previous, active_browser_slot: next.active_browser_slot,
@@ -1070,8 +1144,30 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       if (mountedRef.current) setBusy(false);
     }
   }
+  async function returnToCliBrowserDirect(expectedIdentity: string, openMode?: 'verify' | 'claude_ai') {
+    if (busyRef.current || batchBusyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    browserRuntime.invalidate();
+    setError('');
+    try {
+      const next = await invoke<BrowserState>('browser_return_to_cli', {expectedIdentity, ...(openMode ? {openMode} : {}), onProgress: activity.start('browser')});
+      if (!mountedRef.current) return;
+      setState(previous => previous ? {...previous, active_browser_slot: next.active_browser_slot,
+        warming_cards: previous.warming_cards?.map(card => ({...card, browser_active: card.slot === next.active_browser_slot}))} : previous);
+      setQuotaFeedback('');
+      activity.finish(true, 'browser.returnToCliDone');
+    } catch (reason) {
+      if (mountedRef.current) setError(String(reason));
+      activity.finish(false, String(reason));
+    } finally {
+      busyRef.current = false;
+      if (mountedRef.current) setBusy(false);
+    }
+  }
   function choose(target: Target) {
     setWarmingPromotion(null);
+    setSyncCliBrowserOnSwitch(browserRuntime.status !== 'running');
     setName(target === 'recovery' ? t('恢复前状态') : (active?.name || currentName).slice(0, 64));
     if (target === 'recovery') {
       const previous = state?.records.find(row => row.id === state.recovery);
@@ -1124,7 +1220,8 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     const onProgress = activity.start('identity', target === 'recovery' ? '恢复原身份' : target === 'empty' ? '切换到空身份' : '切换身份');
     try {
       await stop();
-      const next = warmingPromotion ? await invoke<IdentityState>('identities_warming_promote', {
+      const previousActiveId = stateRef.current?.active ?? null;
+      let next = warmingPromotion ? await invoke<IdentityState>('identities_warming_promote', {
         id: warmingPromotion.id, currentName: name.trim(), policy, onProgress,
       }) : await invoke<IdentityState>('identities_switch', {
         targetId: typeof target === 'object' ? target.id : 'empty',
@@ -1133,6 +1230,34 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         recover: target === 'recovery',
         onProgress,
       });
+      if (typeof target === 'object') {
+        noteRelayAccountSwitch(previousActiveId, target.id);
+      }
+      if (
+        !warmingPromotion &&
+        typeof target === 'object' &&
+        syncCliBrowserOnSwitch &&
+        next.browser.enabled &&
+        next.warming_cards?.some(card => card.browser_active) &&
+        next.current?.quota_identity
+      ) {
+        try {
+          const bState = await invoke<BrowserState>('browser_return_to_cli', {
+            expectedIdentity: next.current.quota_identity,
+            onProgress,
+          });
+          next = {
+            ...next,
+            active_browser_slot: bState.active_browser_slot,
+            warming_cards: next.warming_cards?.map(card => ({
+              ...card,
+              browser_active: card.slot === bState.active_browser_slot,
+            })),
+          };
+        } catch {
+          /* Keep completed CLI identity switch even if browser return fails */
+        }
+      }
       setState(next);
       setWarmingPromotion(null);
       setResidueRevision(value => value + 1);
@@ -1151,15 +1276,15 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     browserRuntime.invalidate();
     setBusy(true);
     setError('');
-    const onProgress = activity.start('browser');
+    const onProgress = warmingActivity.start('browser');
     try {
       const next = await invoke<IdentityState>(command, {...args, ...(progress ? {onProgress} : {})});
       setState(next);
-      activity.finish(true, t('warming.operationDone'));
+      warmingActivity.finish(true, 'warming.operationDone');
       return true;
     } catch (e) {
       setError(String(e));
-      activity.finish(false, String(e));
+      warmingActivity.finish(false, String(e));
       await refreshAfterError();
       return false;
     } finally {
@@ -1352,6 +1477,29 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   : t('wakeup.presetAllDay')}
               </button>
             </div>
+            <div className={`relay-header-pill${smartRelay.enabled ? ' is-enabled' : ''}`} data-smart-relay-pill>
+              <Button
+                variant="secondary"
+                size="small"
+                className={`monitor-toggle-btn relay-toggle-btn${smartRelay.enabled ? ' is-enabled' : ''}`}
+                title={t('relay.toggleHint')}
+                disabled={blocked}
+                onClick={() => updateSmartRelayConfig({enabled: !smartRelay.enabled})}
+              >
+                <span className={`monitor-toggle-dot${smartRelay.enabled ? ' is-open' : ''}`} aria-hidden="true" />
+                {t(smartRelay.enabled ? 'relay.toggleOn' : 'relay.toggleOff')}
+              </Button>
+              <button
+                type="button"
+                className="relay-config-trigger"
+                data-smart-relay-trigger
+                title={t('relay.configureButton')}
+                aria-label={t('relay.configureButton')}
+                onClick={() => setRelayPanelOpen(true)}
+              >
+                {t(`relay.strategy.${smartRelay.strategy}`)}
+              </button>
+            </div>
           </div>
           <div className="identity-header-group identity-header-secondary">
             <Button
@@ -1388,6 +1536,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
+                  <DropdownMenu.Item className="identity-menu-item" onSelect={() => setRelayPanelOpen(true)}>
+                    {t('relay.dialogTitle')}
+                  </DropdownMenu.Item>
                   <DropdownMenu.Item className="identity-menu-item" onSelect={() => setOnlinePanelOpen(true)}>
                     {t('identityCard.onlineQuery')}
                   </DropdownMenu.Item>
@@ -1589,10 +1740,284 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         onOpen={target => void openAccountBrowser(target)}
         onRetry={targets => void refreshAllQuotas(true, targets)}
       />
-      {!quotaDetails && (quotaFeedback || batchSummary.completed > 0) && <p className="identity-online-feedback" role="status">{quotaFeedback || formatBatchProgress(batchSummary, t)}{unverifiedQuotaTargets > 0 && <> · {t('quotaOnline.unverifiedTargets', {count:unverifiedQuotaTargets})}</>}</p>}
+      {!quotaDetails && (quotaFeedback || batchSummary.completed > 0) && <p className="identity-online-feedback" role="status">{quotaFeedback ? t(quotaFeedback) : formatBatchProgress(batchSummary, t)}{unverifiedQuotaTargets > 0 && <> · {t('quotaOnline.unverifiedTargets', {count:unverifiedQuotaTargets})}</>}</p>}
       </AppDialog>
 
-      {!onlinePanelOpen && !quotaDetails && quotaFeedback && <p className="identity-online-feedback" role="status"><span>{quotaFeedback}</span><Button variant="ghost" size="small" type="button" data-quota-feedback-dismiss="" onClick={() => setQuotaFeedback('')}>{t('取消')}</Button></p>}
+      <AppDialog
+        open={relayPanelOpen}
+        onOpenChange={open => setRelayPanelOpen(open)}
+        title={t('relay.dialogTitle')}
+        description={t('relay.dialogDesc')}
+        width={660}
+        className="identity-relay-dialog"
+        footer={
+          <div className="identity-dialog-footer-spread">
+            <Button variant="ghost" size="small" onClick={() => resetSmartRelayConfig()}>
+              {t('settings.relayResetBtn')}
+            </Button>
+            <div className="identity-relay-banner-actions">
+              {relayRecommendedSaved && (
+                <Button
+                  variant="secondary"
+                  size="small"
+                  disabled={blocked}
+                  onClick={() => {
+                    setRelayPanelOpen(false);
+                    choose(relayRecommendedSaved.row);
+                  }}
+                >
+                  {t('relay.relaySwitchNow', {
+                    target: maskDisplayName(
+                      relayRecommendedSaved.row.name,
+                      state?.summaries?.[relayRecommendedSaved.row.id]?.email,
+                      prefs.privacyMask,
+                    ),
+                  })}
+                </Button>
+              )}
+              <Button variant="primary" size="small" onClick={() => setRelayPanelOpen(false)}>
+                {t('关闭')}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="identity-relay-panel">
+          <div className="identity-relay-master-row">
+            <div>
+              <strong>{t('settings.relayEnableLabel')}</strong>
+              <p>{t('settings.relayEnableHint')}</p>
+            </div>
+            <label className="identity-auto-refresh-toggle">
+              <Switch
+                checked={smartRelay.enabled}
+                onCheckedChange={checked => updateSmartRelayConfig({enabled: checked})}
+                aria-label={t('settings.relayEnableLabel')}
+              />
+            </label>
+          </div>
+
+          <section className="identity-relay-section" aria-label={t('relay.accountsLabel')}>
+            <div className="identity-relay-section-head">
+              <h3>{t('relay.accountsLabel')}</h3>
+              <label className="identity-relay-return-preferred">
+                <Checkbox
+                  label={t('settings.relayPreferredReturnLabel')}
+                  checked={smartRelay.returnToPreferred}
+                  onCheckedChange={v => updateSmartRelayConfig({returnToPreferred: v === true})}
+                />
+              </label>
+            </div>
+            <div className="identity-relay-account-list">
+              {[...relayEval.candidates]
+                .sort((a, b) => a.listIndex - b.listIndex)
+                .map(acc => {
+                  const isExcluded = !acc.isIncluded;
+                  const isPreferred = acc.isPreferred || (!smartRelay.preferredAccountId && acc.isCurrent);
+                  const isRecommendedNext = !acc.isCurrent && relayEval.recommended?.id === acc.id;
+                  const used5h = acc.known5h ? Math.round(acc.used5h) : 0;
+                  const used7d = acc.known7d ? Math.round(acc.used7d) : 0;
+                  const displayLabel = maskDisplayName(acc.name, acc.email, prefs.privacyMask);
+                  return (
+                    <div
+                      className={`identity-relay-account-row${isExcluded ? ' is-excluded' : ''}${acc.isCurrent ? ' is-current' : ''}`}
+                      key={acc.id}
+                    >
+                      <div className="identity-relay-account-top">
+                        <Checkbox
+                          label={displayLabel}
+                          checked={!isExcluded}
+                          onCheckedChange={checked => {
+                            const nextExcluded = checked
+                              ? smartRelay.excludedAccountIds.filter(id => id !== acc.id)
+                              : [...smartRelay.excludedAccountIds, acc.id];
+                            updateSmartRelayConfig({excludedAccountIds: nextExcluded});
+                          }}
+                        />
+                        {acc.plan && <span className={`identity-plan-pill plan-${acc.plan.toLowerCase()}`}>{acc.plan}</span>}
+                        {acc.isCurrent && <span className="identity-relay-current-badge">{t('relay.currentBadge')}</span>}
+                        {isRecommendedNext && (
+                          <span className="identity-relay-recommended-pill">{t('relay.recommendedBadge')}</span>
+                        )}
+                        <div className="identity-relay-account-spacer" />
+                        {isPreferred ? (
+                          <span className="identity-relay-preferred-pill">{t('relay.preferredBadge')}</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="identity-relay-set-preferred"
+                            onClick={() => updateSmartRelayConfig({preferredAccountId: acc.id})}
+                          >
+                            {t('relay.setPreferred')}
+                          </button>
+                        )}
+                      </div>
+                      <div className="identity-relay-account-bars">
+                        <div className="identity-relay-mini-quota">
+                          <span>{t('relay.window5hShort')}</span>
+                          <div className="identity-relay-mini-track">
+                            <div
+                              className={`identity-relay-mini-fill${used5h >= 95 ? ' is-warn' : ''}`}
+                              style={{width: `${Math.min(100, Math.max(2, used5h))}%`}}
+                            />
+                          </div>
+                          <strong>{acc.known5h ? `${t('已用')} ${used5h}%` : '—'}</strong>
+                        </div>
+                        <div className="identity-relay-account-bars-sep" />
+                        <div className="identity-relay-mini-quota">
+                          <span>{t('relay.window7dShort')}</span>
+                          <div className="identity-relay-mini-track">
+                            <div
+                              className={`identity-relay-mini-fill${used7d >= 95 ? ' is-warn' : ''}`}
+                              style={{width: `${Math.min(100, Math.max(2, used7d))}%`}}
+                            />
+                          </div>
+                          <strong>{acc.known7d ? `${t('已用')} ${used7d}%` : '—'}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </section>
+
+          <div className="identity-relay-form-rows">
+            <div className="identity-relay-form-row">
+              <span className="identity-relay-form-label">{t('relay.routeLabel')}</span>
+              <div className="identity-relay-form-body">
+                <div className="identity-wakeup-presets">
+                  {RELAY_STRATEGIES.map(strategy => (
+                    <button
+                      key={strategy}
+                      type="button"
+                      className={`wakeup-preset-chip${smartRelay.strategy === strategy ? ' active' : ''}`}
+                      onClick={() => updateSmartRelayConfig({strategy})}
+                    >
+                      {t(`relay.strategy.${strategy}`)}
+                    </button>
+                  ))}
+                </div>
+                <p className="identity-relay-form-desc">{t(`relay.strategyDesc.${smartRelay.strategy}`)}</p>
+              </div>
+            </div>
+
+            <div className="identity-relay-form-row">
+              <span className="identity-relay-form-label">{t('relay.rateLimitLabel')}</span>
+              <div className="identity-relay-form-body">
+                <div className="identity-wakeup-presets">
+                  {RELAY_RATE_LIMIT_MODES.map(mode => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`wakeup-preset-chip${smartRelay.rateLimitMode === mode ? ' active' : ''}`}
+                      onClick={() => updateSmartRelayConfig({rateLimitMode: mode})}
+                    >
+                      {t(`relay.rateLimit.${mode}`)}
+                    </button>
+                  ))}
+                </div>
+                <p className="identity-relay-form-desc">{t(`relay.rateLimitDesc.${smartRelay.rateLimitMode}`)}</p>
+              </div>
+            </div>
+
+            <div className="identity-relay-form-row">
+              <span className="identity-relay-form-label">{t('relay.affinityLabel')}</span>
+              <div className="identity-relay-form-body">
+                <div className="identity-wakeup-presets">
+                  {RELAY_AFFINITY_MODES.map(mode => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`wakeup-preset-chip${smartRelay.affinityMode === mode ? ' active' : ''}`}
+                      onClick={() => updateSmartRelayConfig({affinityMode: mode})}
+                    >
+                      {t(`relay.affinity.${mode}`)}
+                    </button>
+                  ))}
+                </div>
+                <p className="identity-relay-form-desc">{t(`relay.affinityDesc.${smartRelay.affinityMode}`)}</p>
+              </div>
+            </div>
+
+            <div className="identity-relay-form-row">
+              <span className="identity-relay-form-label">{t('relay.thresholdLabel')}</span>
+              <div className="identity-relay-form-body">
+                <div className="identity-wakeup-presets">
+                  {RELAY_SPENT_THRESHOLDS.map(pct => (
+                    <button
+                      key={pct}
+                      type="button"
+                      className={`wakeup-preset-chip${smartRelay.spentThresholdPct === pct ? ' active' : ''}`}
+                      onClick={() => updateSmartRelayConfig({spentThresholdPct: pct})}
+                    >
+                      {pct}%
+                    </button>
+                  ))}
+                </div>
+                <p className="identity-relay-form-desc">{t('relay.thresholdDesc', {pct: smartRelay.spentThresholdPct})}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </AppDialog>
+
+      {!onlinePanelOpen && !quotaDetails && quotaFeedback && <p className="identity-online-feedback identity-page-feedback" role="status"><span>{t(quotaFeedback)}</span><Button variant="ghost" size="small" type="button" data-quota-feedback-dismiss="" onClick={() => setQuotaFeedback('')}>{t('关闭记录')}</Button></p>}
+
+      {smartRelay.enabled && smartRelay.affinityMode !== 'manual' && relayRecommendedSaved && (
+        <div
+          className={`identity-relay-banner${relayEval.shouldRelayNow ? ' is-urgent' : ' is-standby'}`}
+          role="status"
+          data-smart-relay-banner
+        >
+          <div className="identity-relay-banner-text">
+            <strong>{t('relay.toggleOn')}</strong>
+            <span>
+              {relayEval.shouldRelayNow
+                ? relayEval.relayTriggerKind === 'preferred_recovered'
+                  ? t('relay.banner.preferredRecovered', {
+                      name: maskDisplayName(
+                        relayRecommendedSaved.row.name,
+                        state?.summaries?.[relayRecommendedSaved.row.id]?.email,
+                        prefs.privacyMask,
+                      ),
+                      rem: Math.round(relayRecommendedSaved.effectiveRem),
+                    })
+                  : t('relay.banner.currentSpent', {
+                      used: Math.round(relayEval.currentCandidate?.effectiveUsed ?? smartRelay.spentThresholdPct),
+                      name: maskDisplayName(
+                        relayRecommendedSaved.row.name,
+                        state?.summaries?.[relayRecommendedSaved.row.id]?.email,
+                        prefs.privacyMask,
+                      ),
+                      reason: t(`relay.strategy.${smartRelay.strategy}`),
+                    })
+                : t('relay.banner.standbyNext', {
+                    strategy: t(`relay.strategy.${smartRelay.strategy}`),
+                    name: maskDisplayName(
+                      relayRecommendedSaved.row.name,
+                      state?.summaries?.[relayRecommendedSaved.row.id]?.email,
+                      prefs.privacyMask,
+                    ),
+                    rem: Math.round(relayRecommendedSaved.effectiveRem),
+                  })}
+            </span>
+          </div>
+          <div className="identity-relay-banner-actions">
+            <Button variant="secondary" size="small" disabled={blocked} onClick={() => choose(relayRecommendedSaved.row)}>
+              {t('relay.relaySwitchNow', {
+                target: maskDisplayName(
+                  relayRecommendedSaved.row.name,
+                  state?.summaries?.[relayRecommendedSaved.row.id]?.email,
+                  prefs.privacyMask,
+                ),
+              })}
+            </Button>
+            <Button variant="ghost" size="small" onClick={() => setRelayPanelOpen(true)}>
+              {t('relay.configureShort')}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <p role="alert" className="cleanup-feedback error">
@@ -1623,6 +2048,17 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             {recommendSaved && (
               <Button variant="secondary" size="small" disabled={blocked} onClick={() => choose(recommendSaved.row)}>
                 {t('切到最优号')}
+              </Button>
+            )}
+            {state?.warming_cards?.some(card => card.browser_active) && current?.quota_identity && (
+              <Button
+                variant="secondary"
+                size="small"
+                data-return-cli-quick
+                disabled={blocked}
+                onClick={() => setReturnCliBrowser({expectedIdentity: current.quota_identity!, name: maskDisplayName(currentName, current.email, prefs.privacyMask)})}
+              >
+                {t('browser.returnToCliShort')}
               </Button>
             )}
             <Checkbox
@@ -1680,6 +2116,16 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   </DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
                     <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
+                      <DropdownMenu.Item className="identity-menu-item" disabled={blocked || !current?.quota_identity} onSelect={() => {
+                        if (current?.quota_identity) void returnToCliBrowserDirect(current.quota_identity, 'claude_ai');
+                      }}>
+                        {t('browser.enterClaudeAi')}
+                      </DropdownMenu.Item>
+                      <DropdownMenu.Item className="identity-menu-item" disabled={blocked || !current?.quota_identity} onSelect={() => {
+                        if (current?.quota_identity) void openAccountBrowser({account_id: 'current', expected_identity: current.quota_identity}, 'usage');
+                      }}>
+                        {t('browser.openAccountUsage')}
+                      </DropdownMenu.Item>
                       <DropdownMenu.Item className="identity-menu-item" data-return-cli-browser disabled={blocked || !current?.quota_identity} onSelect={() => {
                         if (current?.quota_identity) setReturnCliBrowser({expectedIdentity: current.quota_identity, name: maskDisplayName(currentName, current.email, prefs.privacyMask)});
                       }}>
@@ -1752,6 +2198,25 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                       <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
                         <DropdownMenu.Item
                           className="identity-menu-item"
+                          disabled={blocked || !summary?.quota_identity}
+                          onSelect={() => {
+                            if (summary?.quota_identity) void openAccountBrowser({account_id: row.id, expected_identity: summary.quota_identity}, 'claude_ai');
+                          }}
+                        >
+                          {t('browser.openAccountClaudeAi')}
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item
+                          className="identity-menu-item"
+                          disabled={blocked || !summary?.quota_identity}
+                          onSelect={() => {
+                            if (summary?.quota_identity) void openAccountBrowser({account_id: row.id, expected_identity: summary.quota_identity}, 'usage');
+                          }}
+                        >
+                          {t('browser.openAccountUsage')}
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Separator className="identity-menu-separator" />
+                        <DropdownMenu.Item
+                          className="identity-menu-item"
                           disabled={blocked}
                           onSelect={() => openExpiryEditor(row.id, row.name, summary)}
                         >
@@ -1811,6 +2276,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       <WarmingLibrary
         cards={state?.warming_cards ?? []} blocked={warmingBlocked} promotionBlocked={!!state?.recovery}
         runtime={browserRuntime.runtime}
+        activity={warmingActivity.state}
         busy={busy} privacyMask={prefs.privacyMask} nowSec={nowSec} onModalChange={setWarmingModalOpen}
         onOpen={(card, openMode) => warmingAction('identities_warming_open', {id: card.id, openMode})}
         onProbeState={nextState => {
@@ -1858,12 +2324,12 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       <ClaudeCliPanel blocked={locked || loading || !!state?.recovery} onBusy={setCliBusy} />
       <AppDialog alert open={!!returnCliBrowser} onOpenChange={open => {if (!open && !busy) setReturnCliBrowser(null);}}
         title={t('browser.returnToCliConfirmTitle')} description={t('browser.returnToCliConfirm')}
-        footer={<><Button variant="secondary" data-dialog-cancel disabled={busy} onClick={() => setReturnCliBrowser(null)}>{t('取消')}</Button><Button variant="secondary" data-return-cli-confirm disabled={busy || !returnCliBrowser} onClick={() => void returnToCliBrowser()}>{t('browser.returnToCli')}</Button></>}>
+        footer={<><Button variant="secondary" data-dialog-cancel disabled={busy} onClick={() => setReturnCliBrowser(null)}>{t('取消')}</Button><Button variant="secondary" data-return-cli-claude disabled={busy || !returnCliBrowser} onClick={() => void returnToCliBrowser('claude_ai')}>{t('browser.enterClaudeAi')}</Button><Button variant="secondary" data-return-cli-confirm disabled={busy || !returnCliBrowser} onClick={() => void returnToCliBrowser('verify')}>{t('browser.returnToCli')}</Button></>}>
         <div data-return-cli-dialog className="identity-confirm"><strong>{returnCliBrowser?.name}</strong><p>{t('browser.verificationScope')}</p></div>
       </AppDialog>
       <AppDialog
         open={quotaDetails !== null}
-        onOpenChange={open => {if (!open && !busy) setQuotaDetails(null);}}
+        onOpenChange={open => {if (!open && !busy) { setQuotaDetails(null); setQuotaFeedback(''); }}}
         title={t('quota.details')}
         description={t('quota.localOnly')}
         footer={<>
@@ -1879,11 +2345,26 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             </Button>
           )}
           {(detailsQuota?.inferred5h || detailsQuota?.inferred7d) && (
-            <Button variant="secondary" disabled={busy || loading || batchBusy} onClick={() => { setQuotaDetails(null); setOnlinePanelOpen(true); }}>{t('quota.calibrateOnline')}</Button>
+            <Button variant="secondary" disabled={busy || loading || batchBusy} onClick={() => { setQuotaDetails(null); setQuotaFeedback(''); setOnlinePanelOpen(true); }}>{t('quota.calibrateOnline')}</Button>
           )}
           {detailsAreCurrent && (
             <Button variant="secondary" disabled={busy || loading || !state?.browser.enabled} onClick={() => void syncSubscription()}>{t('quota.syncSubscription')}</Button>
           )}
+          <Button
+            variant="secondary"
+            loading={busy}
+            disabled={busy || !quotaDetails?.expectedIdentity || !!state?.recovery}
+            onClick={() => {
+              if (!quotaDetails?.expectedIdentity) return;
+              if (detailsAreCurrent) {
+                void returnToCliBrowserDirect(quotaDetails.expectedIdentity, 'claude_ai');
+              } else {
+                void openAccountBrowser({account_id: quotaDetails.id, expected_identity: quotaDetails.expectedIdentity}, 'claude_ai');
+              }
+            }}
+          >
+            {t('browser.enterClaudeAi')}
+          </Button>
           <Button variant="secondary" loading={busy} disabled={busy || !detailsAreCurrent || !quotaDetails?.expectedIdentity || !!state?.recovery} onClick={() => void openUsagePage()}>{t('quota.openOfficial')}</Button>
         </>}
       >
@@ -2153,7 +2634,15 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             </div>
           )}
           {proxyChanged && <p className="identity-proxy-notice">{t('代理环境提醒：目标身份与当前身份的独立代理配置不同，请确认出口 IP 与目标账号一致。')}</p>}
-          {state?.browser.enabled && <p>{t(state.warming_cards?.some(card => card.browser_active) && !warmingPromotion && review !== 'recovery' && !state.recovery ? 'warming.cliSwitchKeepsBrowser' : '将关闭并重开关联浏览器，请先保存网页任务。')}</p>}
+          {state?.browser.enabled && state.warming_cards?.some(card => card.browser_active) && !warmingPromotion && review !== 'recovery' && !state.recovery && (
+            <Checkbox
+              label={t('warming.syncCliBrowserOnSwitch')}
+              checked={syncCliBrowserOnSwitch}
+              disabled={busy}
+              onCheckedChange={value => setSyncCliBrowserOnSwitch(value === true)}
+            />
+          )}
+          {state?.browser.enabled && <p>{t(state.warming_cards?.some(card => card.browser_active) && !warmingPromotion && review !== 'recovery' && !state.recovery && !syncCliBrowserOnSwitch ? 'warming.cliSwitchKeepsBrowser' : '将关闭并重开关联浏览器，请先保存网页任务。')}</p>}
         </div>
       </AppDialog>
       <AppDialog

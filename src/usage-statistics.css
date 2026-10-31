@@ -135,7 +135,8 @@
 .usage-data-table tbody th { font-weight: 500; }
 .usage-table tbody tr:last-child > *, .usage-data-table tbody tr:last-child > * { border-bottom: 0; }
 .usage-table tbody tr:hover, .usage-data-table tbody tr:hover { background: color-mix(in srgb, var(--muted) 50%, transparent); }
-.usage-sort-button { display: inline-flex; align-items: center; gap: 5px; color: inherit; font: inherit; }
+.usage-sort-button { display: inline-flex; align-items: center; gap: 5px; color: inherit; font: inherit; background: transparent; border: 0; padding: 0; cursor: pointer; }
+.usage-sort-button:hover { color: var(--foreground); }
 .usage-data-table th[aria-sort="ascending"], .usage-data-table th[aria-sort="descending"] { color: var(--local-accent-ink); }
 .usage-trend-table { margin-top: 12px; border-top: 1px solid var(--landing-line); }
 .usage-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 12px 17px; border-top: 1px solid var(--landing-line); font-size: 11px; color: var(--usage-secondary); }
@@ -144,7 +145,7 @@
 .usage-pagination button:hover:not(:disabled) { border-color: var(--local-accent); color: var(--local-accent-ink); }
 .usage-pagination button:disabled { opacity: .45; }
 .usage-row-selected { background: var(--local-accent-soft); }
-.usage-account-name { display: grid; gap: 5px; text-align: left; max-width: 240px; cursor: pointer; }
+.usage-account-name { display: grid; gap: 5px; text-align: left; max-width: 240px; cursor: pointer; background: transparent; border: 0; padding: 0; }
 .usage-account-name > span { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
 .usage-account-name small { color: var(--usage-secondary); font-size: 12px; font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
 .usage-account-name em { color: var(--local-accent-ink); font-size: 11px; font-style: normal; background: var(--local-accent-soft); border-radius: 4px; padding: 2px 5px; }

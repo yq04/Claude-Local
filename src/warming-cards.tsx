@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Native browser-only warming views, IP region probe check results, independent runtime samples, privacy preferences and guarded parent actions.
- * [OUTPUT]: Shared card-count styling, four short steps, 180×286 cards with region-drift hints, pre-open IP region mismatch dialog, and editor SOP guidance.
+ * [INPUT]: Native browser-only warming views, IP region probe check results, independent runtime samples, dedicated warming activity state, privacy preferences and guarded parent actions.
+ * [OUTPUT]: Shared card-count styling, four short steps, 180×286 cards with region-drift hints, inline warming activity log with dismiss support, pre-open IP region mismatch dialog, and editor SOP guidance.
  * [POS]: Free warming identity rail; subscriptions and CLI promotion reuse the identity panel's existing dialogs.
  * [PROTOCOL]: Update this header, src/CLAUDE.md and both locale catalogs when changing UI.
  */
@@ -8,6 +8,7 @@ import {useEffect, useState, type ReactNode} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {Button, Checkbox, Disclosure, Input} from 'cromma-ui';
 import {DropdownMenu} from 'radix-ui';
+import {IdentityOperationProgress, type Activity} from './cleaner-activity';
 import {AppDialog} from './dialog';
 import {useI18n} from './i18n';
 import {maskDisplayName, maskEmailAddress} from './settings-model';
@@ -36,6 +37,7 @@ type MismatchPrompt = {
 type Props = {
   cards: WarmingCard[]; blocked: boolean; promotionBlocked: boolean; busy: boolean; privacyMask: boolean; nowSec: number;
   runtime: BrowserRuntime | null;
+  activity?: Activity | null;
   onModalChange: (open: boolean) => void;
   onOpen: (card: WarmingCard, mode: WarmingOpenMode) => Promise<boolean> | void;
   onProbeState?: (state: unknown) => void;
@@ -45,7 +47,7 @@ type Props = {
   renderName: (card: WarmingCard) => ReactNode;
 };
 
-export function WarmingLibrary({cards, runtime, blocked, promotionBlocked, busy, privacyMask, nowSec, onModalChange, onOpen, onProbeState, onSave, onDelete, onPromote, onExpiry, renderName}: Props) {
+export function WarmingLibrary({cards, runtime, activity, blocked, promotionBlocked, busy, privacyMask, nowSec, onModalChange, onOpen, onProbeState, onSave, onDelete, onPromote, onExpiry, renderName}: Props) {
   const {t, locale} = useI18n();
   const [editor, setEditor] = useState<WarmingDraft | null>(null);
   const [deletion, setDeletion] = useState<WarmingCard | null>(null);
@@ -181,6 +183,7 @@ export function WarmingLibrary({cards, runtime, blocked, promotionBlocked, busy,
         </article>;
       })}
     </div>
+    {activity && <IdentityOperationProgress activity={activity} />}
     <AppDialog open={!!editor} onOpenChange={open => {if (!open && !busy) setEditor(null);}} title={t(editor?.id ? 'warming.edit' : 'warming.create')} description={t('warming.editorHint')} footer={<><Button variant="secondary" data-dialog-cancel disabled={busy} onClick={() => setEditor(null)}>{t('取消')}</Button><Button variant="secondary" disabled={busy || blocked || !editor?.name.trim()} onClick={() => void save()}>{t(editor?.id ? '保存' : 'warming.createConfirm')}</Button></>}>
       {editor && <div className="warming-editor">
         <label htmlFor="warming-name">{t('warming.name')}</label><Input id="warming-name" maxLength={64} value={editor.name} onChange={e => patch('name', e.target.value)} />

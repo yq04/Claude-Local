@@ -121,7 +121,7 @@ try{
  await page.waitForFunction(()=>getComputedStyle(document.querySelector('.identity-card.current')!).transform!=='none');
  assert.equal((await current.evaluate(node=>getComputedStyle(node).transform)).includes('matrix3d'),false);
  await page.mouse.move(10,10);checks++;
- const rail=page.locator('.identity-card-rail');
+ const rail=page.locator('.identity-library:not(.identity-warming-library) .identity-card-rail');
  await rail.hover();await page.mouse.wheel(0,800);
  await page.waitForFunction(()=>document.querySelector('.identity-card-rail')!.scrollLeft>50);
  const mid=await rail.evaluate(node=>node.scrollLeft);assert(mid<801);

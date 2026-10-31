@@ -1,20 +1,23 @@
 <!--
-[INPUT]: Verified v0.2.3 security & warming enhancement implementation (F1–F6 + Stage A/B polish), neutral Windows NSIS build audit, GitHub Release v0.2.3, bilingual README/release presentation sync, and Clash Verge Service Mode runtime DNS/strict-route confirmation.
+[INPUT]: Verified v0.2.4 multi-account Smart Relay & rotation, WebRTC Network Limiter lockdown & Clash/Mihomo anti-leak global override YAML, official API USD cost & cache savings analytics, 2-column Shadowrocket bridge & paste auto-split, companion browser verification header & CLI return workflow, activity log dismissal, neutral Windows NSIS build audit, and GitHub Release v0.2.4.
 [OUTPUT]: Context-free handoff for a brand-new session covering task overview, completed deliverables, current state/remaining boundaries, next steps and critical pitfalls to avoid.
 [POS]: Root maintenance handoff; real identities, IP/proxy values, process IDs, workstation paths and screenshots stay out of tracked files.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only updates do not build/deploy, reload proxies, operate accounts, package/upload or move release tags.
 -->
 # Claude-Local 新会话交接文档（无上下文直接接手）
 
-更新时间：2026-10-30 23:15 EDT（America/New_York）。当前最新正式发布至 GitHub Release（Latest）的版本为 **`v0.2.3`**（源码标签 `v0.2.3` 指向提交 `dd25de8`），`main` 分支最新提交已同步双语旗舰介绍文档与 Clash Verge Rev 服务模式（`clash-verge-service`）运行期配置确认增强并完成本机热更新。
+更新时间：2026-10-31 05:00 EDT（America/New_York）。当前最新正式发布至 GitHub Release（Latest）的版本为 **`v0.2.4`**，`main` 分支与本机安装目录 `%LOCALAPPDATA%\Programs\Claude-Local` 均已同步至 **`v0.2.4`**。
 
 > **给新会话的第一句话（必读）**：
-> 本次 `v0.2.3` 版本及后续收尾工作已**全部编码落地、测试通过、更新至本机安装目录、打包上传发布至 GitHub Release `v0.2.3`，并完成本机 Clash Verge / Mihomo `strict-route: true` 与服务模式运行期配置核验的全绿闭环**：
-> 1. `docs/plans/2026-10-30-security-and-warming-enhancement/` 中的 **F1–F6 全部完成并交付**（F1 伴生浏览器按需无阻断防泄露断路器 Kill-Switch、F2 Mihomo `strict-route` 分层闭环修复向导、F3 养号卡常驻国家/时区锁定与打开前防漂移确认、F4 养号编辑弹窗阶段防封 SOP 折叠指南、F5 额度详情高消耗速率温和提示、F6 全链路 `.clbackup` 覆盖 `warming_cards.json` 与 `manual_subscriptions.json`）。
-> 2. `docs/plans/2026-10-30-multi-account-optimization/` 中的 **阶段 A（操作进度日志关闭/重开、返回 CLI 浏览器自动清理陈旧提示、自动续订与手动到期悬停提示区分、过期重置次数防误导）** 与 **阶段 B（跨槽位绑定资料直接同步当前 CLI 订阅日期与重置次数）** 及 **阶段 D（即 F6 备份范围扩展）** 均已完成并随 `v0.2.3` 一起交付。
-> 3. **双语介绍文档与发布页文案同步（`a26e91a`）**：`README.md`、`README_EN.md`、`docs/RELEASE_NOTES_0.2.3_SECURITY.md`、`docs/FEATURE_NOTES_WARMING_CARDS.md`、`docs/PROJECT_ORIGIN.md` 及 GitHub Release `v0.2.3` 页面正文已完整同步 `v0.2.3` 全量特性与 CCBaga 演进对比。
-> 4. **本机 DNS / `strict-route` 全链路配置与服务模式识别闭环（`bb47f9c`）**：已应用户要求将本机 Clash Verge 的 `config.yaml`、`profiles\Merge.yaml`、`clash-verge.yaml` 与 `clash-verge-service` 运行期 `config.yaml` 全部配置为 `tun.strict-route: true` 并通过控制命名管道无感热重载 `verge-mihomo`；同时在 `src-tauri/src/risk_config_source.rs` 与 `src-tauri/src/windows.rs` 中补齐对 `%PROGRAMDATA%\clash-verge-service\users\<64-hex>\runtime\config.yaml`（经 `active-owner.json` / `.runtime-manifest.json` 校验归属当前用户 `%APPDATA%`）的运行期配置确认并热更新至本机 `%LOCALAPPDATA%\Programs\Claude-Local`。
-> 5. **请勿重复实现上述已交付功能，也不要回退或移动 `v0.2.3` 标签及已上传安装包资产。**
+> 本次 `v0.2.4` 版本的全部功能研发、界面与交互打磨、WebRTC 与 Clash/Mihomo 防泄露加固、单元测试与 Playwright UI 回归、本机热更新、中性目录 NSIS 安装包构建（109 文件白名单 + 29 项隐私探针 `0` 命中）、双语 `README.md` / `README_EN.md` / `docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md` 更新以及 **GitHub Release `v0.2.4` 正式发布**均已圆满完成：
+> 1. **多账号智能接力与轮换（Smart Relay，借鉴 `yetone/magpie`，默认关闭）**：在 `src/smart-relay-model.ts`、`src/identities.tsx`、`src/settings.tsx` 实现完整的多账号智能接力工作台（默认 `enabled: false`；支持在身份管理顶栏胶囊、`⋯` 菜单或软件设置中开启；平铺展示全量账号池而无需嵌套滚动条；支持「智能 / 按顺序 / 轮流 / 用量少的优先 / 重置前用完」五大路由策略、被限流时「保持原位 / 排到最后」、会话保持与换号阈值 `90% / 95% / 98% / 100%`、首选号滞回恢复切回，以及弹窗与顶部横幅一键切换按钮）。
+> 2. **伴生浏览器 WebRTC 全链路防泄露与桌面端 Clash/Mihomo 一键覆写规则（`.yaml`，借鉴 `ryuu-restart/agent-route` 与 `ippure.com` 防封实践）**：
+>    - 在 `src-tauri/src/browser/profile.rs` 的 `preferences()` 中写入 Google 官方 `WebRTC Network Limiter` 同款完整三项策略（`webrtc.ip_handling_policy = "disable_non_proxied_udp"`、`webrtc.multiple_routes_enabled = false`、`webrtc.nonproxied_udp_enabled = false`），并在 `src-tauri/src/browser/config.rs` 注入 `--enforce-webrtc-ip-permission-check`、去重 `--host-resolver-rules` 的 `EXCLUDE 127.0.0.1`、追加 `--test-type` 消除 Chromium 顶部不支持参数横幅。
+>    - 在 `src/risk-model.ts`（`buildDesktopMihomoAntiLeakYaml`）与 `src/risk-verification.tsx` 底部新增 **「查看一键覆写配置 (.yaml)」** 与 **「复制覆写配置 (.yaml)」**，一键生成可直接粘贴进 Clash Verge Rev 全局扩展覆写（Merge）的防泄露 YAML（阻断 `UDP 443` QUIC 与 `UDP 3478/19302/5349` WebRTC STUN/TURN、拦截 `198.18.0.0/15` Fake-IP、锁定 `1.1.1.1/1.0.0.1/8.8.8.8` DoH 走家宽、配置 `:7899` 纯 TCP 监听并将 `claude.ai` / `withpersona.com` / `stripe.com` / `ipquery.io` / `ippure.com` 统一锁死同一静态家宽出口）。
+> 3. **用量分析（`用量分析`）官方 API 美元等效花费（`$`）与缓存节省升级**：在 `src/usage-model.ts`、`src/usage-statistics.tsx` 中用高价值的 **API 等效花费（`$`）**、**缓存节省（`$`）**、**缓存命中率（`%` + 缓存复用倍数）** 与 **日均/时均等效花费（`$`）** 替换原摘要区低信息量的「会话数」、「去重响应数」与重复「活跃天数」，并在模型分布、Effort 档位与多账号表中全面展示 `$` 花费。
+> 4. **风控验证（`风控验证`）两步状态去误报与小火箭（Shadowrocket）双栏桥接优化**：第 1 步静态检查 `3/3` 通过且未点击实测时展示清爽绿色横幅（消除旧版黄色「配置缺失」误报），移除右上角重复的「开始一致性实测」与无作用的「刷新本机配置」按钮；将手机扫码桥接重构为左右均衡双栏卡片，并支持在代理地址框直接粘贴 `socks5://user:pass@host:port` 或 `host:port:user:pass` 自动拆解填入四项参数。
+> 5. **伴生浏览器实测页（`browser.html`）、养号返回 CLI 浏览器与操作日志彻底关闭**：将 `browser.html` 的「仅核验所选浏览器环境，不验证网页登录或 CLI 授权。」整合进顶部深色身份工牌下层（`.verification-scope`）；在身份卡片菜单与额度详情中新增「进入 Claude.ai」、「打开官方用量页」、「返回 CLI 浏览器」快捷入口，并在养号激活时于身份栏顶部提供一键「返回 CLI 浏览器」；点击「关闭记录」后操作日志彻底隐藏（`return null`），「检查更新」无安装时不弹冗余日志，养号操作日志归位至「养号」专区内部。
+> 6. **请勿重复实现上述已交付功能，也不要回退或移动 `v0.2.4` 标签及已上传安装包资产。**
 
 新会话接手时请依次阅读：本文（`HANDOFF.md`） → 根目录 `AGENTS.md`（切勿提交到 Git） → 根目录 `CLAUDE.md`；修改具体模块前先读对应子目录的 `CLAUDE.md` 与源文件头注释（`[INPUT]/[OUTPUT]/[POS]/[PROTOCOL]`）。本文受 Git 跟踪，**严禁写入任何真实账号、邮箱、身份指纹、真实 IP、代理凭据、个人绝对路径或真实截图**。
 
@@ -22,174 +25,94 @@
 
 ## 1. 我们在做什么任务
 
-**Claude-Local** 是基于开源项目 [CCBaga](https://github.com/liseami/CCBaga) 二次开发并在本仓库独立维护的 **Windows 10 / 11 x64** 桌面工作台（技术栈：Tauri 2 + Rust 后端、React 19 + TypeScript 前端、Python 外部额度单写者与加密备份脚本）。核心解决开发者在 Windows 桌面端管理多个 **Claude Code CLI** 与 **Claude Pro / Max / 待转正养号卡片** 时的四大痛点：
-1. **多身份加密保险库与零强杀安全切号**（`BAGAID01` / `.baga` 归档、SQLite `user_version = 3`、`claude.exe` 进程锁检查、1572 行跨账号四维残留消毒）。
-2. **被动额度同步、原生进程内 5h 自动续杯调度与多模态悬浮窗（HUD）**（Python 独占写 `quota_ledger.json`，零后台 OAuth 轮询、零 `.claude.json` 写入）。
-3. **CPAMP / ccusage 风格本地 Token 用量分析**（未缓存输入/输出/缓存写入/缓存读取四类构成、统计身份独立登记、模型与 Effort 分布、IANA/DST 时区与 TSV 导出）。
-4. **身份绑定的防关联伴生浏览器（Fingerprint Chromium）与风控 / KYC 环境核验**（每身份/每养号卡独立槽位与确定性指纹种子、20 项浏览器实测、6 项网络/DNS/Mihomo 运行时风控核验、手机同住宅出口 LAN 桥接）。
-
-### 用户的真实使用习惯与架构取舍（已与用户对齐确认）
-- **单出口顺序使用模型**：用户所有账号均通过本机 Clash Verge Rev（Mihomo 内核）TUN 模式共用同一个美国静态家宽出口，日常按顺序使用账号（极少同时跑多个账号，仅偶有在跑主力 Pro CLI 时打开某张养号卡网页查看）。因此**不需要**强推多账号不同代理 IP 池重架构。
-- **单活跃 CLI 会话交接模型**：用户不需要多个 `claude.exe` 同时跑不同账号，现有 `--resume` 会话交接与 `cleaner_identity.rs` 跨账号残留消毒已满足切号需求。
-- **真正高优诉求**：防止代理/TUN 意外掉线或节点漂移导致伴生浏览器直连暴露真实 IP（且断线保护**绝不能影响后续正常重新打开使用，更不能中断 CLI**）、解决 Clash Verge `strict-route: false` 双网卡 DNS 旁路隐患、防止养号卡跨国漂移打开网页触发二次验证，以及全链路备份养号与订阅元数据。
+**Claude-Local** 是基于开源项目 [CCBaga](https://github.com/liseami/CCBaga) 二次开发并在本仓库独立维护的 **Windows 10 / 11 x64** 桌面工作台（技术栈：Tauri 2 + Rust 后端、React 19 + TypeScript 前端、Python 外部额度单写者与加密备份脚本）。核心解决开发者在 Windows 桌面端管理多个 **Claude Code CLI** 与 **Claude Pro / Max / 待转正养号卡片** 时的五大痛点：
+1. **多身份加密保险库与零强杀安全切号**（`BAGAID01` / `.baga` 归档、SQLite `user_version = 3`、`claude.exe` 进程锁检查、跨账号四维残留消毒、全链路 `.clbackup` 加密备份）。
+2. **Magpie 风格多账号智能接力与轮换（Smart Relay）**（默认关闭，五大路由策略、限流顺位处理、会话保持、首选号滞回恢复切回与一键安全接力）。
+3. **被动额度同步、原生进程内 5h 自动续杯调度与多模态悬浮窗（HUD）**（Python 独占写 `quota_ledger.json`，零后台 OAuth 轮询、零 `.claude.json` 写入）。
+4. **CPAMP / ccusage 风格本地 Token 与官方 API 美元等效花费（`$`）分析**（四类 Token 构成、API 等效花费 `$`、缓存节省 `$` 与复用倍数、模型与 Effort 分布、IANA/DST 时区与 TSV 导出）。
+5. **身份绑定的防关联伴生浏览器（Fingerprint Chromium）与风控 / KYC 环境核验**（每身份/每养号卡独立槽位与确定性指纹种子、WebRTC Network Limiter 三重强锁、按需无阻断 Kill-Switch、20 项浏览器实测、6 项网络/DNS/Mihomo 运行时风控核验、桌面端一键 Clash 防漏覆写 YAML、手机同住宅出口 LAN 扫码桥接）。
 
 ---
 
-## 2. 已经完成了什么（v0.2.3 完整交付清单）
+## 2. 已经完成了什么（v0.2.4 完整交付清单）
 
-### 2.1 审计并纠偏既有调研与计划文档
-在编码前对 `docs/plans/2026-10-30-security-and-warming-enhancement/`（`00-README.md`、`01-FINDINGS.md`、`02-IMPLEMENTATION-PLAN.md`、`CLAUDE.md`）进行了逐行代码级核查，修正了原报告中 6 处与真实代码基线不符的误判：
-- **纠正误报 G8/S01 与 G9/S02**：`src-tauri/src/cleaner_identity.rs` 中的旧函数 `sanitize_cross_account_residue` 早已标注 `#[allow(dead_code)]` 且生产路径零调用，生产切号实际调用 `sanitize_cross_account_residue_in_home`；`Store::open` 与 `save_inner` 早已是纯只读或仅更新目标归档，无任何会话改写副作用。
-- **纠正误报 G11/S03 与 G12/S11**：`src/identities.tsx` 的 `returnToCliBrowser()` 早已在 `!mountedRef.current` 前调用 `setState` 更新 `active_browser_slot` 与 `warming_cards[].browser_active`；`src-tauri/src/browser/windows.rs` 早已调用 `oauth_route::route_external_urls_locked` 将外部授权链接路由到当前 CLI 绑定资料。
-- **纠正 `--disable-spoofing` 语义说明**：在 Fingerprint Chromium 中，`--disable-spoofing` 列表列出的是**豁免伪造、走原生能力**的项（开启 `native_graphics` 时豁免 `canvas,clientrects`，关闭时由 `--fingerprint=<seed>` 确定性接管 Canvas/ClientRects）。
-- **补齐 `backup.rs` 白名单预检要求**：只改 `collect_files` 会被 `verify_staged()` 的严格文件名白名单拒绝，必须同步更新 `collect_files`、`rescue_files`、`verify_staged`、`verify_rescue_staged` 与 `identities_backup_restore_new`。
+### 2.1 多账号智能接力与轮换（Smart Relay，`src/smart-relay-model.ts` & `src/identities.tsx` & `src/settings.tsx`）
+- **借鉴 `yetone/magpie` 的多账号路由与首选号滞回恢复机制**：
+  - 默认关闭（`enabled: false`），持久化于本地 `claude-local.smart-relay.v1`，不干扰原有手动使用习惯。
+  - 双入口配置：「身份管理」顶栏右侧胶囊 `[• 智能接力 | 策略]` / `[⋯]` 更多菜单，以及「软件设置 → 通用」。
+  - **平铺全量账号列表（无嵌套滚动条）**：直观展示当前身份与全部已保存身份的 `5h / 7d` 已用百分比进度条、重置时间、`当前` / `首选` / `下一顺位` 徽章，支持勾选参与轮换池与一键「设为首选」。
+  - **五大路由策略**：`smart`（三级余量池 `>90% / 10% / 耗尽` + 优先消耗最快重置窗口）、`ordered`（按顺序）、`rotate`（轮流 Round-Robin）、`least_used`（用量少的优先）、`pace`（重置前用完）。
+  - **被限流处理与会话保持**：支持 `keep_position`（保持原位）与 `sink_to_end`（排到最后）；会话保持支持 `auto`、`session`、`manual`；换号阈值支持 `90% / 95% / 98% / 100%`。
+  - **首选号恢复滞回保护（Hysteresis）与一键切换**：当启用「首选账号恢复后切回」且首选账号冷却恢复至安全余量（`5h` 已用低于阈值 `15%` 以上且 `7d < 85%`）时，弹窗底部状态卡与「身份管理」顶部横幅自动提示一键 **`切到 {目标账号}`**。
 
-### 2.2 核心安全加固与养号全生命周期功能（F1–F6）
-1. **F1 · 伴生浏览器按需无阻断防泄露断路器（Kill-Switch）**：
-   - 后端：`src-tauri/src/browser/kill_switch.rs` + `src-tauri/src/risk_check.rs::system_tun_and_dns_status()` + `src-tauri/src/main.rs` 托盘图标联动。
-   - **按需激活，零闲置开销**：后台巡检线程仅在检测到受管伴生浏览器（`browser/contexts/*/profile` 或 `browser/profile`）正在运行时激活；当所有受管伴生浏览器关闭时立即休眠，不执行任何 `ipconfig` 或网络请求。
-   - **双通道故障触发与防抖**：
-     - **系统 TUN 掉线（每 5 秒本地核验）**：若当前运行槽位未配置独立代理（依赖系统 TUN）且连续 2 次确认系统无活跃 TUN 适配器，立即调用 `profile::quit()` 优雅关闭全部运行中的受管伴生浏览器槽位。
-     - **出口国家漂移（每 60 秒低频核验）**：若当前槽位锁定了预期国家且机器出口国家发生跨国漂移，立即优雅关闭全部运行中的受管伴生浏览器槽位。
-   - **单次急停 + 醒目提醒，绝不拦截后续使用，绝不触碰 CLI**：
-     - 触发后托盘图标动态染红，向前端发送 `kill-switch-state` 事件，在 `src/browser.tsx` 顶部渲染红色告警横幅（`[data-kill-switch-banner]`），并提供设置开关（`[data-kill-switch-toggle]`，持久化于 SQLite `settings` 表 `browser.kill_switch_enabled`，默认开启）。
-     - 用户恢复代理后，点击横幅「知道了」（`browser_kill_switch_dismiss`）或直接点击任何「打开浏览器并实测」/ 养号卡「打开网页」按钮，浏览器即可正常启动并自动清除告警与恢复托盘图标；**全程绝不停止或干扰任何运行中的 `claude.exe` 进程**。
-2. **F2 · Mihomo / Clash Verge `strict-route` 分层闭环修复向导**：
-   - 前端：`src/risk-model.ts::buildMihomoStrictRouteSnippet()`、`src/risk-verification.tsx`、`src/risk-verification.css`。
-   - 当「风控验证」页检测到 `tun_enabled && tun_strict_route === false` 时，在 `strict-route` 检查项旁渲染「修复 Strict-Route」按钮（`[data-open-strict-route-guide]`），弹窗说明 Clash Verge Rev「订阅配置 → 全局扩展覆写（Merge） → 运行期 `clash-verge.yaml`」三层覆盖机制，提供一键复制全局 Merge 覆写 YAML 片段与「我已完成设置，立即复核」按钮（原位重新调用 `system_network_audit` 验证运行期 `tun_strict_route === true`）。
-3. **F3 · 养号卡片常驻国家/时区锁定与打开前防漂移核验**：
-   - 后端：`src-tauri/src/identities/warming.rs` 为 `WarmingCardRecord` 与 `WarmingCardView` 新增向后兼容字段（`#[serde(default)]`）：`registered_country`、`registered_timezone`、`last_probe_country`、`last_probe_timezone`、`last_probe_at`，扩展 `identities_warming_update` 支持手动修改/清空锁定地区，并新增 `identities_warming_probe_check(app, id, update_lock)` 命令。
-   - 前端：`src/warming-model.ts`、`src/warming-cards.tsx`。首次打开未锁定国家的养号卡时自动探测并锚定常驻国家与时区；后续点击打开前若检测到当前出口国家与 `registered_country` 不一致，弹出 `<AppDialog alert>` 警示确认框（`[data-warming-mismatch-dialog]`），支持「取消」、「仍要打开（不改锁定）」或「更新锁定地区并打开」；卡片环境行内联显示紧凑漂移徽章（`[data-warming-region-drift]`），严守 `180×286` 卡片几何尺寸与零中点（`·`）规范。
-4. **F4 · 养号编辑弹窗阶段防封操作指南（SOP）**：
-   - 前端：`src/warming-cards.tsx` 在养号卡片新建/编辑弹窗底部内嵌默认收起的 `<Disclosure>`（`[data-warming-sop]`），根据所选阶段（`unregistered` / `kyc_passed` 前 72h 观察期与稳定期 / `warming_free` / `pro_ready`）动态显示防封操作参考建议，并明确标注“社区抗风控经验提示，仅供手动操作参考”，不占用主界面卡片高度。
-5. **F5 · 额度详情弹窗高消耗速率温和提示**：
-   - 前端：`src/identities.tsx` 在「额度与重置权益」弹窗（`quotaDetails`）内，当 5h 窗口已用 `>= 85%` 或 7d 窗口进度超前 `deltaUsedPct >= 15%` 时，渲染非阻断温和节奏提示（`[data-quota-pace-hint]`）。
-6. **F6 · 全链路加密备份扩展（含阶段 D）**：
-   - 后端：`src-tauri/src/identities/backup.rs` 与 `backup_tests.rs` 将可选文件 `identity-vault/warming_cards.json` 与 `identity-vault/manual_subscriptions.json` 完整纳入 `collect_files`、自动救援备份 `rescue_files`、`verify_staged`（含养号卡在 `browser_bindings` 中的槽位存在性与正整数 `seed` 校验）、`verify_rescue_staged` 以及隔离恢复 `identities_backup_restore_new`。同步更新 `src/backup-panel.tsx` 及中英双语备份范围说明。
+### 2.2 伴生浏览器 WebRTC 全链路防泄露与桌面端 Clash 一键覆写配置（`.yaml`）
+- **伴生浏览器底层 WebRTC Network Limiter 三重加固**：
+  - `src-tauri/src/browser/profile.rs`（`preferences()`）：在写入 `Default/Preferences` 时完整设置 Google 官方 `WebRTC Network Limiter` 扩展同款三项策略：
+    - `webrtc.ip_handling_policy = "disable_non_proxied_udp"`
+    - `webrtc.multiple_routes_enabled = false`
+    - `webrtc.nonproxied_udp_enabled = false`
+  - `src-tauri/src/browser/config.rs`（`arguments()`）：新增 `--enforce-webrtc-ip-permission-check`，去除 `--host-resolver-rules` 中重复的 `EXCLUDE 127.0.0.1`，并加入 `--test-type` 消除 Chromium 顶部的 `"You are using an unsupported command-line flag"` 提醒条。
+- **「风控验证」桌面端 Clash Verge / Mihomo 一键覆写配置（`buildDesktopMihomoAntiLeakYaml`）**：
+  - 在 `src/risk-model.ts` 与 `src/risk-verification.tsx` 底部新增 **「查看一键覆写配置 (.yaml)」** 与 **「复制覆写配置 (.yaml)」**，生成可直接粘贴至 Clash Verge Rev 全局扩展覆写（Merge）的 YAML：
+    - 阻断 `UDP 443` QUIC 与 `UDP 3478/19302/5349` WebRTC STUN/TURN 端口及 `DOMAIN-KEYWORD,stun,REJECT`；
+    - 封锁 `IP-CIDR,198.18.0.0/15,REJECT,no-resolve` Fake-IP 回流并强制 `1.1.1.1/32`、`1.0.0.1/32`、`8.8.8.8/32` DoH 走家宽节点；
+    - 开启 `tun.strict-route: true`、`dns.respect-rules: true` 与 `:7899` 纯 TCP 独立监听（`udp: false`）；
+    - 将 `claude.ai`、`anthropic.com`、`withpersona.com`、`stripe.com`、`ipquery.io`、`ippure.com` 统一锁定至同一静态家宽节点。
 
-### 2.3 多账号与养号交互细节打磨（阶段 A & B）
-1. **跨槽位绑定资料直接同步订阅（阶段 B）**：
-   - `src-tauri/src/browser/quota_bridge.rs::sync` 与 `src-tauri/src/browser/quota_connection.rs::launch_bound_profile_url_locked`：解除了原先“当前 CLI 绑定槽位必须等于 `browser.active` 才能同步订阅”的限制。现在即使伴生浏览器当前停留在某张养号卡槽位，点击当前 CLI 身份的「同步订阅日期与额外重置」也会自动确保回环服务就绪，并直接在当前 CLI 身份绑定的独立浏览器资料中打开同步页完成同步，不改动 `browser.active` 也不关闭养号窗口。
-2. **操作进度日志可关闭与重开（阶段 A）**：
-   - `src/cleaner-activity.tsx::CleanupActivity`：当操作结束（`!activity.running`）后，在日志头部提供「关闭记录」按钮（`[data-activity-dismiss]`），关闭后折叠为精简的「查看上次记录」按钮（`[data-activity-reopen]`）；发起任何新操作时自动恢复展开。
-3. **陈旧反馈自动清理与到期/重置语义精确化（阶段 A）**：
-   - `src/identities.tsx`：`returnToCliBrowser()` 成功后自动清空陈旧的 `quotaFeedback`，并在主页面 `.identity-online-feedback` 旁提供手动关闭按钮（`[data-quota-feedback-dismiss]`）；`IdentityName` 区分浏览器自动续订日（`identityCard.renewalTooltip`）与手动设置到期日（`identityCard.expiryTooltip`）；`SubscriptionAndResets` 对已过 `validUntil` 有效期的正数重置次数不再展示为当前可用。
+### 2.3 用量分析（`用量分析`）美元等效花费（`$`）与风控验证 / 小火箭双栏体验升级
+- **用量分析高价值 `$` 指标**：
+  - `src/usage-model.ts`、`src/usage-statistics.tsx`、`src/usage-statistics.css`：将主摘要区右侧升级为 **API 等效花费（`$`）**、**缓存节省（`$`）**、**缓存命中率（`%` + 缓存复用倍数）** 与 **日均/时均等效花费（`$`）**，并在模型分布、Effort 档位与多账号表中展示 `$` 花费。
+- **风控验证与小火箭（Shadowrocket）双栏桥接优化**：
+  - `src/risk-verification.tsx`、`src/risk-verification.css`：消除第 1 步 `3/3` 通过但第 2 步未实测时的黄色误报横幅，移除顶部重复的「开始一致性实测」与无用的「刷新本机配置」按钮；将手机扫码桥接重构为左右均衡双栏布局，并支持粘贴完整代理串自动拆解主机、端口、账号与密码。
 
-### 2.4 本机 DNS / `strict-route` 持久化配置与 `clash-verge-service` 运行期识别（`bb47f9c`）
-- **定位并解决 Clash Verge 订阅更新后 `strict-route` 回退 `false` 的根因**：
-  - Clash Verge Rev 在生成最终运行配置时，会在执行完订阅配置、`Merge.yaml` 与 `Script.js` **之后**，将 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev\config.yaml`（Clash Verge 内部基础 Clash 设置补丁）中的 `tun` 字段合并覆盖上去。由于此前 `config.yaml` 中存有 `strict-route: false`，导致每次订阅自动更新或重载配置时，`Script.js` 中的 `config.tun["strict-route"] = true` 都被覆盖回 `false`。
-  - 已先备份本机 4 份配置文件至 `.local/tasks/20261030-dns-config-backup/`，随后将 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev\config.yaml`、`profiles\Merge.yaml`、`clash-verge.yaml` 与 `clash-verge-service` 运行期 `config.yaml` 全部统一为 `strict-route: true`，并通过控制命名管道发送 `PATCH /configs`（`204 No Content`）实时热重载运行中的 `verge-mihomo` 内核，经 `GET /configs` 确认运行期 `"strict-route": true` 已生效。
-- **定位并解决 Clash Verge Rev 服务模式（`clash-verge-service`）下提示“仅发现候选文件，无法确认正在使用”的根因**：
-  - 在 Clash Verge Rev 2.x 服务模式下，`verge-mihomo.exe` 以 `LocalSystem`（`S-1-5-18`）运行，其 `-f` 参数指向 `%PROGRAMDATA%\clash-verge-service\users\<64位hex>\runtime\config.yaml`（文件所有者为 `BUILTIN\Administrators` 或 `NT AUTHORITY\SYSTEM`）。
-  - 已在 `src-tauri/src/risk_config_source.rs::clash_verge_service_runtime_allowed` 与 `src-tauri/src/windows.rs::service_or_user_owned` 中扩展服务配置校验：当路径位于 `%PROGRAMDATA%\clash-verge-service\users\<64位hex>\runtime\config.yaml`、无符号链接/重解析点、所有者为当前用户/`LocalSystem`/`Administrators`，且 `active-owner.json` 或 `.runtime-manifest.json` 确认其绑定当前用户的 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev` 时，将其认证为 `config_source = "running_core"`、`config_source_status = "confirmed"`，使「风控验证」页的本地配置检查直接全绿通过。
+### 2.4 伴生浏览器实测页、养号返回 CLI 浏览器与操作日志关闭打磨
+- **`browser.html` 深色一体化身份与范围卡**：在 `src/browser-start.tsx` 与 `src/style.css` 中将 `.verification-scope` 嵌入 `.verification-identity` 深色卡片下层，统一排版与字体。
+- **养号后一键返回 CLI 浏览器**：在 `src/identities.tsx`、`src-tauri/src/browser/lifecycle.rs`、`src-tauri/src/browser/quota_connection.rs` 中，为身份卡片菜单与额度详情新增「进入 Claude.ai」、「打开官方用量页」、「返回 CLI 浏览器」，并在养号浏览器激活时于身份栏顶部显示一键「返回 CLI 浏览器」按钮，切换 CLI 身份时同步切回 CLI 浏览器。
+- **操作日志彻底关闭与养号日志归位**：在 `src/cleaner-activity.tsx`、`src/claude-cli-panel.tsx`、`src/warming-cards.tsx` 中，点击「关闭记录」后彻底隐藏面板（不再残留「查看上次记录」），点击「检查更新」无安装时不弹日志，养号操作日志直接渲染在「养号」专区内部。
 
-### 2.5 已执行的验证、本机热更新与 `v0.2.3` 打包发布结果
+### 2.5 验证、本机热更新与 `v0.2.4` 打包发布回执
 - **自动化测试全部通过**：
-  - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml warming`：**17 passed, 0 failed**
-  - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml backup`：**15 passed, 0 failed**
-  - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml kill_switch`：**4 passed, 0 failed**
-  - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml risk_`：**13 passed, 0 failed**
-  - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml quota_`：**42 passed, 0 failed**
-  - `bun x tsc --noEmit`：**PASS（0 error）**
-  - `bun test src/identity-online-quota.test.ts src/i18n.test.ts src/risk-model.test.ts src/backup-panel-workflow.test.ts`：**38 passed, 0 failed**
-  - `bun run scripts/test-identities-ui.ts --warming-only`：**29 warming UI checks passed**（含新增的地区漂移拦截弹窗、SOP 折叠面板、Kill-Switch 横幅及 `180×286` 几何零溢出断言）
+  - `bun x tsc --noEmit && bun test`：**162 passed, 0 failed**
+  - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml browser::`：**44 passed, 0 failed**
+  - Playwright 隔离 UI 验收（`--verification-only`、`--warming-only`、`--cards-only`）：**10 + 29 + 28 checks passed**
 - **中性目录 NSIS 安装包构建与 29 项隐私探针解包审计**：
-  - 构建脚本：`scripts/build-windows-share.ps1`（中性根目录 `D:\ClaudeLocalBuild\...`，`--features custom-protocol --bundles nsis`）。
-  - 产出目录：`.local/artifacts/20261030T100102Z-91eca54b81ca417eb557ea43ede2e66f/`。
-  - 安装包：`Claude-Local_0.2.3_x64-setup.exe`，大小 **`140,883,227` 字节（`134.36 MiB`）**，SHA-256 为 **`fa122f952b9a0a7987e51047eb3b341171820e58823a4b15380cd85d362b3e31`**。
-  - 隐私审计：109 个解包文件全部匹配资源白名单，29 项本机外置隐私探针扫描 **`0` 命中**。
+  - 产出目录：`.local/artifacts/20261031T084338Z-3b7d1f2ab630482c9f01faa6f30e3e45/`
+  - 安装包：`Claude-Local_0.2.4_x64-setup.exe`
+  - 文件大小：**`140,893,501` 字节（`134.37 MiB`）**
+  - SHA-256：**`ceae7f931c15ae857c235f89b464e2c6c4cbcd912ae1a044c304dbb107cdecec`**
+  - 隐私审计：109 个解包文件全部匹配资源白名单，29 项外置隐私探针扫描 **`0` 命中**。
 - **本机安装目录安全热更新**：
-  - 更新前备份位于 `.local/tasks/20261030-v0.2.3-release/deployment-before-20261030T101644Z/` 及 `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe.backup-*`。
-  - 已将包含 `clash-verge-service` 运行期配置确认的最新宿主与前端资源部署至 `%LOCALAPPDATA%\Programs\Claude-Local`（当前本机已安装 `claude-local.exe` SHA-256 为 `1218fd8a03a322379deaa5922889321a6971df951b0e4ed4d5d4761825ab3105`），并通过标准 `Win32_Process` CIM `Create` 重启 GUI；**本机正在运行的 `claude.exe` 终端进程全程保持原 PID 与启动时间无中断**。
-- **GitHub Release 正式发布与双语介绍文档同步**：
-  - 标签 `v0.2.3`（指向 `dd25de8`）及公开资产 `Claude-Local_0.2.3_x64-setup.exe`、`SHA256SUMS.txt` 已正式发布至 https://github.com/yq04/Claude-Local/releases/tag/v0.2.3 （`isDraft: false`、`isPrerelease: false`、Latest），GitHub 服务端返回 `digest` 与本地 SHA-256 完全一致。
-  - `README.md`、`README_EN.md`、`docs/RELEASE_NOTES_0.2.3_SECURITY.md`、`docs/FEATURE_NOTES_WARMING_CARDS.md`、`docs/PROJECT_ORIGIN.md` 及 GitHub Release `v0.2.3` 页面正文已完整同步 `v0.2.3` 核心特性矩阵、与 CCBaga 的演进对比表、安全边界说明及安装包 SHA-256 校验指引（未移动 `v0.2.3` 标签，未替换已上传安装包资产）。
+  - 已将 `v0.2.4` Release 宿主与前端资源部署至 `%LOCALAPPDATA%\Programs\Claude-Local`（本机已安装 `claude-local.exe` SHA-256 为 `3523012c0ac826af35e6d466c01ab32fe561957b0eb60b49d7d50f642872ee1d`），并通过 `Win32_Process` CIM `Create` 重启 GUI；**本机正在运行的 `claude.exe` 终端进程全程保持原 PID 与启动时间无中断**。
 
 ---
 
-## 3. 当前卡在哪（当前无阻塞，仅列出已知外部边界与未决背景）
+## 3. 当前卡在哪（当前无阻塞）
 
-当前**没有任何代码、构建、测试或发布阻塞**。工作区干净（仅保留用户原有的未提交 `AGENTS.md`，按规则绝不触碰或提交）。新会话只需了解以下背景边界，避免误判：
-
-1. **本机 Clash Verge `strict-route` 与服务模式（`clash-verge-service`）运行配置核验已全部就绪**：
-   - 已应用户要求备份并更新本机 Clash Verge 的 `config.yaml`、`profiles\Merge.yaml`、`clash-verge.yaml` 与 `clash-verge-service` 运行期 `config.yaml`（开启 `tun.strict-route: true`），并通过控制管道热重载运行中的 `verge-mihomo` 内核使其立即生效。
-   - 同时已在 `src-tauri/src/risk_config_source.rs` 与 `src-tauri/src/windows.rs` 中补齐对 Clash Verge Rev 2.x 服务模式（`%PROGRAMDATA%\clash-verge-service\users\<64-hex>\runtime\config.yaml`，经 `active-owner.json` / `.runtime-manifest.json` 校验归属当前用户 `%APPDATA%`）的运行期配置来源确认，并热更新至本机安装目录（正在运行的 `claude.exe` 全程保持原 PID 无中断）。
-2. **历史某个旧 Pro 账号曾出现的 `403 Request not allowed` 属于外部历史事件**：
-   - 用户早已切换至当前正常工作的 Pro 账号；软件层面的 CLI/养号共存隔离、跨账号残留消毒与断路器防护均已交付完毕。新会话切勿自行尝试切换回旧账号或发起任何探测请求。
-3. **伴生浏览器的单回环核验会话模型（架构设计边界，非缺陷）**：
-   - 当养号窗口打开时，当前 CLI 账号可以通过「打开官方用量页」、「同步订阅日期与额外重置」或受保护的窄 OAuth 授权入口直接启动该 CLI 账号绑定的独立浏览器资料窗口。
-   - 但 `browser.html` 的 20 项环境实测回环报告（`Session.report`）在架构上仍绑定当前全局选中的单个槽位（`browser.active`），尚未将回环服务改造为多槽位同时常驻多份独立 20 项实测报告（对应远期可选方案阶段 C/E）。在用户顺序使用账号的习惯下，当前设计已完全够用。
+当前**没有任何代码、构建、测试或发布阻塞**。工作区干净（仅保留用户原有的未提交 `AGENTS.md`，按规则绝不触碰或提交）。
 
 ---
 
 ## 4. 下一步计划是什么
 
-目前 `v0.2.3` 所有计划内目标均已圆满收官。新会话启动后：
-
-1. **先听取用户的新指令**：
-   - 若用户提出新的使用问题或新需求，先阅读相关模块的 `CLAUDE.md` 与源码头，按需复现并制定方案。
-   - 本机 Clash Verge `strict-route: true` 与服务模式运行期配置确认均已配置并热更新到位，用户在「风控验证」页可直接看到本地配置检查全绿通过，点击右上角「开始一致性实测」即可完成 6/6 全绿核验。
+目前 `v0.2.4` 所有目标均已圆满收官。新会话启动后：
+1. **先听取用户的新指令**：若用户提出新的需求或反馈，先阅读相关模块的 `CLAUDE.md` 与源码头，按需制定方案。
 2. **远期可选储备方向（仅在用户明确要求时再启动，切勿自行开工）**：
-   - **可选方向 1（方案阶段 C / E：多槽位浏览器完整并行管理）**：将 `Browser.session` 升级为 `HashMap<String, SlotSession>`，允许已保存的非当前 CLI 身份卡在不切换 CLI 身份的前提下直接从卡片菜单打开各自绑定的浏览器实测页并独立回传报告。
-   - **可选方向 2（方案 F7：`CLAUDE_CONFIG_DIR` 独立目录非破坏性试点）**：评估通过环境变量隔离配置目录的兼容性（注意目前用户仅顺序运行单个 CLI 会话，优先级为 P2 低优）。
-   - **可选方向 3（单身份便携包 `.bagapack`）**：目前整库加密备份 `.clbackup` 已覆盖全部身份、养号卡与手动订阅；若未来需要将单个账号连同其元数据单独导出给另一台设备，可设计 `.bagapack` 单身份便携导出。
+   - 多槽位浏览器完整并行 20 项回环实测会话（`HashMap<String, SlotSession>`）；
+   - 单身份便携包（`.bagapack`）独立导出与导入。
 
 ---
 
 ## 5. 有哪些踩过的坑绝对不要再踩
 
-### 5.1 进程、数据与工作区安全铁律（最高优先级）
 1. **绝不中断或强杀正在运行的 `claude.exe`（Claude Code CLI）**：
-   - 无论是开发调试、跑测试还是做本机热更新（`deploy-local.ps1`），都只允许操作 `claude-local.exe`（GUI 宿主），**严禁停止、重启或干扰任何 `claude.exe` 进程**。本机热更新前后必须记录并核对 `claude.exe` 的 PID 与 `StartTime` 完全不变。
+   - 无论是开发调试、跑测试还是做本机热更新，都只允许操作 `claude-local.exe`（GUI 宿主），**严禁停止、重启或干扰任何 `claude.exe` 进程**。
 2. **绝不提交或还原根目录 `AGENTS.md`，绝不将 `.local/` 或真实隐私数据带入 Git**：
-   - `AGENTS.md` 含有工作区本地规则修改，必须始终留在未暂存状态（`git add` 时显式排除 `AGENTS.md`）。
+   - `AGENTS.md` 必须始终留在未暂存状态（`git add` 时显式指定文件路径，切勿 `git add .` 或 `git add -A`）。
    - 严禁使用 `git clean`、`git reset --hard`、`git checkout --`、`git restore` 或递归删除工作区。
-   - 提交或打包前必须用外置隐私探针扫描所有待提交文件，确保零真实账号、零邮箱、零身份指纹、零代理凭据、零个人路径。
 3. **持久格式兼容性绝对不可破坏**：
-   - `BAGAID01` 魔数、`.baga` 归档格式、SQLite `user_version = 3`、账号 HMAC 计算规则以及历史 `CCBaga/browser/...` 确定性种子派生域字符串属于持久数据格式契约，严禁在重构或品牌化时修改，否则会导致已有身份库和浏览器指纹失效。
-   - `quota_ledger.json` 必须保持 **Python 唯一写入者**（跨进程文件锁 + 原子替换 + 较新锚点优先），Rust 端只读合并，绝不向 `~/.claude.json` 写入额度字段。
-
-### 5.2 本轮实施与调试中踩过的技术坑（重要经验）
-4. **锁序与重入坑：`Cleaner` 门禁不可在前端未 `await` 的并行 IPC 间争用**：
-   - **踩坑现象**：在实现 F3 打开养号卡前的 IP 地区核验时，若前端对未锁定国家的卡片先不带 `await` 调用 `void invoke('identities_warming_probe_check')`，紧接着立即调用 `onOpen(card, mode)`（内部调用 `identities_warming_open`），而两者都在 Rust 端尝试获取 `cleaner.enter()`，会导致其中一个 IPC 因锁争用报错“正在执行另一项身份或清理操作”。
-   - **正确做法（已修复）**：在 `warming.rs::identities_warming_probe_check` 中，前半段只读检查与网络探测不持有 `cleaner.enter()`，仅在需要落盘写入锁定国家/探测结果时短持 `cleaner.enter()`；同时前端 `onOpen` 返回 `Promise<boolean>`，首次未锁定卡片在 `await onOpen(card, mode)` 完成后再顺序触发后台 `identities_warming_probe_check` 锚定国家与时区。
-5. **Kill-Switch 的设计边界坑：必须是“单次急停 + 状态提醒”，绝不能做成持久锁死门禁**：
-   - **核心原则**：如果把断路器写成“触发后禁止再次启动浏览器，除非先跑通某项检查”，一旦遇上临时网络抖动就会把用户锁在外面无法使用。
-   - **正确做法（已落地）**：断路器仅在受管伴生浏览器运行时监测；触发时执行一次 `profile::quit()` 并点亮横幅/红托盘；用户后续点击任何启动浏览器的按钮（`launch_locked`、`launch_with_urls_locked`、`start_windows_companion`、`launch_bound_profile_url_locked`）或点击「知道了」时，均直接调用 `kill_switch::clear_alert(app)` 自动解除告警并正常放行。
-6. **备份白名单坑：修改 `.clbackup` 备份范围必须五处同步**：
-   - `src-tauri/src/identities/backup.rs` 的 `verify_staged()` 采用了严格的文件路径白名单校验（未知文件直接报错拒绝恢复）。因此新增备份文件（如 `warming_cards.json`、`manual_subscriptions.json`）时，必须同步更新 `collect_files`、`rescue_files`、`verify_staged`、`verify_rescue_staged` 与 `identities_backup_restore_new` 五处，缺一不可。
-7. **订阅同步与过期重置次数坑：注意合成测试 Fixture 的字段省略习惯**：
-   - `tests/identities-fixture.tsx` 在模拟 `identities_sync_subscription` 时只设置了 `manual_resets_remaining: 0` 而未设置 `manual_resets_valid_until`。因此前端过滤过期重置次数时，应仅针对 `typeof validUntil === 'number' && validUntil * 1000 <= Date.now() && remaining > 0`（明确带有过期时间戳的正数次数）做拦截，保留 `remaining === 0` 或无 `validUntil` 时的展示，确保真实场景与合成测试双向兼容。
-8. **Clash Verge Rev 四层配置覆盖顺序坑与服务模式（`clash-verge-service`）路径确认坑**：
-   - **配置覆盖顺序坑**：Clash Verge Rev 在生成最终运行配置时，并非只合并订阅、`Merge.yaml` 与 `Script.js`；它在执行完 `Merge.yaml` 和 `Script.js` **之后**，还会把 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev\config.yaml`（Clash Verge 内部基础 Clash 设置补丁）中的 `tun` 字段覆盖上去。若 `config.yaml` 中存有 `strict-route: false`，即使 `Script.js` 设置了 `config.tun["strict-route"] = true`，每次订阅自动更新或重载后仍会被覆盖回 `false`。因此持久化开启 `strict-route: true` 必须同步修改 `config.yaml` 与 `profiles\Merge.yaml`。
-   - **服务模式运行配置路径坑**：Clash Verge Rev 2.x 开启服务模式（`clash-verge-service.exe`）后，`verge-mihomo.exe` 以 `LocalSystem`（`S-1-5-18`）运行，其 `-f` 参数指向 `%PROGRAMDATA%\clash-verge-service\users\<64位hex>\runtime\config.yaml`（文件所有者为 `BUILTIN\Administrators` 或 `NT AUTHORITY\SYSTEM`），而非 `%APPDATA%` 下的 `clash-verge.yaml`。`src-tauri/src/risk_config_source.rs` 现已通过校验 `active-owner.json` / `.runtime-manifest.json` 与当前用户 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev` 的归属绑定，安全确认服务模式下的运行期配置文件（提交 `bb47f9c`）。
-9. **Windows 构建与工具链坑**：
-   - 在 Windows 下运行 `cargo test` 或 `cargo build` 前，务必设置 `$env:CARGO_INCREMENTAL="0"; $env:CARGO_BUILD_JOBS="1"` 并加 `-j 1`，避免 MSVC `link.exe` 并发争用或 PDB 锁死。
-   - 生产构建与本地部署必须带 `--features custom-protocol`；否则 Tauri 宿主会尝试连 `http://localhost:1420` 导致白屏。
-   - `scripts/build-windows-share.ps1` 需要显式传入本机已有的 7-Zip 路径（`-SevenZipPath "<repo>\.local\build-tools\7zip-26.04-f4a03f7e\portable\7z.exe"`）。
-   - 在 PowerShell 工具调用中重启常驻 GUI 进程时，不要用 `Start-Process`（可能随命令会话结束被 Job Object 回收），应使用 `Invoke-CimMethod -ClassName Win32_Process -MethodName Create` 启动独立进程。
-   - 部分源码文件（如 `scripts/test-warming-ui.ts`、`src/cleaner-activity.tsx`、`src-tauri/src/windows.rs`）在 Windows 工作区中为 `CRLF` 行尾，使用 `edit_file` 替换多行块若报 `target content not found`，优先改用单行精确锚点替换。
-
----
-
-## 6. 关键源码与文档速查索引
-
-- **伴生浏览器断路器与生命周期**：
-  - `src-tauri/src/browser/kill_switch.rs`（按需巡检状态机、5s TUN 检查、60s 国家漂移检查、托盘图标切换）
-  - `src-tauri/src/browser/mod.rs`、`launch.rs`、`windows.rs`、`workspaces.rs`、`lifecycle.rs`
-  - `src/browser.tsx`、`src/browser-model.ts`、`src/browser-runtime.ts`
-- **风控核验与 `strict-route` 修复向导**：
-  - `src-tauri/src/risk_check.rs`、`src-tauri/src/risk_config_source.rs`
-  - `src/risk-verification.tsx`、`src/risk-model.ts`、`src/risk-verification.css`
-- **养号卡片、地区锁定、SOP 与跨槽位订阅同步**：
-  - `src-tauri/src/identities/warming.rs`、`src/warming-cards.tsx`、`src/warming-model.ts`
-  - `src-tauri/src/browser/quota_bridge.rs`、`src-tauri/src/browser/quota_connection.rs`
-  - `src/identities.tsx`、`src/identity-online-quota.ts`、`src/cleaner-activity.tsx`
-- **全链路加密备份与恢复**：
-  - `src-tauri/src/identities/backup.rs`、`src-tauri/src/identities/backup_tests.rs`、`src/backup-panel.tsx`
-- **发布说明与交付核验文档**：
-  - `docs/RELEASE_NOTES_0.2.3_SECURITY.md`、`docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md`
-  - `docs/plans/2026-10-30-security-and-warming-enhancement/`、`docs/plans/2026-10-30-multi-account-optimization/`
-- **本轮本地备份与打包审计产物（均在 `.local/` 忽略目录内，切勿提交）**：
-  - `.local/artifacts/20261030T100102Z-91eca54b81ca417eb557ea43ede2e66f/`（`Claude-Local_0.2.3_x64-setup.exe`、`SHA256SUMS.txt`、`privacy-audit.json`、`resource-manifest.json`）
-  - `.local/tasks/20261030-v0.2.3-release/`（热更新前备份 `deployment-before-20261030T101644Z`、上一版 `HANDOFF.before.md` 及 SHA256 备份回执 `handoff-backup-receipt.json`）
+   - `BAGAID01` 魔数、`.baga` 归档格式、SQLite `user_version = 3`、账号 HMAC 计算规则以及历史 `CCBaga/browser/...` 确定性种子派生域字符串属于持久数据格式契约，严禁修改。
+   - `quota_ledger.json` 必须保持 **Python 唯一写入者**，Rust 端只读合并，绝不向 `~/.claude.json` 写入额度字段。
+4. **Windows 构建与工具链注意事项**：
+   - 运行 `cargo test` 或 `cargo build` 前设置 `$env:CARGO_INCREMENTAL="0"; $env:CARGO_BUILD_JOBS="1"` 并加 `-j 1`。
+   - 生产构建与本地部署必须带 `--features custom-protocol`。
+   - 在 PowerShell 工具调用中重启常驻 GUI 进程时使用 `Invoke-CimMethod -ClassName Win32_Process -MethodName Create`。

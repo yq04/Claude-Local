@@ -117,6 +117,8 @@ pub fn preferences(
         json!(format!("{lang},{}", lang.split('-').next().unwrap_or("en")));
     data["intl"]["selected_languages"] = data["intl"]["accept_languages"].clone();
     data["webrtc"]["ip_handling_policy"] = json!("disable_non_proxied_udp");
+    data["webrtc"]["multiple_routes_enabled"] = json!(false);
+    data["webrtc"]["nonproxied_udp_enabled"] = json!(false);
     data["profile"]["default_content_setting_values"]["geolocation"] = json!(2);
     // Chromium 148 的定位拆分近似/精确权限；同时关闭两项，旧键兼容旧资料。
     data["profile"]["default_content_setting_values"]["geolocation_with_options"] =

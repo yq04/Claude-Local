@@ -26,7 +26,7 @@ const VALID_MONO_FONTS: &[&str] = &["cascadia", "jetbrains", "consolas"];
 const VALID_QUOTA_DISPLAYS: &[&str] = &["remaining", "used"];
 const VALID_UI_SCALES: &[u16] = &[90, 95, 100, 105, 110];
 const VALID_STARTUP_PAGES: &[&str] = &[
-    "remember", "quick", "cleaner", "usage", "browser", "system", "vps", "help", "settings",
+    "remember", "quick", "cleaner", "usage", "browser", "risk", "system", "vps", "help", "settings",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

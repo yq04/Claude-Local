@@ -1,5 +1,5 @@
 // [INPUT]: Synthetic token counters and fixed local calendar dates.
-// [OUTPUT]: Four-part composition, cache denominator, precise counters, calendar spans and elapsed-only trend summary regressions.
+// [OUTPUT]: Four-part composition, cache denominator, USD API cost & cache savings estimation, precise counters, calendar spans and elapsed-only trend summary regressions.
 // [POS]: Pure presentation tests; no runtime identities or browser profiles.
 // [PROTOCOL]: Keep tests proportional to the usage presentation contract.
 import {expect, test} from 'bun:test';
@@ -8,7 +8,11 @@ import {
   dailySeries,
   detectModelFamily,
   emptyUsage,
+  estimateSnapshotCostUsd,
+  estimateTotalsCostUsd,
   formatUsageNumber,
+  formatUsdCost,
+  resolveModelPricing,
   summarizeUsageTrend,
   tokenComposition,
 } from './usage-model';
@@ -117,4 +121,54 @@ test('composition preserves four disjoint counters and uses all tokens as its de
   ]);
   expect(tokenComposition(emptyUsage()).every(part => part.share === 0)).toBe(true);
   expect(tokenComposition(totals).reduce((sum, part) => sum + part.tokens, 0)).toBe(100);
+});
+
+test('estimates USD API cost and prompt cache savings across Opus 5.5/4.6, Sonnet, and Haiku tiers', () => {
+  expect(resolveModelPricing('claude-opus-5-5')).toEqual({
+    inputPerM: 4,
+    outputPerM: 20,
+    cacheWritePerM: 5,
+    cacheReadPerM: 0.2,
+  });
+  expect(resolveModelPricing('claude-opus-4-6')).toEqual({
+    inputPerM: 5,
+    outputPerM: 25,
+    cacheWritePerM: 6.25,
+    cacheReadPerM: 0.5,
+  });
+  const opus55 = estimateTotalsCostUsd({
+    ...emptyUsage(),
+    input_tokens: 1_000_000,
+    output_tokens: 500_000,
+    cache_creation_tokens: 2_000_000,
+    cache_read_tokens: 10_000_000,
+    total_tokens: 13_500_000,
+  }, 'claude-opus-5-5');
+  expect(opus55.costUsd).toBeCloseTo(4 + 10 + 10 + 2, 4);
+  expect(opus55.cacheSavingsUsd).toBeCloseTo(38, 4);
+  expect(opus55.cacheReuseRatio).toBeCloseTo(5, 4);
+
+  const snap = estimateSnapshotCostUsd(opus55 ? {
+    ...emptyUsage(),
+    input_tokens: 1_000_000,
+    output_tokens: 500_000,
+    cache_creation_tokens: 2_000_000,
+    cache_read_tokens: 10_000_000,
+    total_tokens: 13_500_000,
+  } : null, [{
+    model: 'claude-opus-5-5',
+    totals: {
+      ...emptyUsage(),
+      input_tokens: 1_000_000,
+      output_tokens: 500_000,
+      cache_creation_tokens: 2_000_000,
+      cache_read_tokens: 10_000_000,
+      total_tokens: 13_500_000,
+    },
+  }]);
+  expect(snap.costUsd).toBeCloseTo(26, 4);
+  expect(formatUsdCost(0)).toBe('$0.00');
+  expect(formatUsdCost(0.002)).toBe('<$0.01');
+  expect(formatUsdCost(26.5)).toBe('$26.50');
+  expect(formatUsdCost(22340, true)).toBe('$22.3K');
 });

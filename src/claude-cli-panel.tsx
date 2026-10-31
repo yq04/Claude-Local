@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生 CLI 本地状态、用户手动最新版本检查与更新命令和真实任务日志。
- * [OUTPUT]: 紧凑品牌维护卡片、可恢复的本地状态读取、二进制路径一键复制、当前/最新版本、未安装时官方安装指引与命令复制、检查更新与一键更新；读取失败不误报未安装，运行中明确阻断更新。
+ * [OUTPUT]: 紧凑品牌维护卡片、可恢复的本地状态读取、二进制路径一键复制、当前/最新版本可关闭反馈、未安装时官方安装指引与命令复制、检查更新与一键更新；检查更新仅呈现内联版本状态不弹安装日志，运行中明确阻断更新。
  * [POS]: 身份页 CLI 程序维护区域；首次挂载只读本地状态，不联网、不结束会话、不修改身份或配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -96,20 +96,26 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
     if (blocked || loading || action || readError) return;
     setAction(selected);
     setError('');
-    const onProgress = activity.start('cli');
-    try {
-      if (selected === 'check') {
+    if (selected === 'check') {
+      try {
         setUpdate(null);
         const result = await invoke<UpdateStatus>('claude_cli_check');
         setStatus(result.current);
         setUpdate(result);
-        activity.finish(true, result.update_available ? 'cli.available' : 'cli.current');
-      } else {
-        setUpdate(null)
-        const result = await invoke<Status>('claude_cli_manage', {action: 'update', onProgress});
-        setStatus(result);
-        activity.finish(true, 'cli.updated');
+      } catch (e) {
+        setError(String(e));
+        await read();
+      } finally {
+        setAction(null);
       }
+      return;
+    }
+    const onProgress = activity.start('cli');
+    try {
+      setUpdate(null);
+      const result = await invoke<Status>('claude_cli_manage', {action: 'update', onProgress});
+      setStatus(result);
+      activity.finish(true, 'cli.updated');
     } catch (e) {
       setError(String(e));
       activity.finish(false, String(e));
@@ -171,7 +177,12 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
       ) : (
         status?.running ? <p className="cleanup-feedback">{t('cli.running')}</p> : null
       )}
-      {update && <p className="cleanup-feedback" role="status">{t('cli.versions', {current: update.current.version, latest: update.latest_version})} · {t(update.update_available ? 'cli.available' : 'cli.current')}</p>}
+      {update && (
+        <p className="cleanup-feedback cli-update-feedback" role="status">
+          <span>{t('cli.versions', {current: update.current.version, latest: update.latest_version})} · {t(update.update_available ? 'cli.available' : 'cli.current')}</span>
+          <Button variant="ghost" size="small" type="button" onClick={() => setUpdate(null)}>{t('关闭记录')}</Button>
+        </p>
+      )}
       {error && (
         <p role="alert" className="cleanup-feedback error">
           {t(error)}

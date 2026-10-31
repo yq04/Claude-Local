@@ -16,6 +16,7 @@ import {encodeQrMatrix, renderQrSvgPath} from './qrcode-svg';
 import {
   buildCloseLanBridgePrompt,
   buildDesktopDnsFixPrompt,
+  buildDesktopMihomoAntiLeakYaml,
   buildMihomoStrictRouteSnippet,
   buildMobileBridgeConfig,
   buildShadowrocketSocksQrUri,
@@ -261,7 +262,21 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
     () => evaluateRiskChecks(local, probe, privacyMask),
     [local, probe, privacyMask],
   );
+  const staticChecks = useMemo(
+    () => checks.filter(item => item.id === 'browser_dns_lock' || item.id === 'mihomo_dns_leak' || item.id === 'kyc_routing_rules'),
+    [checks],
+  );
+  const probeChecks = useMemo(
+    () => checks.filter(item => item.id === 'claude_exit' || item.id === 'persona_consistency' || item.id === 'exit_isp_kind'),
+    [checks],
+  );
+  const staticPassed = staticChecks.filter(item => item.status === 'ok').length;
+  const probePassed = probeChecks.filter(item => item.status === 'ok').length;
   const overallStatus = useMemo(() => summarizeRiskChecks(checks), [checks]);
+  const localAllReady = Boolean(
+    local && !probe && staticChecks.length === 3 && staticChecks.every(item => item.status === 'ok'),
+  );
+  const bannerStatus = localAllReady ? 'ok' : overallStatus;
   const comparison = probe ? compareProbeExits(probe) : 'unknown';
 
   const bridgeArtifact = useMemo(() => {
@@ -322,6 +337,8 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
   );
 
   const srAntiLeakConf = useMemo(() => buildShadowrocketUniversalAntiLeakConf(), []);
+  const desktopYaml = useMemo(() => buildDesktopMihomoAntiLeakYaml(safePort), [safePort]);
+  const [showDesktopYamlPreview, setShowDesktopYamlPreview] = useState(false);
   const srStandaloneUri = useMemo(() => {
     const p = parsePortInput(srPort);
     return buildShadowrocketSocksQrUri({
@@ -347,8 +364,9 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
     local && (local.system.public_wan_detected || local.system.lan_ipv4_candidates.length === 0),
   );
 
-  const auditTitleKey =
-    overallStatus === 'ok'
+  const auditTitleKey = localAllReady
+    ? 'risk.auditStatus.localReadyTitle'
+    : overallStatus === 'ok'
       ? 'risk.auditStatus.okTitle'
       : overallStatus === 'fail'
         ? 'risk.auditStatus.failTitle'
@@ -356,8 +374,9 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
           ? 'risk.auditStatus.warnTitle'
           : 'risk.auditStatus.pendingTitle';
 
-  const auditDescKey =
-    overallStatus === 'ok'
+  const auditDescKey = localAllReady
+    ? 'risk.auditStatus.localReadyDesc'
+    : overallStatus === 'ok'
       ? 'risk.auditStatus.okDesc'
       : overallStatus === 'fail'
         ? 'risk.auditStatus.failDesc'
@@ -373,19 +392,9 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
           <Button
             variant="secondary"
             size="small"
-            loading={inspecting}
-            disabled={probing}
-            leftIcon={<Refresh size={14} aria-hidden="true" />}
-            onClick={() => void refreshLocalSnapshot()}
-          >
-            {t('risk.refreshEnv')}
-          </Button>
-          <Button
-            variant="secondary"
-            size="small"
-            loading={probing}
-            disabled={inspecting}
-            leftIcon={<Refresh size={14} className={probing ? 'spin' : ''} aria-hidden="true" />}
+            loading={probing || inspecting}
+            disabled={inspecting || probing}
+            leftIcon={<Refresh size={14} className={probing || inspecting ? 'spin' : ''} aria-hidden="true" />}
             onClick={() => void runConsistencyProbe()}
           >
             {probing ? t('risk.probing') : probe ? t('risk.reprobe') : t('risk.startProbe')}
@@ -401,10 +410,10 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
         </div>
 
         <section className="settings-card risk-card" aria-busy={inspecting || probing}>
-          <div className="risk-audit-banner" data-status={overallStatus} role="status" aria-live="polite">
+          <div className="risk-audit-banner" data-status={bannerStatus} role="status" aria-live="polite">
             <div className="risk-banner-main">
-              <span className="risk-status-dot" data-status={overallStatus} aria-hidden="true">
-                {statusSymbol(overallStatus)}
+              <span className="risk-status-dot" data-status={bannerStatus} aria-hidden="true">
+                {statusSymbol(bannerStatus)}
               </span>
               <div className="risk-banner-copy">
                 <strong>{t(auditTitleKey)}</strong>
@@ -437,12 +446,25 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
             )}
           </div>
 
-          <p className="risk-audit-scope">{t('risk.audit.scope')}</p>
-          <p className="risk-audit-scope" data-browser-owner-scope>{t('risk.browserOwnerScope')}</p>
-          {local?.browser_identity && <p className="risk-audit-scope" data-risk-browser-identity={local.browser_identity.status}>
-            {t(local.browser_identity.status === 'warming' ? 'browser.verificationWarmingOwner' : 'browser.verificationOwner', {name: maskDisplayName(local.browser_identity.name, local.browser_identity.email, privacyMask)})}
-          </p>}
-          {local && <p className="risk-audit-scope">{t(local.mihomo.config_source === 'running_core' && local.mihomo.config_source_status === 'confirmed' ? 'risk.audit.runningSource' : local.mihomo.config_source === 'candidate_file' ? 'risk.audit.candidateSource' : 'risk.audit.unknownSource')}</p>}
+          <div className="risk-overview-box">
+            <div className="risk-why-row">
+              <span className="risk-why-badge">{t('risk.workflow.whyTitle')}</span>
+              <p className="risk-audit-scope">{t('risk.workflow.whyDesc')}</p>
+            </div>
+            <div className="risk-context-bar">
+              {local?.browser_identity && (
+                <span className="risk-context-pill" data-risk-browser-identity={local.browser_identity.status}>
+                  {t(local.browser_identity.status === 'warming' ? 'browser.verificationWarmingOwner' : 'browser.verificationOwner', {name: maskDisplayName(local.browser_identity.name, local.browser_identity.email, privacyMask)})}
+                </span>
+              )}
+              {local && (
+                <span className={`risk-context-pill${local.mihomo.config_source === 'running_core' && local.mihomo.config_source_status === 'confirmed' ? ' ok' : ''}`}>
+                  {t(local.mihomo.config_source === 'running_core' && local.mihomo.config_source_status === 'confirmed' ? 'risk.audit.runningSource' : local.mihomo.config_source === 'candidate_file' ? 'risk.audit.candidateSource' : 'risk.audit.unknownSource')}
+                </span>
+              )}
+              <span className="risk-context-note" data-browser-owner-scope>{t('risk.browserOwnerScope')}</span>
+            </div>
+          </div>
 
           {(inspectError || probeError) && (
             <div role="alert" className="system-feedback error">
@@ -450,19 +472,50 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
             </div>
           )}
 
-          <div className="risk-checks-grid">
-            {checks.map(item => (
-              <article key={item.id} className="risk-check-item" data-status={item.status}>
-                <span className="risk-status-dot" data-status={item.status} aria-hidden="true">
-                  {statusSymbol(item.status)}
-                </span>
-                <div className="risk-check-body">
-                  <strong>{t(item.titleKey)}</strong>
-                  <p>{t(item.summaryKey, item.summaryParams)}</p>
-                  {item.detailKeys?.map(key => <p key={key}>{t(key, item.summaryParams)}</p>)}
-                </div>
-              </article>
-            ))}
+          <div className="risk-check-group">
+            <div className="risk-check-group-head">
+              <strong>{t('risk.group.staticTitle')}</strong>
+              <span className={`settings-meta-pill${staticPassed === staticChecks.length ? ' ok' : ''}`}>
+                {t('risk.group.staticProgress', {passed: staticPassed, total: staticChecks.length})}
+              </span>
+            </div>
+            <div className="risk-checks-grid">
+              {staticChecks.map(item => (
+                <article key={item.id} className="risk-check-item" data-status={item.status}>
+                  <span className="risk-status-dot" data-status={item.status} aria-hidden="true">
+                    {statusSymbol(item.status)}
+                  </span>
+                  <div className="risk-check-body">
+                    <strong>{t(item.titleKey)}</strong>
+                    <p>{t(item.summaryKey, item.summaryParams)}</p>
+                    {item.detailKeys?.map(key => <p key={key}>{t(key, item.summaryParams)}</p>)}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div className="risk-check-group">
+            <div className="risk-check-group-head">
+              <strong>{t('risk.group.probeTitle')}</strong>
+              <span className={`settings-meta-pill${probe && probePassed === probeChecks.length ? ' ok' : ''}`}>
+                {probe ? t('risk.group.probeProgress', {passed: probePassed, total: probeChecks.length}) : t('risk.group.probeWaiting')}
+              </span>
+            </div>
+            <div className="risk-checks-grid">
+              {probeChecks.map(item => (
+                <article key={item.id} className="risk-check-item" data-status={item.status}>
+                  <span className="risk-status-dot" data-status={item.status} aria-hidden="true">
+                    {statusSymbol(item.status)}
+                  </span>
+                  <div className="risk-check-body">
+                    <strong>{t(item.titleKey)}</strong>
+                    <p>{t(item.summaryKey, item.summaryParams)}</p>
+                    {item.detailKeys?.map(key => <p key={key}>{t(key, item.summaryParams)}</p>)}
+                  </div>
+                </article>
+              ))}
+            </div>
           </div>
 
           <div className="risk-remediation-bar">
@@ -486,6 +539,13 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               <Button
                 variant="secondary"
                 size="small"
+                onClick={() => setShowDesktopYamlPreview(prev => !prev)}
+              >
+                {showDesktopYamlPreview ? t('risk.action.hideDesktopYaml') : t('risk.action.showDesktopYaml')}
+              </Button>
+              <Button
+                variant="secondary"
+                size="small"
                 disabled={copyingId !== ''}
                 leftIcon={copiedId === 'desktop-fix' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
                 onClick={() => void copyText('desktop-fix', desktopFixPrompt)}
@@ -494,6 +554,24 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               </Button>
             </div>
           </div>
+
+          {showDesktopYamlPreview && (
+            <div className="risk-config-preview-box">
+              <div className="risk-config-preview-head">
+                <strong>{desktopYaml.filename}</strong>
+                <Button
+                  variant="secondary"
+                  size="small"
+                  disabled={copyingId !== ''}
+                  leftIcon={copiedId === 'desktop-yaml' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
+                  onClick={() => void copyText('desktop-yaml', desktopYaml.configText)}
+                >
+                  {t('risk.action.copyDesktopYaml')}
+                </Button>
+              </div>
+              <pre className="risk-config-pre">{desktopYaml.configText}</pre>
+            </div>
+          )}
         </section>
 
         {/* 第二部分：手机扫码 KYC 同源家宽桥接与多客户端配置 */}
@@ -503,12 +581,18 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
         </div>
 
         <section className="settings-card risk-card">
-          <div className="settings-meta-pills">
-            <span className="settings-meta-pill ok">{t('risk.security.pillRfc1918')}</span>
-            <span className="settings-meta-pill ok">{t('risk.security.pillZeroSecret')}</span>
-            <span className="settings-meta-pill">{t('risk.security.pillMemoryToken')}</span>
-            <span className="settings-meta-pill">{t('risk.security.pillOfflineQr')}</span>
-            <span className="settings-meta-pill">{t('risk.security.pillQuicBlock')}</span>
+          <div className="risk-mobile-when-box">
+            <div className="risk-mobile-when-copy">
+              <strong>{t('risk.mobile.whenWhyBadge')}</strong>
+              <span>{t('risk.mobile.whenWhyDesc')}</span>
+            </div>
+            <div className="settings-meta-pills">
+              <span className="settings-meta-pill ok">{t('risk.security.pillRfc1918')}</span>
+              <span className="settings-meta-pill ok">{t('risk.security.pillZeroSecret')}</span>
+              <span className="settings-meta-pill">{t('risk.security.pillMemoryToken')}</span>
+              <span className="settings-meta-pill">{t('risk.security.pillOfflineQr')}</span>
+              <span className="settings-meta-pill">{t('risk.security.pillQuicBlock')}</span>
+            </div>
           </div>
 
           {publicOrNoLan && (
@@ -752,54 +836,6 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                       </li>
                     ))}
                   </ol>
-                  <div className="risk-action-group">
-                    <Button
-                      variant="secondary"
-                      size="small"
-                      disabled={copyingId !== ''}
-                      leftIcon={copiedId === 'sr-antileak' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
-                      onClick={() => void copyText('sr-antileak', srAntiLeakConf.configText)}
-                    >
-                      {t('risk.action.copySrAntiLeakConf')}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="small"
-                      onClick={() =>
-                        downloadTextFile(srAntiLeakConf.filename, srAntiLeakConf.configText)
-                      }
-                    >
-                      {t('risk.action.downloadMobileConfig')}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="small"
-                      aria-expanded={showSrConfText}
-                      onClick={() => setShowSrConfText(prev => !prev)}
-                    >
-                      {showSrConfText ? t('risk.action.hideSrConfText') : t('risk.action.showSrConfText')}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="small"
-                      disabled={copyingId !== ''}
-                      leftIcon={
-                        copiedId === 'standalone-mobile' ? <CheckTickCircle size={14} aria-hidden /> : undefined
-                      }
-                      onClick={() => void copyText('standalone-mobile', standaloneMobilePrompt)}
-                    >
-                      {t('risk.action.copyStandalonePrompt')}
-                    </Button>
-                  </div>
-                  {showSrConfText && (
-                    <pre className="risk-conf-preview" tabIndex={0}>
-                      {srAntiLeakConf.configText}
-                    </pre>
-                  )}
-                  <div className="risk-callout" role="note">
-                    <strong>{t('risk.mobile.srSwitchModeBadge')}</strong>
-                    <span>{t('risk.mobile.srSwitchModeNote')}</span>
-                  </div>
                 </div>
 
                 <aside className="risk-ephemeral-qr-card" aria-label={t('risk.mobile.srQrTitle')}>
@@ -828,7 +864,32 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                         value={srHost}
                         placeholder="us.example.net"
                         autoComplete="off"
-                        onChange={e => setSrHost(e.target.value)}
+                        onChange={e => {
+                          const raw = e.target.value.trim();
+                          const urlMatch = raw.match(/^(?:socks5h?:\/\/)?([^:@\s]+):([^@\s]+)@([^:\s/]+):(\d{1,5})$/i);
+                          if (urlMatch) {
+                            setSrUser(urlMatch[1]);
+                            setSrPass(urlMatch[2]);
+                            setSrHost(urlMatch[3]);
+                            setSrPort(urlMatch[4]);
+                            return;
+                          }
+                          const quadMatch = raw.match(/^([^:\s]+):(\d{1,5}):([^:\s]+):(\S+)$/);
+                          if (quadMatch) {
+                            setSrHost(quadMatch[1]);
+                            setSrPort(quadMatch[2]);
+                            setSrUser(quadMatch[3]);
+                            setSrPass(quadMatch[4]);
+                            return;
+                          }
+                          const hostPortMatch = raw.match(/^([^:\s]+):(\d{1,5})$/);
+                          if (hostPortMatch) {
+                            setSrHost(hostPortMatch[1]);
+                            setSrPort(hostPortMatch[2]);
+                            return;
+                          }
+                          setSrHost(e.target.value);
+                        }}
                       />
                     </div>
                     <div className="risk-field">
@@ -888,6 +949,55 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                     <p className="risk-qr-caption">{t('risk.mobile.srQrPrivacyHint')}</p>
                   </div>
                 </aside>
+              </div>
+
+              <div className="risk-standalone-footer">
+                <div className="risk-standalone-footer-bar">
+                  <div className="risk-callout risk-callout-inline" role="note">
+                    <strong>{t('risk.mobile.srSwitchModeBadge')}</strong>
+                    <span>{t('risk.mobile.srSwitchModeNote')}</span>
+                  </div>
+                  <div className="risk-action-group">
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      aria-expanded={showSrConfText}
+                      onClick={() => setShowSrConfText(prev => !prev)}
+                    >
+                      {showSrConfText ? t('risk.action.hideSrConfText') : t('risk.action.showSrConfText')}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      disabled={copyingId !== ''}
+                      leftIcon={
+                        copiedId === 'standalone-mobile' ? <CheckTickCircle size={14} aria-hidden /> : undefined
+                      }
+                      onClick={() => void copyText('standalone-mobile', standaloneMobilePrompt)}
+                    >
+                      {t('risk.action.copyStandalonePrompt')}
+                    </Button>
+                  </div>
+                </div>
+                {showSrConfText && (
+                  <div className="risk-conf-preview-wrap">
+                    <div className="risk-conf-preview-head">
+                      <span>{srAntiLeakConf.filename}</span>
+                      <Button
+                        variant="secondary"
+                        size="small"
+                        disabled={copyingId !== ''}
+                        leftIcon={copiedId === 'sr-antileak' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
+                        onClick={() => void copyText('sr-antileak', srAntiLeakConf.configText)}
+                      >
+                        {t('risk.action.copySrAntiLeakConf')}
+                      </Button>
+                    </div>
+                    <pre className="risk-conf-preview" tabIndex={0}>
+                      {srAntiLeakConf.configText}
+                    </pre>
+                  </div>
+                )}
               </div>
             </div>
           ) : (

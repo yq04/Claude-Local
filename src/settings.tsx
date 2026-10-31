@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 共享界面语言状态、宿主语言写入命令、Tauri 本机应用版本、settings-model 响应式视图偏好与主题预设、wallpaper-store 本地自定义壁纸与主色调提取引擎、身份备份组件与 Cromma UI 控件。
- * [OUTPUT]: 对齐 Cockpit Tools 悬浮胶囊分栏且四分页完全正交解耦的「软件设置」页面：通用（目录摘要+语言/默认页/额度口径/隐私打码/目录快捷操作）、外观与布局（一键主题预设/主题/6色强调色/表面玻璃化/艺术与自定义本地壁纸上传+主色调智能提取+五层光学毛玻璃3项无级滑块/减少动画+字体与排版预览+侧栏布局/界面缩放）、数据管理（独立资料目录+加密备份/恢复+界面偏好重置）与关于（只读版本信息与架构规格）。
+ * [INPUT]: 共享界面语言状态、宿主语言写入命令、Tauri 本机应用版本、settings-model 响应式视图偏好与主题预设、smart-relay-model 多账号智能接力与轮换策略、wallpaper-store 本地自定义壁纸与主色调提取引擎、身份备份组件与 Cromma UI 控件。
+ * [OUTPUT]: 对齐 Cockpit Tools 悬浮胶囊分栏且四分页完全正交解耦的「软件设置」页面：通用（目录摘要+语言/默认页/额度口径/隐私打码/目录快捷操作+多账号智能接力与轮换策略+额度监控/自动续杯/防封守护快捷中心）、外观与布局（一键主题预设/主题/6色强调色/表面玻璃化/艺术与自定义本地壁纸上传+主色调智能提取+五层光学毛玻璃3项无级滑块/减少动画+字体与排版预览+侧栏布局/界面缩放）、数据管理（独立资料目录+加密备份/恢复+界面偏好重置）与关于（只读版本信息与架构规格）。
  * [POS]: 独立设置面板；视图偏好与身份备份均由用户手动触发，不联网、不检查或安装更新、不替换当前身份库。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -30,6 +30,16 @@ import {
 } from './settings-model';
 import {clearCustomWallpaper, processWallpaperFile, useCustomWallpaper} from './wallpaper-store';
 import {BackupPanel} from './backup-panel';
+import {
+  RELAY_AFFINITY_MODES,
+  RELAY_RATE_LIMIT_MODES,
+  RELAY_SPENT_THRESHOLDS,
+  RELAY_STRATEGIES,
+  updateSmartRelayConfig,
+  useSmartRelayConfig,
+  type RelaySpentThreshold,
+  type RelayStrategy,
+} from './smart-relay-model';
 import type {Page} from './navigation';
 
 type SettingsTab = 'general' | 'appearance' | 'data' | 'about';
@@ -111,6 +121,7 @@ function GroupHeading({children}: {children: ReactNode}) {
 export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void}) {
   const {t, locale} = useI18n();
   const prefs = usePreferences();
+  const smartRelay = useSmartRelayConfig();
   const customWallpaper = useCustomWallpaper();
   const privacyError = usePrivacySyncError();
   const [tab, setTab] = useState<SettingsTab>('general');
@@ -256,6 +267,99 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
         </Button>
         <Button variant="secondary" size="small" onClick={() => void copyDataDir()}>
           {t(copiedPath ? 'settings.copiedPath' : 'settings.copyPathShort')}
+        </Button>
+      </SettingsRow>
+    </>
+  );
+
+  const relayRows = (
+    <>
+      <SettingsRow title={t('settings.relayEnableLabel')} detail={t('settings.relayEnableHint')}>
+        <Switch
+          aria-label={t('settings.relayEnableLabel')}
+          checked={smartRelay.enabled}
+          onCheckedChange={enabled => updateSmartRelayConfig({enabled})}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('settings.relayStrategyLabel')} detail={t(`relay.strategyDesc.${smartRelay.strategy}`)}>
+        <Select
+          aria-label={t('settings.relayStrategyLabel')}
+          size="small"
+          value={smartRelay.strategy}
+          onValueChange={v => updateSmartRelayConfig({strategy: v as RelayStrategy})}
+          items={RELAY_STRATEGIES.map(s => ({
+            value: s,
+            label: t(`relay.strategy.${s}`),
+          }))}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('settings.relayRateLimitLabel')} detail={t(`relay.rateLimitDesc.${smartRelay.rateLimitMode}`)}>
+        <SegmentedControl
+          aria-label={t('settings.relayRateLimitLabel')}
+          size="small"
+          value={smartRelay.rateLimitMode}
+          onValueChange={rateLimitMode => updateSmartRelayConfig({rateLimitMode})}
+          items={RELAY_RATE_LIMIT_MODES.map(m => ({
+            value: m,
+            label: t(`relay.rateLimit.${m}`),
+          }))}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('settings.relayAffinityLabel')} detail={t(`relay.affinityDesc.${smartRelay.affinityMode}`)}>
+        <SegmentedControl
+          aria-label={t('settings.relayAffinityLabel')}
+          size="small"
+          value={smartRelay.affinityMode}
+          onValueChange={affinityMode => updateSmartRelayConfig({affinityMode})}
+          items={RELAY_AFFINITY_MODES.map(m => ({
+            value: m,
+            label: t(`relay.affinity.${m}`),
+          }))}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('settings.relayThresholdLabel')} detail={t('relay.thresholdDesc', {pct: smartRelay.spentThresholdPct})}>
+        <SegmentedControl
+          aria-label={t('settings.relayThresholdLabel')}
+          size="small"
+          value={String(smartRelay.spentThresholdPct)}
+          onValueChange={v => updateSmartRelayConfig({spentThresholdPct: Number(v) as RelaySpentThreshold})}
+          items={RELAY_SPENT_THRESHOLDS.map(pct => ({
+            value: String(pct),
+            label: `${pct}%`,
+          }))}
+        />
+      </SettingsRow>
+      <SettingsRow title={t('settings.relayPreferredReturnLabel')} detail={t('settings.relayPreferredReturnHint')}>
+        <Switch
+          aria-label={t('settings.relayPreferredReturnLabel')}
+          checked={smartRelay.returnToPreferred}
+          onCheckedChange={returnToPreferred => updateSmartRelayConfig({returnToPreferred})}
+        />
+      </SettingsRow>
+    </>
+  );
+
+  const automationRows = (
+    <>
+      <SettingsRow title={t('settings.automationWakeupLabel')} detail={t('settings.automationWakeupHint')}>
+        <Button variant="secondary" size="small" onClick={() => onNavigate?.('cleaner')}>
+          {t('settings.relayOpenIdentities')}
+        </Button>
+      </SettingsRow>
+      <SettingsRow title={t('settings.automationMonitorLabel')} detail={t('settings.automationMonitorHint')}>
+        <Button
+          variant="secondary"
+          size="small"
+          onClick={() => {
+            void invoke('quota_monitor_toggle_window').catch(e => setError(String(e)));
+          }}
+        >
+          {t('monitor.toggleButton')}
+        </Button>
+      </SettingsRow>
+      <SettingsRow title={t('settings.automationKillSwitchLabel')} detail={t('settings.automationKillSwitchHint')}>
+        <Button variant="secondary" size="small" onClick={() => onNavigate?.('risk')}>
+          {t('风控验证')}
         </Button>
       </SettingsRow>
     </>
@@ -601,12 +705,26 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
         )}
 
         {showGeneral && (
-          <section className="settings-group">
-            <GroupHeading>{t('settings.generalSection')}</GroupHeading>
-            <div className="settings-card">
-              {generalRows}
-            </div>
-          </section>
+          <>
+            <section className="settings-group">
+              <GroupHeading>{t('settings.generalSection')}</GroupHeading>
+              <div className="settings-card">
+                {generalRows}
+              </div>
+            </section>
+            <section className="settings-group">
+              <GroupHeading>{t('settings.relayTitle')}</GroupHeading>
+              <div className="settings-card">
+                {relayRows}
+              </div>
+            </section>
+            <section className="settings-group">
+              <GroupHeading>{t('settings.automationTitle')}</GroupHeading>
+              <div className="settings-card">
+                {automationRows}
+              </div>
+            </section>
+          </>
         )}
 
         {showAppearance && (

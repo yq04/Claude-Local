@@ -1,5 +1,5 @@
-/* [INPUT]: Identity/warming shared count headers, readable saved-profile email, selected-slot/runtime state, short onboarding, expiry, quota and wakeup state.
- * [OUTPUT]: Accessible ⋯ dropdown menu, Pro/Max pill + right-hand MM/DD subscription expiry tag, manual recharge/expiry date editor dialog, compact primary auto-wake and secondary HUD/sync/menu header action groups with uniform 28px controls, header auto-wakeup pill, auto-wakeup time-window & status panel with compact wrap-safe 4-zone account blocks, quota estimation track with 7d pace tick, sync confirmation pill, result ages and centralized connection recovery styling without changing card geometry.
+/* [INPUT]: Identity/warming shared count headers, readable saved-profile email, selected-slot/runtime state, short onboarding, expiry, quota, wakeup and smart-relay state.
+ * [OUTPUT]: Accessible ⋯ dropdown menu, Pro/Max pill + right-hand MM/DD subscription expiry tag, manual recharge/expiry date editor dialog, compact primary auto-wake/smart-relay and secondary HUD/sync/menu header action groups with uniform 28px controls, header auto-wakeup & smart-relay pills, auto-wakeup time-window & status panel with compact wrap-safe 4-zone account blocks, Magpie-style multi-account smart relay dialog & banner, quota estimation track with 7d pace tick, sync confirmation pill, result ages and centralized connection recovery styling without changing card geometry.
  * [POS]: Identity productivity presentation; the 180×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
  */
@@ -364,6 +364,21 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+.identity-page > .identity-online-feedback,
+.identity-page > .cleanup-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 20px 10px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--landing-line);
+  background: color-mix(in srgb, var(--muted) 55%, var(--panel));
+}
+.identity-page > .identity-batch-task {
+  margin: 0 20px 10px;
+}
 .identity-online-query-dialog { display: grid; gap: 12px; min-width: 0; max-width: 100%; }
 .identity-online-query-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
@@ -458,8 +473,9 @@
 .identity-connection-queue li[data-connection-issue="login"]{color:var(--destructive,#b42318)}
 .identity-connection-queue li[data-connection-issue="route"]{color:var(--muted-foreground)}
 
-/* 顶部自动续杯一体化分段胶囊与时间段触发按钮 */
-.wakeup-header-pill {
+/* 顶部自动续杯与智能接力一体化分段胶囊与触发按钮 */
+.wakeup-header-pill,
+.relay-header-pill {
   display: inline-flex;
   align-items: stretch;
   height: 30px;
@@ -471,11 +487,13 @@
   overflow: hidden;
   transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
 }
-.wakeup-header-pill.is-enabled {
+.wakeup-header-pill.is-enabled,
+.relay-header-pill.is-enabled {
   border-color: color-mix(in srgb, #10b981 42%, var(--border));
   background: color-mix(in srgb, #10b981 6%, var(--card-elevated, var(--card)));
 }
-.wakeup-header-pill .wakeup-toggle-btn.isolate {
+.wakeup-header-pill .wakeup-toggle-btn.isolate,
+.relay-header-pill .relay-toggle-btn.isolate {
   height: 28px !important;
   border: 0 !important;
   border-radius: 0 !important;
@@ -483,10 +501,12 @@
   box-shadow: none !important;
   padding-inline: 10px !important;
 }
-.wakeup-header-pill .wakeup-toggle-btn.isolate:hover:not(:disabled) {
+.wakeup-header-pill .wakeup-toggle-btn.isolate:hover:not(:disabled),
+.relay-header-pill .relay-toggle-btn.isolate:hover:not(:disabled) {
   background: color-mix(in srgb, var(--muted) 70%, transparent) !important;
 }
-.wakeup-config-trigger {
+.wakeup-config-trigger,
+.relay-config-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -504,12 +524,15 @@
   white-space: nowrap;
   transition: color 0.15s ease, background-color 0.15s ease;
 }
-.wakeup-header-pill.is-enabled .wakeup-config-trigger {
+.wakeup-header-pill.is-enabled .wakeup-config-trigger,
+.relay-header-pill.is-enabled .relay-config-trigger {
   border-left-color: color-mix(in srgb, #10b981 28%, var(--border));
   color: var(--foreground);
 }
 .wakeup-config-trigger:hover,
-.wakeup-config-trigger:focus-visible {
+.wakeup-config-trigger:focus-visible,
+.relay-config-trigger:hover,
+.relay-config-trigger:focus-visible {
   color: var(--local-accent);
   background: color-mix(in srgb, var(--local-accent) 10%, var(--muted));
   outline: none;
@@ -818,4 +841,265 @@
     justify-content: flex-start;
     width: 100%;
   }
+}
+
+/* 智能接力与多号轮换（Magpie 风格面板与横幅） */
+.relay-header-pill .relay-config-trigger {
+  font-family: var(--font-sans);
+  font-weight: 550;
+  font-size: 11px;
+}
+
+.identity-relay-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 20px 10px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, #10b981 38%, var(--border));
+  background: color-mix(in srgb, #10b981 8%, var(--card));
+  font-size: 12px;
+}
+.identity-relay-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  color: var(--foreground);
+}
+.identity-relay-banner-text > strong {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(16, 185, 129, 0.16);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.32);
+}
+:root.dark .identity-relay-banner-text > strong {
+  background: rgba(52, 211, 153, 0.18);
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.36);
+}
+.identity-relay-banner-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.identity-relay-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.identity-relay-master-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.identity-relay-master-row strong {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.identity-relay-master-row p {
+  margin: 1px 0 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.identity-relay-section {
+  display: grid;
+  gap: 6px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.identity-relay-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.identity-relay-section-head h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.identity-relay-account-list {
+  display: grid;
+  gap: 5px;
+}
+.identity-relay-account-row {
+  display: grid;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  background: var(--muted);
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+.identity-relay-account-row.is-current {
+  border-color: color-mix(in srgb, #10b981 40%, var(--border));
+}
+.identity-relay-account-row.is-excluded {
+  opacity: 0.56;
+}
+.identity-relay-account-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.identity-relay-account-spacer {
+  flex: 1 1 auto;
+}
+.identity-relay-current-badge,
+.identity-relay-recommended-pill,
+.identity-relay-preferred-pill {
+  padding: 1.5px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.identity-relay-current-badge {
+  background: rgba(16, 185, 129, 0.14);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+:root.dark .identity-relay-current-badge {
+  background: rgba(52, 211, 153, 0.18);
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.34);
+}
+.identity-relay-recommended-pill {
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+  border: 1px solid rgba(59, 130, 246, 0.28);
+}
+:root.dark .identity-relay-recommended-pill {
+  background: rgba(96, 165, 250, 0.16);
+  color: #93c5fd;
+  border-color: rgba(96, 165, 250, 0.34);
+}
+.identity-relay-preferred-pill {
+  background: var(--background);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+}
+.identity-relay-set-preferred {
+  padding: 1.5px 7px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.identity-relay-set-preferred:hover {
+  color: var(--foreground);
+  background: var(--background);
+  border-color: var(--border);
+}
+.identity-relay-account-bars {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: 24px;
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+.identity-relay-account-bars-sep {
+  width: 1px;
+  height: 10px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.identity-relay-mini-quota {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.identity-relay-mini-quota > span {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.identity-relay-mini-track {
+  flex: 1 1 56px;
+  height: 4.5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 75%, transparent);
+  overflow: hidden;
+}
+.identity-relay-mini-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--foreground);
+}
+.identity-relay-mini-fill.is-warn {
+  background: #d97706;
+}
+.identity-relay-mini-quota > strong {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+.identity-relay-form-rows {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.identity-relay-form-row {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.identity-relay-form-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.identity-relay-form-label {
+  padding-top: 3px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.identity-relay-form-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.identity-relay-form-desc {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.38;
+  color: var(--muted-foreground);
 }

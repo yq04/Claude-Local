@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 pub const USAGE_SETTINGS_URL: &str = "https://claude.ai/settings/usage";
+pub const CLAUDE_AI_NEW_URL: &str = "https://claude.ai/new";
 
 struct CleanerGuard(tauri::AppHandle);
 
@@ -220,7 +221,12 @@ pub async fn browser_open_identity_profile(
     app: tauri::AppHandle,
     account_id: String,
     expected_identity: String,
+    open_mode: Option<String>,
 ) -> Result<(), String> {
+    let target_url = match open_mode.as_deref() {
+        Some("claude_ai") => CLAUDE_AI_NEW_URL,
+        _ => USAGE_SETTINGS_URL,
+    };
     tauri::async_runtime::spawn_blocking(move || {
         // Step 1: acquire Cleaner enter_quota to freeze identity changes without epoch bump
         let cleaner = app.state::<crate::cleaner::Cleaner>();
@@ -232,7 +238,7 @@ pub async fn browser_open_identity_profile(
         let _browser_guard = browser.gate.lock().unwrap();
 
         // Launch under the door; release both guards on completion
-        launch_identity_profile_locked(&app, &account_id, &expected_identity)
+        launch_bound_profile_url_locked(&app, &account_id, &expected_identity, target_url)
     })
     .await
     .map_err(|_| "浏览器操作被中断。".to_string())?

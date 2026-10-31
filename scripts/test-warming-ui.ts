@@ -101,7 +101,7 @@ export async function testWarmingUi(browser: Browser, base: string): Promise<num
       const cmds = (window as any).identityFixture.commands;
       return cmds.filter((c: any) => ['identities_stop', 'identities_save', 'identities_switch'].includes(c.command)).length;
     });
-    assert.equal(cliAfterOpen, 0, 'Warming open must never invoke CLI stop/save/switch');
+    assert.equal(cliAfterOpen, 0, 'Warming open must never invoke CLI stop/save/switch'); const cliSection = page.locator('section.identity-library:not(.identity-warming-library)'); assert.equal(await cliSection.locator('.identity-operation').count(), 0, 'Warming operation log must not appear in CLI identity section'); const warmingLog = warmingSection.locator('.identity-operation'); assert.equal(await warmingLog.count(), 1, 'Warming operation log must appear inside warming section'); assert.match(await warmingLog.innerText(), /养号卡操作完成/); await warmingLog.getByRole('button', {name: /关闭记录|Dismiss log/}).click(); assert.equal(await warmingLog.count(), 0, 'Dismissing warming log must completely close it');
     checks++;
 
     // External close/reopen changes only lightweight runtime; selection and seed stay stable.

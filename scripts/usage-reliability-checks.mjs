@@ -1,5 +1,5 @@
 // [INPUT]: Real usage page, shared fictional IPC fixture and an isolated local browser context.
-// [OUTPUT]: Token/activity/model conservation, concise dynamic account selection, scoped TSV and bilingual light/dark 760x640 / 1280x900 evidence.
+// [OUTPUT]: Token/cost/model conservation, concise dynamic account selection, scoped TSV and bilingual light/dark 760x640 / 1280x900 evidence.
 // [POS]: Focused --usage-reliability-only helper; no real identities, session files or native mutations.
 // [PROTOCOL]: Update this header and scripts/CLAUDE.md with changes.
 import assert from 'node:assert/strict';
@@ -53,9 +53,10 @@ export async function runUsageReliabilityChecks({page, output, base, errors}) {
   assert.equal(totals.totals.total_tokens, 3100);
   assert.equal(totals.activity.sessions, 6);
   assert.equal(await page.locator('.usage-total-value').getAttribute('title'), '3,100');
-  assert.equal(await page.locator('[data-usage-metric="sessions"] > strong').innerText(), '6');
-  assert.equal(await page.locator('[data-usage-metric="activeDays"] > strong').innerText(), String(totals.activity.active_days));
-  assert.equal(await page.locator('[data-usage-metric="responses"] > strong').innerText(), '134');
+  assert.match(await page.locator('[data-usage-metric="cost"] > strong').innerText(), /^(<\$|\$)/);
+  assert.match(await page.locator('[data-usage-metric="savings"] > strong').innerText(), /^(<\$|\$)/);
+  assert.match(await page.locator('[data-usage-metric="cache"] > strong').innerText(), /%/);
+  assert.match(await page.locator('[data-usage-metric="pace"] > strong').innerText(), /^(<\$|\$)/);
   const composition = await page.locator('.usage-total-card .usage-composition-details > div').evaluateAll(nodes => nodes.map(node => ({kind: node.dataset.tokenKind, tokens: node.querySelector('dd').title})));
   assert.deepEqual(composition, [{kind:'input', tokens:'740'}, {kind:'output', tokens:'410'}, {kind:'cacheWrite', tokens:'300'}, {kind:'cacheRead', tokens:'1,650'}]);
   const widths = await page.locator('.usage-total-card .usage-composition-track > span').evaluateAll(nodes => nodes.map(node => parseFloat(node.style.width)));
@@ -75,7 +76,7 @@ export async function runUsageReliabilityChecks({page, output, base, errors}) {
   const alpha = totals.accounts[0];
   await chooseAccount(alpha.name);
   assert.equal(await page.locator('.usage-total-value').getAttribute('title'), '1,000');
-  assert.equal(await page.locator('[data-usage-metric="sessions"] > strong').innerText(), '2');
+  assert.match(await page.locator('[data-usage-metric="cost"] > strong').innerText(), /^(<\$|\$)/);
   assert.equal((await page.evaluate(() => window.usageFixture.requests.at(-1))).accountId, alpha.id);
   const accountExport = await copyTsv();
   const accountTsv = summaryRow(accountExport);
@@ -84,8 +85,8 @@ export async function runUsageReliabilityChecks({page, output, base, errors}) {
   assert.doesNotMatch(accountExport, hiddenAccountTerms, 'Exported labels must use ordinary account scope');
   await chooseAccount('Gamma workspace');
   assert.equal(await page.locator('.usage-total-value').getAttribute('title'), '0');
-  assert.equal(await page.locator('[data-usage-metric="sessions"] > strong').innerText(), '0', 'Known zero sessions must remain zero');
-  assert.equal(await page.locator('[data-usage-metric="activeDays"] > strong').innerText(), '0');
+  assert.equal(await page.locator('[data-usage-metric="cost"] > strong').innerText(), '$0.00', 'Zero usage must show $0.00');
+  assert.equal(await page.locator('[data-usage-metric="savings"] > strong').innerText(), '$0.00');
   await chooseAccount('全部');
 
   const layouts = [];
@@ -113,17 +114,13 @@ export async function runUsageReliabilityChecks({page, output, base, errors}) {
       assert.ok(geometry.documentScrollWidth <= geometry.documentWidth + 1, label + ': document must fit horizontally');
       for (const panel of geometry.panels) assert.ok(panel.scrollWidth <= panel.width + 1, label + ': panel must fit: ' + panel.className);
       assert.equal(geometry.modelCount, 8);
-      assert.doesNotMatch(await page.locator('.usage-page').innerText(), /\$|USD|API 等效花费|缓存节省|Cache savings|API cost/);
+      assert.match(await page.locator('.usage-page').innerText(), /\$|API 等效花费|缓存节省|Cache savings|Est\. API cost/);
       await page.locator('.usage-overview').screenshot({path:join(output, `usage-${locale}-${theme}-${viewport.width}x${viewport.height}.png`)});
       layouts.push({label, geometry});
     }
   }
   await page.evaluate(() => {window.usageFixture.legacyActivity = true;});
   await refresh();
-  assert.equal(await page.locator('[data-usage-metric="sessions"] > strong').innerText(), '—');
-  assert.equal(await page.locator('[data-usage-metric="activeDays"] > strong').innerText(), '—');
-  assert.equal(await page.locator('[data-usage-metric="responses"] > strong').innerText(), '134', 'Responses must not be reused as sessions');
-  assert.equal(await page.getByText('Verified statistics unavailable', {exact:true}).count(), 2);
   const legacyTsv = summaryRow(await copyTsv());
   assert.deepEqual(legacyTsv.values.slice(-2), ['', ''], 'Missing legacy activity must remain blank in TSV');
   await page.locator('.usage-overview').screenshot({path:join(output,'usage-legacy-activity-unknown-en-dark.png')});
@@ -139,7 +136,7 @@ export async function runUsageReliabilityChecks({page, output, base, errors}) {
   assert.equal(commands.some(({command}) => /^identities_(stop|save|switch|delete)$|^system_(set|disable)|^browser_(launch|quit|clear|save|align|set)/.test(command)), false, 'Checks must remain synthetic and read-only');
   const requests = await page.evaluate(() => window.usageFixture.requests);
   assert.equal(requests.some(({accountId}) => accountId === 'unattributed'), false, 'UI must only query All or ordinary account IDs');
-  const result = {status:'passed', checks:['all = confirmed accounts + remaining recorded counters','four token categories and shares','recorded sessions and active days','known zero versus missing legacy activity','all eight model rows including unrecorded model','All plus dynamic ordinary accounts only','ordinary account-scoped TSV without extra labels','aligned TSV summary columns','no historical-rule or extra account UI','no dollar-cost UI','bilingual light/dark narrow/default geometry','no runtime errors or native mutations'], layouts, screenshots:output};
+  const result = {status:'passed', checks:['all = confirmed accounts + remaining recorded counters','four token categories and shares','USD API cost and cache savings','zero versus legacy activity TSV','all eight model rows including unrecorded model','All plus dynamic ordinary accounts only','ordinary account-scoped TSV without extra labels','aligned TSV summary columns','no historical-rule or extra account UI','bilingual light/dark narrow/default geometry','no runtime errors or native mutations'], layouts, screenshots:output};
   await writeFile(join(output,'usage-reliability-results.json'), JSON.stringify(result,null,2));
   console.log(JSON.stringify({status:result.status, checks:result.checks.length, layouts:layouts.length, screenshots:output}));
 }

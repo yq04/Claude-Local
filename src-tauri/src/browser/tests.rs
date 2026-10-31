@@ -119,7 +119,11 @@ fn proxy_and_real_hardware() {
     assert!(a.contains(&"--fingerprint-hardware-concurrency=10".into()));
     assert!(a.contains(&"--proxy-bypass-list=127.0.0.1;localhost;[::1]".into()));
     assert!(!a.iter().any(|argument| argument.contains("<-loopback>")));
-    assert!(a.iter().any(|x| x.starts_with("--host-resolver-rules=")));
+    assert!(a.contains(
+        &"--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost, EXCLUDE ::1"
+            .into()
+    ));
+    assert!(a.contains(&"--test-type".into()));
     c.proxy = "socks5://[::1]:7898".into();
     let ipv6_args = config::arguments(
         &c,

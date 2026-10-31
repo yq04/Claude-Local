@@ -137,8 +137,8 @@ fn resolve_cli_target(
     profile::check_path(root, &config_path)?;
     profile::check_path(root, &stamp)?;
     let config = config::load(&bound.scope)?;
-    // Refuse rather than letting ensure() regenerate a fingerprint on return.
-    if config.seed != seed
+    // Refuse invalid seed or mismatched seed.owner stamp so ensure() never regenerates a fingerprint on return.
+    if config.seed == 0
         || fs::metadata(&stamp)
             .ok()
             .filter(|m| m.is_file() && m.len() <= 10)
@@ -239,8 +239,12 @@ fn rollback_selection(root: &Path, previous: &str, target: &str) -> Result<(), S
 fn return_locked(
     app: &tauri::AppHandle,
     expected: &str,
+    open_mode: &str,
     reporter: &Reporter,
 ) -> Result<Snapshot, String> {
+    if open_mode != "verify" && open_mode != "claude_ai" {
+        return Err("浏览器打开方式无效。".into());
+    }
     let target = current_target(app, expected)?;
     let root = root(app)?;
     let previous = workspaces::database(&root)?.browser_slot()?;
@@ -285,7 +289,11 @@ fn return_locked(
         selected = true;
         refresh_launch_args(app)?;
         launch_attempted = true;
-        launch_locked(app, reporter)
+        if open_mode == "claude_ai" {
+            launch_with_urls_locked(app, reporter, &["https://claude.ai/new"])
+        } else {
+            launch_locked(app, reporter)
+        }
     })();
     match result {
         Ok(value) => Ok(value),
@@ -337,14 +345,16 @@ pub async fn browser_return_to_cli(
     app: tauri::AppHandle,
     webview: tauri::Webview,
     expected_identity: String,
+    open_mode: Option<String>,
     on_progress: Option<tauri::ipc::JavaScriptChannelId>,
 ) -> Result<Snapshot, String> {
     let on_progress = on_progress.map(|id| id.channel_on(webview));
+    let mode = open_mode.unwrap_or_else(|| "verify".to_string());
     run(move || {
         let _cleaner = IdentityGuard::acquire(&app)?;
         let browser = app.state::<Browser>();
         let _guard = browser.gate.lock().unwrap();
-        return_locked(&app, &expected_identity, &Reporter::channel(on_progress))
+        return_locked(&app, &expected_identity, &mode, &Reporter::channel(on_progress))
     })
     .await
 }

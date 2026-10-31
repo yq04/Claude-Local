@@ -64,6 +64,8 @@ export async function testBrowserVerification(browser:Browser,base:string) {
   await badge.getByRole('heading',{name:'Fixture identity',exact:true}).waitFor();
   assert.match(await badge.innerText(),/fixture@example.invalid/);assert.match(await badge.innerText(),/身份已联动/);
   assert(await page.evaluate(()=>!!(document.querySelector('.verification-identity')!.compareDocumentPosition(document.querySelector('.verification-banner')!)&Node.DOCUMENT_POSITION_FOLLOWING)));
+  const scopeAlignment=await page.evaluate(()=>{const idRect=document.querySelector('.verification-identity')!.getBoundingClientRect();const scopeRect=document.querySelector('.verification-scope')!.getBoundingClientRect();return Math.abs(idRect.left-scopeRect.left);});
+  assert(scopeAlignment<=1,`Expected verification-scope left margin to align with verification-identity, delta=${scopeAlignment}`);
 
   await page.waitForFunction(()=>{const img=document.querySelector('.verification-brand img') as HTMLImageElement;return img?.complete&&img.naturalWidth>0;});
   assert(await page.locator('.verification-banner').evaluate(node=>node.getBoundingClientRect().height<=150));

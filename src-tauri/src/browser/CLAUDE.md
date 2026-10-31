@@ -11,8 +11,8 @@ mod.rs: Tauri 浏览器命令、单次变更锁、运行时状态与风控验证
 mod.rs 风控上下文补充: 同一次槽位/配置读取与机器快照生成不含路径/代理的短context_id及有效路由；槽位、配置或路由变化会使手动探针结果失效，配置不可读保持未知。
 oauth_route.rs: Windows外部浏览器入口的私有Claude授权URL保护；只识别严格claude.ai/oauth/authorize+PKCE+loopback回调形状，当前养号槽位时只打开经当前CLI账号证明的既有独立绑定资料，不改选养号槽位/全局参数或自动授权；证据缺失固定双语可见错误，不回退养号资料、不记录URL查询。其他普通登录/支付链接及显式转正保持原行为，未声称覆盖所有CLI授权端点。
 quota_connection.rs: 用户显式选择账号后，只解析数据库中该账号已有绑定的资料与固定 `claude.ai/settings/usage` 地址；Cleaner enter_quota 后再取 Browser gate，冻结并复核账号指纹/绑定路径/配置；不切换全局 slot、不写全局 launch.args、不登记系统浏览器、不创建缺失资料、不读取 Cookie 或启动任意 URL；合成解析测试只用临时身份库和资料。
-config.rs: 按当前身份保存的指纹配置（新资料默认代理留空以跟随 TUN）、实际机器参数、代理/地区语言白名单、回环地址豁免（--proxy-bypass-list 与 IPv6 规则规范化）和 Chromium 参数生成；Windows 仅在固定扩展清单存在时加载隔离额度桥；独占 user-data-dir 内明确启动 Default 资料，品牌版本采用实际引擎版本。
-profile.rs: 当前绑定的独立资料目录、进程占用检查、偏好窄范围写入、Windows 沙盒缓存子目录所有者继承自愈与缓存清理；登录数据单独明确选择，旧/新两种定位偏好同时禁用；Unix 显式导入所有权与权限元数据 trait。
+config.rs: 按当前身份保存的指纹配置（新资料默认代理留空以跟随 TUN）、实际机器参数、代理/地区语言白名单、回环地址豁免（--proxy-bypass-list 与去重 SOCKS --host-resolver-rules / --test-type / --enforce-webrtc-ip-permission-check 及 IPv6 规则规范化）和 Chromium 参数生成；Windows 仅在固定扩展清单存在时加载隔离额度桥；独占 user-data-dir 内明确启动 Default 资料，品牌版本采用实际引擎版本。
+profile.rs: 当前绑定的独立资料目录、进程占用检查、偏好窄范围写入（含 WebRTC Network Limiter 三项防泄露策略 disable_non_proxied_udp / multiple_routes_enabled=false / nonproxied_udp_enabled=false）、Windows 沙盒缓存子目录所有者继承自愈与缓存清理；登录数据单独明确选择，旧/新两种定位偏好同时禁用；Unix 显式导入所有权与权限元数据 trait。
 network.rs: macOS/Linux/Windows 原生平台与浏览器观测分别核验，Windows 识别 Win32 并要求真实版本/CPU；共用 ipwho.is/ipapi.co 服务目录并提取 ASN/机房标识；经同一指定代理检测出口，服务故障/限流按顺序备援；报告 schema 版本控制深探针，缺少时保持 pending；出口分类未知不视为 ISP 宽带，WebRTC 标题明确为无 STUN 本地候选观察且不覆盖 DNS/公网 STUN；浏览器项目保留原生三态。
 机房补充沿同一冻结代理client，仅缺标识时请求固定IPQuery的相同IP；3秒/32KiB、严验IPv4/IPv6地址及布尔值，来源/失败代码受控，地理成功不因分类失败被抹去。Context/State提供可选exit_classification_service，旧Report继续可用；新增WebRTC reason白名单/耗时上限和分类字段边界，未知保持pending，不把分类数据称为住宅或账号安全保证。
 server.rs: 仅向带随机令牌的回环 context 提供脱敏身份/环境状态，排除凭据/账号 UUID/匹配摘要；共用请求头解析器校验唯一 Host、Content-Length 和传输编码，quota-sync 仅接受固定 MV3 扩展 Origin、短期单次 nonce 和当前 active/quota_identity 双绑定快照，正文、请求时限及并发边界不放宽；静态资源限制在打包目录。

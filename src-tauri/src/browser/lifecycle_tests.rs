@@ -126,8 +126,15 @@ fn return_target_requires_proven_cli_and_exact_existing_seed_and_binding() {
         target.seed.to_string().as_bytes(),
     )
     .unwrap();
+    let mut custom_config = config::load(&cli_scope).unwrap();
+    custom_config.seed = target.seed.wrapping_add(1).max(1);
+    config::save(&cli_scope, &custom_config).unwrap();
+    assert!(
+        resolve_cli_target(&root, &db, Some((&cli.id, FP)), FP).is_ok(),
+        "custom non-zero config.seed with matching seed.owner stamp is preserved"
+    );
     let mut wrong_config = config::load(&cli_scope).unwrap();
-    wrong_config.seed = target.seed.wrapping_add(1);
+    wrong_config.seed = 0;
     config::save(&cli_scope, &wrong_config).unwrap();
     assert!(resolve_cli_target(&root, &db, Some((&cli.id, FP)), FP).is_err());
     config::save(

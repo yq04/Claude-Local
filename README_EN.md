@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.2.3 security & warming lifecycle protection, 0.2.2 usage reliability and mixed-version English synthetic-data previews.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.2.4 multi-account Smart Relay & WebRTC/Clash anti-leak hardening, 0.2.3 security & warming lifecycle protection, and synthetic-data previews.
 [OUTPUT]: Full English flagship project presentation, architectural lineage, feature matrix, visual tour, installation workflow and runtime boundaries.
 [POS]: English repository introduction linked bidirectionally with README.md.
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -11,11 +11,11 @@
 
 # Claude-Local
 
-**A Local-First Windows 10 / 11 x64 Multi-Identity Encrypted Vault, Token Usage Analyzer, 5h Auto-Wake Scheduler, and Isolated Browser for Claude**
+**A Local-First Windows 10 / 11 x64 Multi-Identity Encrypted Vault, Smart Relay Rotation, USD Cost & Token Analyzer, 5h Auto-Wake Scheduler, and Isolated Browser for Claude**
 
 Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://github.com/liseami)) and independently maintained, retaining the original contributors' copyright and [MIT license](LICENSE) · Local-First · Zero Cloud Credential Hosting · Never Force-Kills Running `claude.exe` Sessions
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.2.3-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.3)
+[![Latest Release](https://img.shields.io/badge/Release-v0.2.4-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.4)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@ Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://git
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.3/Claude-Local_0.2.3_x64-setup.exe"><strong>⬇️ Download v0.2.3 Installer (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.4/Claude-Local_0.2.4_x64-setup.exe"><strong>⬇️ Download v0.2.4 Installer (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.3"><strong>✨ v0.2.3 Release Page</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.4"><strong>✨ v0.2.4 Release Page</strong></a>
   ·
   <a href="#-visual-tour--core-capabilities"><strong>🖼️ Visual Tour</strong></a>
   ·
@@ -67,10 +67,11 @@ Built for developers on Windows who rely heavily on **Claude Code CLI** and mana
 | Core Pillar | Key Capabilities & Engineering Highlights |
 | :--- | :--- |
 | **🔐 Multi-Identity Encrypted Vault & Safe Switching** | Preserves `BAGAID01` / `.baga` (Zstandard + AES-256-GCM) archives and SQLite `user_version = 3`; enforces live `claude.exe` process locks before switching (never force-killing active CLI sessions), performs 4-dimensional cross-account residue sanitization, and supports **full-chain `.clbackup` password-encrypted vault backups (covering identity vaults, browser seeds, warming cards, and manual subscription metadata)** with isolated recovery copies. |
-| **🌱 Free Warming Cards & Lifecycle Protection** | Provides a dedicated **Free Warming Cards** section below the CLI vault (each with an exclusive browser slot and deterministic seed); includes **automatic country/timezone lock on first verified check**, **pre-open cross-country drift confirmation**, **stage-specific anti-ban SOP disclosure**, and zero-rebind promotion to Pro that preserves the existing browser slot and seed. |
-| **🌐 Isolated Browser & Non-Blocking Kill-Switch** | Binds each identity and warming card to a dedicated Chromium user-data directory and deterministic fingerprint seed; features the **`v0.2.3` On-Demand Non-Blocking Kill-Switch** (monitors 5s system TUN drops and 60s exit-country drift only while a managed browser is running, gracefully closing managed browsers and lighting up a red banner/tray alert on anomaly, with zero roadblocks on relaunch and **zero interruption to running `claude.exe` sessions**). |
-| **🛡️ Risk / KYC Verification & `strict-route` Guide** | Dedicated **Risk & KYC** workbench with local DNS/DoH leak auditing, a **Layered `strict-route` Remediation Guide for Clash Verge / Mihomo (one-click Global Merge YAML copy + in-place Re-verify Now)**, `claude.ai` vs. `withpersona.com` cross-domain exit consistency checks, and RFC1918-bounded mobile same-residential KYC QR bridging. |
-| **📊 Token Usage & Account Analytics** | A local deduplicated ledger shows **uncached input, output, cache writes, and cache reads**, cache hit rate, explicitly recorded sessions, and active days. Newly signed-in accounts can register for statistics before an archive is saved. Includes all-model and recorded Effort breakdowns, dynamic account filters, IANA/DST timezones, and TSV export. |
+| **🔀 Multi-Account Smart Relay & Rotation** | Inspired by [magpie](https://github.com/yetone/magpie) (default OFF, opt-in via Identity Management or App Settings); offers **Smart (3-tier headroom pool + earliest reset first) / In Order / Round-Robin / Least Used / Use Before Reset** routing strategies, **Keep Position vs. Sink to End** on rate limit, **Session Stickiness & Switch Thresholds (90%–100%)**, and **Preferred Account hysteresis recovery** with one-click safe relay switching. |
+| **🌱 Free Warming Cards & Lifecycle Protection** | Provides a dedicated **Free Warming Cards** section below the CLI vault (each with an exclusive browser slot and deterministic seed); includes **automatic country/timezone lock on first verified check**, **pre-open cross-country drift confirmation**, **stage-specific anti-ban SOP disclosure**, zero-rebind promotion to Pro, and one-click **Return to CLI browser** / **Open Claude.ai** from any identity card. |
+| **🌐 Isolated Browser & WebRTC / Kill-Switch Defense** | Binds each identity and warming card to a dedicated Chromium user-data directory and deterministic fingerprint seed; **`v0.2.4` enforces all three official Google `WebRTC Network Limiter` `Default/Preferences` keys (`disable_non_proxied_udp`, `multiple_routes_enabled: false`, `nonproxied_udp_enabled: false`) + `--enforce-webrtc-ip-permission-check`** alongside the **On-Demand Non-Blocking Kill-Switch** (5s system TUN drop & 60s exit-country drift protection with **zero interruption to running `claude.exe` sessions**). |
+| **🛡️ Risk / KYC Verification & One-Click Clash Override** | Dedicated **Risk & KYC** workbench with two-step static & live exit auditing, **one-click Desktop Clash Verge / Mihomo Anti-Leak Override YAML (`.yaml`, blocking `UDP 443` QUIC and `UDP 3478/19302/5349` WebRTC STUN/TURN, rejecting `198.18.0.0/15` Fake-IP, configuring `:7899` TCP-only listener, and binding `claude.ai`, `withpersona.com`, `stripe.com`, `ipquery.io`, and `ippure.com`)**, plus RFC1918-bounded mobile Shadowrocket QR bridging. |
+| **📊 Token Usage & Official API USD Cost (`$`) Analytics** | A local deduplicated ledger shows **uncached input, output, cache writes, and cache reads**, alongside **Official API Equivalent Cost (`$`), Cache Savings (`$`), Cache Hit Rate (`%` + Cache Reuse Multiplier), and Daily / Hourly Avg Cost (`$`)** across all models, Effort tiers, and accounts with IANA/DST timezones and TSV export. |
 | **🖥️ Multi-Mode Floating HUD** | Shares the analytics ledger and filters by the current account to show **rolling 5h token composition, a 10-minute average rate, unique responses, and cache hit rate**. Supports Expanded, Compact, and Edge-Collapsed Capsule modes, Pin, Lock, magnetic edge snap, auto-hide, 50%–100% opacity, and theme/wallpaper synchronization. |
 | **⏱️ In-Process Native 5h Auto-Wake Scheduler** | Driven by a single Rust in-process scheduler with configurable active time windows (e.g. `08:00–23:00`), primary-account threshold pre-warming, and staggered per-account backoff; strictly requires a fresh `new_5h_confirmed` server reset anchor, registers zero Windows services or scheduled tasks, and stops immediately when the app exits. |
 | **🧭 Passive Quota Sync & Connection Recovery Queue** | Passively observes CLI `/usage` caches and the Python single-writer quota ledger by default (**zero background OAuth polling, zero writes to `.claude.json`**); includes high-load quota pace hints, cross-slot account-bound subscription sync, and a centralized Connection Recovery Queue. |
@@ -79,30 +80,33 @@ Built for developers on Windows who rely heavily on **Claude Code CLI** and mana
 
 ## 🖼️ Visual Tour & Core Capabilities
 
-> **Screenshot Versions & Privacy Notice**: The usage screenshot shows `Claude-Local v0.2.2`; other pages remain labeled historical `v0.2.0` examples. See the current descriptions, [0.2.3 release notes](docs/RELEASE_NOTES_0.2.3_SECURITY.md), and [0.2.2 release notes](docs/RELEASE_NOTES_0.2.2_USAGE.md). The real frontend was captured in an isolated environment using **synthetic demonstration data**. Account names, organizations, token counts, and CLI versions are fictional; emails use the reserved `@example.invalid` domain with privacy masking enabled.
+> **Screenshot Versions & Privacy Notice**: The usage screenshot shows `Claude-Local v0.2.2`; other pages remain labeled historical `v0.2.0` examples. See the current descriptions, [0.2.4 release notes](docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md), [0.2.3 release notes](docs/RELEASE_NOTES_0.2.3_SECURITY.md), and [0.2.2 release notes](docs/RELEASE_NOTES_0.2.2_USAGE.md). The real frontend was captured in an isolated environment using **synthetic demonstration data**. Account names, organizations, token counts, and CLI versions are fictional; emails use the reserved `@example.invalid` domain with privacy masking enabled.
 
-### 1. Identity Management Workbench & Free Warming Cards
+### 1. Identity Management Workbench, Smart Relay & Free Warming Cards
 
 ![Claude-Local 0.2.0 Identity Management (English)](docs/screenshots/0.2.0/identity-management-en.png)
 
-- **Unified `30px` Segmented Header Toolbar**: Combines `[• Auto-wake · On | 08:00–23:00]`, `[• Floating HUD]`, `[↻ Sync local quota]`, and the `[⋯]` overflow menu (housing online batch queries, auto-wake configuration, and the connection recovery queue); the operation activity panel supports one-click **Dismiss** and **View last log** after completion.
-- **`180×286` Identity Badges & Subscription Expiry**: Pinned active identity card at the front with top green status glow; displays `MM/DD` auto-renewal or manual expiry dates next to `PRO` / `MAX` badges (with cross-slot account-bound browser subscription sync or manual `+1 calendar month` entry), independent **5h / 7d remaining quota bars**, `reset_inferred` indicators, and gentle high-load quota pace hints.
+- **Unified `30px` Segmented Header Toolbar**: Combines `[• Auto-wake · On | 08:00–23:00]`, `[• Smart Relay | Strategy]` (opt-in, default OFF), `[• Floating HUD]`, `[↻ Sync local quota]`, and the `[⋯]` overflow menu (housing Smart Relay & Rotation, online batch queries, auto-wake configuration, and the connection recovery queue); finished operation activity panels completely dismiss on click.
+- **Multi-Account Smart Relay & Rotation (`v0.2.4`, Default OFF)**:
+  - Displays all accounts in a flat list with `5h / 7d` used progress bars and `Current` / `Preferred` / `Next Up` badges;
+  - Supports 5 routing strategies (`Smart`, `In Order`, `Round-Robin`, `Least Used`, `Use Before Reset`), rate-limit handling, session stickiness, and `90%–100%` switch thresholds with hysteresis preferred-account recovery.
+- **`180×286` Identity Badges & Quick Browser Actions**: Pinned active identity card at the front with top green status glow; displays `MM/DD` auto-renewal or manual expiry dates next to `PRO` / `MAX` badges, and provides **Open Claude.ai**, **Open official usage page**, and **Return to CLI browser** actions in card menus and quota details.
 - **Dedicated Free Warming Cards Section**:
-  - Each warming card maintains an isolated browser slot and deterministic seed across four stages (`Pending signup → KYC passed → Free warming → Ready for Pro`) with local-calendar `Day N` tracking; ordinary warming actions never stop `claude.exe` or alter the active CLI identity pointer.
+  - Each warming card maintains an isolated browser slot and deterministic seed across four stages (`Pending signup → KYC passed → Free warming → Ready for Pro`) with local-calendar `Day N` tracking and inline warming logs inside the Warming section.
   - **Country/Timezone Lock & Pre-open Drift Protection (`v0.2.3`)**: Automatically anchors the card's home country and timezone on its first verified browser check; prompts for confirmation before opening if the current exit country drifts, and displays a compact inline drift badge within the fixed `180×286` geometry.
   - **Stage Anti-Ban SOP Reference & Zero-Rebind Promotion (`v0.2.3`)**: Embeds a collapsible stage-aware SOP guide inside the card editor, and promotes upgraded accounts to full CLI identities while retaining their original browser slot, seed, cookies, and subscription dates.
 - **Auto-Launch Linked Browser on Switch**: When **Link browser** is checked, switching to another identity automatically launches that identity's dedicated Chromium profile and opens its environment verification & sign-in page.
 
 ---
 
-### 2. Usage Analytics & Token Composition
+### 2. Usage Analytics & Official API USD Cost (`$`)
 
 ![Claude-Local 0.2.2 Usage Analytics (English)](docs/screenshots/0.2.2/usage-analytics-en.png)
 
 - **Inline Date Range & Timezone Badge**: Displays the active date interval and timezone abbreviation (`Oct 6, 2026 – Oct 26, 2026 EDT`) directly alongside `[Today | Yesterday | 7 days | 30 days | All time]`.
 - **Total Tokens & Four-Part Composition**: Shows amounts and shares for uncached input, output, cache writes, and cache reads. Reasoning tokens are already included in output and are not added again.
-- **Recorded Activity**: Shows cache hit rate, deduplicated explicit session identifiers, active calendar days in the selected timezone, unique responses, and tokens per response.
-- **All Models & Effort**: Lists all models by total token share with four-part composition, responses, cache hit rate, and recorded reasoning Effort tiers.
+- **High-Signal USD Cost & Cache Efficiency Cards (`v0.2.4`)**: Displays **API Equivalent Cost (`$`)**, **Cache Savings (`$`)**, **Cache Hit Rate (`%` + Cache Reuse Multiplier)**, and **Daily / Hourly Avg Cost (`$`)**.
+- **All Models, Effort & Multi-Account USD Breakdown**: Lists all models and Effort tiers with four-part composition, responses, cache hit rate, and estimated USD cost (`$`).
 - **Account & Time Filters**: The account dropdown offers only All accounts and the dynamic account list; retains chart/data views, privacy masking, and scoped TSV export.
 
 ---
@@ -131,7 +135,7 @@ Inspired by **Token Monitor**, the HUD supports Expanded, Compact, and Edge-Coll
   - **On-Demand Monitoring with Zero Idle Overhead**: Activates only while a managed companion browser profile is running and sleeps completely when all managed browsers are closed.
   - **Dual-Trigger Protection**: Gracefully closes running managed companion browser slots if a TUN-dependent profile experiences **two consecutive system TUN adapter drops (5s interval)** or if the **observed exit country drifts from the slot's locked country (60s interval)**, preventing physical-adapter IP exposure.
   - **One-Shot Emergency Stop, Zero Roadblocks & Zero CLI Interference**: Switches the tray icon to red and renders a top alert banner; once the user restores their proxy and clicks **Got it** or any **Open browser / Open web** button, the browser launches normally and clears the alert automatically — **never interrupting running `claude.exe` sessions**.
-- **10 Categories / 20 Anti-Correlation Checks**: Verifies target region exit IP, browser-vs-machine exit alignment, IANA timezone consistency, system locale, hardware CPU/memory, engine version, geolocation off, WebGL/Canvas/font fingerprints, **phased no-STUN WebRTC local candidate observation**, and **same-IP hosting/ISP classification**.
+- **10 Categories / 20 Anti-Correlation Checks (`v0.2.4` Hardened)**: Displays a unified dark identity & scope header card on `browser.html`; persists all three Google `WebRTC Network Limiter` keys (`disable_non_proxied_udp`, `multiple_routes_enabled: false`, `nonproxied_udp_enabled: false`) + `--enforce-webrtc-ip-permission-check`, and verifies target region exit IP, browser-vs-machine exit alignment, IANA timezone consistency, system locale, hardware CPU/memory, engine version, geolocation off, WebGL/Canvas/font fingerprints, **phased no-STUN WebRTC local candidate observation**, and **same-IP hosting/ISP classification**.
 - **Safe Cache Release vs. Scoped Deep Reset**: Clear everyday image/script caches while keeping login cookies intact, or deep-reset only the active identity's browser profile without affecting other accounts.
 
 ---
@@ -143,10 +147,11 @@ Inspired by **Token Monitor**, the HUD supports Expanded, Compact, and Edge-Coll
 | ![Claude-Local 0.2.0 Quick Setup (English)](docs/screenshots/0.2.0/quick-setup-en.png) | ![Claude-Local 0.2.0 Network Environment (English)](docs/screenshots/0.2.0/network-environment-en.png) |
 
 - **Quick Setup**: Independently reads the active identity, companion browser, computer environment, and Claude Code CLI status on demand, offering seven workspace shortcuts.
-- **Risk & KYC Verification Workbench (`v0.2.2` / `v0.2.3`)**:
-  - **6-Item Desktop Network & DNS Leak Audit**: Checks `claude.ai` vs. `withpersona.com` cross-domain exit-IP consistency, system TUN adapter state, and runtime Mihomo DNS/routing configuration.
-  - **Layered `strict-route` Remediation Guide (`v0.2.3`)**: When `tun.strict-route: false` is detected, provides a **Fix Strict-Route** dialog explaining Clash Verge Rev's three-layer precedence (`Subscription -> Global Merge Override -> Runtime clash-verge.yaml`), with one-click copy for the Global Merge YAML snippet and an in-place **Re-verify Now** button.
-  - **Mobile Same-Residential KYC Bridge**: Generates CSPRNG-authenticated local LAN proxy profiles (Shadowrocket / Clash Mi / Stash / sing-box) and offline SVG QR codes in memory so mobile Persona KYC shares the desktop's static residential exit.
+- **Risk & KYC Verification, Desktop Clash Override & Mobile Shadowrocket Bridge (`v0.2.2` – `v0.2.4`)**:
+  - **2-Step Static & Live Exit Audit**: Automatically audits 3 desktop static anti-leak rules on entry and probes `claude.ai` vs. `withpersona.com` cross-domain exit-IP consistency on demand.
+  - **One-Click Desktop Clash Verge / Mihomo Anti-Leak Override (`.yaml`, `v0.2.4`)**: Generates and copies a complete Clash Verge Global Merge YAML that blocks `UDP 443` QUIC and `UDP 3478/19302/5349` WebRTC STUN/TURN, rejects `198.18.0.0/15` Fake-IP leaks, locks DoH IPs, enables the `:7899` TCP-only listener, and binds `claude.ai`, `withpersona.com`, `stripe.com`, `ipquery.io`, and `ippure.com` to the same static residential exit.
+  - **Layered `strict-route` Remediation Guide (`v0.2.3`)**: When `tun.strict-route: false` is detected, provides a **Fix Strict-Route** dialog with an in-place **Re-verify Now** button.
+  - **Mobile Same-Residential KYC Bridge (`v0.2.4` 2-Column Layout)**: Balanced 2-column card with automatic proxy paste splitting (`socks5://user:pass@host:port` or `host:port:user:pass`), generating CSPRNG-authenticated local LAN proxy profiles (Shadowrocket / Clash Mi / Stash / sing-box) and offline SVG QR codes in memory.
 - **Network Environment**: Runs read-only concurrent connectivity probes across `claude.ai`, `api.anthropic.com`, `console.anthropic.com`, and official installer endpoints on manual trigger.
 
 ---
@@ -155,45 +160,46 @@ Inspired by **Token Monitor**, the HUD supports Expanded, Compact, and Edge-Coll
 
 Claude-Local is **derived from the open-source project [CCBaga](https://github.com/liseami/CCBaga) (created by [@liseami](https://github.com/liseami) and contributors)**. We gratefully acknowledge the original authors for their foundational work on multi-identity archive encoding and browser profile isolation.
 
-While preserving compatibility with existing vaults and browser profiles, Claude-Local is independently engineered for **Windows 10 / 11 x64 desktop reliability, companion browser Kill-Switch protection, Free warming card lifecycle management, Risk & KYC verification, passive quota & token analytics, in-process 5h auto-wake scheduling, and desktop HUD monitoring**:
+While preserving compatibility with existing vaults and browser profiles, Claude-Local is independently engineered for **Windows 10 / 11 x64 desktop reliability, multi-account Smart Relay rotation, companion browser WebRTC & Kill-Switch protection, Free warming card lifecycle management, Risk & KYC verification, passive quota & USD cost analytics, in-process 5h auto-wake scheduling, and desktop HUD monitoring**:
 
-| Dimension | Inherited CCBaga Baseline | Claude-Local (`v0.2.3`) Independent Engineering & Enhancements |
+| Dimension | Inherited CCBaga Baseline | Claude-Local (`v0.2.4`) Independent Engineering & Enhancements |
 | :--- | :--- | :--- |
 | **Vault & Full-Chain Backup** | `BAGAID01` magic header, `.baga` archives, SQLite `user_version = 3`, account HMACs, and deterministic browser seed domain | **Full backward compatibility**; added Zstandard streaming compression support, bounded tar extraction limits, `ScratchGuard` staging cleanup, strict 32-byte master key validation, and **full-chain `.clbackup` password-encrypted vault backups (covering identity vaults + `warming_cards.json` + `manual_subscriptions.json`) with isolated recovery copies**. |
-| **Warming Workflow & Risk / KYC** | Single identity list & basic profile switching | Added a dedicated **Free Warming Cards** section (4-stage progress, **country/timezone lock & pre-open drift check**, **stage anti-ban SOP disclosure**, zero-rebind Pro promotion) and the **Risk & KYC Workbench** (`claude.ai` vs. `withpersona.com` exit consistency, **layered `strict-route` remediation guide**, mobile LAN QR bridge). |
+| **Smart Relay, Warming & Risk / KYC** | Single identity list & basic profile switching | Added **Magpie-inspired Multi-Account Smart Relay & Rotation** (opt-in, 5 routing strategies, rate-limit handling, session stickiness, preferred hysteresis recovery); added **Free Warming Cards** (4-stage progress, country/timezone lock & pre-open drift check, stage SOP disclosure, zero-rebind Pro promotion) and the **Risk & KYC Workbench + One-Click Desktop Clash Anti-Leak Override YAML**. |
 | **Quota Tracking & Auto-Wake** | Basic identity state management | Built **passive CLI quota observation + Python single-writer ledger + `quota_core` per-window monotonic merge** (zero writes to `.claude.json`); added `MM/DD` subscription badges, **cross-slot account-bound subscription sync**, **high-load quota pace hints**, `reset_inferred` recovery, **in-process Rust 5h auto-wake scheduler**, and the Connection Recovery Queue. |
-| **Token Usage Analytics** | — | Native deduplicated SQLite ledger + **CPAMP / ccusage-inspired analytics workbench** with independent statistics identities, controlled sign-in attribution for resumed sessions, four-part composition, explicit sessions and active days, all-model/Effort breakdowns, IANA/DST timezones, and TSV export. |
+| **Token & USD Cost Analytics** | — | Native deduplicated SQLite ledger + **CPAMP / ccusage-inspired analytics workbench** with independent statistics identities, four-part token composition, **Official Anthropic API USD Equivalent Cost (`$`) & Cache Savings**, cache reuse multiplier, all-model/Effort breakdowns, IANA/DST timezones, and TSV export. |
 | **Floating HUD Monitor** | — | **Token Monitor-inspired multi-mode desktop HUD** supporting Expanded/Compact/Capsule geometries, Pin, Lock, 18px Magnetic Edge Snap, Edge Auto-Hide, 50%–100% Opacity slider, and live theme/accent/wallpaper synchronization. |
-| **Windows x64 & Anti-Leak Hardening** | Cross-platform baseline | Purpose-built for **Windows x64**: **on-demand non-blocking Companion Browser Kill-Switch (5s TUN drop / 60s country drift stop, zero CLI disruption)**, narrow OAuth authorize routing protection, Chromium AppContainer cache DACL self-healing, Win32/MSIX `claude.exe` process tree detection, 4D cross-account residue sanitization, and system setting snapshot rollback. |
+| **Windows x64 & Anti-Leak Hardening** | Cross-platform baseline | Purpose-built for **Windows x64**: **Companion Browser WebRTC Network Limiter 3-key lockdown + On-Demand Non-Blocking Kill-Switch (5s TUN drop / 60s country drift stop, zero CLI disruption)**, narrow OAuth authorize routing protection, Chromium AppContainer cache DACL self-healing, Win32/MSIX `claude.exe` process tree detection, 4D cross-account residue sanitization, and system setting snapshot rollback. |
 
 ---
 
 ## 📦 Download, Installation & Release History
 
-### 1. Latest Windows x64 Installer (`v0.2.3`)
+### 1. Latest Windows x64 Installer (`v0.2.4`)
 
 | Asset | Platform | File Size | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.2.3_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.3/Claude-Local_0.2.3_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,883,227` bytes (134.36 MiB) | `fa122f952b9a0a7987e51047eb3b341171820e58823a4b15380cd85d362b3e31` |
+| **[Claude-Local_0.2.4_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.4/Claude-Local_0.2.4_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,893,501` bytes (134.37 MiB) | `ceae7f931c15ae857c235f89b464e2c6c4cbcd912ae1a044c304dbb107cdecec` |
 
-Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.2.3 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.3):
+Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.2.4 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.4):
 
 ```powershell
-Get-FileHash .\Claude-Local_0.2.3_x64-setup.exe -Algorithm SHA256
-# Expected SHA-256: fa122f952b9a0a7987e51047eb3b341171820e58823a4b15380cd85d362b3e31
+Get-FileHash .\Claude-Local_0.2.4_x64-setup.exe -Algorithm SHA256
+# Expected SHA-256: ceae7f931c15ae857c235f89b464e2c6c4cbcd912ae1a044c304dbb107cdecec
 ```
 
 ### 2. Installation & Non-Disruptive Upgrade Notes
 
 1. **Install Location & Identifiers**: Per-user NSIS installer defaulting to `%LOCALAPPDATA%\Programs\Claude-Local`; main executable `claude-local.exe`, bundle identifier `ai.local.claude-local`, companion browser registration `Claude-Local-Browser`.
 2. **User Data Root**: All encrypted vaults, master keys, quota/usage ledgers, appearance settings, and browser profiles live under `%APPDATA%\ai.local.claude-local`.
-3. **Seamless Upgrades**: Upgrading from `0.1.x`, `0.2.0`, or `0.2.2` to `0.2.3` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
+3. **Seamless Upgrades**: Upgrading from `0.1.x` or `0.2.x` to `0.2.4` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
 
-### 3. Public Release Series (`0.1.0` – `0.2.3`)
+### 3. Public Release Series (`0.1.0` – `0.2.4`)
 
 | Version | Date | Highlights | Documentation |
 | :--- | :--- | :--- | :--- |
-| **`v0.2.3`** *(Latest)* | 2026-10-30 | On-demand non-blocking Companion Browser Kill-Switch, layered `strict-route` remediation guide, warming card country/timezone lock & pre-open drift check, stage SOP reference, pace hints, and full-chain encrypted backup extension | [Release Notes](docs/RELEASE_NOTES_0.2.3_SECURITY.md) · [Verification](docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md) |
+| **`v0.2.4`** *(Latest)* | 2026-10-31 | **Magpie-inspired Multi-Account Smart Relay & Rotation (default OFF, 5 routing strategies + preferred hysteresis recovery)**, **Companion Browser WebRTC Network Limiter lockdown + One-Click Desktop Clash Anti-Leak Override YAML**, **Official API USD Cost (`$`) & Cache Savings Analytics**, 2-column Shadowrocket QR bridge, and one-click CLI browser return | [Release Notes](docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md) |
+| **`v0.2.3`** | 2026-10-30 | On-demand non-blocking Companion Browser Kill-Switch, layered `strict-route` remediation guide, warming card country/timezone lock & pre-open drift check, stage SOP reference, pace hints, and full-chain encrypted backup extension | [Release Notes](docs/RELEASE_NOTES_0.2.3_SECURITY.md) · [Verification](docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md) |
 | **`v0.2.2`** | 2026-10-29 | Identity card `MM/DD` subscription expiry badges & manual recharge entry, Risk & KYC exit-consistency & mobile residential bridge, independent statistics identities, four-part token analytics, and shared account-ledger HUD | [Release Notes](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
 | **`v0.2.0`** | 2026-10-26 | **Token Monitor-style multi-mode Floating HUD (Pin/Lock/Snap/Auto-Hide/Opacity/Theme Sync)**, **official API USD cost & cache savings analytics (historical feature)**, **auto-launch linked browser on account switch**, and global UI/sidebar polish | [UI & HUD Note](docs/UI_MONITOR_0.2.0.md) · [Release Notes](docs/RELEASE_NOTES_0.2.0.md) · [Verification](docs/RELEASE_VERIFICATION_0.2.0.md) |
 | **`v0.1.5`** | 2026-10-26 | Five-page copy & toolbar refinement, synthetic preview refresh, and 20-check isolated production browser verification | [UI Polish Note](docs/UI_POLISH_0.1.5.md) · [Verification](docs/RELEASE_VERIFICATION_0.1.5_UI.md) |
@@ -271,7 +277,8 @@ Issues and Pull Requests are welcome via [GitHub Issues](https://github.com/yq04
 ### Acknowledgements
 
 - **[CCBaga](https://github.com/liseami/CCBaga)**: Created by [@liseami](https://github.com/liseami) and contributors; Claude-Local inherits its MIT-licensed core vault architecture and `.baga` archive specification.
-- **[ccusage](https://github.com/ccusage/ccusage), [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor), [CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus) & Token Monitor**: Design inspiration for local token ledger aggregation, usage analytics layout, and the desktop Floating HUD monitor.
+- **[magpie](https://github.com/yetone/magpie) & [agent-route](https://github.com/ryuu-restart/agent-route)**: Design inspiration for multi-account Smart Relay & rotation strategies, preferred-account hysteresis recovery, and desktop Clash/Mihomo anti-WebRTC/DNS leak override rules.
+- **[ccusage](https://github.com/ccusage/ccusage), [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor), [CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus) & Token Monitor**: Design inspiration for local token ledger aggregation, official API USD cost estimation, usage analytics layout, and the desktop Floating HUD monitor.
 - **[Fingerprint Chromium](https://github.com/adryfish/fingerprint-chromium)**, **vendor/cromma-ui**, **[LobeHub lobe-icons](https://github.com/lobehub/lobe-icons)** & **[Unicode CLDR 48](https://github.com/unicode-org/cldr)**: Governed by their respective licenses; see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
 
 > **Disclaimer**: Claude-Local is an independent open-source utility and is not affiliated with, endorsed by, or sponsored by Anthropic or the upstream CCBaga project.

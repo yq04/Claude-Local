@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Redacted native usage aggregates and the current local calendar/locale.
- * [OUTPUT]: Typed accounting/activity contract, four-part token composition, cache-rate/K-M-B formatting, calendar series and elapsed-period averages/peaks.
+ * [OUTPUT]: Typed accounting/activity contract, four-part token composition, official API USD cost/cache-savings estimation, cache-rate/K-M-B formatting, calendar series and elapsed-period averages/peaks.
  * [POS]: Pure usage presentation helpers; no identity files, credentials or network access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -49,6 +49,23 @@ export type UsageSnapshot = {
   /** Scoped distinct sessions and local calendar days with recorded usage. */
   activity?: {sessions: number; active_days: number};
 };
+export type ModelApiPricing = {
+  inputPerM: number;
+  outputPerM: number;
+  cacheWritePerM: number;
+  cacheReadPerM: number;
+};
+export type UsageCostEstimate = {
+  inputCostUsd: number;
+  outputCostUsd: number;
+  cacheWriteCostUsd: number;
+  cacheReadCostUsd: number;
+  costUsd: number;
+  cacheSavingsUsd: number;
+  savingsRate: number | null;
+  cacheReuseRatio: number | null;
+};
+
 export function detectModelFamily(model: string): {key: 'opus' | 'sonnet' | 'fable' | 'haiku' | 'other'; label: string | null} {
   const lower = model.toLowerCase();
   if (lower.includes('opus')) return {key: 'opus', label: 'Opus'};
@@ -57,6 +74,154 @@ export function detectModelFamily(model: string): {key: 'opus' | 'sonnet' | 'fab
   if (lower.includes('haiku')) return {key: 'haiku', label: 'Haiku'};
   return {key: 'other', label: null};
 }
+
+/**
+ * Resolves official Anthropic API per-1M-token USD pricing aligned with the Claude Code qHr catalog.
+ */
+export function resolveModelPricing(model?: string | null): ModelApiPricing {
+  const lower = (model ?? '').toLowerCase();
+  if (lower.includes('haiku')) {
+    if (lower.includes('haiku-5-5') || lower.includes('haiku-5.5')) {
+      return {inputPerM: 0.10, outputPerM: 0.50, cacheWritePerM: 0.125, cacheReadPerM: 0.01};
+    }
+    if (lower.includes('3-5-haiku') || lower.includes('3.5-haiku')) {
+      return {inputPerM: 0.80, outputPerM: 4.00, cacheWritePerM: 1.00, cacheReadPerM: 0.08};
+    }
+    return {inputPerM: 1.00, outputPerM: 5.00, cacheWritePerM: 1.25, cacheReadPerM: 0.10};
+  }
+  if (lower.includes('opus')) {
+    if (lower.includes('opus-5-5') || lower.includes('opus-5.5')) {
+      return {inputPerM: 4.00, outputPerM: 20.00, cacheWritePerM: 5.00, cacheReadPerM: 0.20};
+    }
+    if (
+      lower.includes('opus-4-5') || lower.includes('opus-4.5') ||
+      lower.includes('opus-4-6') || lower.includes('opus-4.6') ||
+      lower.includes('opus-4-7') || lower.includes('opus-4.7') ||
+      lower.includes('opus-4-8') || lower.includes('opus-4.8') ||
+      lower.includes('opus-5')
+    ) {
+      return {inputPerM: 5.00, outputPerM: 25.00, cacheWritePerM: 6.25, cacheReadPerM: 0.50};
+    }
+    return {inputPerM: 15.00, outputPerM: 75.00, cacheWritePerM: 18.75, cacheReadPerM: 1.50};
+  }
+  if (lower.includes('fable')) {
+    return {inputPerM: 10.00, outputPerM: 50.00, cacheWritePerM: 12.50, cacheReadPerM: 1.00};
+  }
+  if (lower.includes('sonnet-5-5') || lower.includes('sonnet-5.5')) {
+    return {inputPerM: 2.00, outputPerM: 10.00, cacheWritePerM: 2.50, cacheReadPerM: 0.10};
+  }
+  if (lower.includes('sonnet-5')) {
+    return {inputPerM: 2.00, outputPerM: 10.00, cacheWritePerM: 2.50, cacheReadPerM: 0.20};
+  }
+  return {inputPerM: 3.00, outputPerM: 15.00, cacheWritePerM: 3.75, cacheReadPerM: 0.30};
+}
+
+export function estimateTotalsCostUsd(totals: UsageTotals, model?: string | null): UsageCostEstimate {
+  const rate = resolveModelPricing(model);
+  const inputCostUsd = (totals.input_tokens * rate.inputPerM) / 1_000_000;
+  const outputCostUsd = (totals.output_tokens * rate.outputPerM) / 1_000_000;
+  const cacheWriteCostUsd = (totals.cache_creation_tokens * rate.cacheWritePerM) / 1_000_000;
+  const cacheReadCostUsd = (totals.cache_read_tokens * rate.cacheReadPerM) / 1_000_000;
+  const costUsd = inputCostUsd + outputCostUsd + cacheWriteCostUsd + cacheReadCostUsd;
+  const cacheSavingsUsd = Math.max(0, totals.cache_read_tokens * (rate.inputPerM - rate.cacheReadPerM)) / 1_000_000;
+  const grossUncached = costUsd + cacheSavingsUsd;
+  const savingsRate = grossUncached > 0 && cacheSavingsUsd > 0 ? cacheSavingsUsd / grossUncached : null;
+  const cacheReuseRatio = totals.cache_creation_tokens > 0 && totals.cache_read_tokens > 0
+    ? totals.cache_read_tokens / totals.cache_creation_tokens
+    : null;
+  return {
+    inputCostUsd,
+    outputCostUsd,
+    cacheWriteCostUsd,
+    cacheReadCostUsd,
+    costUsd,
+    cacheSavingsUsd,
+    savingsRate,
+    cacheReuseRatio,
+  };
+}
+
+export function estimateSnapshotCostUsd(totals?: UsageTotals | null, models?: UsageModel[] | null): UsageCostEstimate {
+  if (!totals) {
+    return estimateTotalsCostUsd(emptyUsage());
+  }
+  if (!models?.length) {
+    return estimateTotalsCostUsd(totals);
+  }
+  let inputCostUsd = 0;
+  let outputCostUsd = 0;
+  let cacheWriteCostUsd = 0;
+  let cacheReadCostUsd = 0;
+  let cacheSavingsUsd = 0;
+  let coveredInput = 0;
+  let coveredOutput = 0;
+  let coveredWrite = 0;
+  let coveredRead = 0;
+  for (const row of models) {
+    const est = estimateTotalsCostUsd(row.totals, row.model);
+    inputCostUsd += est.inputCostUsd;
+    outputCostUsd += est.outputCostUsd;
+    cacheWriteCostUsd += est.cacheWriteCostUsd;
+    cacheReadCostUsd += est.cacheReadCostUsd;
+    cacheSavingsUsd += est.cacheSavingsUsd;
+    coveredInput += row.totals.input_tokens;
+    coveredOutput += row.totals.output_tokens;
+    coveredWrite += row.totals.cache_creation_tokens;
+    coveredRead += row.totals.cache_read_tokens;
+  }
+  const remInput = Math.max(0, totals.input_tokens - coveredInput);
+  const remOutput = Math.max(0, totals.output_tokens - coveredOutput);
+  const remWrite = Math.max(0, totals.cache_creation_tokens - coveredWrite);
+  const remRead = Math.max(0, totals.cache_read_tokens - coveredRead);
+  if (remInput > 0 || remOutput > 0 || remWrite > 0 || remRead > 0) {
+    const remEst = estimateTotalsCostUsd({
+      ...emptyUsage(),
+      input_tokens: remInput,
+      output_tokens: remOutput,
+      cache_creation_tokens: remWrite,
+      cache_read_tokens: remRead,
+      total_tokens: remInput + remOutput + remWrite + remRead,
+    });
+    inputCostUsd += remEst.inputCostUsd;
+    outputCostUsd += remEst.outputCostUsd;
+    cacheWriteCostUsd += remEst.cacheWriteCostUsd;
+    cacheReadCostUsd += remEst.cacheReadCostUsd;
+    cacheSavingsUsd += remEst.cacheSavingsUsd;
+  }
+  const costUsd = inputCostUsd + outputCostUsd + cacheWriteCostUsd + cacheReadCostUsd;
+  const grossUncached = costUsd + cacheSavingsUsd;
+  const savingsRate = grossUncached > 0 && cacheSavingsUsd > 0 ? cacheSavingsUsd / grossUncached : null;
+  const cacheReuseRatio = totals.cache_creation_tokens > 0 && totals.cache_read_tokens > 0
+    ? totals.cache_read_tokens / totals.cache_creation_tokens
+    : null;
+  return {
+    inputCostUsd,
+    outputCostUsd,
+    cacheWriteCostUsd,
+    cacheReadCostUsd,
+    costUsd,
+    cacheSavingsUsd,
+    savingsRate,
+    cacheReuseRatio,
+  };
+}
+
+export function formatUsdCost(usd: number | null | undefined, compact = false): string {
+  if (usd == null || !Number.isFinite(usd)) return '—';
+  if (usd <= 0) return '$0.00';
+  if (usd < 0.01) return '<$0.01';
+  if (compact && usd >= 10_000) {
+    return '$' + formatUsageNumber(usd, 'en', true);
+  }
+  if (usd >= 1_000) {
+    return '$' + new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: compact ? 1 : 2,
+      maximumFractionDigits: compact ? 1 : 2,
+    }).format(usd);
+  }
+  return '$' + usd.toFixed(2);
+}
+
 export const emptyUsage = (): UsageTotals => ({input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: 0, reasoning_tokens: null, requests: 0});
 export type UsageTokenKind = 'input' | 'output' | 'cacheWrite' | 'cacheRead';
 /** These counters are disjoint; reasoning is already part of output. */
