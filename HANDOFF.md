@@ -102,9 +102,9 @@
 
 当前**没有任何代码、构建、测试或发布阻塞**。工作区干净（仅保留用户原有的未提交 `AGENTS.md`，按规则绝不触碰或提交）。新会话只需了解以下背景边界，避免误判：
 
-1. **本机 Clash Verge `strict-route` 的实时生效取决于用户在客户端内的操作**：
-   - 软件已在 `v0.2.3` 的「风控验证」页交付了 **「修复 Strict-Route」** 闭环向导（支持一键复制全局 Merge 覆写 YAML 并点击「我已完成设置，立即复核」）。
-   - 为避免在未经用户确认时中断本机活动网络连接，我们没有在后台擅自替用户改写或重载本机 Clash Verge 运行配置。用户在方便时可在软件「风控验证」页点击「修复 Strict-Route」按步骤粘贴保存并点击「立即复核」即可变绿。
+1. **本机 Clash Verge `strict-route` 与服务模式（`clash-verge-service`）运行配置核验已全部就绪**：
+   - 已应用户要求备份并更新本机 Clash Verge 的 `config.yaml`、`profiles\Merge.yaml`、`clash-verge.yaml` 与 `clash-verge-service` 运行期 `config.yaml`（开启 `tun.strict-route: true`），并通过控制管道热重载运行中的 `verge-mihomo` 内核使其立即生效。
+   - 同时已在 `src-tauri/src/risk_config_source.rs` 与 `src-tauri/src/windows.rs` 中补齐对 Clash Verge Rev 2.x 服务模式（`%PROGRAMDATA%\clash-verge-service\users\<64-hex>\runtime\config.yaml`，经 `active-owner.json` / `.runtime-manifest.json` 校验归属当前用户 `%APPDATA%`）的运行期配置来源确认，并热更新至本机安装目录（正在运行的 `claude.exe` 全程保持原 PID 无中断）。
 2. **历史某个旧 Pro 账号曾出现的 `403 Request not allowed` 属于外部历史事件**：
    - 用户早已切换至当前正常工作的 Pro 账号；软件层面的 CLI/养号共存隔离、跨账号残留消毒与断路器防护均已交付完毕。新会话切勿自行尝试切换回旧账号或发起任何探测请求。
 3. **伴生浏览器的单回环核验会话模型（架构设计边界，非缺陷）**：

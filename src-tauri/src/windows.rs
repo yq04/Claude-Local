@@ -301,6 +301,15 @@ fn file_owner_sid(path: &std::path::Path) -> Option<Vec<u8>> {
 pub fn owned(path: &std::path::Path) -> bool {
     file_owner_sid(path).is_some_and(|actual| current_owner_sids().contains(&actual))
 }
+pub fn service_or_user_owned(path: &std::path::Path) -> bool {
+    const LOCAL_SYSTEM_SID: [u8; 12] = [1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0];
+    const BUILTIN_ADMINS_SID: [u8; 16] = [1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 32, 2, 0, 0];
+    file_owner_sid(path).is_some_and(|actual| {
+        current_owner_sids().contains(&actual)
+            || actual.as_slice() == LOCAL_SYSTEM_SID
+            || actual.as_slice() == BUILTIN_ADMINS_SID
+    })
+}
 #[cfg(test)]
 pub(crate) fn fixture_owner(path: &std::path::Path) {
     let wide = wide_path(path);

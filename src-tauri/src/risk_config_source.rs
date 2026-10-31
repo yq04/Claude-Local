@@ -32,6 +32,66 @@ fn core_owner(owner: Option<&[u8]>, current: &[u8]) -> CoreOwner {
 }
 
 #[cfg(windows)]
+fn clash_verge_service_runtime_allowed(path: &Path, appdata_base: &Path) -> bool {
+    let program_data = std::env::var_os("PROGRAMDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    let service_root = program_data.join("clash-verge-service");
+    let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    if !file_name.eq_ignore_ascii_case("config.yaml") {
+        return false;
+    }
+    let Some(runtime_dir) = path.parent() else {
+        return false;
+    };
+    if !runtime_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("runtime"))
+    {
+        return false;
+    }
+    let Some(user_dir) = runtime_dir.parent() else {
+        return false;
+    };
+    let Some(owner_key) = user_dir.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    if owner_key.len() != 64 || !owner_key.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    let Some(users_dir) = user_dir.parent() else {
+        return false;
+    };
+    let normalize = |p: &Path| {
+        dunce::simplified(p)
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+    };
+    if normalize(users_dir) != normalize(&service_root.join("users")) {
+        return false;
+    }
+    if !no_links(path)
+        || !crate::windows::service_or_user_owned(path)
+        || !crate::windows::service_or_user_owned(runtime_dir)
+    {
+        return false;
+    }
+    let expected_appdata = normalize(&appdata_base.join("io.github.clash-verge-rev.clash-verge-rev"));
+    let matches_appdata = |meta_path: &Path, max_bytes: u64| -> bool {
+        read_bounded_utf8(meta_path, max_bytes).is_some_and(|raw| {
+            let unescaped = raw.replace("\\\\", "\\").replace('/', "\\").to_ascii_lowercase();
+            unescaped.contains(&expected_appdata)
+        })
+    };
+    matches_appdata(&service_root.join("active-owner.json"), 16 * 1024)
+        || matches_appdata(&runtime_dir.join(".runtime-manifest.json"), 64 * 1024)
+}
+
+#[cfg(windows)]
 fn service_config_allowed(path: &Path) -> bool {
     let Some(appdata) = std::env::var_os("APPDATA") else {
         return false;
@@ -42,14 +102,20 @@ fn service_config_allowed(path: &Path) -> bool {
         base.join("mihomo-party"),
         base.join("com.follow"),
     ];
-    let normalize = |p: &Path| p.to_string_lossy().replace('/', "\\").to_ascii_lowercase();
+    let normalize = |p: &Path| {
+        dunce::simplified(p)
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+    };
     let normalized = normalize(path);
-    known_roots
+    let in_user_appdata = known_roots
         .iter()
         .any(|root| normalized.starts_with(&(normalize(root) + "\\")))
         && no_links(path)
         && crate::windows::owned(path)
-        && path.parent().is_some_and(crate::windows::owned)
+        && path.parent().is_some_and(crate::windows::owned);
+    in_user_appdata || clash_verge_service_runtime_allowed(path, &base)
 }
 
 fn config_argument(args: &[String]) -> Option<PathBuf> {
