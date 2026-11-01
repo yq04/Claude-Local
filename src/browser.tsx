@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生浏览器/CLI归属快照、网络防漏断路器状态与事件、轻量窗口采样、真实观测事件、共享活动日志和双语文案。
- * [OUTPUT]: 明确所选浏览器/CLI与运行状态的环境控制台、断路器保护关闭横幅与开关、冻结账号确认后的浏览器返回核验、缓存与高级设置。
+ * [OUTPUT]: 明确所选浏览器/CLI与运行状态的环境控制台、关闭浏览器或切页后保留同槽位同配置实测结果、断路器保护关闭横幅与开关、冻结账号确认后的浏览器返回核验、缓存与高级设置。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -182,6 +182,11 @@ export function BrowserPanel({ onBusy }: {
                         <Button variant="secondary" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
                             {browserRuntime.status === 'running' ? t("重新打开实测页") : t("打开浏览器并实测")}
                         </Button>
+                        {state?.running && (
+                            <Button variant="secondary" size="small" disabled={disabled} loading={busy === 'browser_quit'} onClick={() => void act('browser_quit')}>
+                                {t("正常退出浏览器")}
+                            </Button>
+                        )}
                         <Button variant="secondary" size="small" data-return-cli-browser disabled={disabled || !state?.engine_ready || !state?.cli_expected_identity || !!changed} onClick={() => {
                             if (state?.cli_expected_identity) setReturnCliBrowser({expectedIdentity: state.cli_expected_identity, name: cliIdentityName});
                         }}>{t('browser.returnToCli')}</Button>
@@ -223,7 +228,9 @@ export function BrowserPanel({ onBusy }: {
                             {state?.report_received_at
                                 ? isStale
                                     ? t("browserSafety.reportStale", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') }) || `检测已过时（>10分钟）· 上次回报 ${new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US')}`
-                                    : t("已连接 · 回报 {v0}", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })
+                                    : (state.running && browserRuntime.status !== 'closed')
+                                        ? t("已连接 · 回报 {v0}", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })
+                                        : t("browserSafety.reportRetained", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })
                                 : browserRuntime.status === 'running'
                                     ? t("等待浏览器回报")
                                     : t(browserRuntime.status === 'closed' ? 'browser.runtimeClosed' : 'browser.runtimeUnknown')}

@@ -3,7 +3,7 @@
 CCBaga-derived, independently maintained Windows desktop application: Tauri/Rust native operations, React/TypeScript UI, encrypted local identity storage and an optional isolated browser. Preserve the original attribution; independent maintenance does not mean entirely original code. Project rules live in AGENTS.md. No upstream synchronization or official updater exists.
 
 <directory>
-src/browser-runtime.ts / use-browser-runtime.ts - Slot-scoped process/window presentation and visible-page-only lightweight sampling; selected profiles persist after windows close and unknown observations never imply liveness.
+src/browser-runtime.ts / use-browser-runtime.ts - Slot-scoped process/window presentation and visible-page-only lightweight sampling; selected profiles and verified (slot, config) in-memory observations persist after windows close or across page navigation, while unknown observations never imply liveness.
 src-tauri/src/browser/lifecycle.rs - Read-only selected-profile runtime, masked CLI binding proof, confirmed browser-only return with compensation and fixed account-bound usage-page routing; no CLI stop or identity switch.
 src-tauri/src/browser/kill_switch.rs - On-demand companion browser Kill-Switch monitor when managed profiles are running, multi-slot browser quit on confirmed TUN drop or exit country drift, red tray alert icon and zero-roadblock auto-clear on dismiss or browser relaunch.
 src/ - Main application, browser verification page, shared UI and bilingual catalogs.
@@ -74,6 +74,7 @@ docs/RELEASE_VERIFICATION_0.2.2_USAGE.md - Fixed 0.2.2 source/CI, neutral NSIS p
 docs/RELEASE_NOTES_0.2.3_SECURITY.md - Public bilingual 0.2.3 release notes for on-demand non-blocking Companion Browser Kill-Switch, layered strict-route remediation guide, warming card country/timezone lock & pre-open drift check, stage SOP reference, pace hints, full-chain encrypted backup extension and multi-account workflow polish.
 docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md - Fixed 0.2.3 source/tag, neutral NSIS payload/privacy audit (109 files, 29 external private probes, 0 findings), GitHub Release asset digest and backed-up local GUI update preserving running CLI sessions.
 docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md - Public bilingual 0.2.4 release notes for Magpie-inspired multi-account Smart Relay & rotation, companion browser WebRTC Network Limiter 3-key lockdown, one-click desktop Clash/Mihomo anti-leak override YAML, official API USD cost & cache savings analytics, 2-column Shadowrocket QR bridge and one-click CLI browser return.
+docs/RELEASE_NOTES_0.2.5.md - Public bilingual 0.2.5 release notes for end-to-end anti-ban & KYC/WebRTC/IPv6/DNS hardening, persistent (slot, config) 20-item browser verification & deterministic 32-bit FNV-1a Canvas pixel hash, warming card IANA timezone drift clarity, and redesigned Quota HUD (real 5h four-counter cache hit rate + exhaustion ETA) & Usage Analytics.
 README_EN.md - Full English companion README linked bidirectionally with README.md, using synthetic English 1280x900 screenshots and identical safety/attribution boundaries.
 docs/screenshots/ - README screenshots of the actual frontend with synthetic data, masked reserved-domain emails, no real identity/network/path information or embedded text/EXIF metadata; see its source and privacy notes.
 

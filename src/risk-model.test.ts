@@ -4,6 +4,7 @@ import {encodeQrMatrix, renderQrSvgPath} from './qrcode-svg';
 import {
   buildCloseLanBridgePrompt,
   buildDesktopDnsFixPrompt,
+  buildDesktopMihomoAntiLeakYaml,
   buildMihomoStrictRouteSnippet,
   buildMobileBridgeConfig,
   buildShadowrocketSocksQrUri,
@@ -22,6 +23,7 @@ import {
   type LocalRiskSnapshot,
 } from './risk-model';
 import {createWarmingDraft, editWarmingDraft, warmingStageSopKey} from './warming-model';
+import {buildAiProxyPrompt} from './vps';
 
 test('RFC1918 validator strictly accepts private LAN hosts and rejects WAN, loopback, WSL network base and Fake-IP', () => {
   expect(isValidRfc1918Ipv4('192.168.1.25')).toBe(true);
@@ -320,6 +322,31 @@ test('AI remediation prompts cover desktop DNS/Persona fix, campus route exclusi
   const zhStandalone = buildStandaloneMobilePrompt({client: 'shadowrocket', targetTimezone: 'America/New_York', locale: 'zh'});
   expect(zhStandalone).toContain('Shadowrocket (iOS)');
   expect(zhStandalone).toContain('America/New_York');
+
+  for (const locale of ['zh', 'en'] as const) {
+    const prompt = buildAiProxyPrompt(locale);
+    const lines = prompt.trim().split(/\r?\n/).filter(line => line.trim());
+    expect(lines.length).toBeGreaterThanOrEqual(4);
+    expect(lines.length).toBeLessThanOrEqual(8);
+    expect(prompt).toMatch(/iKuuu/i);
+    expect(prompt).toMatch(/Kookeey/i);
+    expect(prompt).toMatch(/Clash Verge Rev/i);
+    expect(prompt).toMatch(/SOCKS5/i);
+    expect(prompt).toMatch(/dialer-proxy/);
+    expect(prompt).toMatch(/Merge\.yaml/);
+    expect(prompt).toMatch(/config\.yaml/);
+    expect(prompt).toMatch(/tun\.strict-route/);
+    expect(prompt).toMatch(/claudeusercontent\.com/);
+    expect(prompt).toMatch(/withpersona\.com/);
+    expect(prompt).toMatch(/persona\.org/);
+    expect(prompt).toMatch(/ippure\.com/);
+    expect(prompt).toMatch(/198\.18\.0\.0\/15/);
+    expect(prompt).toMatch(/https:\/\/1\.1\.1\.1\/dns-query/);
+    expect(prompt).toMatch(/3478\/19302\/5349/);
+    expect(prompt).toMatch(/socks5:\/\/127\.0\.0\.1:7899/);
+    expect(prompt).toMatch(/美国.*静态.*(?:住宅|家宽)|US static residential/i);
+    expect(prompt).not.toMatch(/function\s+main|tcp-concurrent|mixed-port|7890|proxy-providers|listeners\s*:|rules\s*[:=]|<PASSWORD>|<USERNAME>/i);
+  }
 });
 
 test('all dynamic diagnostic keys resolve in both zh and en without unresolved placeholders', () => {
@@ -467,4 +494,14 @@ test('buildMihomoStrictRouteSnippet and strict-route detection flag tun_strict_r
   });
   expect(edited.registeredCountry).toBe('JP');
   expect(edited.registeredTimezone).toBe('Asia/Tokyo');
+
+  const desktopYaml = buildDesktopMihomoAntiLeakYaml(17899);
+  expect(desktopYaml.configText).toContain('ipv6: false');
+  expect(desktopYaml.configText).toContain('claude.com');
+  expect(desktopYaml.configText).toContain('claudemcpcontent.com');
+  expect(desktopYaml.configText).toContain('persona.com');
+  expect(desktopYaml.configText).toContain('stripecdn.com');
+  expect(desktopYaml.configText).toContain('featuregates.org');
+  expect(desktopYaml.configText).toContain('intercomcdn.com');
+  expect(desktopYaml.configText).toContain('8.8.4.4/32');
 });

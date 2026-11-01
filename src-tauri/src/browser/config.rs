@@ -38,7 +38,7 @@ pub fn machine() -> Result<Machine, String> {
     }
     Ok(machine)
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub seed: u32,
@@ -143,6 +143,14 @@ pub fn save(root: &Path, config: &Config) -> Result<(), String> {
         &serde_json::to_vec_pretty(config).map_err(|_| "配置编码失败。")?,
     )
 }
+pub(super) fn accept_languages(language: &str) -> String {
+    match language.split_once('-') {
+        Some((primary, _)) if !primary.is_empty() && primary != language => {
+            format!("{language},{primary}")
+        }
+        _ => language.to_string(),
+    }
+}
 pub fn arguments(
     config: &Config,
     machine: &Machine,
@@ -161,10 +169,7 @@ pub fn arguments(
         format!("--fingerprint-brand-version={version}"),
         format!("--fingerprint-hardware-concurrency={}", machine.cores),
         format!("--lang={language}"),
-        format!(
-            "--accept-lang={language},{}",
-            language.split('-').next().unwrap_or("en")
-        ),
+        format!("--accept-lang={}", accept_languages(&language)),
         format!("--timezone={}", config.timezone(machine)),
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp".into(),
         "--disable-non-proxied-udp".into(),

@@ -91,7 +91,6 @@ pub(super) fn launch_with_urls_locked(
             None,
         );
     }
-    *state.host.lock().unwrap() = None;
     let page = open_session(app, &config, &machine, version(&engine))?;
     let mut cmd_args = config::arguments(&config, &machine, &profile, &page, &version(&engine));
     for url in urls {

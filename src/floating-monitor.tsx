@@ -27,6 +27,7 @@ import {
   cycleMonitorOpacityPct,
   deriveMonitorActivityMode,
   formatCompactCount,
+  formatMonitorCacheStats,
   formatVelocityLabel,
   formatWindowResetLabel,
   monitorTokenComposition,
@@ -321,6 +322,11 @@ export function FloatingMonitorApp() {
       ? maskEmailAddress(rawTitle, hideAccount)
       : maskDisplayName(rawTitle, current.email, hideAccount)
     : t('monitor.noActiveAccount');
+  const avatarInitial = (maskedTitle.trim().charAt(0) || 'C').toUpperCase();
+  const maskedEmail =
+    current?.present && current.email && rawTitle !== current.email
+      ? maskEmailAddress(current.email, hideAccount)
+      : null;
 
   const evaluated = evaluateQuota(current, nowSec);
   const bar5h = computeMonitorWindowBar(
@@ -394,6 +400,7 @@ export function FloatingMonitorApp() {
   const usageAvailable = metrics?.available === true;
   const velocityText = formatVelocityLabel(usageAvailable ? metrics.tokensPerMin : undefined);
   const totalText = usageAvailable ? formatCompactCount(metrics.tokens5hTotal) : '—';
+  const cacheStats = formatMonitorCacheStats(usageAvailable ? metrics : undefined);
   const sessionModelLabel = usageAvailable && metrics.latestModel
     ? metrics.latestModel
     : t(usageAvailable ? 'monitor.noModel' : 'monitor.accountUsageUnavailable');
@@ -673,6 +680,11 @@ export function FloatingMonitorApp() {
         onDoubleClick={handleBlockDoubleClick}
       >
         <div className="monitor-hud-account-ident">
+          {current?.present && (
+            <span className="monitor-hud-avatar" aria-hidden="true">
+              {avatarInitial}
+            </span>
+          )}
           <span className="monitor-hud-account-name" title={maskedTitle}>
             {maskedTitle}
           </span>
@@ -681,9 +693,18 @@ export function FloatingMonitorApp() {
               ✓
             </span>
           )}
+          {current?.plan && <span className="monitor-hud-badge">{current.plan}</span>}
         </div>
         <div className="monitor-hud-badges">
-          {current?.plan && <span className="monitor-hud-badge">{current.plan}</span>}
+          {maskedEmail ? (
+            <span className="monitor-hud-account-email" title={maskedEmail}>
+              {maskedEmail}
+            </span>
+          ) : telemetry?.routeProtected ? (
+            <span className="monitor-hud-route-pill" title={t('monitor.routeProtectedHint')}>
+              {t('monitor.routeProtected')}
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -780,7 +801,8 @@ export function FloatingMonitorApp() {
               </span>
             </div>
             <span className="monitor-session-cache" title={t('monitor.cacheHitTitle')}>
-              {t('monitor.cacheHit')} {usageAvailable && metrics.cacheHitPct != null ? `${metrics.cacheHitPct}%` : '—'}
+              {t('monitor.cacheHit')} <strong>{cacheStats.hitPctText}</strong>
+              {cacheStats.reuseRatioText ? <em> · {cacheStats.reuseRatioText}</em> : null}
             </span>
           </div>
 

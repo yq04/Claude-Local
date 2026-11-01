@@ -556,8 +556,8 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
           </div>
 
           {showDesktopYamlPreview && (
-            <div className="risk-config-preview-box">
-              <div className="risk-config-preview-head">
+            <div className="risk-conf-preview-wrap">
+              <div className="risk-conf-preview-head">
                 <strong>{desktopYaml.filename}</strong>
                 <Button
                   variant="secondary"
@@ -569,8 +569,13 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                   {t('risk.action.copyDesktopYaml')}
                 </Button>
               </div>
-              <pre className="risk-config-pre">{desktopYaml.configText}</pre>
+              <pre className="risk-conf-preview">{desktopYaml.configText}</pre>
             </div>
+          )}
+          {(copiedId === 'desktop-fix' || copiedId === 'desktop-yaml') && (
+            <p className="risk-copy-feedback" role="status">
+              {t('risk.feedback.copied')}
+            </p>
           )}
         </section>
 

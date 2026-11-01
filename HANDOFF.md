@@ -1,19 +1,19 @@
 <!--
-[INPUT]: Verified v0.2.4 multi-account Smart Relay & rotation (recommendation + manual safe switch, default OFF), WebRTC Network Limiter lockdown & Clash/Mihomo anti-leak global override YAML, official API USD cost & cache savings analytics, 2-column Shadowrocket bridge & paste auto-split, companion browser verification header & CLI return workflow, activity log dismissal, neutral Windows NSIS build audit, and GitHub Release v0.2.4.
+[INPUT]: Verified v0.2.5 end-to-end anti-ban & KYC/WebRTC/IPv6/DNS hardening, persistent (slot, config) 20-item browser verification & deterministic 32-bit FNV-1a Canvas pixel hash, redesigned Quota HUD (real 5h four-counter cache hit rate + exhaustion ETA) & Usage Analytics, v0.2.4 Smart Relay (default OFF), neutral Windows NSIS build audit, and GitHub Release v0.2.5.
 [OUTPUT]: Context-free handoff for a brand-new session covering task overview, completed deliverables, current state/remaining boundaries, next steps and critical pitfalls to avoid.
 [POS]: Root maintenance handoff; real identities, IP/proxy values, process IDs, workstation paths and screenshots stay out of tracked files.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only updates do not build/deploy, reload proxies, operate accounts, package/upload or move release tags.
 -->
 # Claude-Local 新会话交接文档（无上下文直接接手）
 
-更新时间：2026-10-31 05:12 EDT（America/New_York）。当前最新正式发布至 GitHub Release（Latest）的版本为 **`v0.2.4`**（源码标签 `v0.2.4` 指向提交 `79915a5`），本机安装目录 `%LOCALAPPDATA%\Programs\Claude-Local` 亦已热更新并同步运行 **`v0.2.4`** 正式版。
+更新时间：2026-11-01 01:30 EDT（America/New_York）。当前最新正式发布至 GitHub Release（Latest）的版本为 **`v0.2.5`**，本机安装目录 `%LOCALAPPDATA%\Programs\Claude-Local` 亦已热更新并同步运行最新构建的 **`v0.2.5`** 正式版（涵盖浏览/电脑/网络/风控验证全链路防关联与 IPv6/WebRTC/DNS/KYC 防泄露加固、伴生浏览器 20 项防封实测结果按 `(slot, config)` 跨关窗/切页持久保留与 Canvas FNV-1a 真实像素哈希、额度小窗真实 5h 缓存命中率与耗尽预计时间，以及用量分析与 README 旗舰重构）。
 
 > **给新会话的第一句话（必读）**：
-> 1. **`v0.2.4` 已全部开发完成、验证通过、更新至本机安装目录，并打包发布至 GitHub Release `v0.2.4`（Latest）**：涵盖多账号智能接力与轮换（Smart Relay，默认关闭）、伴生浏览器 WebRTC Network Limiter 三重强锁 + 桌面端 Clash Verge / Mihomo 一键防漏覆写 YAML（`.yaml`）、用量分析官方 API 美元等效花费（`$`）与缓存节省回归、风控验证两步状态去误报与小火箭（Shadowrocket）双栏扫码桥接、伴生浏览器实测页深色一体化卡片、养号后一键返回 CLI 浏览器，以及操作日志彻底关闭与养号日志归位。
+> 1. **`v0.2.5` 已全部开发完成、验证通过、更新至本机安装目录，并打包发布至 GitHub Release `v0.2.5`（Latest）**：在 `v0.2.4` 基础上新增了全链路 `ipv6: false` / `dns.ipv6: false` 防双栈旁路、补齐 Anthropic + Persona KYC + Stripe + Sentry + WorkOS 同源家宽分流规则、修复 `--accept-lang` 区域子标签与 `dns_prefetching` 泄露、实现伴生浏览器实测结果跨关窗与跨菜单持久保留（`last_observations`）、升级 `Canvas 2D` 为真实 32 位 FNV-1a 像素哈希探针、修正机房 ASN 词边界误判（`RCN` 等真家宽不再误触 `cn`）、重做「额度小窗」（真实 5h 四计数器缓存命中率 + 5h 耗尽预计时间）与「用量分析」2×2 卡片排版，并重构了中英文 `README.md` / `README_EN.md`（将四大防封与多身份物理隔离能力置于最核心位置）。
 > 2. **关于「智能接力（Smart Relay）」的明确产品定调（已与用户对齐确认）**：
->    - 目前 `v0.2.4` 的智能接力采用**「纯本地余量推荐 + 手动点击走原生安全切号流程（含跨账号四维消毒与 `claude.exe` 进程检查）」**，**没有**采用本地 HTTP 反向代理网关，也**没有**开启后台自动无确认切号。
+>    - 目前智能接力采用**「纯本地余量推荐 + 手动点击走原生安全切号流程（含跨账号四维消毒与 `claude.exe` 进程检查）」**，**没有**采用本地 HTTP 反向代理网关，也**没有**开启后台自动无确认切号。
 >    - 用户已明确指示：**「目前先不做接力了！但也不用删除现有功能！」** —— 因此请保持现有智能接力代码与界面原样保留（默认关闭 `enabled: false`），**切勿自行删除该功能，也切勿自行继续开发后台自动切号逻辑**。
-> 3. **请勿重复实现 `v0.2.4` 已交付功能，也不要回退或移动 `v0.2.4` 标签及已上传安装包资产。**
+> 3. **请勿重复实现 `v0.2.5` 已交付功能，也不要回退或移动 `v0.2.5` 标签及已上传安装包资产。**
 
 新会话接手时请依次阅读：本文（`HANDOFF.md`） → 根目录 `AGENTS.md`（切勿提交到 Git） → 根目录 `CLAUDE.md`；修改具体模块前先读对应子目录的 `CLAUDE.md` 与源文件头注释（`[INPUT]/[OUTPUT]/[POS]/[PROTOCOL]`）。本文受 Git 跟踪，**严禁写入任何真实账号、邮箱、身份指纹、真实 IP、代理凭据、个人绝对路径或真实截图**。
 
@@ -56,6 +56,12 @@
        - 封锁 `IP-CIDR,198.18.0.0/15,REJECT,no-resolve` Fake-IP 回流，强制 `1.1.1.1/32`、`1.0.0.1/32`、`8.8.8.8/32` DoH 走家宽节点；
        - 开启 `tun.strict-route: true`、`dns.respect-rules: true` 与 `:7899` 纯 TCP 独立监听（`udp: false`）；
        - 将 `claude.ai`、`anthropic.com`、`withpersona.com`、`stripe.com`、`ipquery.io`、`ippure.com` 统一锁死至同一静态家宽出口；同步升级「复制电脑配置提示词」（`buildDesktopDnsFixPrompt`）。
+  3. **「网络环境 → 复制提示词」（`src/vps.tsx` `buildAiProxyPrompt`）全链路防漏与持久化配置加固**：
+     - 将中英文 AI 配置提示词升级为 8 行高密度可执行指令（严格兼容 `scripts/test-network-diagnostics.ts` 的 `assertCompactPrompt` 契约与 `src/risk-model.test.ts` 单元测试）：
+       - 明确 `iKuuu` 前置多节点自动测速/容灾组 → `Kookeey` 静态住宅 SOCKS5 出口（显式 `udp: false`）双跳 `dialer-proxy` 链路；
+       - 明确 Clash Verge Rev 四层持久化要求：写入全局扩展覆写（`Merge.yaml`）或扩展脚本防订阅刷新冲掉，并**在 `config.yaml` 与 `Merge.yaml` 同步开启 `tun.strict-route`**；
+       - 补齐全部 20 个 Claude / KYC / 支付 / 风控探针域名（含 `claudeusercontent.com`、`persona.org`、`personacustomer.com`、`stripe.network`、`siftscience.com`、`intercom.io`、`statsig.com`、`ippure.com`）与远程 DoH IP（`1.1.1.1/32`、`1.0.0.1/32`、`8.8.8.8/32`）同源家宽路由，拦截 `198.18.0.0/15` 防 Fake-IP 漏出，保持回环与私有内网直连；
+       - 开启 `sniffer`（`parse-pure-ip`）、`dns.respect-rules`、`dns.direct-nameserver-follow-policy`、`proxy-server-nameserver` 与纯 IP 远程加密 DoH，阻断 UDP `443`（QUIC）及 UDP `3478/19302/5349` 与 `stun`（WebRTC STUN/TURN），配置 `127.0.0.1:7899` 纯 TCP 独立监听（`udp: false`）并完成三路 `cdn-cgi/trace` 实测校验。
 
 ### 2.3 用量分析（`用量分析`）官方 API 美元等效花费（`$`）与缓存节省升级
 - **替换低价值计数卡片，突出等效美元价值与缓存效率**：
@@ -87,20 +93,38 @@
     - 点击「检查更新」在未执行安装时不再弹出冗余的「CLI 安装记录」面板；
     - 点击养号卡片的浏览器操作日志直接渲染在「养号」专区内部，不再错位出现在上方「身份」栏。
 
-### 2.6 验证、本机热更新与 `v0.2.4` 打包发布回执
+### 2.6 额度小窗（Quota HUD）、用量分析视觉打磨与浏览/网络/风控全链路加固（v0.2.5 核心交付）
+- **额度小窗按钮文案统一、紧凑单行头部与真实 5h 指标（`src/identities.tsx`、`src/settings.tsx`、`src/floating-monitor.tsx`、`src/floating-monitor.css`、`src-tauri/src/monitor_window.rs`、`src-tauri/src/identities/usage.rs`）**：
+  - 将「身份管理」与「软件设置」右上角的悬浮窗切换按钮文案统一为 **`额度小窗` / `Quota HUD`**，仅由左侧状态圆点亮暗表达开启/关闭状态；
+  - 重构额度小窗展开态头部为高密度单行结构（`账号名 + 绿勾 + 套餐徽章 + 右侧当前模型胶囊`），彻底消除原版账号名与 `Pro` 标签之间的空白断层；
+  - **真实 5h 四计数器缓存命中率**：在 `usage.rs::monitor_snapshot()` 中直接基于 SQLite 近 5h 窗口计算 `cache_read / (uncached_input + cache_creation + cache_read)`，取代旧版近似估算公式，与「用量分析」口径完全对齐；
+  - **5h 耗尽预计时间（ETA）**：在 5h 卡片底部新增按当前消耗速率推算的 `预计 Xh Ym 耗尽` 指标，并修复贴边折叠胶囊（`52×138`）右侧边缘被 Win32 DWM 裁剪的问题。
+- **用量分析（`src/usage-statistics.tsx`、`src/usage-statistics.css`）排版与视觉重构**：
+  - 顶部筛选栏收口为紧凑单行，扫描跳过提示收纳入底部折叠区；
+  - 主摘要区采用左右双栏黄金比例（左侧 `总 Token + 2×2 四类构成子卡`，右侧 `2×2 核心财务与效率指标卡`：API 等效花费 `$`、缓存节省 `$`、缓存命中率 `%`、日均/时均等效花费 `$`），精简冗余小字备注。
+- **伴生浏览器 20 项防封实测深层加固与跨关窗/切页结果持久保留（`src/browser-start.tsx`、`src/browser.tsx`、`src-tauri/src/browser/mod.rs`、`server.rs`、`launch.rs`、`network.rs`、`config.rs`、`profile.rs`）**：
+  - **Canvas 2D 真实 32 位 FNV-1a 像素哈希探针**：在 `browser-start.tsx` 中绘制多图元测试图案并读取 `getImageData()` RGBA 像素流计算确定性 FNV-1a 哈希（如 `Canvas #xxxxxxxx · OfflineAudioContext 44100Hz 正常`），验证 `--fingerprint=<seed>` 噪声注入正常工作；
+  - **实测结果按 `(slot, config)` 跨关窗与跨菜单持久保留**：在 `Browser` 状态中新增 `last_observations: Mutex<HashMap<String, CachedObservation>>`，并在 `browser_launch` 时保留 `state.host`（机器出口检测结果）；用户完成浏览器实测与机器出口检测后，即使关闭伴生浏览器或切换到其他菜单再切回「浏览环境」，10 项绿勾与实测详情依然完整保留（状态药丸显示 `浏览器已关闭 · 保留 HH:MM:SS 实测结果`），仅在切换账号/资料、修改配置、清理重置浏览器或触发断路器时自动失效；
+  - **修复 `--accept-lang` 区域子标签与 `dns_prefetching`**：将 `en-US` 规范化为 `--accept-lang=en-US,en`，禁用 `dns_prefetching.enabled = false`；
+  - **修复机房 ASN 词边界匹配与探针状态显示**：对短词（`cn`/`aws`/`ovh`/`vps` 等）启用 ASCII 词边界匹配，避免美国真家宽 `RCN` (`AS6079`) 误触 `cn` 子串；消除「WebRTC 本地候选观察」重复文案，修正「真实设备与 CPU」及「防封特征与出口纯净度」通过态文案。
+- **Mihomo / Clash 全套域名分流与 IPv6 防旁路（`src/risk-model.ts`、`src/vps.tsx`、`src-tauri/src/risk_check.rs`）**：
+  - 在桌面端一键覆写 YAML、桌面修复提示词、网络环境 AI 提示词与四端手机桥接配置（Shadowrocket / Clash Mi / Stash / sing-box）中，全面强制 **`ipv6: false` 与 `dns.ipv6: false`**，切断双栈 IPv6 直连绕过；
+  - 补齐 `claude.com`、`claudemcpcontent.com`、`persona.com`、`stripecdn.com`、`stripe.global`、`sentry.io`、`workos.com`、`authkit.app`、`funcaptcha.com` 等完整 KYC/支付/风控域名及备用 DoH IP `8.8.4.4/32`；`risk_check.rs` 静态审计支持 `prepend-rules` / `append-rules`；
+  - 修复 `src/warming-cards.tsx` 同国不同时区漂移弹窗文案（明确显示 `US (America/Los_Angeles)` vs `US (America/New_York)`）。
+
+### 2.7 验证、本机热更新与 `v0.2.5` 打包发布回执
 - **自动化测试全部通过**：
-  - `bun x tsc --noEmit && bun test`：**162 passed, 0 failed**（含新增 `src/smart-relay-model.test.ts` 与更新的 `src/usage-model.test.ts`）
+  - `bun x tsc --noEmit && bun test`：**162 passed, 0 failed**
   - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml browser::`：**44 passed, 0 failed**
-  - Playwright 隔离 UI 验收（`--verification-only`、`--warming-only`、`--cards-only`）：**10 + 29 + 28 checks passed**
 - **中性目录 NSIS 安装包构建与 29 项隐私探针解包审计**：
-  - 构建脚本：`scripts/build-windows-share.ps1`（中性根目录 `D:\ClaudeLocalBuild\20261031T084338Z-3b7d1f2ab630482c9f01faa6f30e3e45`）
-  - 产出目录：`.local/artifacts/20261031T084338Z-3b7d1f2ab630482c9f01faa6f30e3e45/`
-  - 安装包：`Claude-Local_0.2.4_x64-setup.exe`，大小 **`140,893,501` 字节（`134.37 MiB`）**，SHA-256 为 **`ceae7f931c15ae857c235f89b464e2c6c4cbcd912ae1a044c304dbb107cdecec`**
-  - 隐私审计：109 个解包文件全部匹配资源白名单，29 项外置隐私探针扫描 **`0` 命中**。
+  - 构建脚本：`scripts/build-windows-share.ps1`（中性根目录 `D:\ClaudeLocalBuild\20261101T051704Z-c2d03423ff1946e1beb70aa1dc2e9138`）
+  - 产出目录：`.local/artifacts/20261101T051704Z-c2d03423ff1946e1beb70aa1dc2e9138/`
+  - 安装包：`Claude-Local_0.2.5_x64-setup.exe`，大小 **`140,847,905` 字节（`134.32 MiB`）**，SHA-256 为 **`16c9320d05a2100047c602331e22f9318dbba93a712100185b9bab4aca344e95`**
+  - 隐私审计：108 个解包文件全部匹配资源白名单，29 项外置隐私探针扫描 **`0` 命中**。
 - **本机安装目录安全热更新**：
-  - 已将 `v0.2.4` Release 宿主与前端资源部署至 `%LOCALAPPDATA%\Programs\Claude-Local`（当前本机已安装 `claude-local.exe` SHA-256 为 `3523012c0ac826af35e6d466c01ab32fe561957b0eb60b49d7d50f642872ee1d`），并通过 `Win32_Process` CIM `Create` 重启 GUI；**本机正在运行的 `claude.exe` 终端进程全程保持原 PID 与启动时间无中断**。
+  - 已将 `v0.2.5` Release 宿主与前端资源部署至 `%LOCALAPPDATA%\Programs\Claude-Local`（当前本机已安装 `claude-local.exe` SHA-256 为 `0c7238b8bfe90658d6c1e3d65c205af6f18b0d3d640aa8da98459496f40f06fd`），并通过 `schtasks /Create ... /IT` 在交互式桌面会话启动 GUI；**本机 `claude.exe` 进程零中断**。
 - **GitHub Release 正式发布**：
-  - 标签 `v0.2.4`（指向 `79915a5`）及公开资产 `Claude-Local_0.2.4_x64-setup.exe`、`SHA256SUMS.txt` 已正式发布至 https://github.com/yq04/Claude-Local/releases/tag/v0.2.4 （`isDraft: false`、`isPrerelease: false`、Latest），GitHub 服务端返回 `digest` 与本地 SHA-256 完全一致。
+  - 标签 `v0.2.5` 及公开资产 `Claude-Local_0.2.5_x64-setup.exe`、`SHA256SUMS.txt` 已正式发布至 https://github.com/yq04/Claude-Local/releases/tag/v0.2.5 （`isDraft: false`、`isPrerelease: false`、Latest），GitHub 服务端返回 `digest` 与本地 SHA-256 完全一致。
 
 ---
 
@@ -113,6 +137,9 @@
    - 因此，最安全的工作流是：**退出当前 CLI（`/exit` 或在切号弹窗中确认由软件安全关闭） → 点击 `Claude-Local` 切号（`cleaner_identity.rs` 自动剥离 `.jsonl` 会话中旧账号的 `userEmail`、`credential_org` 与 `thinking` 签名） → 在终端执行 `claude -c` 继续对话**。
 2. **「智能接力（Smart Relay）」保持当前 `v0.2.4` 状态（不删不改）**：
    - 用户已明确指示：**「目前先不做接力了！但也不用删除现有功能！」**。现有智能接力默认关闭（`enabled: false`），开启时作为余量/重置顺位计算器与手动一键切号入口保留即可。
+3. **坚持「前置专线 + 静态住宅 SOCKS5 双跳链式代理 + 软件三级验真防线」，不追求 VPS 自建面板**：
+   - 经对社区 VPS 自建教程（`3x-ui` / `VLESS+Reality` / `Sub-Store`）与 X 防封实测的交叉调研确认：自建 VPS 运维门槛极高、单 IP 易被墙/被邻居送中，且在注册/过 Persona KYC/绑 Stripe 卡阶段机房 IP（`hosting: true`）极易被拦截，而高阶 VPS 玩家最终解决 AI 解锁依然必须回归 `dialer-proxy` 链式落地架构。
+   - 针对市面上静态住宅可能混有“单 ISP 广播伪家宽”或高风险脏 IP 的情况，本项目不依赖盲信代理商宣传，而是由软件内置的 **三级验真防线** 兜底：① `classifyExitIsp` + `api.ipquery.io`（`is_datacenter`）零盲信红灯拦截机房/伪家宽；② 伴生浏览器起始页内置 `Ping0.cc` / `CheckCC.org` / `BrowserScan` / `IPHey` 及同源路由的 `ippure.com` 深度复核；③ 先验真确认双 ISP 原生低风险后再登号绑定。因此保持现有 `iKuuu + Kookeey + Clash Verge Rev 双跳防漏` 方案即可，无需引导用户折腾 VPS 自建机场。
 
 ---
 
@@ -157,8 +184,8 @@
 9. **Windows 构建、测试与 CRLF 编辑坑**：
    - Windows 下没有预装 `rg`（ripgrep），搜索代码请使用 PowerShell `Select-String`。
    - 运行 `cargo test` 或 `cargo build` 前务必设置 `$env:CARGO_INCREMENTAL="0"; $env:CARGO_BUILD_JOBS="1"` 并加 `-j 1`，防止 MSVC `link.exe` / PDB 锁冲突。
-   - 生产构建与本地部署必须带 `--features custom-protocol`；`scripts/build-windows-share.ps1` 需传入 `-SevenZipPath "<repo>\.local\build-tools\7zip-26.04-f4a03f7e\portable\7z.exe"`。
-   - 在 PowerShell 工具调用中重启常驻 GUI 进程时，使用 `Invoke-CimMethod -ClassName Win32_Process -MethodName Create` 启动独立进程，避免随命令会话退出被回收。
+   - 生产构建与本地部署必须带 `--features custom-protocol`；`scripts/build-windows-share.ps1` 需传入 `-SevenZipPath "C:\Program Files\AMD\CIM\Bin64\7z.exe"`（或本机已安装的 `7z.exe` 路径）。
+   - **在沙箱化 PowerShell 工具调用中启动 `claude-local.exe` GUI 窗口时，切勿直接使用 `Start-Process` 或 `Win32_Process Create`**：因为工具子进程运行在非交互式后台 WindowStation（`Service-0x0-...`），直接拉起的 `claude-local.exe` 会变成不可见的后台僵尸进程并霸占 `tauri_plugin_single_instance` 单实例锁，导致用户双击桌面快捷方式无法打开窗口！必须使用 `schtasks /Create /TN "ClaudeLocalLaunchTemp" /TR "\"$dstExe\"" /SC ONCE /ST 00:00 /IT /F` + `schtasks /Run` 将进程挂载到用户交互式桌面会话（`WinSta0\Default`）。
    - 部分文件（如 `src/locales/zh.yaml`、`src/locales/en.yaml` 前半段及部分测试脚本）含 `CRLF` 行尾，若多行 `edit_file` 报未找到目标，优先使用单行锚点或 PowerShell `[System.IO.File]::ReadAllText/WriteAllText` 精确替换。
 
 ---
@@ -168,19 +195,21 @@
 - **多账号智能接力与身份工作台**：
   - `src/smart-relay-model.ts`、`src/smart-relay-model.test.ts`
   - `src/identities.tsx`、`src/identity-productivity.css`、`src/settings.tsx`
-- **伴生浏览器 WebRTC 加固、断路器与生命周期**：
+- **伴生浏览器 WebRTC 加固、实测结果持久保留、断路器与生命周期**：
+  - `src-tauri/src/browser/mod.rs`（`last_observations` 跨关窗/切页持久保留）、`src-tauri/src/browser/server.rs`、`src-tauri/src/browser/launch.rs`、`src-tauri/src/browser/network.rs`
   - `src-tauri/src/browser/profile.rs`、`src-tauri/src/browser/config.rs`、`src-tauri/src/browser/kill_switch.rs`
   - `src-tauri/src/browser/lifecycle.rs`、`src-tauri/src/browser/quota_connection.rs`
   - `src/browser.tsx`、`src/browser-start.tsx`、`src/style.css`
-- **风控核验、桌面端一键 Clash 覆写 YAML 与手机小火箭双栏桥接**：
-  - `src/risk-model.ts`（`buildDesktopMihomoAntiLeakYaml`、`buildDesktopDnsFixPrompt`）、`src/risk-verification.tsx`、`src/risk-verification.css`
+- **风控核验、网络环境 AI 配置提示词、桌面端一键 Clash 覆写 YAML 与手机小火箭双栏桥接**：
+  - `src/vps.tsx`（`buildAiProxyPrompt`）、`src/risk-model.ts`（`buildDesktopMihomoAntiLeakYaml`、`buildDesktopDnsFixPrompt`）、`src/risk-verification.tsx`、`src/risk-verification.css`
   - `src-tauri/src/risk_check.rs`、`src-tauri/src/risk_config_source.rs`
-- **用量分析（官方 API 美元等效花费 `$` 与缓存节省）**：
+- **额度小窗（Quota HUD）与用量分析（官方 API 美元等效花费 `$` 与缓存节省）**：
+  - `src/floating-monitor.tsx`、`src/floating-monitor.css`、`src-tauri/src/monitor_window.rs`、`src-tauri/src/identities/usage.rs`
   - `src/usage-model.ts`、`src/usage-model.test.ts`、`src/usage-statistics.tsx`、`src/usage-statistics.css`
 - **操作日志彻底关闭与养号卡片**：
   - `src/cleaner-activity.tsx`、`src/claude-cli-panel.tsx`、`src/warming-cards.tsx`、`src-tauri/src/identities/warming.rs`
 - **发布说明与主文档**：
-  - `docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md`、`README.md`、`README_EN.md`
+  - `docs/RELEASE_NOTES_0.2.5.md`、`docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md`、`README.md`、`README_EN.md`
 - **本轮本地备份与打包审计产物（均在 `.local/` 忽略目录内，切勿提交）**：
-  - `.local/artifacts/20261031T084338Z-3b7d1f2ab630482c9f01faa6f30e3e45/`（`Claude-Local_0.2.4_x64-setup.exe`、`SHA256SUMS.txt`、`privacy-audit.json`、`resource-manifest.json`）
-  - `.local/tasks/20261031-v0.2.4-release/`（`HANDOFF` 历史备份与 SHA-256 备份回执）
+  - `.local/artifacts/20261101T051704Z-c2d03423ff1946e1beb70aa1dc2e9138/`（`Claude-Local_0.2.5_x64-setup.exe`、`SHA256SUMS.txt`、`privacy-audit.json`、`resource-manifest.json`）
+  - `.local/tasks/20261101-v0.2.5-release/`（`HANDOFF` 历史备份与 SHA-256 备份回执）

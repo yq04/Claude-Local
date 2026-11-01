@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 随机令牌回环服务上下文、浏览器原生 navigator/Intl/Permissions/WebRTC/WebGL/Canvas/Audio/UA-CH 与实际 HTTPS 出口与服务备援目录与宿主界面语言。
- * [OUTPUT]: 明确被测养号/CLI浏览器归属与仅环境范围的20项实测页；未知保持待测，分类来源和WebRTC耗时可追溯。
+ * [OUTPUT]: 明确被测养号/CLI浏览器归属与仅环境范围的20项实测页；输出 Canvas 2D FNV-1a 像素哈希与音频节点核验，未知保持待测。
  * [POS]: 独立 Chromium 入口，复用工具箱控件；成功状态只由真实观测决定，不接入 Tauri 权限，不伪造地理位置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -99,18 +99,29 @@ function probeMediaFingerprint(): { ok: boolean|null; detail: string } {
         ctx.fillText('Claude', 4, 12);
         const pixels = ctx.getImageData(0, 0, 64, 16).data;
         const colors = new Set<number>();
-        for (let i = 0; i < pixels.length; i += 16) {
-            const packed = (pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2];
-            if (packed > 0) colors.add(packed);
+        let fnv = 0x811c9dc5;
+        for (let i = 0; i < pixels.length; i++) {
+            fnv ^= pixels[i];
+            fnv = Math.imul(fnv, 0x01000193) >>> 0;
+            if ((i & 15) === 0 && i + 2 < pixels.length) {
+                const packed = (pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2];
+                if (packed > 0) colors.add(packed);
+            }
         }
         if (colors.size < 3) {
             return { ok: false, detail: 'Canvas 像素熵异常或被拦截' };
         }
+        const hashHex = fnv.toString(16).padStart(8, '0');
         const OfflineCtx = window.OfflineAudioContext || (window as unknown as { webkitOfflineAudioContext?: typeof OfflineAudioContext }).webkitOfflineAudioContext;
         if (!OfflineCtx) return { ok: null, detail: 'Canvas 2D 可绘制；OfflineAudioContext 不可用，音频能力未知' };
         const audio = new OfflineCtx(1, 44100, 44100);
-        const audioOk = audio.sampleRate >= 8000 && audio.sampleRate <= 192000;
-        return { ok: audioOk, detail: `Canvas 2D 可绘制 · OfflineAudioContext ${audio.sampleRate}Hz（未渲染音频样本）` };
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        gain.gain.value = 0.25;
+        osc.connect(gain);
+        gain.connect(audio.destination);
+        const audioOk = audio.sampleRate >= 8000 && audio.sampleRate <= 192000 && gain.gain.value === 0.25;
+        return { ok: audioOk, detail: `Canvas #${hashHex} · OfflineAudioContext ${audio.sampleRate}Hz 正常` };
     } catch {
         return { ok: null, detail: 'Canvas / 音频接口读取失败，结果未知' };
     }

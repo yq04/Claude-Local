@@ -427,6 +427,9 @@ fn preferences_preserve_assets_and_block_both_geolocation_modes() {
         value["profile"]["content_settings"]["exceptions"]["geolocation_with_options"],
         serde_json::json!({})
     );
+    assert_eq!(value["dns_prefetching"]["enabled"], serde_json::json!(false));
+    assert_eq!(config::accept_languages("ja"), "ja");
+    assert_eq!(config::accept_languages("en-US"), "en-US,en");
     fs::remove_dir_all(root).unwrap();
 }
 #[test]
@@ -737,13 +740,13 @@ fn linux_platform_and_unknown_location_cannot_be_misreported_as_mac_or_disabled(
             .status,
         "ok"
     );
-    assert_ne!(
+    assert_eq!(
         checks
             .iter()
             .find(|c| c.title == "地理位置关闭")
             .unwrap()
             .status,
-        "ok"
+        "pending"
     );
 }
 

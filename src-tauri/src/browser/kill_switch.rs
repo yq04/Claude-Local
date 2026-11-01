@@ -161,6 +161,8 @@ pub(crate) fn quit_all_managed_profiles(app: &tauri::AppHandle) -> Vec<String> {
         closed.push(slot);
     }
     *state.quota_sync.lock().unwrap() = None;
+    state.last_observations.lock().unwrap().clear();
+    *state.host.lock().unwrap() = None;
     super::renew_session(app);
     closed
 }

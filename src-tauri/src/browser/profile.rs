@@ -99,6 +99,7 @@ pub fn preferences(
     for pointer in [
         "/intl",
         "/webrtc",
+        "/dns_prefetching",
         "/profile",
         "/profile/default_content_setting_values",
         "/profile/content_settings",
@@ -113,9 +114,9 @@ pub fn preferences(
         }
     }
     let lang = config.language(machine);
-    data["intl"]["accept_languages"] =
-        json!(format!("{lang},{}", lang.split('-').next().unwrap_or("en")));
+    data["intl"]["accept_languages"] = json!(super::config::accept_languages(&lang));
     data["intl"]["selected_languages"] = data["intl"]["accept_languages"].clone();
+    data["dns_prefetching"]["enabled"] = json!(false);
     data["webrtc"]["ip_handling_policy"] = json!("disable_non_proxied_udp");
     data["webrtc"]["multiple_routes_enabled"] = json!(false);
     data["webrtc"]["nonproxied_udp_enabled"] = json!(false);

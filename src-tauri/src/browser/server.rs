@@ -508,13 +508,23 @@ fn handle(
         };
         let state = app.state::<Browser>();
         let mut session = state.session.lock().unwrap();
-        if let Some(state) = session.as_mut().filter(|x| x.token == token) {
-            state.report = Some(report);
-            state.received_at = Some(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64,
+        if let Some(s) = session.as_mut().filter(|x| x.token == token) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            s.report = Some(report.clone());
+            s.received_at = Some(now);
+            let slot = s.slot.clone();
+            let cfg = s.config.clone();
+            drop(session);
+            state.last_observations.lock().unwrap().insert(
+                slot,
+                super::CachedObservation {
+                    config: cfg,
+                    report,
+                    received_at: now,
+                },
             );
             let _ = app.emit("browser-report", ());
             answer(stream, "200 OK", "application/json", b"{\"ok\":true}");
@@ -605,6 +615,8 @@ mod tests {
         let session = Some(super::super::Session {
             token: "new".into(),
             port: 0,
+            slot: "default".into(),
+            config: super::super::Config::default(),
             received_at: None,
             report: None,
         });

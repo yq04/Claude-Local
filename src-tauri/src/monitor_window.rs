@@ -225,9 +225,11 @@ fn enforce_monitor_geometry(window: &tauri::WebviewWindow, state: &MonitorWindow
     let _ = window.set_maximizable(false);
     let _ = window.set_resizable(false);
     let fixed = Size::Logical(target_logical_size(state));
+    let _ = window.set_min_size(None::<Size>);
+    let _ = window.set_max_size(None::<Size>);
+    let _ = window.set_size(fixed);
     let _ = window.set_min_size(Some(fixed));
     let _ = window.set_max_size(Some(fixed));
-    let _ = window.set_size(fixed);
 }
 
 fn position_top_right(app: &tauri::AppHandle, window: &tauri::WebviewWindow, width: f64) {
@@ -264,8 +266,20 @@ fn evaluate_and_apply_edge_snap(
     let scale = monitor.scale_factor();
     let area = monitor.work_area();
     let logical = target_logical_size(state);
-    let width_px = (logical.width * scale).round() as i32;
-    let height_px = (logical.height * scale).round() as i32;
+    let logical_w_px = (logical.width * scale).round() as i32;
+    let logical_h_px = (logical.height * scale).round() as i32;
+    let width_px = window
+        .outer_size()
+        .ok()
+        .map(|s| s.width as i32)
+        .unwrap_or(logical_w_px)
+        .max(logical_w_px);
+    let height_px = window
+        .outer_size()
+        .ok()
+        .map(|s| s.height as i32)
+        .unwrap_or(logical_h_px)
+        .max(logical_h_px);
     let snap_px = (SNAP_THRESHOLD_LOGICAL_PX * scale).round() as i32;
     let unsnap_px = (UNSNAP_THRESHOLD_LOGICAL_PX * scale).round() as i32;
     let edge_pad = (6.0 * scale).round() as i32;
@@ -350,14 +364,26 @@ fn apply_collapsed_transition(
         mem.state.collapsed = true;
         enforce_monitor_geometry(window, &mem.state);
 
-        let collapsed_w_px = (MONITOR_COLLAPSED_WIDTH * scale).round() as i32;
-        let collapsed_h_px = (MONITOR_COLLAPSED_HEIGHT * scale).round() as i32;
+        let collapsed_w_px = window
+            .outer_size()
+            .ok()
+            .map(|s| s.width as i32)
+            .unwrap_or((MONITOR_COLLAPSED_WIDTH * scale).round() as i32)
+            .max((MONITOR_COLLAPSED_WIDTH * scale).round() as i32);
+        let collapsed_h_px = window
+            .outer_size()
+            .ok()
+            .map(|s| s.height as i32)
+            .unwrap_or((MONITOR_COLLAPSED_HEIGHT * scale).round() as i32)
+            .max((MONITOR_COLLAPSED_HEIGHT * scale).round() as i32);
+        let edge_pad = (4.0 * scale).round() as i32;
         let min_y = area.position.y + 12;
         let max_y = (area.position.y + (area.size.height as i32) - collapsed_h_px - 12).max(min_y);
         let target_y = pos.y.clamp(min_y, max_y);
         let target_x = match dock_edge {
-            MonitorDockEdge::Left => area.position.x,
-            _ => (area.position.x + (area.size.width as i32) - collapsed_w_px).max(area.position.x),
+            MonitorDockEdge::Left => area.position.x + edge_pad,
+            _ => (area.position.x + (area.size.width as i32) - collapsed_w_px - edge_pad)
+                .max(area.position.x + edge_pad),
         };
         let _ = window.set_position(Position::Physical(PhysicalPosition {
             x: target_x,

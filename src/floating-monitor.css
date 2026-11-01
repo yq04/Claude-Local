@@ -161,9 +161,10 @@
 
 /* Edge-collapsed 52x138 vertical capsule */
 .monitor-hud-shell.is-collapsed {
-  padding: 8px 6px;
+  padding: 8px 5px;
   align-items: center;
   justify-content: space-between;
+  border-radius: 10px;
   cursor: pointer;
 }
 
@@ -178,6 +179,7 @@
   display: grid;
   gap: 5px;
   width: 100%;
+  box-sizing: border-box;
 }
 
 .monitor-collapsed-pill {
@@ -186,8 +188,10 @@
   gap: 1px;
   padding: 4px 2px;
   border-radius: 7px;
-  background: color-mix(in srgb, var(--card-elevated) 78%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--card-elevated) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.16);
 }
 
 .monitor-collapsed-pill.tone-ok {
@@ -414,6 +418,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding: 2px 3px;
   flex-shrink: 0;
   cursor: move;
 }
@@ -423,11 +428,29 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
+  flex-shrink: 0;
+  max-width: 62%;
+}
+
+.monitor-hud-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: var(--font-sans);
+  color: var(--local-accent);
+  background: color-mix(in srgb, var(--local-accent) 14%, var(--card-elevated));
+  border: 1px solid color-mix(in srgb, var(--local-accent) 28%, transparent);
+  flex-shrink: 0;
 }
 
 .monitor-hud-account-name {
   font-size: 12.5px;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--foreground);
   white-space: nowrap;
   overflow: hidden;
@@ -445,19 +468,47 @@
 .monitor-hud-badges {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 5px;
-  flex-shrink: 0;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .monitor-hud-badge {
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 5px;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
   background: var(--local-accent-soft);
   color: var(--local-accent);
-  border: 1px solid color-mix(in srgb, var(--local-accent) 28%, transparent);
+  border: 1px solid color-mix(in srgb, var(--local-accent) 30%, transparent);
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.monitor-hud-account-email {
+  font-size: 10px;
+  letter-spacing: -0.015em;
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.monitor-hud-route-pill {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--muted) 75%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* Token Monitor 2-column side-by-side quota cards (5h | 7d) */
@@ -474,8 +525,9 @@
   min-width: 0;
   padding: 6px 8px;
   border-radius: 9px;
-  background: color-mix(in srgb, var(--card-elevated) 68%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  background: color-mix(in srgb, var(--card-elevated) 76%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.18);
 }
 
 .monitor-limit-window.tone-warn {
@@ -666,10 +718,27 @@
 }
 
 .monitor-session-cache {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
   color: var(--muted-foreground);
   font-size: 10px;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.monitor-session-cache strong {
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-weight: 650;
+}
+
+.monitor-session-cache em {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--hud-ok);
+  font-weight: 600;
 }
 
 .monitor-token-composition {
@@ -798,8 +867,9 @@
   min-width: 0;
   padding: 5px 7px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--card-elevated) 72%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  background: color-mix(in srgb, var(--card-elevated) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.16);
 }
 
 .monitor-usage-label {

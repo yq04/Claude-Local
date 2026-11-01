@@ -78,11 +78,16 @@ export function WarmingLibrary({cards, runtime, activity, blocked, promotionBloc
       const res = await invoke<WarmingProbeCheckResult>('identities_warming_probe_check', {id: card.id}).catch(() => null);
       if (res?.state) onProbeState?.(res.state);
       if (res?.status === 'mismatch') {
+        const regCountry = res.registered_country || card.registered_country || '-';
+        const curCountry = res.current_country || '-';
+        const regTz = res.registered_timezone || card.registered_timezone || '';
+        const curTz = res.current_timezone || '';
+        const showTz = regCountry === curCountry && Boolean(regTz || curTz);
         setMismatchPrompt({
           card,
           mode,
-          registeredCountry: res.registered_country || card.registered_country || '-',
-          currentCountry: res.current_country || '-',
+          registeredCountry: showTz && regTz ? `${regCountry} (${regTz})` : regCountry,
+          currentCountry: showTz && curTz ? `${curCountry} (${curTz})` : curCountry,
         });
         return;
       }
@@ -179,7 +184,7 @@ export function WarmingLibrary({cards, runtime, activity, blocked, promotionBloc
               <span className="warming-note" title={privacyMask ? undefined : card.note || undefined}>{card.note ? privacyMask ? t('warming.hiddenNote') : card.note : t('warming.noNote')}</span>
             </div>
           </div>
-          <div className="identity-card-footer"><Button variant="secondary" size="small" disabled={blocked || busy || checkingId === card.id} data-warming-open onClick={() => void requestOpen(card, card.stage === 'unregistered' ? 'verify' : 'claude_ai')}>{t(card.stage === 'unregistered' ? 'warming.verifyRegister' : 'warming.openClaude')}</Button></div>
+          <div className="identity-card-footer"><Button variant="secondary" size="small" loading={checkingId === card.id} disabled={blocked || busy || checkingId === card.id} data-warming-open onClick={() => void requestOpen(card, card.stage === 'unregistered' ? 'verify' : 'claude_ai')}>{t(card.stage === 'unregistered' ? 'warming.verifyRegister' : 'warming.openClaude')}</Button></div>
         </article>;
       })}
     </div>

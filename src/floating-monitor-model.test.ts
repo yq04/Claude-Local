@@ -13,6 +13,7 @@ import {
   formatCompactCount,
   formatCompactExhaustionEta,
   formatExhaustionEta,
+  formatMonitorCacheStats,
   formatVelocityLabel,
   formatWindowResetLabel,
   monitorTokenComposition,
@@ -47,8 +48,25 @@ describe('floating-monitor-model', () => {
     expect(formatCompactCount(845)).toBe('845')
     expect(formatCompactCount(1_420)).toBe('1.4k')
     expect(formatCompactCount(142_600)).toBe('143k')
+    expect(formatCompactCount(999_600)).toBe('1M')
     expect(formatCompactCount(2_340_000)).toBe('2.3M')
+    expect(formatCompactCount(6_080_000_000)).toBe('6.1B')
     expect(formatVelocityLabel(1_420)).toBe('1.4k tok/m')
+    expect(formatMonitorCacheStats(undefined)).toEqual({ hitPctText: '—', reuseRatioText: null })
+    expect(
+      formatMonitorCacheStats({
+        available: true,
+        tokens5hTotal: 5_763_042,
+        tokensPerMin: 336_000,
+        requests5h: 20,
+        input5h: 42,
+        output5h: 106_000,
+        cacheWrite5h: 457_000,
+        cacheRead5h: 5_200_000,
+        cacheHitPct: 92,
+        jsonlRevision: 'r1',
+      }),
+    ).toEqual({ hitPctText: '91.9%', reuseRatioText: '11.4×' })
   })
 
   test('formats exhaustion ETA in both Chinese and English', () => {

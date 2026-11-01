@@ -1,5 +1,5 @@
 // [INPUT]: 冻结的显式代理、ipwho.is/ipapi.co 地理信息、可选固定 IPQuery 分类与版本化浏览器观测。
-// [OUTPUT]: 同 IP 布尔分类/受控失败诊断、有界 WebRTC 原因/耗时与兼容核验；缺少观测保持 pending。
+// [OUTPUT]: 同 IP 布尔分类/受控失败诊断、本机与网页上报平台/CPU对比、去重有界 WebRTC 原因/耗时与探针核验；缺少观测保持 pending。
 // [POS]: 环境核验边界；WebRTC 仅为无 STUN 本地候选观察，不证明 DNS 或公网 STUN 状态。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -336,6 +336,24 @@ impl Report {
                 .unwrap_or(true)
     }
 }
+fn contains_ascii_word(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let nbytes = needle.as_bytes();
+    if nbytes.is_empty() || nbytes.len() > bytes.len() {
+        return false;
+    }
+    for start in 0..=(bytes.len() - nbytes.len()) {
+        if &bytes[start..start + nbytes.len()] == nbytes {
+            let prev_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+            let next_idx = start + nbytes.len();
+            let next_ok = next_idx == bytes.len() || !bytes[next_idx].is_ascii_alphanumeric();
+            if prev_ok && next_ok {
+                return true;
+            }
+        }
+    }
+    false
+}
 pub fn is_hosting_exit(exit: &Exit) -> bool {
     if exit.hosting == Some(true) {
         return true;
@@ -345,10 +363,14 @@ pub fn is_hosting_exit(exit: &Exit) -> bool {
         exit.isp.to_ascii_lowercase(),
         exit.asn.as_deref().unwrap_or("").to_ascii_lowercase()
     );
-    const HOSTING_KEYWORDS: [&str; 26] = [
+    const WORD_KEYWORDS: [&str; 14] = [
+        "aws", "gcp", "azure", "ovh", "m247", "vps", "idc", "xtom", "dmit", "cera", "kurun",
+        "nocix", "buyvm", "v.ps",
+    ];
+    const SUBSTRING_KEYWORDS: [&str; 33] = [
         "amazon",
-        "aws",
         "google cloud",
+        "microsoft",
         "digitalocean",
         "linode",
         "akamai",
@@ -356,8 +378,6 @@ pub fn is_hosting_exit(exit: &Exit) -> bool {
         "choopa",
         "constant company",
         "hetzner",
-        "ovh",
-        "m247",
         "contabo",
         "leaseweb",
         "datacamp",
@@ -370,10 +390,29 @@ pub fn is_hosting_exit(exit: &Exit) -> bool {
         "tencent",
         "zenlayer",
         "sharktech",
+        "multacom",
+        "psychz",
+        "quadranet",
+        "colocrossing",
+        "scaleway",
+        "upcloud",
+        "kamatera",
+        "bandwagon",
+        "it7 networks",
+        "hostwinds",
+        "racknerd",
+    ];
+    const EXTRA_KEYWORDS: [&str; 6] = [
+        "frantech",
+        "cloudie",
+        "ceranetworks",
         "datacenter",
         "hosting",
+        "server",
     ];
-    HOSTING_KEYWORDS.iter().any(|kw| text.contains(kw))
+    WORD_KEYWORDS.iter().any(|kw| contains_ascii_word(&text, kw))
+        || SUBSTRING_KEYWORDS.iter().any(|kw| text.contains(kw))
+        || EXTRA_KEYWORDS.iter().any(|kw| contains_ascii_word(&text, kw))
 }
 #[derive(Serialize)]
 pub struct Check {
@@ -486,8 +525,13 @@ pub fn checks(
                     && (machine.platform == "linux" || r.platform_version == machine.version)
             }),
             format!(
-                "{} {} · {} 核；浏览器版本 {} · {} 核",
-                machine.platform,
+                "本机：{} {} · {} 核；网页上报：{} · {} 核",
+                match machine.platform.as_str() {
+                    "windows" => "Windows",
+                    "macos" => "macOS",
+                    "linux" => "Linux",
+                    other => other,
+                },
                 machine.version,
                 machine.cores,
                 report
@@ -508,7 +552,13 @@ pub fn checks(
         check(
             "privacy.geolocation",
             "地理位置关闭",
-            report.map(|r| machine.location_enabled == Some(false) && r.geolocation == "denied"),
+            report.and_then(|r| {
+                if r.geolocation != "denied" {
+                    Some(false)
+                } else {
+                    machine.location_enabled.map(|enabled| !enabled)
+                }
+            }),
             format!(
                 "机器定位：{}；网页权限：{}",
                 match machine.location_enabled {
@@ -553,7 +603,11 @@ pub fn checks(
                 .and_then(|r| r.webrtc_detail.as_deref())
                 .filter(|s| !s.is_empty())
             {
-                format!("无 STUN 的短时本地候选观察；不覆盖 DNS 或公网 STUN：{detail}")
+                if detail.starts_with("无 STUN") {
+                    detail.to_string()
+                } else {
+                    format!("无 STUN 的短时本地候选观察；不覆盖 DNS 或公网 STUN：{detail}")
+                }
             } else {
                 "尚无完整的本地候选观察；此项不测 DNS 或公网 STUN。".into()
             },
@@ -604,6 +658,11 @@ pub fn checks(
                         || r.client_hints_ok == Some(false)
                     {
                         "部分防封探针异常"
+                    } else if r.tz_offset_ok == Some(true)
+                        && r.media_fingerprint_ok == Some(true)
+                        && r.client_hints_ok == Some(true)
+                    {
+                        "时区偏移 / Canvas / 音频 / UA-CH 已核验正常"
                     } else {
                         "时区偏移 / Canvas / UA-CH 待核验或正常"
                     };

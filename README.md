@@ -1,6 +1,6 @@
 <!--
-[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.2.4 multi-account Smart Relay & WebRTC/Clash anti-leak hardening, 0.2.3 security & warming lifecycle protection, and synthetic-data previews.
-[OUTPUT]: Bilingual-linked flagship project presentation, architectural lineage, feature matrix, visual tour, installation workflow and runtime boundaries.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.2.5 end-to-end anti-ban & Browser/System/Network/KYC hardening, persistent browser verification state, real Canvas FNV-1a fingerprinting, 4D cross-account sanitization, Free warming lifecycle protection, Smart Relay rotation, and HUD/Usage analytics polish.
+[OUTPUT]: Bilingual-linked flagship project presentation foregrounding anti-ban engineering, isolated Fingerprint Chromium, KYC/WebRTC/DNS/IPv6 protection, zero-kill encrypted vault switching, and full-lifecycle warming cards.
 [POS]: Primary repository introduction (Simplified Chinese default, linked to README_EN.md).
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
 -->
@@ -11,11 +11,11 @@
 
 # Claude-Local
 
-**面向 Windows 10 / 11 x64 的 Claude 多账号加密工作台、智能接力轮换、Token 美元等效花费分析、5h 自动续杯调度与指纹隔离浏览器**
+**面向 Windows 10 / 11 x64 的 Claude 多账号全链路防关联工作台：硬件级指纹隔离伴生浏览器 · 跨域 KYC / WebRTC / DNS / IPv6 防泄露工程 · 零强杀四维消毒加密切号 · 全生命周期 Free 养号与智能接力**
 
 基于开源项目 [CCBaga](https://github.com/liseami/CCBaga)（[@liseami](https://github.com/liseami)）二次开发并独立维护，保留原贡献者版权与 [MIT 许可](LICENSE) · 纯本地单机优先（Local-First） · 零云端凭据托管 · 绝不强杀运行中的 `claude.exe`
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.2.4-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.4)
+[![Latest Release](https://img.shields.io/badge/Release-v0.2.5-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.5)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,13 +27,13 @@
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.4/Claude-Local_0.2.4_x64-setup.exe"><strong>⬇️ 下载 v0.2.4 安装包 (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.5/Claude-Local_0.2.5_x64-setup.exe"><strong>⬇️ 下载 v0.2.5 安装包 (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.4"><strong>✨ v0.2.4 Release 页面</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.5"><strong>✨ v0.2.5 Release 页面</strong></a>
   ·
-  <a href="#-界面与核心功能全览"><strong>🖼️ 界面预览</strong></a>
+  <a href="#-为什么选择-claude-local直击多账号风控四大痛点"><strong>🔥 四大防封壁垒</strong></a>
   ·
-  <a href="#-与-ccbaga-的来源关系与独立演进"><strong>🧬 来源与演进</strong></a>
+  <a href="#️-核心架构与界面全览"><strong>🖼️ 核心功能全览</strong></a>
   ·
   <a href="#-架构设计与数据安全边界"><strong>🛡️ 安全边界</strong></a>
 </p>
@@ -44,13 +44,14 @@
 
 ## 📖 目录
 
-- [✨ 核心特色一览](#-核心特色一览)
-- [🖼️ 界面与核心功能全览](#️-界面与核心功能全览)
-  - [1. 身份管理工作台与 Free 养号专区](#1-身份管理工作台与-free-养号专区identity-management--warming-cards)
-  - [2. 用量分析与 Token 构成](#2-用量分析与-token-构成usage-analytics)
-  - [3. 新一代 Token Monitor 风格桌面悬浮监控窗（HUD）](#3-新一代-token-monitor-风格桌面悬浮监控窗hud)
-  - [4. 身份绑定的隔离浏览环境与防封实测](#4-身份绑定的隔离浏览环境与防封实测browser-environment)
-  - [5. 快速配置、网络诊断与风控 KYC 核验](#5-快速配置网络诊断与风控-kyc-核验quick-setup-network--risk-verification)
+- [🔥 为什么选择 Claude-Local？（直击多账号风控四大痛点）](#-为什么选择-claude-local直击多账号风控四大痛点)
+- [✨ 八大核心能力矩阵](#-八大核心能力矩阵)
+- [🖼️ 核心架构与界面全览](#️-核心架构与界面全览)
+  - [1. 硬件级自洽的防关联伴生浏览器、20 项真机探针与断流急停（Kill-Switch）](#1-硬件级自洽的防关联伴生浏览器20-项真机探针与断流急停kill-switch)
+  - [2. 跨域风控 / Persona KYC 核验、一键 Clash 防漏覆写与手机小火箭同源桥接](#2-跨域风控--persona-kyc-核验一键-clash-防漏覆写与手机小火箭同源桥接)
+  - [3. 多身份加密保险库、跨账号四维消毒与全生命周期 Free 养号专区](#3-多身份加密保险库跨账号四维消毒与全生命周期-free-养号专区)
+  - [4. 电脑/网络环境对齐、多账号智能接力与进程内 5h 自动续杯](#4-电脑网络环境对齐多账号智能接力与进程内-5h-自动续杯)
+  - [5. 配套效率看板：桌面额度小窗（HUD）与本地用量价值分析](#5-配套效率看板桌面额度小窗hud与本地用量价值分析)
 - [🧬 与 CCBaga 的来源关系与独立演进](#-与-ccbaga-的来源关系与独立演进)
 - [📦 获取、安装与版本记录](#-获取安装与版本记录)
 - [⚙️ 运行前置条件与源码构建](#️-运行前置条件与源码构建)
@@ -60,99 +61,106 @@
 
 ---
 
-## ✨ 核心特色一览
+## 🔥 为什么选择 Claude-Local？（直击多账号风控四大痛点）
 
-Claude-Local 专为在 Windows 桌面端高频使用 **Claude Code CLI** 与 **Claude Pro / Max / 待转正养号卡片** 多账号的开发者打造，将身份隔离、防泄露保护、额度观测、Token 分析与环境核验整合为一套本地工作台：
+在 Windows 桌面端同时维护多个 **Claude Code CLI** 与 **Claude Pro / Max / 待转正 Free** 账号时，绝大多数封号并非因为“额度用多了”，而是栽在 **跨域名出口分裂、底层网络泄露、劣质指纹伪装穿帮、以及切号本地残留污染** 四大隐蔽陷阱上。Claude-Local 从底层工程上逐一闭环解决：
 
-| 核心模块 | 解决痛点与能力亮点 |
+| 真实风控痛点 | 传统做法为何频繁翻车 | Claude-Local 的系统级解决方案 |
+| :--- | :--- | :--- |
+| **1. 主站、Persona KYC、Stripe 绑卡与 Sentry 遥测出口分裂** | 代理规则只写了 `claude.ai`，结果触发 Persona 实名认证（`withpersona.com`）、Stripe 3DS 支付（`stripe.network`）或前端 Sentry 遥测（`sentry.io`）时走了直连或机场机房节点；或者拿手机用蜂窝流量/异地节点扫电脑上的 KYC 二维码，秒触发欺诈封号。 | **跨域同源核验 + 桌面/手机双端家宽桥接**：内置 `claude.ai` 与 `withpersona.com` 真实出口一致性实测；提供一键 **Clash/Mihomo 全局防漏覆写 YAML**（覆盖 Claude / Persona / Stripe / Sentry / WorkOS / Cloudflare 全域名同路锁死 + `ipv6: false` 防双栈旁路）；内置 **手机小火箭（Shadowrocket）同源家宽扫码桥接**，让手机与电脑 100% 共用同一静态住宅 IP 完成 KYC。 |
+| **2. WebRTC STUN 穿透、Windows 双网卡明文 DNS 抢答与语言头穿帮** | 即使开了系统代理或普通 TUN，Windows 多宿主智能名称解析（SMHNR）仍会从物理网卡抢发明文 DNS；WebRTC 会探测物理网卡局域网/公网 IPv6；浏览器请求头残留 `en-US,zh-CN;q=0.9` 直接暴露真实区域。 | **内核三重强锁 + 严格路由体检 + 语言子标签净化**：伴生浏览器自动向每个资料写入 Google 官方 `WebRTC Network Limiter` 同款三重策略（禁非代理 UDP + 禁多路由枚举）与 `dns_prefetching.enabled = false`；规范注入 `--accept-lang=en-US,en` 杜绝中文子标签残留；自动审计本机 `tun.strict-route: true` 与远程加密 DoH。 |
+| **3. 劣质防关联插件“假面具”硬件特征自相矛盾** | 普通反指纹插件强行把 UA 改成 macOS 或随机向 Canvas 涂抹噪点，但底层 `navigator.platform` 仍是 `Win32`、WebGL 仍暴露 `Direct3D11`、CPU 核数在 Worker 线程不一致，被 Cloudflare Turnstile 直接判定为高危脚本环境。 | **Fingerprint Chromium 硬件级自洽 + 按需防泄露断路器（Kill-Switch）**：每个身份/养号卡独占 `profile/` 目录与 32 位确定性种子；主线程、High-Entropy UA-CH、CPU 核数与真实 D3D11/WebGL 显卡渲染 100% 自洽；内置 **20 项真机探针（含 Canvas 2D FNV-1a 像素哈希与同 IP 机房分类）**；当检测到系统 TUN 掉线（5s）或出口国家漂移（60s）时，**Kill-Switch 自动保护性关闭浏览器**，阻断直连裸奔。 |
+| **4. CLI 切号残留污染与强杀进程丢代码** | 直接替换 `.claude.json` 或用网关半途热换 Token，导致旧账号的设备 ID、缓存路径、组织 UUID 以及 `.jsonl` 会话中旧账号加密的 `thinking` 签名直接发给新账号，引发同人多号关联连坐。 | **零强杀进程锁 + 1,500+ 行跨账号四维消毒引擎**：切号前强制检查运行中的 `claude.exe`（绝不强杀终端会话），在加密 SQLite + `BAGAID01`（Zstd + AES-256-GCM）归档间执行原子切换，并自动对跨账号缓存、代理、仓库路径与历史会话签名执行四维消毒。 |
+
+---
+
+## ✨ 八大核心能力矩阵
+
+| 核心支柱 | 工程实现与能力亮点 |
 | :--- | :--- |
-| **🔐 多身份加密保险库与安全切换** | 保留 `BAGAID01` / `.baga`（Zstandard + AES-256-GCM）加密归档与 SQLite `user_version = 3` 架构；切号前强制执行 `claude.exe` 进程锁检查（绝不暴力强杀终端会话），自动执行跨账号缓存/代理/仓库路径四维消毒与无损合并；支持 **全链路 `.clbackup` 口令加密备份（覆盖加密身份库、浏览器种子、养号卡片与手动订阅元数据）** 与隔离救援副本恢复。 |
-| **🔀 多账号智能接力与轮换（Smart Relay）** | 借鉴 [magpie](https://github.com/yetone/magpie) 的多账号路由设计（默认关闭，支持在身份管理顶栏或软件设置中按需开启）；提供 **智能（三级余量池 + 最快重置优先）/ 按顺序 / 轮流 / 用量少优先 / 重置前用完** 五大路由策略、**被限流时保持原位或沉底**、**会话保持与换号阈值（90%–100%）**，以及 **首选账号（Preferred）冷却恢复后滞回切回提示** 与一键安全接力。 |
-| **🌱 Free 养号卡片与全生命周期防护** | 在正式 CLI 身份库下方提供独立的 **Free 养号卡专区**（每卡独占浏览器槽位与确定性种子）；支持 **首次核验自动锚定常驻国家/时区**、**打开前跨国漂移确认拦截**、**阶段防封 SOP 折叠指南**（待注册 / 过 KYC 72h 观察期 / 日常轻聊 / Pro 转正），以及保留原浏览器槽位与种子的无损转正 Pro；养号后支持在任意身份卡菜单一键返回 CLI 浏览器或直达 `claude.ai` / 官方用量页。 |
-| **🌐 隔离伴侣浏览器与 WebRTC / 断路器双防线** | 为每个身份与养号卡绑定独立 Chromium 资料目录与确定性指纹种子；**`v0.2.4` 内置 Google 官方 `WebRTC Network Limiter` 同款三重 `Preferences` 强锁（`disable_non_proxied_udp` + 禁多路由枚举 + 禁非代理 UDP）与 `--enforce-webrtc-ip-permission-check`**；配合 **按需无阻断防泄露断路器（Kill-Switch）**（监测 5s 系统 TUN 掉线与 60s 出口国家漂移，异常时保护性关闭受管浏览器并点亮托盘/横幅提醒，**全程绝不中断 `claude.exe`**）。 |
-| **🛡️ 风控 / KYC 核验与一键 Clash 覆写配置** | 独立「风控验证」工作台提供本机静态防漏体检与跨域真实出口实测、**桌面端 Clash Verge / Mihomo 防 WebRTC / DNS / QUIC 泄露一键全局覆写配置（`.yaml`，含 STUN `3478/19302/5349` 与 UDP `443` 阻断、`198.18.0.0/15` Fake-IP 封锁、`:7899` 独立 TCP 监听及全域名同路路由）**，以及严格限定 RFC1918 局域网的手机小火箭（Shadowrocket / Clash Mi / Stash / sing-box）扫码同源桥接。 |
-| **📊 Token 用量与官方 API 美元等效花费（`$`）** | 本地去重账本展示 **未缓存输入、输出、缓存写入、缓存读取** 四类 Token，以及按 Anthropic 官方 API 单价折算的 **API 等效花费（`$`）、缓存节省（`$`）、缓存命中率（含缓存复用倍数）与日均/时均花费**；支持全部模型与 Effort 档位美元花费明细、动态账号筛选、IANA/DST 时区与 TSV 导出。 |
-| **🖥️ 桌面悬浮监控小窗（HUD）** | 使用与用量页相同的账本，按当前账号显示 **滚动近 5 小时 Token 构成、近 10 分钟平均速率、去重响应与缓存命中率**；支持展开、紧凑与侧边胶囊三态，以及置顶、位置锁定、边缘磁吸、贴边自动隐藏、50%–100% 透明度和主题/壁纸同步。 |
-| **⏱️ 进程内原生 5h 自动续杯调度** | 由 Rust 进程内唯一调度器驱动，支持自定义生效时段（如 `08:00–23:00`）、主力号阈值联动与逐账号阶梯退避；严格校验新鲜 `new_5h_confirmed` 服务端窗口，无需注册 Windows 系统服务或计划任务，最小化到托盘保持工作、退出软件即刻停止。 |
-| **🧭 被动额度同步与连接修复队列** | 默认以只读方式被动监测 CLI `/usage` 缓存与 Python 单写者额度账本，**零后台 OAuth 轮询、零 `.claude.json` 写入**；支持高消耗速率温和提示、跨槽位直接同步当前 CLI 订阅日期与重置次数，并将授权失效或路由异常的账号集中归入「连接修复队列」。 |
+| **🌐 指纹隔离伴生浏览器与 20 项防封实测** | 每身份与养号卡独占 Chromium 资料目录与确定性种子；内置 **WebRTC 三重强锁、禁 DNS 预取、语言子标签净化、D3D11/WebGL/CPU/UA-CH 硬件自洽、Canvas 2D FNV-1a 像素哈希与 WebAudio 实测、同 IP 机房（Hosting）分类核验**；**`v0.2.5` 支持关闭浏览器或跨菜单切页后按 `(槽位, 配置)` 自动保留 10 项核验绿勾与机器出口结果**。 |
+| **⚡ 伴生浏览器防泄露断路器（Kill-Switch）** | 按需激活（无受管浏览器运行时零开销）：后台以 **5s 周期监测系统 TUN 虚拟网卡掉线**、**60s 周期监测出口国家漂移**；一旦异常立即优雅关闭全部受管伴生浏览器并点亮托盘/横幅红色告警，恢复网络后一键重开，**全程绝不中断正在运行的 `claude.exe` 终端会话**。 |
+| **🛡️ 跨域 KYC 核验、桌面 Clash 覆写与手机扫码桥接** | 第 1 步进页自动审计本机远程 DNS 锁、`strict-route` 与 KYC 分流配置，第 2 步实测比对 `claude.ai` 与 `withpersona.com` 真实出口 IP 及家宽属性；提供 **桌面端一键 Clash/Mihomo 防漏覆写 YAML（含 `ipv6: false`、封锁 STUN/QUIC/Fake-IP、`:7899` 独立监听与全域名同源规则）** 及 **手机小火箭（Shadowrocket / Clash Mi / Stash / sing-box）双栏扫码桥接**。 |
+| **🔐 多身份加密保险库与跨账号四维消毒** | 100% 兼容 `BAGAID01` / `.baga`（Zstandard + AES-256-GCM）与 SQLite `user_version = 3`；切号前执行 `claude.exe` 进程锁保护，自动清理跨账号缓存、代理配置、项目路径与 `.jsonl` 历史签名残留；支持涵盖 **加密身份库 + 浏览器种子 + 养号卡片 + 手动订阅记录** 的全链路 `.clbackup` 口令加密备份与隔离救援恢复。 |
+| **🌱 Free 养号卡片专区与全生命周期守护** | 独立于 CLI 正式身份库的 **Free 养号专区**（支持 `待注册 → 已过 KYC → Free 养号中 → Pro 待转正` 四阶段与自然日 `Day N` 追踪）；首次实测通过自动锁定常驻国家与 IANA 时区，后续打开前若检测到跨国或同国跨时区漂移自动弹窗拦截；内置阶段化防封 SOP 指南，升级 Pro 后一键零重绑无损转正为 CLI 身份。 |
+| **🔀 多账号智能接力与轮换（Smart Relay）** | 借鉴 [magpie](https://github.com/yetone/magpie) 的顺位评估模型（默认关闭，按需开启）；支持 **智能（三级余量池 + 最快重置优先）/ 按顺序 / 轮流 / 余量优先 / 重置前用完** 五大策略、限流顺位保持或沉底、首选主力号滞回恢复提醒与一键安全切号接力。 |
+| **⏱️ 进程内原生 5h 自动续杯调度** | 由 Rust 进程内唯一调度器驱动，支持自定义生效时段（如 `08:00–23:00`）、主力号阈值预热与逐账号阶梯退避；严格校验服务端 `new_5h_confirmed` 窗口锚点，不注册任何 Windows 后台服务或计划任务，退出软件即刻停止。 |
+| **🖥️ 桌面额度小窗（HUD）与本地用量价值分析** | 配套提供三态桌面悬浮小窗（展开 / 紧凑 / 侧边磁吸自动隐藏胶囊，展示 5h/7d 剩余额度、耗尽预估 ETA、近 10 分钟 `tok/m` 速率与真实 5h 四类 Token 缓存命中率）及本地去重账本仪表盘（按官方 API 单价折算美元等效花费 `$`、缓存节省 `$` 与模型/Effort 分布）。 |
 
 ---
 
-## 🖼️ 界面与核心功能全览
+## 🖼️ 核心架构与界面全览
 
-> **截图版本与隐私说明**：用量页截图为 `Claude-Local v0.2.2`；其他页面仍为明确标注的 `v0.2.0` 历史界面示例，当前功能以文字、[0.2.4 发布说明](docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md)、[0.2.3 发布说明](docs/RELEASE_NOTES_0.2.3_SECURITY.md) 与 [0.2.2 发布说明](docs/RELEASE_NOTES_0.2.2_USAGE.md) 为准。截图来自隔离环境下的真实前端，账号、组织、用量与 CLI 版本均为**合成演示数据**；邮箱仅使用保留域名 `@example.invalid` 并启用隐私遮罩，不含真实凭据、代理地址或个人路径。
+> **截图版本与隐私说明**：界面截图采集自隔离环境下的真实前端，账号、组织、用量与 CLI 版本均为**合成演示数据**；邮箱仅使用保留域名 `@example.invalid` 并启用隐私遮罩，不含任何真实凭据、代理地址或个人路径。最新 `v0.2.5` 增强详见上方能力表与 [0.2.5 发布说明](docs/RELEASE_NOTES_0.2.5.md)。
 
-### 1. 身份管理工作台、智能接力与 Free 养号专区（Identity Management, Smart Relay & Warming Cards）
+### 1. 硬件级自洽的防关联伴生浏览器、20 项真机探针与断流急停（Kill-Switch）
 
-![Claude-Local 0.2.0 身份管理工作台](docs/screenshots/0.2.0/identity-management.png)
+![Claude-Local 浏览环境](docs/screenshots/0.2.0/browser-environment.png)
 
-- **一体化 `30px` 顶部胶囊工具栏**：右上角集成 `[• 自动续杯 · 已开 | 08:00–23:00]`、`[• 智能接力 | 策略]`（默认关闭，按需开启）、`[• 悬浮监控窗]`、`[↻ 同步本地额度]` 与 `[⋯]` 更多操作菜单（收纳多账号智能接力与轮换、在线额度批次查询、自动续杯参数配置与连接修复队列）；操作进度面板点击「关闭记录」即可彻底收起隐藏。
-- **多账号智能接力与轮换（`v0.2.4` 新增，默认关闭）**：
-  - 平铺展示全部账号的 `5h / 7d` 已用进度与状态徽章（`当前` / `首选` / `下一顺位`），支持勾选轮换池与设定首选主力号；
-  - 提供 `智能`、`按顺序`、`轮流`、`用量少的优先`、`重置前用完` 五种路由策略，配合限流顺位策略、会话保持与 `90%–100%` 阈值，在额度触顶或首选号恢复时给出醒目横幅与一键切换入口。
-- **`180×286` 专属身份工牌与快捷浏览器入口**：当前激活身份固定置顶并带顶部呼吸绿光；`PRO` / `MAX` 徽章右侧直观展示 **`MM/DD` 订阅续订或手动到期日**；卡片菜单与额度详情内支持一键 **「进入 Claude.ai」**、**「打开官方用量页」** 与养号后 **「返回 CLI 浏览器」**。
-- **独立的「待转正 Free 养号卡片」专区**：
-  - 每张养号卡拥有独立浏览器槽位与确定性种子，支持 `待注册 → 已过 KYC → Free 养号中 → Pro 待转正` 四阶段与本地自然日 `Day N` 追踪；养号操作日志直接内嵌于「养号」专区，普通养号网页操作绝不中断运行中的 `claude.exe` 或篡改当前 CLI 身份指针。
-  - **常驻国家/时区锁定与打开前防漂移核验（`v0.2.3`）**：首次完成浏览器核验自动锁定常驻国家与时区；后续打开前若检测到出口国家发生跨国漂移，自动弹窗拦截确认并在卡片环境行显示紧凑漂移徽章。
-  - **阶段防封 SOP 折叠指南与零重绑转正（`v0.2.3`）**：新建/编辑弹窗底部内嵌阶段化防封操作指南（SOP）；网页升级 Pro 后支持一键转正为正式 CLI 身份，完整继承原浏览器槽位、种子、Cookie 与订阅日期。
-- **「联动浏览器」切号自动打开验证页**：勾选右上角「联动浏览器」后，点击任意备用身份的「切换」按钮，完成本地身份切换后会**自动启动或重开该账号专属的内置隔离浏览器并打开实测与登录验证页**。
+- **双上下文清晰归属与按需启动**：顶栏明确区分「当前 CLI 身份」与「已选浏览器资料（CLI 身份或养号卡）」，支持一键「重新打开实测页」、「正常退出浏览器」与「返回当前 CLI 浏览器并核验」；日常启动主程序绝不后台自启浏览器。
+- **10 大类 / 20 项硬件与网络深度核验（`v0.2.5` 升级）**：
+  - **网络与出口层**：核验目标地区网络出口、浏览器与机器出口 IP 一致性、同 IP 机房（Hosting）/ ISP 住宅属性分类（`api.ipquery.io` 词边界精准识别）、以及分阶段无 STUN WebRTC 本地候选观察。
+  - **区域与时钟层**：核验网页 IANA 时区、出口时区与本机系统时区三方对齐，验证 `Intl` 时区偏移与本地时钟一致性，核验网页语言列表纯净度（`--accept-lang=en-US,en` 无次选中文残留）与地理位置权限关闭（`denied`）。
+  - **硬件与反自动化层**：核验本机与网页上报的操作系统内核版本及 CPU 逻辑核数一致性、Chromium 引擎版本、`navigator.webdriver = false` 隐藏状态、真实 D3D11/ANGLE 硬件显卡渲染器（拦截 `SwiftShader` 等软件光栅化）、桌面端 UA-CH 与屏幕色深（`≥24-bit`），以及 **Canvas 2D FNV-1a 真实像素指纹哈希（`Canvas #xxxxxxxx`）与 `OfflineAudioContext` 音频节点图实测**。
+- **跨菜单与关窗自动保留实测结果（`v0.2.5` 新增）**：实测通过后，即使关闭伴生浏览器、切换左侧菜单页面或执行日常图片/脚本缓存清理，10 项绿勾（`✓ 检测通过`）与机器出口结果依然按 `(槽位, 配置)` 完整保留，仅在修改指纹设置、深度重置资料或触发断路器时自动失效。
+- **按需无阻断防泄露断路器（Kill-Switch）**：当受管浏览器运行期间检测到系统 TUN 虚拟网卡断开（连续 2 次 · 5s 周期）或机器出口国家偏离锁定国家（60s 周期）时，立即优雅关闭受管浏览器并弹出醒目告警横幅，**全程绝不中断正在运行的 `claude.exe` 会话**。
 
 ---
 
-### 2. 用量分析与官方 API 美元等效花费（Usage Analytics & USD Cost）
+### 2. 跨域风控 / Persona KYC 核验、一键 Clash 防漏覆写与手机小火箭同源桥接
 
-![Claude-Local 0.2.2 用量分析](docs/screenshots/0.2.2/usage-analytics.png)
-
-- **同行时间范围与时区徽章**：在 `[今天 | 昨天 | 近7天 | 近30天 | 全部]` 右侧同行直接展示精确统计区间与简写时区（如 `2026年10月6日 – 2026年10月26日 EDT`），版面紧凑高效。
-- **总 Token 与四类构成**：突出展示总量，以及未缓存输入、输出、缓存写入和缓存读取的数量与占比；推理 Token 已包含在输出中，不重复累加。
-- **高价值美元等效花费与缓存效率卡片（`v0.2.4` 升级）**：主摘要区右侧展示 **API 等效花费（`$`）**、**缓存节省（`$`）**、**缓存命中率（`%` + 缓存复用倍数）** 与 **日均/时均等效花费（`$`）**。
-- **完整模型分布、Effort 档位与多账号花费对比**：全部模型按总 Token 占比排序，展示各模型与 Effort 推理档位的四类构成、响应数、缓存命中率及美元等效花费（`$`）。
-- **账号与时间筛选**：账号下拉仅提供「全部」和动态账号列表；保留趋势/数据视图、隐私遮罩和当前范围 TSV 导出。
-
----
-
-### 3. 新一代 Token Monitor 风格桌面悬浮监控窗（HUD）
-
-借鉴 **Token Monitor** 的卡片设计，支持展开、紧凑与侧边胶囊三态，并同步主窗口的主题、强调色与自定义壁纸。
-
-- **与用量页共享的账号账本**：仅显示当前账号有证据的记录；账号无法确认或读取失败时显示未知，不借用其他账号的数据。
-- **滚动窗口指标**：展示滚动近 5 小时总 Token 与四类构成、缓存命中率、最近有记录的模型和去重响应数；`tok/m` 表示近 10 分钟固定窗口的平均速率。
-- **额度与统计分别呈现**：保留额度来源和重置倒计时；本地 Token 统计不代表订阅额度换算。
-- **完备的桌面窗口交互能力**：
-  - **置顶（Pin）与位置锁定（Lock）**：支持常驻桌面最顶层，锁定后禁用拖拽防止误触；
-  - **18px 边缘磁吸（Magnetic Edge Snap）**：拖拽释放或移动停止时自动吸附当前显示器工作区四边；
-  - **贴边自动隐藏（Edge Auto-Hide）**：吸附左/右屏幕边缘并开启自动隐藏后，鼠标移出约 420ms 自动收缩为侧边胶囊，鼠标移入或点击自动展开；
-  - **50%–100% 无级透明度调节**：点击标题栏透明度图标可呼出滑块与五档快捷预设（50% / 65% / 80% / 95% / 100%），右键点击图标可快速循环切换透明度。
-
----
-
-### 4. 身份绑定的隔离浏览环境与防封实测（Browser Environment）
-
-![Claude-Local 0.2.0 浏览环境](docs/screenshots/0.2.0/browser-environment.png)
-
-- **极简顶部启动栏与双上下文指示**：清晰区分「当前 CLI 身份」与「当前选中浏览器槽位（CLI 身份或养号卡）」，一键启动当前槽位隔离浏览器并打开本地回环实测页；日常打开主程序绝不后台自启浏览器。
-- **按需无阻断防泄露断路器（Kill-Switch，`v0.2.3`）**：
-  - **按需激活、零闲置开销**：仅在检测到受管伴生浏览器正在运行时激活后台监测，所有受管浏览器关闭后立即休眠。
-  - **双通道故障保护**：当依赖系统 TUN 的运行槽位连续两次检测到 **TUN 虚拟网卡意外断开（5s 周期）**，或检测到 **出口国家偏离锁定国家（60s 周期）** 时，立即优雅关闭全部运行中的受管伴生浏览器，防止回退物理网卡暴露真实本地 IP。
-  - **单次急停 + 醒目提醒，绝不锁死、绝不触碰 CLI**：触发后托盘图标染红并在页面顶部展示红色告警横幅；恢复代理后点击「知道了」或任意「打开浏览器 / 打开网页」按钮即可正常启动并自动清除告警，**全程绝不中断正在运行的 `claude.exe` 会话**。
-- **10 大类 / 20 项防关联与环境一致性核验（`v0.2.4` 强化）**：顶部深色身份工牌一体化展示当前核验范围；为每个资料写入 Google 官方 `WebRTC Network Limiter` 同款三重策略（`disable_non_proxied_udp`、`multiple_routes_enabled: false`、`nonproxied_udp_enabled: false`）与 `--enforce-webrtc-ip-permission-check`，涵盖目标地区网络出口、浏览器与机器出口比对、IANA 时区一致性、系统语言与区域、真实硬件 CPU/内存、内核版本、地理位置关闭、WebGL/Canvas/字体指纹、**无 STUN 分阶段 WebRTC 本地候选观察**以及 **同 IP 机房（Hosting）/ ISP 宽带分类核验**。
-- **安全缓存释放与深度重置分离**：支持保留登录 Cookie 的日常图片/脚本缓存清理，以及仅针对当前身份资料目录的深度重置（绝不波及其他身份资料）。
-
----
-
-### 5. 快速配置、网络诊断与风控 KYC 核验（Quick Setup, Network & Risk Verification）
-
-| 快速配置（四卡独立状态读取与工作区导流） | 网络环境（四大官方域名只读并发探针） |
+| 快速配置（四卡独立状态读取与工作区导流） | 网络环境（四大官方域名只读并发探针与链式家宽 AI 提示词） |
 | :---: | :---: |
-| ![Claude-Local 0.2.0 快速配置](docs/screenshots/0.2.0/quick-setup.png) | ![Claude-Local 0.2.0 网络环境](docs/screenshots/0.2.0/network-environment.png) |
+| ![Claude-Local 快速配置](docs/screenshots/0.2.0/quick-setup.png) | ![Claude-Local 网络环境](docs/screenshots/0.2.0/network-environment.png) |
 
-- **快速配置**：按需独立读取当前身份、隔离浏览器、电脑环境与 Claude Code CLI 状态，提供七大工作区快捷入口与系统/缓存排障导流。
-- **风控验证、桌面端一键 Clash 覆写配置与手机小火箭 KYC 桥接（`v0.2.2` – `v0.2.4`）**：
-  - **两步清晰防漏核验**：第 1 步进页自动核验本机 3 项静态防漏配置（远程 DNS 锁、加密 DoH + `strict-route`、KYC 分流与 `:7899` 独立监听），第 2 步点击「开始一致性实测」比对 `claude.ai` 与 `withpersona.com` 跨域真实出口 IP 一致性及机房属性。
-  - **桌面端一键覆写配置（`.yaml`，`v0.2.4` 新增）**：点击底部「查看一键覆写配置 (.yaml)」或「复制覆写配置 (.yaml)」，即可获取可直接粘贴至 Clash Verge Rev 全局扩展覆写（Merge）的完整 YAML（阻断 `UDP 443` QUIC 与 `UDP 3478/19302/5349` WebRTC STUN/TURN、封锁 `198.18.0.0/15` Fake-IP、锁定 DoH IP、开启 `:7899` 纯 TCP 监听，并将 `claude.ai`、`withpersona.com`、`stripe.com`、`ipquery.io`、`ippure.com` 统一分流至同一静态家宽出口）。
-  - **Mihomo / Clash Verge `strict-route` 分层闭环修复向导（`v0.2.3`）**：当检测到 `tun.strict-route: false` 存在双网卡 DNS 旁路风险时，提供「修复 Strict-Route」弹窗与原位重验。
-  - **手机同住宅出口 LAN 扫码桥接（`v0.2.4` 双栏升级）**：采用左右双栏均衡布局，支持直接粘贴完整代理串自动拆解主机/端口/账号/密码，在内存中生成 Shadowrocket / Clash Mi / Stash / sing-box 局域网代理配置与离线 SVG 二维码，让手机端 Persona 实名认证直接复用桌面端同一静态住宅出口。
-- **网络环境**：用户手动点击「开始检测」后，对 `claude.ai`、`api.anthropic.com`、`console.anthropic.com` 与官方安装包下载域执行只读并发连通性探测（8 秒超时、不携带凭据、不自动外跳）；内置链式代理配置提示词一键复制。
+- **「风控验证」两步闭环体检**：
+  - **第 1 步 · 本机静态防漏配置（进页自动检查）**：自动扫描浏览器远程 DNS 锁（`socks5h` / `--host-resolver-rules`）、Mihomo 运行期 `tun.strict-route: true` + 远程加密 DoH，以及 `claude.ai` / `withpersona.com` / `:7899` 独立监听规则（支持识别 `rules`、`prepend-rules` 与 `append-rules`）；若 `strict-route` 未开启，提供一键「修复 Strict-Route」分层向导与原位复核。
+  - **第 2 步 · 跨域真实出口与家宽属性实测**：一键并发实测 `claude.ai` 主站链路与 `withpersona.com` KYC 链路的真实出口 IP、国家、ASN 及机房/住宅属性，确保登录、绑卡与实名认证 100% 走同一静态住宅 IP。
+- **桌面端 Clash Verge / Mihomo 一键防漏覆写配置（`.yaml`，`v0.2.5` 增强）**：
+  - 点击「查看一键覆写配置 (.yaml)」或「复制覆写配置 (.yaml)」，直接生成可粘贴至 Clash Verge 全局扩展覆写（Merge）的完整配置：
+    1. **封死双栈 IPv6 旁路**：显式设置顶层 `ipv6: false` 与 `dns.ipv6: false`，防止校园网/双栈宽带下 IPv6 流量绕过纯 IPv4 静态家宽；
+    2. **阻断 WebRTC STUN/TURN、QUIC 与 Fake-IP 泄露**：强制拦截 `UDP 443`、`UDP 3478/19302/5349`、`DOMAIN-KEYWORD,stun` 与 `198.18.0.0/15`；
+    3. **全量关联域名同源锁死**：将 `claude.ai`、`claude.com`、`anthropic.com`、`withpersona.com`、`persona.org`、`stripe.com`、`stripe.network`、`sentry.io`、`workos.com`、`authkit.app`、`challenges.cloudflare.com`、`statsig.com`、`intercom.io` 及出口核验域统一绑定至同一静态家宽出口与 `:7899` 纯 TCP 监听端口。
+- **手机端小火箭（Shadowrocket）同住宅出口双栏扫码桥接**：
+  - 当网页弹出 Persona 扫码拍照认证时，支持「局域网同住宅桥接」与「独立直连前置代理链」两种模式；支持直接粘贴完整 SOCKS5 代理串自动拆解主机/端口/账号/密码，在内存中生成离线二维码，确保手机与电脑共用同一静态家宽 IP。
+- **「电脑环境」与「网络环境」一键协同**：
+  - **电脑环境**：一键将 Windows 系统时区、首选语言（`en-US`）、区域格式（`en_US`）及系统定位服务关闭状态对齐至目标出口地区，所有系统修改均保存快照并支持一键还原；内置 Claude Code CLI 版本检查与四维残留精细清理。
+  - **网络环境**：对 `claude.ai`、`api.anthropic.com`、`console.anthropic.com` 与安装包域执行只读并发探测，并提供针对「机场节点 + Kookeey 静态家宽 `dialer-proxy` 链式代理」的一键 AI 自动配置提示词。
+
+---
+
+### 3. 多身份加密保险库、跨账号四维消毒与全生命周期 Free 养号专区
+
+![Claude-Local 身份管理工作台](docs/screenshots/0.2.0/identity-management.png)
+
+- **`180×286` 专属身份工牌与零强杀安全切换**：
+  - 当前运行身份置顶并带呼吸绿光，`PRO` / `MAX` 徽章旁直观显示 `MM/DD` 自动续订或到期日；卡片菜单内置 **「进入 Claude.ai（独立浏览器）」**、**「打开官方用量页」** 与 **「返回 CLI 浏览器」**。
+  - 点击「切换」或「新身份」时，强制检查 `claude.exe` 运行状态，自动完成旧身份加密归档（`.baga`）、跨账号四维残留消毒与目标身份凭据还原；若勾选「联动浏览器」，切号后自动调起对应槽位的隔离浏览器。
+- **独立的「Free 养号卡片」全生命周期专区**：
+  - 每张养号卡拥有独立浏览器槽位与确定性指纹种子，支持 `待注册 → 已过 KYC → Free 养号中 → Pro 待转正` 四阶段与自然日 `Day N` 追踪，养号操作绝不触碰当前 CLI 身份指针。
+  - **常驻国家/时区自动锚定与漂移拦截（`v0.2.5` 增强）**：首次浏览器核验通过后自动锁定常驻国家与 IANA 时区；后续打开前若检测到跨国或同国跨州时区漂移（如 `US (America/Los_Angeles)` → `US (America/New_York)`），自动弹窗预警拦截。
+  - **阶段防封 SOP 指南与无损转正 Pro**：内置待注册、刚过 KYC 72h 观察期、日常轻度使用与升级绑卡四阶段防封 SOP；网页升级 Pro 后一键「转正为 CLI 身份」，100% 继承原浏览器槽位、种子与登录 Cookie。
+
+---
+
+### 4. 电脑/网络环境对齐、多账号智能接力与进程内 5h 自动续杯
+
+- **多账号智能接力与轮换（Smart Relay，默认关闭）**：
+  - 在「身份管理」顶栏右侧胶囊 `[• 智能接力 | 策略]` 或「软件设置」中按需开启；平铺展示全部账号 `5h / 7d` 余量，提供 **智能 / 按顺序 / 轮流 / 余量优先 / 重置前用完** 5 种路由策略、限流顺位处理与 **首选账号（Preferred）冷却恢复滞回切回提醒**，点击一键接力仍走标准安全切号与四维消毒流程。
+- **Rust 进程内原生 5h 自动续杯调度**：
+  - 支持在顶栏 `[• 自动续杯 | 20:00–23:00]` 自定义生效时段；当账号 5h 窗口到期后，在生效时段内自动发送极简 ping 提前开启新一轮 5h 计时窗口，无需注册任何系统后台服务。
+
+---
+
+### 5. 配套效率看板：桌面额度小窗（HUD）与本地用量价值分析
+
+![Claude-Local 用量分析](docs/screenshots/0.2.2/usage-analytics.png)
+
+- **桌面实时额度小窗（`v0.2.5` 界面与数据校准）**：
+  - 顶栏开关统一为 **`额度小窗`**（左侧绿/灰圆点指示并支持直接点击切换）；支持展开、紧凑与贴边自动隐藏胶囊三态，置顶、位置锁定、18px 边缘磁吸与 50%–100% 透明度无级调节。
+  - **紧凑身份头栏 + 真实 5h 缓存命中率 + 耗尽预估 ETA**：左侧紧凑排列 `[账号名 ✓ [Pro]]`，右侧显示实时会话状态；5h 进度条内置时间刻度与耗尽预估（`预计 Xh Ym 后耗尽` / `余量充裕`），并直接聚合 5h 窗口内真实四类 Token 计算缓存命中率，与「用量分析」页 100% 同口径。
+- **「用量分析」黄金比例仪表盘（`v0.2.5` 重构）**：
+  - 采用左大卡（总 Token + 四色构成 `2×2` 网格）+ 右侧等高 `2×2` 核心指标卡（**API 等效花费 `$`**、**缓存节省 `$`**、**缓存命中率 `%` + 复用倍数**、**日均/时均等效花费 `$`**），搭配用量趋势面积图、模型/Effort 分布双轨进度条、多账号对比与 TSV 导出。
 
 ---
 
@@ -160,60 +168,49 @@ Claude-Local 专为在 Windows 桌面端高频使用 **Claude Code CLI** 与 **C
 
 本项目**基于开源项目 [CCBaga](https://github.com/liseami/CCBaga)（由 [@liseami](https://github.com/liseami) 与社区贡献者开发）进行二次开发**。我们衷心感谢原作者在多账号归档格式与浏览器隔离工作流上的开创性设计。
 
-Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **Windows 10 / 11 x64 桌面工程可靠性、多账号智能接力轮换、伴生浏览器 WebRTC 与防泄露断路器、Free 养号全生命周期、风控与 KYC 环境核验、被动额度与美元等效花费分析、进程内自动续杯以及桌面 HUD 监控** 进行了独立重构与扩展：
+Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **Windows 10 / 11 x64 桌面工程可靠性、硬件级自洽伴生浏览器与 20 项防封实测、WebRTC 三重强锁与按需防泄露断路器（Kill-Switch）、跨域风控 / Persona KYC / 双栈 IPv6 防旁路与手机同源家宽桥接、Free 养号全生命周期、多账号智能接力、进程内 5h 自动续杯以及桌面额度小窗 / 美元花费分析** 进行了独立重构与扩展：
 
-| 维度 | 继承自 CCBaga 的基线设计 | Claude-Local (`v0.2.4`) 的独立演进与增强 |
+| 维度 | 继承自 CCBaga 的基线设计 | Claude-Local (`v0.2.5`) 的独立演进与增强 |
 | :--- | :--- | :--- |
-| **存储与全链路备份** | `BAGAID01` 魔数、`.baga` 归档、SQLite `user_version = 3`、账号 HMAC 与确定性浏览器种子域 | **100% 向下兼容已有身份库与浏览器种子**；新增 Zstandard 流式压缩兼容、有界 tar 解包防炸弹限额、`ScratchGuard` 暂存自清理、32 字节主密钥强校验，以及覆盖 **加密身份库 + 养号卡片（`warming_cards.json`）+ 手动订阅元数据（`manual_subscriptions.json`）的全链路 `.clbackup` 口令加密备份与隔离恢复副本**。 |
-| **多账号智能接力与养号** | 单一身份列表与基础浏览器资料切换 | 新增 **Magpie 风格多账号智能接力与轮换**（默认关闭，五大路由策略、限流顺位处理、会话保持、首选号滞回恢复与一键接力）；新增 **独立 Free 养号卡片专区**（四阶段进度、常驻国家/时区锁定与打开前防漂移确认、阶段防封 SOP 折叠指南、零重绑继承槽位/种子转正 Pro）；新增 **风控验证工作台与桌面端一键 Clash 防漏覆写 YAML**。 |
-| **额度监测与续杯** | 基础身份状态管理 | 建立 **CLI 被动额度观察 + Python 单写者账本 + `quota_core` 逐窗单调合并** 架构（零 `.claude.json` 写入）；新增工牌 `MM/DD` 订阅续订/到期显示、**跨槽位直接同步当前 CLI 订阅与重置次数**、**高消耗速率温和提示**、`reset_inferred` 到期推定、**Rust 进程内唯一 5h 自动续杯调度器**与集中连接修复队列。 |
-| **Token 与美元花费分析** | — | 原生 SQLite 去重账本与 **CPAMP / ccusage 风格分析工作台**：统计身份独立登记、受控登录后续聊归属、四类 Token 构成、**Anthropic 官方 API 美元等效花费（`$`）与缓存节省分析**、缓存复用倍数、全部模型及 Effort 分布、IANA/DST 时区与 TSV 导出。 |
-| **桌面悬浮监控（HUD）** | — | 全新自研 **Token Monitor 风格多模态桌面悬浮小窗**：支持展开/紧凑/侧边胶囊三态、置顶、位置锁定、18px 边缘磁吸、贴边自动隐藏、50%–100% 透明度调节，以及主题/强调色/自定义壁纸实时联动。 |
-| **Windows 平台与防泄露** | 跨平台通用实现 | 专为 **Windows x64** 深度加固：**伴生浏览器 WebRTC Network Limiter 三重强锁 + 按需无阻断防泄露断路器（Kill-Switch，5s TUN 掉线 / 60s 国家漂移急停，零 CLI 干扰）**、受保护的窄 OAuth 授权链接路由、Chromium AppContainer 缓存 DACL 权限继承自愈、Win32/MSIX `claude.exe` 进程树精确识别、跨账号四维残留消毒与系统设置快照回滚。 |
-
-### 维护与边界声明
-
-- **独立演进与独立发行**：Claude-Local 在本仓库独立维护，发行版本号从 **`0.1.0`** 起算（当前最新版为 **`0.2.4`**）。本项目未配置针对上游仓库的自动代码同步，不接入任何外部自动更新端点，亦不依赖上游发行流水线。
-- **开源许可边界**：完整保留原 CCBaga 贡献者版权与 MIT 声明（见 [LICENSE](LICENSE)）；其他第三方组件与图标资产按各自许可证条款管理（详见 [NOTICE.md](NOTICE.md) 与 [分发说明](docs/DISTRIBUTION.md)）。
-- **非官方声明**：本项目为独立开源辅助工具，非 Anthropic 或 CCBaga 官方产品，不代表任何官方背书或商业支持承诺。
+| **防关联浏览器与断路器** | 基础隔离浏览器资料与环境检测 | **Fingerprint Chromium 深度加固**：新增 Google 官方 `WebRTC Network Limiter` 三重 `Preferences` 强锁、`dns_prefetching.enabled = false`、`--accept-lang=en-US,en` 语言子标签防泄露、Canvas 2D FNV-1a 真实像素哈希与 WebAudio 节点图实测、同 IP 机房词边界分类、**关窗/跨页保留 `(槽位, 配置)` 实测结果**，以及 **按需无阻断防泄露断路器（Kill-Switch，5s TUN 掉线 / 60s 国家漂移急停，零 CLI 干扰）**。 |
+| **风控 / KYC 与防泄露工程** | — | 全新 **「风控验证」工作台**：两步本机静态体检（含 `strict-route` 闭环向导）+ `claude.ai` 与 `withpersona.com` 跨域真实出口实测；内置 **桌面端一键 Clash/Mihomo 防漏覆写 YAML（含 `ipv6: false` 双栈防旁路、STUN/QUIC/Fake-IP 封锁、`:7899` 独立监听与 Claude/Persona/Stripe/Sentry/WorkOS 全域名同源锁死）** 及 **手机小火箭双栏扫码同源桥接**。 |
+| **加密保险库与四维消毒** | `BAGAID01` 魔数、`.baga` 归档、SQLite `user_version = 3`、账号 HMAC 与浏览器种子域 | **100% 向下兼容已有身份库与浏览器种子**；新增 Zstandard 流式压缩、有界 tar 解包限额、`ScratchGuard` 暂存自清理、32 字节主密钥强校验、1,500+ 行跨账号缓存/代理/路径/会话签名四维消毒，以及覆盖 **加密身份库 + 养号卡片 + 手动订阅记录的全链路 `.clbackup` 口令加密备份与隔离恢复副本**。 |
+| **Free 养号全生命周期与智能接力** | 单一身份列表 | 新增 **独立 Free 养号卡片专区**（四阶段进度、常驻国家/IANA 时区自动锚定与打开前跨国/跨州漂移拦截、阶段防封 SOP 指南、零重绑继承槽位/种子转正 Pro）；新增 **Magpie 风格多账号智能接力与轮换**（默认关闭，五大路由策略 + 首选号滞回恢复 + 一键安全切号）。 |
+| **自动续杯、额度小窗与价值分析** | 基础身份状态管理 | 建立 **CLI 被动额度观察 + Python 单写者账本 + Rust 进程内唯一 5h 自动续杯调度器**（零 `.claude.json` 写入）；自研 **多模态桌面额度小窗（HUD，含 5h 真实四类 Token 缓存命中率与耗尽 ETA）** 与 **官方 API 美元等效花费（`$`）/ 缓存节省分析仪表盘**。 |
 
 ---
 
 ## 📦 获取、安装与版本记录
 
-### 1. 下载最新安装包（`v0.2.4`）
+### 1. 下载最新安装包（`v0.2.5`）
 
 | 发行资产 | 适用系统 | 文件大小 | SHA-256 校验和 |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.2.4_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.4/Claude-Local_0.2.4_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,893,501` 字节 (134.37 MiB) | `ceae7f931c15ae857c235f89b464e2c6c4cbcd912ae1a044c304dbb107cdecec` |
+| **[Claude-Local_0.2.5_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.5/Claude-Local_0.2.5_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,847,905` 字节 (`134.32` MiB) | `16c9320d05a2100047c602331e22f9318dbba93a712100185b9bab4aca344e95` |
 
-下载后在 PowerShell 中计算 SHA-256，并与 [v0.2.4 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.4) 公布的校验值比对：
+下载后在 PowerShell 中计算 SHA-256，并与 [v0.2.5 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.5) 公布的校验值比对：
 
 ```powershell
-Get-FileHash .\Claude-Local_0.2.4_x64-setup.exe -Algorithm SHA256
-# 预期 SHA-256：ceae7f931c15ae857c235f89b464e2c6c4cbcd912ae1a044c304dbb107cdecec
+Get-FileHash .\Claude-Local_0.2.5_x64-setup.exe -Algorithm SHA256
+# 预期 SHA-256：16c9320d05a2100047c602331e22f9318dbba93a712100185b9bab4aca344e95
 ```
 
 ### 2. 安装与无损升级说明
 
 1. **安装位置与标识**：采用当前用户模式 NSIS 安装程序，默认安装至 `%LOCALAPPDATA%\Programs\Claude-Local`；主程序为 `claude-local.exe`，应用包标识为 `ai.local.claude-local`，伴侣浏览器注册名为 `Claude-Local-Browser`。
 2. **用户数据目录**：所有加密身份库、主密钥、额度/用量账本、外观壁纸配置与隔离浏览器个人资料均独立保存在 `%APPDATA%\ai.local.claude-local`。
-3. **平滑升级**：从 `0.1.x` 或 `0.2.x` 升级至 `0.2.4` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
+3. **平滑升级**：从 `0.1.x` 或 `0.2.x` 升级至 `0.2.5` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
 
 ### 3. 发行版本演进记录
 
 | 版本 | 发布日期 | 核心演进内容 | 详细文档 |
 | :--- | :--- | :--- | :--- |
-| **`v0.2.4`** *(Latest)* | 2026-10-31 | **Magpie 风格多账号智能接力与轮换（默认关闭，五大路由策略 + 首选号恢复回切）**、**伴生浏览器 WebRTC Network Limiter 三重防漏强锁 + 桌面端 Clash/Mihomo 一键防漏覆写 YAML**、**官方 API 美元等效花费（`$`）与缓存节省分析回归**、小火箭双栏扫码桥接与养号一键返回 CLI 浏览器 | [发布说明](docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md) |
+| **`v0.2.5`** *(Latest)* | 2026-11-01 | **全链路抗风控与防关联环境加固（`--accept-lang` 子标签防泄露、禁 DNS 预取、双栈 `ipv6: false` 防旁路、Claude/Persona/Stripe/Sentry/WorkOS 全域名同源分流）**、**伴生浏览器实测结果跨页/关窗自动保留与 Canvas 2D FNV-1a 真实像素哈希**、**桌面额度小窗真实 5h 缓存命中率校准与用量分析仪表盘重构** | [发布说明](docs/RELEASE_NOTES_0.2.5.md) |
+| **`v0.2.4`** | 2026-10-31 | Magpie 风格多账号智能接力与轮换（默认关闭，五大路由策略 + 首选号恢复回切）、伴生浏览器 WebRTC Network Limiter 三重防漏强锁 + 桌面端 Clash/Mihomo 一键防漏覆写 YAML、官方 API 美元等效花费（`$`）与缓存节省分析回归、小火箭双栏扫码桥接与养号一键返回 CLI 浏览器 | [发布说明](docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md) |
 | **`v0.2.3`** | 2026-10-30 | 伴生浏览器按需无阻断防泄露断路器（Kill-Switch）、Mihomo `strict-route` 分层闭环修复向导、养号卡片国家/时区锁定与打开前防漂移核验、阶段防封 SOP 指南、高负荷速率提示与全链路加密备份扩展 | [发布说明](docs/RELEASE_NOTES_0.2.3_SECURITY.md) · [交付核验](docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md) |
 | **`v0.2.2`** | 2026-10-29 | 身份卡片 `PRO`/`MAX` 右侧 `MM/DD` 订阅到期显示与手动充值补录、「风控验证」跨域出口与手机同住宅出口 KYC 桥接、统计身份独立登记与受控续聊归属、四类 Token 构成与共享账本 HUD | [发布说明](docs/RELEASE_NOTES_0.2.2_USAGE.md) |
-| **`v0.2.0`** | 2026-10-26 | **Token Monitor 风格多模态悬浮监控小窗（置顶/锁定/磁吸/贴边隐藏/透明度/主题联动）**、**官方 API 美元等效花费与缓存节省分析（历史功能）**、**勾选联动浏览器切号自动弹出验证页**、全工作区界面减负与导航栏美化 | [更新说明](docs/UI_MONITOR_0.2.0.md) · [发布说明](docs/RELEASE_NOTES_0.2.0.md) · [交付核验](docs/RELEASE_VERIFICATION_0.2.0.md) |
-| **`v0.1.5`** | 2026-10-26 | 五大核心页面冗余说明精简、身份与用量工具栏分组重构、隔离演示数据预览重拍与已安装生产包 20 项浏览器核验 | [界面精简说明](docs/UI_POLISH_0.1.5.md) · [交付核验](docs/RELEASE_VERIFICATION_0.1.5_UI.md) |
-| **`v0.1.4`** | 2026-10-26 | 伴侣浏览器同 IP 机房分类查询生产环境 CSP（`api.ipquery.io`）完整闭环与回归验证 | [浏览器 CSP 修复](docs/BROWSER_CSP_0.1.4.md) · [交付核验](docs/RELEASE_VERIFICATION_0.1.4_BROWSER.md) |
-| **`v0.1.3`** | 2026-10-26 | 分阶段无 STUN WebRTC 本地候选计时修复与同 IP 机房/ISP 补充分类接入 | [浏览器核验说明](docs/BROWSER_VERIFICATION_0.1.3.md) |
-| **`v0.1.2`** | 2026-10-26 | 加密存储与备份兼容加固（`ScratchGuard` 暂存清理、解包资源限额、32 字节主密钥严格核验） | [存储加固说明](docs/CRYPTO_HARDENING_0.1.2.md) · [交付核验](docs/RELEASE_VERIFICATION_0.1.2_CRYPTO.md) |
-| **`v0.1.1`** | 2026-10-26 | 网页额度恢复与 CLI 授权状态分离、自动续杯本地就绪度同步与连接修复队列优化 | [登录同步说明](docs/AUTH_SYNC_0.1.1.md) · [交付核验](docs/RELEASE_VERIFICATION_0.1.1_SYNC.md) |
-| **`v0.1.0`** | 2026-10-26 | Claude-Local 首个公开基准版本：多身份归档切换、被动额度观察、Effort 用量统计、原生自动续杯与伴侣浏览器 | [首发说明](docs/RELEASE_NOTES_0.1.0.md) · [交付核验](docs/RELEASE_VERIFICATION_0.1.0.md) |
+| **`v0.2.0`** | 2026-10-26 | Token Monitor 风格多模态悬浮监控小窗（置顶/锁定/磁吸/贴边隐藏/透明度/主题联动）、勾选联动浏览器切号自动弹出验证页、全工作区界面减负与导航栏美化 | [更新说明](docs/UI_MONITOR_0.2.0.md) · [发布说明](docs/RELEASE_NOTES_0.2.0.md) · [交付核验](docs/RELEASE_VERIFICATION_0.2.0.md) |
+| **`v0.1.0` – `v0.1.5`** | 2026-10-26 | 多身份加密保险库基线、存储加固、网页额度与 CLI 授权分离、分阶段无 STUN WebRTC 本地候选观察、同 IP 机房 CSP 闭环与 20 项浏览器核验 | [首发说明](docs/RELEASE_NOTES_0.1.0.md) · [界面精简说明](docs/UI_POLISH_0.1.5.md) |
 
 ---
 
@@ -246,7 +243,7 @@ python scripts/test-windows.py
 bun run build:local
 bun run deploy:local
 
-# 4. 构建经 13 项隐私探针审计的完整 Windows NSIS 安装包（需先准备固定版本浏览器内核与 7z.exe）
+# 4. 构建经隐私探针审计的完整 Windows NSIS 安装包（需先准备固定版本浏览器内核与 7z.exe）
 python scripts/fetch-browser.py
 bun run build:windows
 ```

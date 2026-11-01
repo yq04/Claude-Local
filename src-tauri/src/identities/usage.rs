@@ -1266,7 +1266,7 @@ pub(crate) fn monitor_usage(
         .flatten()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0);
-    if clock.saturating_sub(scanned) >= 30 {
+    if clock.saturating_sub(scanned) >= 5 {
         // This path uses the same complete-line cursors as the statistics page.
         // The three-second HUD tick only queries SQLite between shared scans.
         read_at_with_timezone_now(vault, home, "today", None, 0, None, None, clock)?;
@@ -1315,7 +1315,9 @@ pub(crate) fn monitor_usage(
             complete = false;
         }
         latest_at = Some(ts);
-        latest_model = (!model.is_empty() && model != "unknown").then_some(model);
+        if !model.is_empty() && model != "unknown" {
+            latest_model = Some(model);
+        }
     }
     totals.sessions = complete.then_some(sessions.len() as u64);
     let revision = hex_hash(

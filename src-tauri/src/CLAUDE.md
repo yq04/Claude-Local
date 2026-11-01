@@ -21,7 +21,7 @@ quota_core.rs: GUI/Python writer 共用的逐窗状态、观测百分比有限�
 local_runtime.rs: 启动参数明确门控配套浏览器，普通启动不启动引擎；含纯输入策略回归。
 ui_language.rs: 受 zh/en 白名单限制的界面偏好，原子持久化后发布内存状态；本地版托盘菜单，独立于电脑与浏览器语言。
 ui_appearance.rs: 界面外观偏好（主题、6 色强调色、字体栈、五层光学毛玻璃无级参数与 8 款壁纸画布）及自定义壁纸 Data URI 的原生白名单校验、Win32 私有 ACL 原子落盘（ui-appearance.json / ui-wallpaper.json）与主窗口原生标题栏明暗主题同步（set_theme）。
-monitor_window.rs: 独立可开关无边框「实时额度悬浮监控窗」（monitor）生命周期、三态尺寸（340×258 / 340×152 / 52×138）、置顶/位置锁定/边缘磁吸/贴边隐藏与透明度机制；复用 identities::usage 的节流增量采集和严格当前账号账本查询，展示5h四类Token、去重响应、固定近10分钟均值速率、缓存命中及最近实际模型。无可靠账号证据显示未确认，不借用全库或历史fallback；不独立扫描JSONL、不猜成本或上下文上限，5h/7d配额与倒计时保留。
+monitor_window.rs: 独立可开关无边框「实时额度悬浮监控窗」（monitor）生命周期、三态尺寸（340×258 / 340×152 / 52×138，切换尺寸前先解除旧 min/max 约束防 Win32 截断）、置顶/位置锁定/边缘磁吸/贴边隐藏（基于实际 outer_size 与 4px 边距防右侧 DWM 边框裁切）与透明度机制；复用 identities::usage 的 5s 节流增量采集和严格当前账号账本查询，展示5h四类Token、去重响应、固定近10分钟均值速率、缓存命中及最近非 unknown 实际模型。无可靠账号证据显示未确认，不借用全库或历史fallback；不独立扫描JSONL、不猜成本或上下文上限，5h/7d配额与倒计时保留。
 browser/: 指纹浏览器、资料与缓存边界、真实浏览器回报及目标地区环境核验；见其 CLAUDE.md。
 risk_check.rs / risk_config_source.rs: 只读六项风险审计，受限已知核心配置来源证据、有界无链接文件投影、加密DNS与明文分开、解析不完整保持未知；HTTP出口探针冻结浏览器槽位/配置/有效路由，变化拒收，不读取或轮换凭据、不修改系统设置。
 windows.rs: Win32 剪贴板、当前用户 TokenUser/TokenOwner/管理员组文件所有权与权限保留回退、Win32 与注册表读取时区/首选语言/定位偏好/系统代理（跳过空白环境变量并区分 SOCKS4/5）、缓存系统版本与用户触发设置；控制台工具隐藏窗口，外部链接；拒绝凭据管理器自动读取和 SSH 操作。
@@ -44,5 +44,5 @@ cleaner_tests.rs: 临时白名单/快照/日志验证，覆盖超过 30,000 文�
 regions.rs: 地区编号到语言、区域格式和代表时区的唯一白名单与目标语言前缀/美国多时区地区匹配；供前端选择与系统/浏览器快捷操作共用，包含目录与本机时区验证。
 linux.rs: Linux procfs 当前用户进程、zoneinfo/timedatectl、GNOME 定位偏好、GNOME/KDE 设置入口与 Wayland/X11 剪贴板；LC_MESSAGES/LC_TIME 分别读取会话语言/区域格式，不匹配时先报手动操作再改时区；未知定位为 null，Linux 钥匙串明确不可用；不将系统代理凭据序列化给 WebView。
 network_links.rs: 用户手动触发的固定四域名并发只读 HTTP 探针（downloads 验证安装器公开版本号，Cloudflare 浏览器质询标为可达），优先显式或系统脱敏代理、不携带认证、不跟随重定向、校验目标域、八秒超时，真实连接对端不冒充出口；不接收任意 URL、不打开外部资源、不依赖 Skill 或供应商配置；离线回环测试覆盖域名、响应和注册边界。
-risk_check.rs: 风控验证只读原生命令（risk_inspect_local_env 与 risk_probe_consistency）；仅扫描浏览器代理协议特征、Mihomo YAML 分流/DNS/独立监听布尔结构（显式跳过 proxies/authentication/secret 等敏感块）及本机带默认网关的 RFC1918 私有局域网 IPv4（排除公网 WAN、WSL/Hyper-V 虚拟交换机与 198.18 Fake-IP），并按用户点击并发探测 claude.ai、withpersona.com 与未列举域名的边缘 trace 出口一致性。
+risk_check.rs: 风控验证只读原生命令（risk_inspect_local_env 与 risk_probe_consistency）；仅扫描浏览器代理协议特征、Mihomo YAML 分流/DNS/独立监听布尔结构（兼容 rules / prepend-rules / append-rules 与 claude.com / persona.com 域名识别，显式跳过 proxies/authentication/secret 等敏感块）及本机带默认网关的 RFC1918 私有局域网 IPv4（排除公网 WAN、WSL/Hyper-V 虚拟交换机与 198.18 Fake-IP），并按用户点击并发探测 claude.ai、withpersona.com 与未列举域名的边缘 trace 出口一致性。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

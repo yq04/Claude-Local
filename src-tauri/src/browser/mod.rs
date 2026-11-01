@@ -1,5 +1,5 @@
 // [INPUT]: 本机指纹引擎（优先 /Applications/Claude-Local Browser.app，回退 ~/Applications）、本地版浏览器包标识、配置/资料边界、真实浏览器观测、宿主界面语言与共享操作日志。
-// [OUTPUT]: 有界 CLI/养号绑定上下文、只读所选资料窗口状态、伴生浏览器异常断流急停状态、冻结CLI归属的返回/用量页及转正/恢复编排。
+// [OUTPUT]: 有界 CLI/养号绑定上下文、只读所选资料窗口状态、按槽位与配置绑定的核验结果记忆、伴生浏览器异常断流急停状态、冻结CLI归属的返回/用量页及转正/恢复编排。
 // [POS]: 独立浏览器模块的唯一编排入口；改变资料前必须退出浏览器；不自行改系统默认浏览器，只发起系统确认。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub(crate) mod config;
@@ -73,11 +73,18 @@ extern "C" {
     fn rf_system_timezone(zone: *const c_char) -> *mut c_char;
     fn rf_system_location() -> *mut c_char;
 }
+#[derive(Clone)]
+pub(crate) struct CachedObservation {
+    pub config: Config,
+    pub report: Report,
+    pub received_at: u64,
+}
 #[derive(Default)]
 pub struct Browser {
     gate: Mutex<()>,
     pub(crate) warning: Mutex<Option<String>>,
     session: Mutex<Option<Session>>,
+    pub(crate) last_observations: Mutex<std::collections::HashMap<String, CachedObservation>>,
     quota_sync: Mutex<Option<quota_bridge::Ticket>>,
     host: Mutex<Option<Exit>>,
     pub(crate) kill_switch: Mutex<kill_switch::KillSwitchState>,
@@ -85,6 +92,8 @@ pub struct Browser {
 struct Session {
     token: String,
     port: u16,
+    slot: String,
+    config: Config,
     received_at: Option<u64>,
     report: Option<Report>,
 }
@@ -390,15 +399,18 @@ fn open_session(
         engine_version,
     };
     let web = web(app)?;
+    let root = root(app)?;
+    let slot = workspaces::database(&root)?.browser_slot()?;
     *state.quota_sync.lock().unwrap() = None;
     *state.session.lock().unwrap() = Some(Session {
         token: token.clone(),
         port,
+        slot,
+        config: config.clone(),
         report: None,
         received_at: None,
     });
     server::start(app.clone(), listener, token, web, context);
-    let root = root(app)?;
     crate::identities::private::directory(&root)?;
     crate::identities::private::write(&root.join("start.url"), format!("{page}\n").as_bytes())?;
     Ok(page)
@@ -624,15 +636,29 @@ fn snapshot(app: &tauri::AppHandle) -> Result<Snapshot, String> {
     let engine = engine(app)?;
     let engine_version = packaged_version(app, &engine);
     let running = profile::running(&profile)?;
-    let (report, report_received_at) = app
+    let active_browser_slot = workspaces::database(&root)?.browser_slot()?;
+    let (mut report, mut report_received_at) = app
         .state::<Browser>()
         .session
         .lock()
         .unwrap()
         .as_ref()
-        .filter(|_| running)
-        .map(|x| (x.report.clone(), x.received_at))
+        .filter(|s| s.slot == active_browser_slot && s.config == config)
+        .and_then(|x| x.report.clone().map(|r| (Some(r), x.received_at)))
         .unwrap_or((None, None));
+    if report.is_none() {
+        if let Some(cached) = app
+            .state::<Browser>()
+            .last_observations
+            .lock()
+            .unwrap()
+            .get(&active_browser_slot)
+            .filter(|c| c.config == config)
+        {
+            report = Some(cached.report.clone());
+            report_received_at = Some(cached.received_at);
+        }
+    }
     let host = app.state::<Browser>().host.lock().unwrap().clone();
     let checks = network::checks(
         &machine,
@@ -660,7 +686,7 @@ fn snapshot(app: &tauri::AppHandle) -> Result<Snapshot, String> {
         engine_version,
         running,
         profile: profile.to_string_lossy().into(),
-        active_browser_slot: workspaces::database(&root)?.browser_slot()?,
+        active_browser_slot,
         identity_linked: workspaces::database(&root)?.browser_link()?.enabled,
         identity,
         cli_identity,
@@ -701,6 +727,9 @@ pub async fn browser_save(app: tauri::AppHandle, config: Config) -> Result<Snaps
         }
         config.validate(&config::machine()?)?;
         config::save(&workspaces::scope(&root)?, &config)?;
+        if let Ok(slot) = workspaces::database(&root).and_then(|db| db.browser_slot()) {
+            state.last_observations.lock().unwrap().remove(&slot);
+        }
         refresh_launch_args(&app)?;
         renew_session(&app);
         snapshot(&app)
@@ -813,6 +842,9 @@ pub async fn browser_clear(
         };
         if let Err(error) = result {
             if reset {
+                if let Ok(slot) = workspaces::database(&root(&app)?).and_then(|db| db.browser_slot()) {
+                    state.last_observations.lock().unwrap().remove(&slot);
+                }
                 renew_session(&app);
                 log.log(
                     "browser",
@@ -825,6 +857,11 @@ pub async fn browser_clear(
                 log.fail(&error);
             }
             return Err(error);
+        }
+        if reset {
+            if let Ok(slot) = workspaces::database(&root(&app)?).and_then(|db| db.browser_slot()) {
+                state.last_observations.lock().unwrap().remove(&slot);
+            }
         }
         renew_session(&app);
         log.log(
@@ -914,6 +951,7 @@ pub async fn browser_align(
         config.language = "en-US".into();
         config.timezone = exit.timezone;
         config::save(&workspaces::scope(&root(&app_align)?)?, &config)?;
+        state.last_observations.lock().unwrap().clear();
         refresh_launch_args(&app_align)?;
         renew_session(&app_align);
         log.log(

@@ -165,12 +165,44 @@ export function formatCompactCount(value: number | undefined | null): string {
   if (rounded < 1_000) {
     return String(rounded)
   }
-  if (rounded < 1_000_000) {
+  if (rounded < 999_500) {
     const k = rounded / 1_000
     return `${k >= 100 ? Math.round(k) : Number(k.toFixed(1))}k`
   }
-  const m = rounded / 1_000_000
-  return `${m >= 100 ? Math.round(m) : Number(m.toFixed(1))}M`
+  if (rounded < 999_500_000) {
+    const m = rounded / 1_000_000
+    return `${m >= 100 ? Math.round(m) : Number(m.toFixed(1))}M`
+  }
+  const b = rounded / 1_000_000_000
+  return `${b >= 100 ? Math.round(b) : Number(b.toFixed(1))}B`
+}
+
+export function formatMonitorCacheStats(metrics: LiveUsageMetrics | undefined): {
+  hitPctText: string
+  reuseRatioText: string | null
+} {
+  if (!metrics || !metrics.available) {
+    return { hitPctText: '—', reuseRatioText: null }
+  }
+  const prompt = (metrics.input5h ?? 0) + (metrics.cacheWrite5h ?? 0) + (metrics.cacheRead5h ?? 0)
+  if (prompt <= 0) {
+    return {
+      hitPctText: metrics.cacheHitPct != null ? `${metrics.cacheHitPct}%` : '—',
+      reuseRatioText: null,
+    }
+  }
+  const rawPct = (metrics.cacheRead5h / prompt) * 100
+  const hitPctText =
+    rawPct >= 99.95
+      ? '100%'
+      : Math.abs(rawPct - Math.round(rawPct)) < 0.05
+        ? `${Math.round(rawPct)}%`
+        : `${rawPct.toFixed(1)}%`
+  const reuseRatioText =
+    metrics.cacheWrite5h > 0 && metrics.cacheRead5h > 0
+      ? `${(metrics.cacheRead5h / metrics.cacheWrite5h).toFixed(1)}×`
+      : null
+  return { hitPctText, reuseRatioText }
 }
 
 export function formatVelocityLabel(tokensPerMin: number | undefined | null): string {

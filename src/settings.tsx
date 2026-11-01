@@ -9,7 +9,15 @@ import {Button, Select, SegmentedControl, Switch, Tabs} from 'cromma-ui';
 import {ShieldCheck, FolderDefault, Settings01, Globe} from 'cromma-ui/pika';
 import {getVersion} from '@tauri-apps/api/app';
 import {invoke} from '@tauri-apps/api/core';
+import {listen} from '@tauri-apps/api/event';
 import appLogo from '../assets/claude-local-mark.svg';
+import {
+  MONITOR_BUS_CHANNEL,
+  postMonitorBusMessage,
+  type MonitorBusMessage,
+  type MonitorWindowState,
+} from './floating-monitor-model';
+import './floating-monitor.css';
 import {useI18n, setLocale, type Locale} from './i18n';
 import {
   applyThemePreset,
@@ -130,8 +138,60 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
   const [copiedPath, setCopiedPath] = useState(false);
   const [langBusy, setLangBusy] = useState(false);
   const [wallpaperBusy, setWallpaperBusy] = useState(false);
+  const [monitorOpen, setMonitorOpen] = useState(false);
   const [error, setError] = useState('');
   const wallpaperInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    void invoke<MonitorWindowState>('monitor_window_state')
+      .then(st => {
+        if (active && st) setMonitorOpen(Boolean(st.open));
+      })
+      .catch(() => {});
+    void listen<MonitorWindowState>('monitor-window-state', event => {
+      if (active && event.payload) setMonitorOpen(Boolean(event.payload.open));
+    })
+      .then(fn => {
+        if (active) unlisten = fn;
+        else fn();
+      })
+      .catch(() => {});
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        channel = new BroadcastChannel(MONITOR_BUS_CHANNEL);
+        channel.onmessage = (event: MessageEvent<MonitorBusMessage>) => {
+          const msg = event.data;
+          if (msg && typeof msg === 'object' && msg.type === 'window-state' && active) {
+            setMonitorOpen(Boolean(msg.state.open));
+          }
+        };
+      } catch {
+        channel = null;
+      }
+    }
+    return () => {
+      active = false;
+      if (unlisten) unlisten();
+      if (channel) channel.close();
+    };
+  }, []);
+
+  const toggleMonitorWindow = async () => {
+    setError('');
+    const next = !monitorOpen;
+    setMonitorOpen(next);
+    try {
+      const state = await invoke<MonitorWindowState>('monitor_window_set_open', {open: next});
+      setMonitorOpen(Boolean(state.open));
+      postMonitorBusMessage({type: 'window-state', state});
+    } catch (e) {
+      setMonitorOpen(!next);
+      setError(String(e));
+    }
+  };
 
   useEffect(() => {
     let live = true;
@@ -350,11 +410,12 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
         <Button
           variant="secondary"
           size="small"
-          onClick={() => {
-            void invoke('quota_monitor_toggle_window').catch(e => setError(String(e)));
-          }}
+          className="monitor-toggle-btn"
+          title={t('monitor.toggleHint')}
+          onClick={() => void toggleMonitorWindow()}
         >
-          {t('monitor.toggleButton')}
+          <span className={`monitor-toggle-dot${monitorOpen ? ' is-open' : ''}`} aria-hidden="true" />
+          {t(monitorOpen ? 'monitor.toggleButtonOpen' : 'monitor.toggleButton')}
         </Button>
       </SettingsRow>
       <SettingsRow title={t('settings.automationKillSwitchLabel')} detail={t('settings.automationKillSwitchHint')}>

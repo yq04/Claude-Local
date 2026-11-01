@@ -369,7 +369,7 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                         }
                     }
                     "listeners" => section = Section::Listeners,
-                    "rules" => section = Section::Rules,
+                    "rules" | "prepend-rules" | "append-rules" => section = Section::Rules,
                     // 显式跳过可能包含节点域名、密码、订阅链接与认证口令的所有段落。
                     "proxies" | "proxy-providers" | "authentication" | "secret" | "hosts" => {
                         section = Section::IgnoredSecretSection;
@@ -480,10 +480,17 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
             }
             Section::Rules => {
                 let lower = line.to_ascii_lowercase();
-                if lower.contains("claude.ai") || lower.contains("anthropic.com") {
+                if lower.contains("claude.ai")
+                    || lower.contains("anthropic.com")
+                    || lower.contains("claude.com")
+                {
                     audit.has_claude_rules = true;
                 }
-                if lower.contains("withpersona.com") || lower.contains("withpersona") {
+                if lower.contains("withpersona.com")
+                    || lower.contains("withpersona")
+                    || lower.contains("persona.com")
+                    || lower.contains("persona.org")
+                {
                     audit.has_persona_rules = true;
                 }
                 if (lower.contains("443") && lower.contains("udp") && lower.contains("reject"))

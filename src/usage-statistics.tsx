@@ -217,14 +217,12 @@ export function UsageStatisticsPanel() {
         </div>
 
         {error && <p role="alert" className="system-feedback error usage-error">{t('usage.readFailed')} {t(error)}</p>}
-        {snapshot?.warnings.some(code => code !== 'attribution_gap') ? <div className="usage-notice" role="status"><span>{[...new Set(snapshot.warnings.filter(code => code !== 'attribution_gap').map(code => t(warningKeys[code] ?? 'usage.warning.partial')))].join(' · ')}</span></div> : null}
 
         <div className="usage-overview" aria-busy={busy}>
           <section data-usage-metric="total" className="settings-card usage-total-card">
-            <div className="usage-metric-heading"><MetricGlyph kind="total" /><span>{t('usage.total')}</span><small>{t('usage.composition')}</small></div>
+            <div className="usage-metric-heading"><MetricGlyph kind="total" /><span>{t('usage.total')}</span>{totals && <small className="usage-total-badge">{num(totals.requests, true)} {t('usage.requests')}</small>}</div>
             <strong className="usage-total-value" title={num(totals?.total_tokens)}>{num(totals?.total_tokens, true)}<small>Token</small></strong>
             {totals ? <TokenComposition totals={totals} details /> : <div className="usage-composition-placeholder">{t('usage.totalHint')}</div>}
-            <p className="usage-overview-note">{t('usage.scopeNote')}</p>
           </section>
           <div className="usage-summary">
             <div data-usage-metric="cost" className="settings-card usage-metric" title={totals ? t('usage.costTooltipBreakdown', {input: formatUsdCost(costSummary.inputCostUsd), output: formatUsdCost(costSummary.outputCostUsd), write: formatUsdCost(costSummary.cacheWriteCostUsd), read: formatUsdCost(costSummary.cacheReadCostUsd)}) : t('usage.estimatedCostHint')}>
@@ -262,10 +260,9 @@ export function UsageStatisticsPanel() {
               <div><span>{t('usage.outputThroughput')}</span><strong title={num(totals?.output_tokens)}>{num(totals?.output_tokens, true)}<small>{avgOutputTokens != null ? t(isHourly ? 'usage.outputHourlyAvg' : 'usage.outputDailyAvg', {avg: num(Math.round(avgOutputTokens), true)}) : 'Token'}</small></strong></div>
             </div>
             {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={isHourly} timezone={snapshot.timezone} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={isHourly} timezone={snapshot.timezone} />}
-            <div className="usage-chart-caption"><span><i aria-hidden="true" />{t('usage.total')}</span><span>{t(trendView === 'chart' ? 'usage.trendHint' : 'usage.tableHint')}</span></div>
           </section>
           <section className="settings-card usage-model-card">
-            <div className="usage-panel-header"><div><GroupTitle aside={String(models.length)}>{t('usage.models')}</GroupTitle><p>{t('usage.modelsHint')}</p></div></div>
+            <div className="usage-panel-header"><div><GroupTitle aside={String(models.length)}>{t('usage.models')}</GroupTitle></div></div>
             <div className="usage-models">
               {models.length ? models.map(row => {
                 const family = detectModelFamily(row.model);
@@ -314,10 +311,6 @@ export function UsageStatisticsPanel() {
                 );
               }) : <p className="usage-model-empty">{t('usage.noModelData')}</p>}
             </div>
-            <div className="usage-model-footer">
-              <span>{t('usage.estimatedCost')} <strong>{totals ? formatUsdCost(costSummary.costUsd) : '—'}</strong></span>
-              <span>{t('usage.cacheSavings')} <strong>{totals ? formatUsdCost(costSummary.cacheSavingsUsd, true) : '—'}</strong></span>
-            </div>
           </section>
           </div>
 
@@ -332,7 +325,7 @@ export function UsageStatisticsPanel() {
             </div>
           </section>
         </>}
-        <Disclosure className="usage-method settings-card" triggerClassName="usage-method-trigger" summary={t('usage.method')}><div className="usage-method-body"><p>{t('usage.logCounters')}</p><p>{t('usage.totalFormula')}</p><p>{t('usage.cacheFormula')}</p><p>{t('usage.activityMethod')}</p><p>{t('usage.coverageNote')}</p><p>{t('usage.refreshNote')}</p><p>{t('usage.timezoneNote')}</p>{snapshot?.tracking_since != null && <p>{t('usage.trackingSince', {date: dateLabel(new Date(snapshot.tracking_since * 1000).toISOString())})}</p>}</div></Disclosure>
+        <Disclosure className="usage-method settings-card" triggerClassName="usage-method-trigger" summary={t('usage.method')}><div className="usage-method-body"><p>{t('usage.scopeNote')}</p><p>{t('usage.logCounters')}</p><p>{t('usage.totalFormula')}</p><p>{t('usage.cacheFormula')}</p><p>{t('usage.activityMethod')}</p><p>{t('usage.coverageNote')}</p><p>{t('usage.refreshNote')}</p><p>{t('usage.timezoneNote')}</p>{snapshot?.tracking_since != null && <p>{t('usage.trackingSince', {date: dateLabel(new Date(snapshot.tracking_since * 1000).toISOString())})}</p>}{snapshot?.warnings.some(code => code !== 'attribution_gap') && <p>{[...new Set(snapshot.warnings.filter(code => code !== 'attribution_gap').map(code => t(warningKeys[code] ?? 'usage.warning.partial')))].join(' · ')}</p>}</div></Disclosure>
       </div>
     </section>
   );
