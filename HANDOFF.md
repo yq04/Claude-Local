@@ -6,7 +6,7 @@
 -->
 # Claude-Local 新会话交接文档（无上下文直接接手）
 
-更新时间：2026-11-01 01:30 EDT（America/New_York）。当前最新正式发布至 GitHub Release（Latest）的版本为 **`v0.2.5`**，本机安装目录 `%LOCALAPPDATA%\Programs\Claude-Local` 亦已热更新并同步运行最新构建的 **`v0.2.5`** 正式版（涵盖浏览/电脑/网络/风控验证全链路防关联与 IPv6/WebRTC/DNS/KYC 防泄露加固、伴生浏览器 20 项防封实测结果按 `(slot, config)` 跨关窗/切页持久保留与 Canvas FNV-1a 真实像素哈希、额度小窗真实 5h 缓存命中率与耗尽预计时间，以及用量分析与 README 旗舰重构）。
+更新时间：2026-11-01 01:35 EDT（America/New_York）。当前最新正式发布至 GitHub Release（Latest）的版本为 **`v0.2.5`**（源码标签 `v0.2.5` 指向提交 `6d505a6`），本机安装目录 `%LOCALAPPDATA%\Programs\Claude-Local` 亦已热更新并同步运行最新构建的 **`v0.2.5`** 正式版（涵盖浏览/电脑/网络/风控验证全链路防关联与 IPv6/WebRTC/DNS/KYC 防泄露加固、伴生浏览器 20 项防封实测结果按 `(slot, config)` 跨关窗/切页持久保留与 Canvas FNV-1a 真实像素哈希、额度小窗真实 5h 缓存命中率与耗尽预计时间，以及用量分析与 README 旗舰重构）。
 
 > **给新会话的第一句话（必读）**：
 > 1. **`v0.2.5` 已全部开发完成、验证通过、更新至本机安装目录，并打包发布至 GitHub Release `v0.2.5`（Latest）**：在 `v0.2.4` 基础上新增了全链路 `ipv6: false` / `dns.ipv6: false` 防双栈旁路、补齐 Anthropic + Persona KYC + Stripe + Sentry + WorkOS 同源家宽分流规则、修复 `--accept-lang` 区域子标签与 `dns_prefetching` 泄露、实现伴生浏览器实测结果跨关窗与跨菜单持久保留（`last_observations`）、升级 `Canvas 2D` 为真实 32 位 FNV-1a 像素哈希探针、修正机房 ASN 词边界误判（`RCN` 等真家宽不再误触 `cn`）、重做「额度小窗」（真实 5h 四计数器缓存命中率 + 5h 耗尽预计时间）与「用量分析」2×2 卡片排版，并重构了中英文 `README.md` / `README_EN.md`（将四大防封与多身份物理隔离能力置于最核心位置）。
@@ -30,7 +30,7 @@
 
 ---
 
-## 2. 已经完成了什么（v0.2.4 完整交付清单）
+## 2. 已经完成了什么（v0.2.5 & v0.2.4 完整交付清单）
 
 ### 2.1 多账号智能接力与轮换（Smart Relay，`src/smart-relay-model.ts`、`src/identities.tsx`、`src/settings.tsx`）
 - **借鉴 `yetone/magpie` 的顺位评估与首选号滞回恢复，坚守单机安全切号边界**：
@@ -123,8 +123,9 @@
   - 隐私审计：108 个解包文件全部匹配资源白名单，29 项外置隐私探针扫描 **`0` 命中**。
 - **本机安装目录安全热更新**：
   - 已将 `v0.2.5` Release 宿主与前端资源部署至 `%LOCALAPPDATA%\Programs\Claude-Local`（当前本机已安装 `claude-local.exe` SHA-256 为 `0c7238b8bfe90658d6c1e3d65c205af6f18b0d3d640aa8da98459496f40f06fd`），并通过 `schtasks /Create ... /IT` 在交互式桌面会话启动 GUI；**本机 `claude.exe` 进程零中断**。
-- **GitHub Release 正式发布**：
-  - 标签 `v0.2.5` 及公开资产 `Claude-Local_0.2.5_x64-setup.exe`、`SHA256SUMS.txt` 已正式发布至 https://github.com/yq04/Claude-Local/releases/tag/v0.2.5 （`isDraft: false`、`isPrerelease: false`、Latest），GitHub 服务端返回 `digest` 与本地 SHA-256 完全一致。
+- **GitHub Release 正式发布与 README 旗舰重构**：
+  - 标签 `v0.2.5`（指向 `6d505a6`）及公开资产 `Claude-Local_0.2.5_x64-setup.exe`、`SHA256SUMS.txt` 已正式发布至 https://github.com/yq04/Claude-Local/releases/tag/v0.2.5 （`isDraft: false`、`isPrerelease: false`、Latest），GitHub 服务端返回 `digest` 与本地 SHA-256 完全一致；
+  - 重构了 `README.md`、`README_EN.md` 与 `docs/RELEASE_NOTES_0.2.5.md`，开篇新增「🔥 为什么选择 Claude-Local？（直击多账号风控四大痛点）」与「✨ 八大核心能力矩阵」，将防封隔离壁垒（独立指纹浏览器 + 20 项实测、WebRTC/IPv6/DNS/KYC 防漏与断路器、四维跨账号残留消毒、免费号科学养号与智能接力）置于最核心位置，而将额度小窗与用量分析定位为辅助效率能力。
 
 ---
 
@@ -135,7 +136,7 @@
 1. **为什么跨账号接力必须退出 `claude.exe` 后再 `claude -c` / `claude --resume`，而不能像 Magpie 那样靠本地网关热替换 Token**：
    - `claude.exe` 启动时会将当前账号的 OAuth Token、组织 UUID 及本次进程的遥测 `sessionId` 缓存在进程内存中；若不退出 `claude.exe` 而在半途通过本地代理偷换 Token，会导致同一个 CLI 进程 `sessionId` 与旧账号加密的 `thinking` 签名直接发送给新账号，极易触发 Anthropic 服务端同人多号关联风控或 `400 Invalid signature in thinking block`。
    - 因此，最安全的工作流是：**退出当前 CLI（`/exit` 或在切号弹窗中确认由软件安全关闭） → 点击 `Claude-Local` 切号（`cleaner_identity.rs` 自动剥离 `.jsonl` 会话中旧账号的 `userEmail`、`credential_org` 与 `thinking` 签名） → 在终端执行 `claude -c` 继续对话**。
-2. **「智能接力（Smart Relay）」保持当前 `v0.2.4` 状态（不删不改）**：
+2. **「智能接力（Smart Relay）」保持当前默认关闭状态（不删不改）**：
    - 用户已明确指示：**「目前先不做接力了！但也不用删除现有功能！」**。现有智能接力默认关闭（`enabled: false`），开启时作为余量/重置顺位计算器与手动一键切号入口保留即可。
 3. **坚持「前置专线 + 静态住宅 SOCKS5 双跳链式代理 + 软件三级验真防线」，不追求 VPS 自建面板**：
    - 经对社区 VPS 自建教程（`3x-ui` / `VLESS+Reality` / `Sub-Store`）与 X 防封实测的交叉调研确认：自建 VPS 运维门槛极高、单 IP 易被墙/被邻居送中，且在注册/过 Persona KYC/绑 Stripe 卡阶段机房 IP（`hosting: true`）极易被拦截，而高阶 VPS 玩家最终解决 AI 解锁依然必须回归 `dialer-proxy` 链式落地架构。
@@ -145,7 +146,7 @@
 
 ## 4. 下一步计划是什么
 
-目前 `v0.2.4` 所有计划内目标均已圆满收官。新会话启动后：
+目前 `v0.2.5` 所有计划内目标均已圆满收官。新会话启动后：
 
 1. **先听取用户的新指令**：
    - 若用户提出新的使用问题、界面细节调整或新功能需求，先阅读相关模块的 `CLAUDE.md` 与源码头，按需制定方案。
@@ -187,6 +188,13 @@
    - 生产构建与本地部署必须带 `--features custom-protocol`；`scripts/build-windows-share.ps1` 需传入 `-SevenZipPath "C:\Program Files\AMD\CIM\Bin64\7z.exe"`（或本机已安装的 `7z.exe` 路径）。
    - **在沙箱化 PowerShell 工具调用中启动 `claude-local.exe` GUI 窗口时，切勿直接使用 `Start-Process` 或 `Win32_Process Create`**：因为工具子进程运行在非交互式后台 WindowStation（`Service-0x0-...`），直接拉起的 `claude-local.exe` 会变成不可见的后台僵尸进程并霸占 `tauri_plugin_single_instance` 单实例锁，导致用户双击桌面快捷方式无法打开窗口！必须使用 `schtasks /Create /TN "ClaudeLocalLaunchTemp" /TR "\"$dstExe\"" /SC ONCE /ST 00:00 /IT /F` + `schtasks /Run` 将进程挂载到用户交互式桌面会话（`WinSta0\Default`）。
    - 部分文件（如 `src/locales/zh.yaml`、`src/locales/en.yaml` 前半段及部分测试脚本）含 `CRLF` 行尾，若多行 `edit_file` 报未找到目标，优先使用单行锚点或 PowerShell `[System.IO.File]::ReadAllText/WriteAllText` 精确替换。
+10. **伴生浏览器实测结果缓存（`last_observations`）与机器出口 `state.host` 失效边界坑**：
+    - 关闭伴生浏览器或切换左侧菜单时，不能在 `snapshot()` 中简单用 `.filter(|_| running)` 丢弃 `session.report`，也不能在 `browser_launch` 时把 `state.host` 清空为 `None`（否则用户先点「检测机器出口」再点「打开浏览器实测」时机器出口结果会被冲掉）；
+    - `Browser.last_observations` 必须严格绑定 `(slot, config)`（`Config` 需实现 `PartialEq, Eq`），并在 `browser_save`（修改浏览器配置）、`browser_clear(reset=true)`（深度重置）、`browser_align`（对齐美国环境）与 `kill_switch`（触发断路器）时主动清除对应缓存，防止配置变更后仍展示旧绿勾。
+11. **机房 ASN / ISP 短词识别误判真家宽坑**：
+    - 像 `cn`、`aws`、`gcp`、`ovh`、`vps`、`idc`、`dmit` 等短词绝对不能用普通 `contains()` 子串匹配，否则美国老牌真家宽 `RCN` (`AS6079`) 会因包含字母 `cn` 被误判为机房；必须使用 ASCII 词边界匹配 `contains_word_bounded()`。
+12. **Mihomo / Clash Verge Rev Windows 命名管道热重载 `SAFE_PATHS` 坑**：
+    - 通过命名管道 `\\.\pipe\verge-mihomo-production-*` 调用 `PUT /configs?force=true` 热重载 Mihomo 时，若启用了 `clash-verge-service` 服务模式，直接传入 `%APPDATA%` 下的路径会报 `400 path is not a subpath of SAFE_PATHS`；必须先将生成的配置同步到 `%PROGRAMDATA%\clash-verge-service\users\<64位hex>\runtime\clash-verge.yaml` 再向该安全路径发起 `PUT /configs?force=true`。
 
 ---
 
