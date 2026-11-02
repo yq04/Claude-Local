@@ -1,6 +1,6 @@
 {
   "identifier": "main",
-  "description": "单窗口事件与界面控制",
+  "description": "主窗口与悬浮监控窗事件及界面控制",
   "windows": [
     "main",
     "monitor"

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Selected browser slot, visible-page lifecycle and read-only browser_runtime_read IPC.
- * [OUTPUT]: Three-second runtime samples with no overlapping requests or late/old-slot updates.
+ * [OUTPUT]: Three-second runtime samples with structural equality deduplication and no overlapping requests or late/old-slot updates.
  * [POS]: Shared desktop runtime hook; never refreshes identities, profile caches or OAuth usage.
  * [PROTOCOL]: Update this header and src/CLAUDE.md when changing polling or invalidation.
  */
@@ -32,9 +32,18 @@ export function useBrowserRuntime(selectedSlot: string | null | undefined, enabl
       const version = generation.current;
       try {
         const next = await invoke<BrowserRuntime>('browser_runtime_read');
-        if (visible() && version === generation.current) setSample(next?.slot === selectedSlot ? next : null);
+        if (visible() && version === generation.current) {
+          const matched = next?.slot === selectedSlot ? next : null;
+          setSample(prev =>
+            prev?.slot === matched?.slot &&
+            prev?.running === matched?.running &&
+            prev?.window_open === matched?.window_open
+              ? prev
+              : matched,
+          );
+        }
       } catch {
-        if (visible() && version === generation.current) setSample(null);
+        if (visible() && version === generation.current) setSample(prev => (prev === null ? prev : null));
       } finally {
         inFlight.current = false;
         if (queued.current) { queued.current = false; refreshRef.current(); }

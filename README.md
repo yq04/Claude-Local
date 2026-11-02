@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.2.5 end-to-end anti-ban & Browser/System/Network/KYC hardening, persistent browser verification state, real Canvas FNV-1a fingerprinting, 4D cross-account sanitization, Free warming lifecycle protection, Smart Relay rotation, and HUD/Usage analytics polish.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.2.6 compact/reorderable cards, silent local sync, promotion fix, HUD/relay/usage improvements, and retained 0.2.5 browser/network hardening.
 [OUTPUT]: Bilingual-linked flagship project presentation foregrounding anti-ban engineering, isolated Fingerprint Chromium, KYC/WebRTC/DNS/IPv6 protection, zero-kill encrypted vault switching, and full-lifecycle warming cards.
 [POS]: Primary repository introduction (Simplified Chinese default, linked to README_EN.md).
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -15,7 +15,7 @@
 
 基于开源项目 [CCBaga](https://github.com/liseami/CCBaga)（[@liseami](https://github.com/liseami)）二次开发并独立维护，保留原贡献者版权与 [MIT 许可](LICENSE) · 纯本地单机优先（Local-First） · 零云端凭据托管 · 绝不强杀运行中的 `claude.exe`
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.2.5-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.5)
+[![Latest Release](https://img.shields.io/badge/Release-v0.2.6-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.6)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.5/Claude-Local_0.2.5_x64-setup.exe"><strong>⬇️ 下载 v0.2.5 安装包 (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.6/Claude-Local_0.2.6_x64-setup.exe"><strong>⬇️ 下载 v0.2.6 安装包 (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.5"><strong>✨ v0.2.5 Release 页面</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.6"><strong>✨ v0.2.6 Release 页面</strong></a>
   ·
   <a href="#-为什么选择-claude-local直击多账号风控四大痛点"><strong>🔥 四大防封壁垒</strong></a>
   ·
@@ -76,6 +76,10 @@
 
 ## ✨ 八大核心能力矩阵
 
+**v0.2.6 最新亮点**：`166×286` 身份/养号卡顶部拖拽与键盘调序、5 秒静默本地同步、转正空白卡修复、HUD 鼠标穿透与底部防遮挡、接力池容量/三态会话保持、未知/过期额度定向查询，以及单次用量均值与 Markdown/TSV 导出。[完整发布说明](docs/RELEASE_NOTES_0.2.6.md)。
+
+现有全库 `.clbackup` 备份与「复制跨机防关联交接卡」保留；单身份加密导入/导出及 `.bagapack` 跨机身份包方案已取消，交接卡仅复制环境说明。环境核验不保证账号不受风控。
+
 | 核心支柱 | 工程实现与能力亮点 |
 | :--- | :--- |
 | **🌐 指纹隔离伴生浏览器与 20 项防封实测** | 每身份与养号卡独占 Chromium 资料目录与确定性种子；内置 **WebRTC 三重强锁、禁 DNS 预取、语言子标签净化、D3D11/WebGL/CPU/UA-CH 硬件自洽、Canvas 2D FNV-1a 像素哈希与 WebAudio 实测、同 IP 机房（Hosting）分类核验**；**`v0.2.5` 支持关闭浏览器或跨菜单切页后按 `(槽位, 配置)` 自动保留 10 项核验绿勾与机器出口结果**。 |
@@ -91,7 +95,7 @@
 
 ## 🖼️ 核心架构与界面全览
 
-> **截图版本与隐私说明**：界面截图采集自隔离环境下的真实前端，账号、组织、用量与 CLI 版本均为**合成演示数据**；邮箱仅使用保留域名 `@example.invalid` 并启用隐私遮罩，不含任何真实凭据、代理地址或个人路径。最新 `v0.2.5` 增强详见上方能力表与 [0.2.5 发布说明](docs/RELEASE_NOTES_0.2.5.md)。
+> **截图版本与隐私说明**：界面截图采集自隔离环境下的真实前端，账号、组织、用量与 CLI 版本均为**合成演示数据**；邮箱仅使用保留域名 `@example.invalid` 并启用隐私遮罩，不含任何真实凭据、代理地址或个人路径。最新 `v0.2.6` 增强详见上方亮点与 [0.2.6 发布说明](docs/RELEASE_NOTES_0.2.6.md)；下方截图沿用历史版本示意。
 
 ### 1. 硬件级自洽的防关联伴生浏览器、20 项真机探针与断流急停（Kill-Switch）
 
@@ -182,30 +186,30 @@ Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **W
 
 ## 📦 获取、安装与版本记录
 
-### 1. 下载最新安装包（`v0.2.5`）
+### 1. 下载最新安装包（`v0.2.6`）
 
 | 发行资产 | 适用系统 | 文件大小 | SHA-256 校验和 |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.2.5_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.5/Claude-Local_0.2.5_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | `140,847,905` 字节 (`134.32` MiB) | `16c9320d05a2100047c602331e22f9318dbba93a712100185b9bab4aca344e95` |
+| **[Claude-Local_0.2.6_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.6/Claude-Local_0.2.6_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | 见 Release 资产 | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.2.6/SHA256SUMS.txt) |
 
-下载后在 PowerShell 中计算 SHA-256，并与 [v0.2.5 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.5) 公布的校验值比对：
+下载后在 PowerShell 中计算 SHA-256，并与 [v0.2.6 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.6) 公布的校验值比对：
 
 ```powershell
-Get-FileHash .\Claude-Local_0.2.5_x64-setup.exe -Algorithm SHA256
-# 预期 SHA-256：16c9320d05a2100047c602331e22f9318dbba93a712100185b9bab4aca344e95
+Get-FileHash .\Claude-Local_0.2.6_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. 安装与无损升级说明
 
 1. **安装位置与标识**：采用当前用户模式 NSIS 安装程序，默认安装至 `%LOCALAPPDATA%\Programs\Claude-Local`；主程序为 `claude-local.exe`，应用包标识为 `ai.local.claude-local`，伴侣浏览器注册名为 `Claude-Local-Browser`。
 2. **用户数据目录**：所有加密身份库、主密钥、额度/用量账本、外观壁纸配置与隔离浏览器个人资料均独立保存在 `%APPDATA%\ai.local.claude-local`。
-3. **平滑升级**：从 `0.1.x` 或 `0.2.x` 升级至 `0.2.5` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
+3. **平滑升级**：从 `0.1.x` 或 `0.2.x` 升级至 `0.2.6` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
 
 ### 3. 发行版本演进记录
 
 | 版本 | 发布日期 | 核心演进内容 | 详细文档 |
 | :--- | :--- | :--- | :--- |
-| **`v0.2.5`** *(Latest)* | 2026-11-01 | **全链路抗风控与防关联环境加固（`--accept-lang` 子标签防泄露、禁 DNS 预取、双栈 `ipv6: false` 防旁路、Claude/Persona/Stripe/Sentry/WorkOS 全域名同源分流）**、**伴生浏览器实测结果跨页/关窗自动保留与 Canvas 2D FNV-1a 真实像素哈希**、**桌面额度小窗真实 5h 缓存命中率校准与用量分析仪表盘重构** | [发布说明](docs/RELEASE_NOTES_0.2.5.md) |
+| **`v0.2.6`** *(Latest)* | 2026-11-02 | 紧凑卡片拖拽/键盘调序、5 秒静默本地同步、转正幽灵卡修复、HUD 穿透与防遮挡、接力池容量与定向额度查询、单次用量指标及 Markdown/TSV 导出 | [发布说明](docs/RELEASE_NOTES_0.2.6.md) |
+| **`v0.2.5`** | 2026-11-01 | **全链路抗风控与防关联环境加固（`--accept-lang` 子标签防泄露、禁 DNS 预取、双栈 `ipv6: false` 防旁路、Claude/Persona/Stripe/Sentry/WorkOS 全域名同源分流）**、**伴生浏览器实测结果跨页/关窗自动保留与 Canvas 2D FNV-1a 真实像素哈希**、**桌面额度小窗真实 5h 缓存命中率校准与用量分析仪表盘重构** | [发布说明](docs/RELEASE_NOTES_0.2.5.md) |
 | **`v0.2.4`** | 2026-10-31 | Magpie 风格多账号智能接力与轮换（默认关闭，五大路由策略 + 首选号恢复回切）、伴生浏览器 WebRTC Network Limiter 三重防漏强锁 + 桌面端 Clash/Mihomo 一键防漏覆写 YAML、官方 API 美元等效花费（`$`）与缓存节省分析回归、小火箭双栏扫码桥接与养号一键返回 CLI 浏览器 | [发布说明](docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md) |
 | **`v0.2.3`** | 2026-10-30 | 伴生浏览器按需无阻断防泄露断路器（Kill-Switch）、Mihomo `strict-route` 分层闭环修复向导、养号卡片国家/时区锁定与打开前防漂移核验、阶段防封 SOP 指南、高负荷速率提示与全链路加密备份扩展 | [发布说明](docs/RELEASE_NOTES_0.2.3_SECURITY.md) · [交付核验](docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md) |
 | **`v0.2.2`** | 2026-10-29 | 身份卡片 `PRO`/`MAX` 右侧 `MM/DD` 订阅到期显示与手动充值补录、「风控验证」跨域出口与手机同住宅出口 KYC 桥接、统计身份独立登记与受控续聊归属、四类 Token 构成与共享账本 HUD | [发布说明](docs/RELEASE_NOTES_0.2.2_USAGE.md) |

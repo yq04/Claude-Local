@@ -588,3 +588,68 @@ fn standard_fs_written_files_are_accepted_by_profile_catalog_and_switch() {
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
+#[test]
+fn switching_from_unauthenticated_workspace_with_cache_or_projects_never_creates_blank_identity_card() {
+    let folder = canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("baga-empty-switch-{}", new_id().unwrap()));
+    let home = folder.join("home");
+    let vault = folder.join("vault");
+    private::directory(&home.join(".claude/projects/demo")).unwrap();
+    private::directory(&home.join(".claude/cache")).unwrap();
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"first-user","emailAddress":"first@example.invalid","displayName":"First"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"first-token"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/projects/demo/session.jsonl"),
+        "{\"session\":1}\n",
+    )
+    .unwrap();
+    fixture_write(home.join(".claude/cache/entry"), "cached").unwrap();
+
+    let mut policy = Policy::default();
+    policy.projects = false;
+    policy.history = false;
+    policy.cache = false;
+
+    let mut store = store::Store::open(&vault, &home).unwrap();
+    let reporter = Reporter::channel(None);
+    // 1. Switch to empty ("新身份"): saves "First"
+    store.switch("empty", "First", &policy, &reporter).unwrap();
+    assert_eq!(store.records().into_iter().filter(|r| !r.empty).count(), 1);
+    assert!(!profile::read(&home).present);
+
+    // 2. While workspace is already empty (unauthenticated), residual cache/projects appear
+    //    and the user triggers warming promotion / switch("empty") again.
+    private::directory(&home.join(".claude/projects/residual")).unwrap();
+    private::directory(&home.join(".claude/cache")).unwrap();
+    fixture_write(
+        home.join(".claude/projects/residual/turn.jsonl"),
+        "{\"turn\":1}\n",
+    )
+    .unwrap();
+    fixture_write(home.join(".claude/cache/residual"), "residual-cache").unwrap();
+
+    store
+        .switch("empty", "当前身份", &policy, &reporter)
+        .unwrap();
+    let visible = store
+        .records()
+        .into_iter()
+        .filter(|r| !r.empty)
+        .collect::<Vec<_>>();
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].name, "First");
+    assert!(!visible.iter().any(|r| r.name == "当前身份"));
+
+    drop(store);
+    std::fs::remove_dir_all(folder).unwrap();
+}

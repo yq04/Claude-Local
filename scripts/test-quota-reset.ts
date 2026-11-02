@@ -51,7 +51,7 @@ export async function testQuotaReset(browser:Browser,base:string) {
   assert.match(await cards.nth(3).locator('[data-quota-window="5h"]').innerText(),/未知/);
   checks++;
 
-  const size=await cards.first().boundingBox();assert(size);assert.equal(size.width,180);assert.equal(size.height,286);
+  const size=await cards.first().boundingBox();assert(size);assert.equal(size.width,166);assert.equal(size.height,286);
   await cards.first().locator('.identity-quota-open').click();
   const dialog=page.getByRole('dialog');
   await dialog.getByText('按已过重置时间推定',{exact:true}).waitFor();

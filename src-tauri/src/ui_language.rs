@@ -1,5 +1,5 @@
 // [INPUT]: 应用数据目录和显式的 zh/en 界面偏好。
-// [OUTPUT]: 语言读写命令及回环服务共享的当前语言；原子保存后再发布内存状态。
+// [OUTPUT]: 语言读写命令、含「额度小窗」入口的双语托盘菜单及回环服务共享的当前语言；原子保存后再发布内存状态。
 // [POS]: 界面语言边界，独立于系统语言、浏览器指纹和地区设置。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use std::{fs, sync::Mutex};
@@ -66,6 +66,17 @@ pub fn menu(
         true,
         None::<&str>,
     )?;
+    let monitor = MenuItem::with_id(
+        app,
+        "monitor",
+        if language == "en" {
+            "Quota HUD"
+        } else {
+            "额度小窗"
+        },
+        true,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(
         app,
         "quit",
@@ -73,7 +84,7 @@ pub fn menu(
         true,
         None::<&str>,
     )?;
-    Menu::with_items(app, &[&open, &quit])
+    Menu::with_items(app, &[&open, &monitor, &quit])
 }
 #[cfg(test)]
 mod tests {

@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 共享界面语言状态、宿主语言写入命令、Tauri 本机应用版本、settings-model 响应式视图偏好与主题预设、smart-relay-model 多账号智能接力与轮换策略、wallpaper-store 本地自定义壁纸与主色调提取引擎、身份备份组件与 Cromma UI 控件。
- * [OUTPUT]: 对齐 Cockpit Tools 悬浮胶囊分栏且四分页完全正交解耦的「软件设置」页面：通用（目录摘要+语言/默认页/额度口径/隐私打码/目录快捷操作+多账号智能接力与轮换策略+额度监控/自动续杯/防封守护快捷中心）、外观与布局（一键主题预设/主题/6色强调色/表面玻璃化/艺术与自定义本地壁纸上传+主色调智能提取+五层光学毛玻璃3项无级滑块/减少动画+字体与排版预览+侧栏布局/界面缩放）、数据管理（独立资料目录+加密备份/恢复+界面偏好重置）与关于（只读版本信息与架构规格）。
+ * [INPUT]: 共享界面语言状态、宿主语言写入命令、Tauri 本机应用版本、settings-model 响应式视图偏好与主题预设、smart-relay-model 多账号智能接力与轮换策略、floating-monitor-model 悬浮窗开启/鼠标穿透状态、wallpaper-store 本地自定义壁纸与主色调提取引擎、身份备份组件与 Cromma UI 控件。
+ * [OUTPUT]: 对齐 Cockpit Tools 悬浮胶囊分栏且四分页完全正交解耦的「软件设置」页面：通用（目录摘要+语言/默认页/额度口径/隐私打码/目录快捷操作+多账号智能接力与轮换策略+额度监控/穿透恢复/自动续杯/防封守护快捷中心）、外观与布局（一键主题预设/主题/6色强调色/表面玻璃化/艺术与自定义本地壁纸上传+主色调智能提取+五层光学毛玻璃3项无级滑块/减少动画+字体与排版预览+侧栏布局/界面缩放）、数据管理（独立资料目录+加密备份/恢复+界面偏好重置）与关于（只读版本信息与架构规格）。
  * [POS]: 独立设置面板；视图偏好与身份备份均由用户手动触发，不联网、不检查或安装更新、不替换当前身份库。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -139,6 +139,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
   const [langBusy, setLangBusy] = useState(false);
   const [wallpaperBusy, setWallpaperBusy] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(false);
+  const [monitorClickThrough, setMonitorClickThrough] = useState(false);
   const [error, setError] = useState('');
   const wallpaperInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -147,11 +148,17 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
     let unlisten: (() => void) | null = null;
     void invoke<MonitorWindowState>('monitor_window_state')
       .then(st => {
-        if (active && st) setMonitorOpen(Boolean(st.open));
+        if (active && st) {
+          setMonitorOpen(Boolean(st.open));
+          setMonitorClickThrough(Boolean(st.clickThrough));
+        }
       })
       .catch(() => {});
     void listen<MonitorWindowState>('monitor-window-state', event => {
-      if (active && event.payload) setMonitorOpen(Boolean(event.payload.open));
+      if (active && event.payload) {
+        setMonitorOpen(Boolean(event.payload.open));
+        setMonitorClickThrough(Boolean(event.payload.clickThrough));
+      }
     })
       .then(fn => {
         if (active) unlisten = fn;
@@ -166,6 +173,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
           const msg = event.data;
           if (msg && typeof msg === 'object' && msg.type === 'window-state' && active) {
             setMonitorOpen(Boolean(msg.state.open));
+            setMonitorClickThrough(Boolean(msg.state.clickThrough));
           }
         };
       } catch {
@@ -181,11 +189,25 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
 
   const toggleMonitorWindow = async () => {
     setError('');
+    if (monitorOpen && monitorClickThrough) {
+      setMonitorClickThrough(false);
+      try {
+        const state = await invoke<MonitorWindowState>('monitor_window_set_click_through', {clickThrough: false});
+        setMonitorOpen(Boolean(state.open));
+        setMonitorClickThrough(Boolean(state.clickThrough));
+        postMonitorBusMessage({type: 'window-state', state});
+      } catch (e) {
+        setMonitorClickThrough(true);
+        setError(String(e));
+      }
+      return;
+    }
     const next = !monitorOpen;
     setMonitorOpen(next);
     try {
       const state = await invoke<MonitorWindowState>('monitor_window_set_open', {open: next});
       setMonitorOpen(Boolean(state.open));
+      setMonitorClickThrough(Boolean(state.clickThrough));
       postMonitorBusMessage({type: 'window-state', state});
     } catch (e) {
       setMonitorOpen(!next);
@@ -410,12 +432,25 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
         <Button
           variant="secondary"
           size="small"
-          className="monitor-toggle-btn"
-          title={t('monitor.toggleHint')}
+          className={`monitor-toggle-btn${monitorOpen && monitorClickThrough ? ' is-click-through' : ''}`}
+          title={
+            monitorOpen && monitorClickThrough
+              ? locale === 'en'
+                ? 'HUD is in Ghost (click-through) mode — click to restore mouse interaction'
+                : '悬浮窗正处于鼠标穿透模式，点击立即恢复鼠标交互'
+              : t('monitor.toggleHint')
+          }
           onClick={() => void toggleMonitorWindow()}
         >
-          <span className={`monitor-toggle-dot${monitorOpen ? ' is-open' : ''}`} aria-hidden="true" />
-          {t(monitorOpen ? 'monitor.toggleButtonOpen' : 'monitor.toggleButton')}
+          <span
+            className={`monitor-toggle-dot${monitorOpen ? (monitorClickThrough ? ' is-click-through' : ' is-open') : ''}`}
+            aria-hidden="true"
+          />
+          {monitorOpen && monitorClickThrough
+            ? locale === 'en'
+              ? 'Quota HUD · Ghost'
+              : '额度小窗 · 穿透中'
+            : t(monitorOpen ? 'monitor.toggleButtonOpen' : 'monitor.toggleButton')}
         </Button>
       </SettingsRow>
       <SettingsRow title={t('settings.automationKillSwitchLabel')} detail={t('settings.automationKillSwitchHint')}>

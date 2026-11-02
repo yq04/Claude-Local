@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Native browser-only warming views, IP region probe check results, independent runtime samples, dedicated warming activity state, privacy preferences and guarded parent actions.
- * [OUTPUT]: Shared card-count styling, four short steps, 180×286 cards with region-drift hints, inline warming activity log with dismiss support, pre-open IP region mismatch dialog, and editor SOP guidance.
+ * [OUTPUT]: Shared card-count styling, four short steps, 166×286 cards with top-pill drag-to-reorder handle and region-drift hints, cross-machine anti-association handoff spec copy, inline warming activity log with dismiss support, pre-open IP region mismatch dialog, and editor SOP guidance.
  * [POS]: Free warming identity rail; subscriptions and CLI promotion reuse the identity panel's existing dialogs.
  * [PROTOCOL]: Update this header, src/CLAUDE.md and both locale catalogs when changing UI.
  */
@@ -27,6 +27,7 @@ import {
   type WarmingProbeCheckResult,
 } from './warming-model';
 import {browserRuntimeStatus, type BrowserRuntime} from './browser-runtime';
+import {useCardRailReorder, WARMING_CARD_ORDER_STORAGE_KEY} from './card-order';
 
 type MismatchPrompt = {
   card: WarmingCard;
@@ -54,9 +55,58 @@ export function WarmingLibrary({cards, runtime, activity, blocked, promotionBloc
   const [mismatchPrompt, setMismatchPrompt] = useState<MismatchPrompt | null>(null);
   const [checkingId, setCheckingId] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false), [deleteBrowser, setDeleteBrowser] = useState(false), [formError, setFormError] = useState('');
+  const [handoffNotice, setHandoffNotice] = useState('');
   const today = localTodayYmd(new Date(nowSec * 1000));
   const modalOpen = !!editor || !!deletion || !!mismatchPrompt;
+  const warmingReorder = useCardRailReorder({
+    storageKey: WARMING_CARD_ORDER_STORAGE_KEY,
+    items: cards,
+    getId: card => card.id,
+    disabled: blocked || busy || modalOpen,
+  });
   useEffect(() => { onModalChange(modalOpen); return () => onModalChange(false); }, [modalOpen, onModalChange]);
+  async function copyWarmingHandoffSpec(card: WarmingCard) {
+    const shownLabel = maskDisplayName(card.name, card.email, privacyMask);
+    const shownEmail = card.email ? maskEmailAddress(card.email, privacyMask) : t('warming.noEmail');
+    const regionSpec = [
+      card.registered_country || 'US',
+      card.registered_timezone || 'America/Los_Angeles',
+      'en-US',
+    ].join(' · ');
+    const expiryYmd = card.subscription_expiry_ymd || (locale === 'zh' ? '未设置' : 'Not set');
+    const lines = locale === 'zh'
+      ? [
+          '### Claude-Local 跨机防关联环境交接卡 (养号工牌)',
+          `- **养号工牌**: ${shownLabel} (${t(`warming.stage.${card.stage}`)}) · ${shownEmail}`,
+          `- **固定指纹种子与槽位**: \`seed=#${String(card.seed).slice(-4)} (${card.seed})\` · \`slot=${card.slot}\``,
+          `- **目标区域 / 时区 / 语言**: \`${regionSpec}\``,
+          '- **推荐本地代理监听**: `socks5://127.0.0.1:7899` (独立住宅出口，CLI 不受影响)',
+          `- **订阅到期日**: ${expiryYmd}`,
+          '- **抗封铁律 (单机单活)**: 严禁两台设备同时打开同一养号浏览器槽位或并发登录；迁移前请先关闭源设备内置浏览器并保持住宅出口国家/时区一致。',
+        ]
+      : [
+          '### Claude-Local Anti-Association Handoff Spec (Warming Card)',
+          `- **Warming Card**: ${shownLabel} (${t(`warming.stage.${card.stage}`)}) · ${shownEmail}`,
+          `- **Fingerprint Seed & Slot**: \`seed=#${String(card.seed).slice(-4)} (${card.seed})\` · \`slot=${card.slot}\``,
+          `- **Target Region / Timezone / Locale**: \`${regionSpec}\``,
+          '- **Recommended Local Proxy Listener**: `socks5://127.0.0.1:7899` (dedicated residential exit, CLI unaffected)',
+          `- **Subscription Expiry**: ${expiryYmd}`,
+          '- **Anti-Ban Rule (1-Device-at-a-Time)**: Never open the same warming browser slot on two machines simultaneously; close the companion browser on the source machine and match the registered country/timezone before opening on the target machine.',
+        ];
+    const text = lines.join('\n');
+    try {
+      await invoke('copy_result', {text});
+      setHandoffNotice('warming.handoffSpecCopied');
+    } catch {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+        await navigator.clipboard.writeText(text);
+        setHandoffNotice('warming.handoffSpecCopied');
+      } catch {
+        setHandoffNotice('warming.handoffSpecCopyFailed');
+      }
+    }
+  }
   function edit(card?: WarmingCard) {
     setFormError('');
     setEditor(card ? editWarmingDraft(card) : createWarmingDraft(today));
@@ -138,9 +188,10 @@ export function WarmingLibrary({cards, runtime, activity, blocked, promotionBloc
       <span className="identity-onboarding-badge">{t('warming.stepsTitle')}</span>
       {['create', 'configure', 'interact', 'promote'].map((step, index) => <span className="warming-step" key={step}>{index > 0 && <i aria-hidden="true">→</i>}<span className="identity-onboarding-chip">{t(`warming.step.${step}`)}</span></span>)}
     </div></div>
-    <div className="identity-card-rail" tabIndex={0} role="region" aria-label={t('warming.title')}>
-      {cards.length === 0 && <p className="warming-empty">{t('warming.empty')}</p>}
-      {cards.map(card => {
+    {handoffNotice && <p className="identity-online-feedback identity-page-feedback" role="status" data-warming-handoff-notice><span>{t(handoffNotice)}</span><Button variant="ghost" size="small" type="button" onClick={() => setHandoffNotice('')}>{t('关闭记录')}</Button></p>}
+    <div className="identity-card-rail" ref={warmingReorder.railRef} tabIndex={0} role="region" aria-label={t('warming.title')}>
+      {warmingReorder.orderedItems.length === 0 && <p className="warming-empty">{t('warming.empty')}</p>}
+      {warmingReorder.orderedItems.map(card => {
         const days = warmingDays(card.created_ymd, today), shownName = maskDisplayName(card.name, card.email, privacyMask);
         const runtimeStatus = browserRuntimeStatus(runtime, card.browser_active ? card.slot : null);
         const badge = card.browser_active ? `warming.browser${runtimeStatus === 'running' ? 'Running' : runtimeStatus === 'closed' ? 'Closed' : 'Unknown'}` : `warming.stage.${card.stage}`;
@@ -153,8 +204,21 @@ export function WarmingLibrary({cards, runtime, activity, blocked, promotionBloc
         const regionTitle = hasRegionDrift
           ? `${baseRegion}${separator}${t('identities.warming.regionDriftTitle', {registered: card.registered_country ?? '', current: card.last_probe_country ?? ''})}`
           : region;
+        const isDragging = warmingReorder.draggingId === card.id;
+        const dragStyle = isDragging
+          ? {transform: `translate3d(${warmingReorder.dragOffsetX}px, -4px, 0) scale(1.025) rotate(${warmingReorder.dragTiltDeg}deg)`}
+          : undefined;
         const menu = (action: string, label: string, run: () => void, danger = false, extraDisabled = false) => <DropdownMenu.Item className={`identity-menu-item${danger ? ' danger' : ''}`} data-warming-action={action} disabled={blocked || busy || extraDisabled} onSelect={run}>{t(label)}</DropdownMenu.Item>;
-        return <article className={`identity-card warming-card${card.browser_active ? ' browser-selected' : ''}${runtimeStatus === 'running' ? ' browser-active' : ''}${card.stage === 'pro_ready' ? ' pro-ready' : ''}`} key={card.id} data-warming-id={card.id} data-warming-stage={card.stage} data-browser-active={card.browser_active} data-browser-runtime={runtimeStatus} aria-label={shownName}>
+        return <article className={`identity-card warming-card${card.browser_active ? ' browser-selected' : ''}${runtimeStatus === 'running' ? ' browser-active' : ''}${card.stage === 'pro_ready' ? ' pro-ready' : ''}${isDragging ? ' is-dragging' : ''}`} key={card.id} data-reorder-card-id={card.id} data-warming-id={card.id} data-warming-stage={card.stage} data-browser-active={card.browser_active} data-browser-runtime={runtimeStatus} aria-label={shownName} style={dragStyle}>
+          <div
+            className="identity-card-drag-handle"
+            data-card-drag-handle
+            title={t('identityCard.dragReorderHint')}
+            aria-label={t('identityCard.dragReorderHint')}
+            tabIndex={0}
+            onPointerDown={e => warmingReorder.startCardDrag(card.id, e)}
+            onKeyDown={e => warmingReorder.handleCardKeyDown(card.id, e)}
+          />
           <div className="identity-card-head">
             <div className="identity-avatar" aria-hidden="true">{Array.from(shownName)[0]?.toUpperCase()}</div>
             <span className="identity-live-badge" title={t(card.browser_active ? `${badge}Title` : `warming.stage.${card.stage}`)}>{t(badge)}</span>
@@ -165,6 +229,7 @@ export function WarmingLibrary({cards, runtime, activity, blocked, promotionBloc
                 {menu('switch', 'warming.switchMenu', () => void requestOpen(card, 'switch_only'))}
                 {menu('edit', 'warming.edit', () => edit(card))}
                 {menu('expiry', 'warming.expiry', () => onExpiry(card))}
+                {menu('copy-handoff', 'warming.copyHandoffSpec', () => void copyWarmingHandoffSpec(card))}
                 {menu('promote', card.stage === 'pro_ready' ? 'warming.promote' : 'warming.promoteStageRequired', () => onPromote(card), false, promotionBlocked || card.stage !== 'pro_ready')}
                 {menu('delete', 'warming.delete', () => {setDeletion(card); setAccepted(false); setDeleteBrowser(false); setFormError('');}, true)}
               </DropdownMenu.Content></DropdownMenu.Portal>

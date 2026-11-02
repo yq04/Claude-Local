@@ -3,6 +3,14 @@
  * [POS]: Identity productivity presentation; the 180×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
  */
+.identity-confirm-target.warming-promote-target {
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.identity-confirm-target.warming-promote-target > p {
+  flex: 1 1 100%;
+  margin: 0;
+}
 .identity-observation-age { color: var(--muted-foreground); font-size: 10px; font-weight: 400; }
 
 /* Browser-only warming cards share the fixed identity badge geometry. */

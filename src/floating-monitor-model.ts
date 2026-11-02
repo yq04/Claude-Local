@@ -1,5 +1,5 @@
 // [INPUT]: Native monitor_live_telemetry payload, active-account quota windows, and account-scoped shared-ledger token counters.
-// [OUTPUT]: Pure token composition/formatting, quota labels, HUD opacity persistence, adaptive local polling cadence, and cross-window BroadcastChannel helpers.
+// [OUTPUT]: Pure token composition/formatting, window time-pace calculation, quota labels, HUD opacity persistence, adaptive local polling cadence, and cross-window BroadcastChannel helpers.
 // [POS]: Pure model layer for the toggleable Floating Monitor HUD and main-window live telemetry strip; zero network I/O.
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -13,9 +13,74 @@ export interface MonitorWindowState {
   alwaysOnTop: boolean
   compact: boolean
   locked?: boolean
+  clickThrough?: boolean
   autoHide?: boolean
   collapsed?: boolean
   dockedEdge?: MonitorDockEdge | null
+}
+
+export interface WindowTimePace {
+  available: boolean
+  elapsedPct: number | null
+  paceDeltaPct: number | null
+  projectedEndPct: number | null
+  tone: 'safe' | 'steady' | 'ahead' | 'unknown'
+}
+
+export function computeWindowTimePace(
+  resetAtSec: number | null | undefined,
+  windowSeconds: number,
+  usedPct: number | null | undefined,
+  nowSec: number,
+): WindowTimePace {
+  if (
+    !resetAtSec ||
+    !Number.isFinite(resetAtSec) ||
+    resetAtSec <= nowSec ||
+    windowSeconds <= 0
+  ) {
+    return {
+      available: false,
+      elapsedPct: null,
+      paceDeltaPct: null,
+      projectedEndPct: null,
+      tone: 'unknown',
+    }
+  }
+  const remainingSec = resetAtSec - nowSec
+  if (remainingSec > windowSeconds) {
+    return {
+      available: false,
+      elapsedPct: null,
+      paceDeltaPct: null,
+      projectedEndPct: null,
+      tone: 'unknown',
+    }
+  }
+  const elapsedSec = windowSeconds - remainingSec
+  const elapsedPct = Math.max(0, Math.min(100, Math.round((elapsedSec / windowSeconds) * 100)))
+  if (usedPct === null || usedPct === undefined || !Number.isFinite(usedPct)) {
+    return {
+      available: true,
+      elapsedPct,
+      paceDeltaPct: null,
+      projectedEndPct: null,
+      tone: 'unknown',
+    }
+  }
+  const clampedUsed = Math.max(0, Math.min(100, Math.round(usedPct)))
+  const paceDeltaPct = clampedUsed - elapsedPct
+  const projectedEndPct =
+    elapsedPct >= 5 ? Math.min(999, Math.round((clampedUsed / elapsedPct) * 100)) : null
+  const tone: WindowTimePace['tone'] =
+    paceDeltaPct >= 15 ? 'ahead' : paceDeltaPct <= -10 ? 'safe' : 'steady'
+  return {
+    available: true,
+    elapsedPct,
+    paceDeltaPct,
+    projectedEndPct,
+    tone,
+  }
 }
 
 export interface LiveUsageMetrics {

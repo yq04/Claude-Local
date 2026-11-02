@@ -23,7 +23,7 @@ Store::open主密钥最多读取33字节并严格要求32，不截断/重生成/
 profile.rs: 只读默认 .claude.json 的用户名/邮箱/组织/套餐显示白名单与 cachedUsageUtilization 离线 5h/7d 额度；按窗口保存来源和真实server/本地最新会话切片观测时间，逐窗合并/到期/聚合规则复用 ../quota_core.rs，旧聚合source/time字段保留兼容；可信服务端边界到期显示 reset_inferred，缺证据仍未知，不滚动reset或制造新观测，live估算须由active_since绑定的实际会话切片支撑，saved不重用共享sessions；旧账本仅在live账号UUID和组织名严格匹配且无组织UUID冲突时合并，身份不匹配的账本不污染摘要；结合 projects 会话 jsonl 跨文件全局 (message.id, requestId) 去重、active_since 跨账号会话计费隔离、Claude Code 2.1.302 qHr 模型计费表、单账号自适应窗口标定与 quota_ledger.json 最新同账号 server_anchor 在内存合并校准实时消耗（账本由 Python 独占写入，UI 不覆盖）；保留向后兼容的可选 subscription_expires_at，当前没有可信来源时省略，绝不将 OAuth expiresAt 当作订阅到期。API Key 仅记存在性、桌面仅检查身份路径元数据；不可读不冒充空身份，不读取钥匙串或 Cookie 正文，零网络请求。
 Current与Summary保留同一白名单OAuth expiresAt/refresh存在性；当前摘要写回不再清空已保存身份的授权元数据。本地valid仅表示本地授权材料状态，不代表messages服务端授权恢复。
 credentials.rs: 默认 Code 凭据按用户策略合并身份与共享 MCP/插件秘密；正文只在原生内存流动。
-archive.rs: 新身份复用空浏览器预留编号；tar/Zstd 与旧 gzip 兼容验收，代次与卡片编号分离；源文件写完后才递增完成数，压缩/认证落盘和完整解包验收分阶段报告；完整认证后才交目录事务，解包区可丢弃，归档本体保持 fsync。
+archive.rs: 新身份复用空浏览器预留编号，当工作区无实际登录身份（account_key/凭据/profile.present 均空）且普通保存/切换（reuse=true）时不消费浏览器预留草稿并标记 empty=true（避免仅因未清理的 projects/history/cache 生成多余空白「当前身份」卡，而恢复检查点 reuse=false 仍保留中断后工作区文件）；tar/Zstd 与旧 gzip 兼容验收，代次与卡片编号分离；源文件写完后才递增完成数，压缩/认证落盘和完整解包验收分阶段报告；完整认证后才交目录事务，解包区可丢弃，归档本体保持 fsync。
 catalog.rs: 有界读取账号 UUID/组织（缺失时邮箱/组织），以本机 HMAC 匹配稳定槽位并同步脱敏身份摘要与离线额度；旧副本验收后索引，提交后去重/回收；未知账号与恢复检查点不猜测合并，Desktop-only 暂存保守保留。
 compression.rs: Zstandard 级别 3 流式压缩与校验和，读取侧限制窗口并按魔数兼容旧 gzip；外层认证协议不变。
 optimization_tests.rs: 虚构 A/B 连续切换、原地保存与离线额度摘要回填、空身份往返无泄漏、独立代理与仓库路径隔离、跨账号 plugins/model-catalog/groveConfigCache 与共享会话风控脱敏（含 api-request-blob/bridge-session 剥离、中断 tool_use/tool_result 成对自愈、tengu_exit 拆弹）、旧归档历史会话与项目映射无损合并、凭据刷新、跨组织隔离、覆盖崩溃恢复、压缩兼容与认证尾部拒绝；手动 500 会话性能样本不设不稳定的 CI 时间阈值。

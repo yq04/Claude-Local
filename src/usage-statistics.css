@@ -1,6 +1,6 @@
 /*
  * [INPUT]: Shared application theme variables and Usage analytics components.
- * [OUTPUT]: Token-first composition overview, four activity/cache cards, full model distribution and responsive trend/tables with a concise All/account selector; control skins remain shared with Cromma UI.
+ * [OUTPUT]: Token-first composition overview, four activity/cache cards, full model distribution and responsive sortable trend/account tables with a concise All/account selector; control skins remain shared with Cromma UI.
  * [POS]: Usage page styles; respects accent, dark theme, compact sidebar and shared margins.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -134,8 +134,9 @@
 .usage-table tbody tr:last-child > *, .usage-data-table tbody tr:last-child > * { border-bottom: 0; }
 .usage-table tbody tr:hover, .usage-data-table tbody tr:hover { background: color-mix(in srgb, var(--muted) 50%, transparent); }
 .usage-sort-button { display: inline-flex; align-items: center; gap: 5px; color: inherit; font: inherit; background: transparent; border: 0; padding: 0; cursor: pointer; }
-.usage-sort-button:hover { color: var(--foreground); }
-.usage-data-table th[aria-sort="ascending"], .usage-data-table th[aria-sort="descending"] { color: var(--local-accent-ink); }
+.usage-sort-button:hover, .usage-sort-button.is-active { color: var(--foreground); }
+.usage-sort-button.is-active { font-weight: 700; color: var(--local-accent-ink); }
+.usage-table th[aria-sort="ascending"], .usage-table th[aria-sort="descending"], .usage-data-table th[aria-sort="ascending"], .usage-data-table th[aria-sort="descending"] { color: var(--local-accent-ink); }
 .usage-trend-table { margin-top: 12px; border-top: 1px solid var(--landing-line); }
 .usage-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 12px 17px; border-top: 1px solid var(--landing-line); font-size: 11px; color: var(--usage-secondary); }
 .usage-pagination > div { display: flex; gap: 7px; }

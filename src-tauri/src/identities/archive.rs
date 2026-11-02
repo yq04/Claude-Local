@@ -282,13 +282,16 @@ impl Store {
         } else {
             None
         };
+        let has_live_identity = account_key.is_some()
+            || !credentials.is_empty()
+            || super::profile::read(&self.home).present;
         let previous = account_key
             .as_deref()
             .map(|key| self.db.by_account(key))
             .transpose()?
             .flatten();
         // 空资料的随机编号预留给首次保存的身份，避免登录后第一次暂存又改变种子。
-        let draft = if reuse && !self.suppress_browser_draft {
+        let draft = if reuse && has_live_identity && !self.suppress_browser_draft {
             self.db.browser_draft()?
         } else {
             None
@@ -436,7 +439,8 @@ impl Store {
                     .as_millis() as u64,
                 bytes: fs::metadata(&destination).map_err(problem)?.len(),
                 policy: policy.clone(),
-                empty: manifest.sources.is_empty() && manifest.credentials.is_empty(),
+                empty: (reuse && !has_live_identity)
+                    || (manifest.sources.is_empty() && manifest.credentials.is_empty()),
                 account_key: Some(account_key.unwrap_or_default()),
             };
             reporter.log(

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Local identity records, passive/online quota snapshots, current timestamp and browser localStorage.
- * [OUTPUT]: Magpie-inspired 3-tier account classification, 5 routing strategies (Smart / Pace / Ordered / LeastUsed / Rotate), preferred-account hysteresis return, rate-limit queue demotion, and reactive Smart Relay configuration store.
+ * [OUTPUT]: Magpie-inspired 3-tier account classification (with rested inferred7d/inferred5h Tier 0 promotion), 5 routing strategies (Smart / Pace / Ordered / LeastUsed / Rotate), 3-state affinityMode (auto / session / manual), preferred-account hysteresis return, rate-limit queue demotion, pool capacity summary (summarizeRelayPool), and reactive Smart Relay configuration store.
  * [POS]: Pure frontend multi-account rotation & smart relay model; default OFF, never terminates running claude.exe or bypasses vault isolation.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -214,10 +214,10 @@ export type RelayCandidate = {
   inferred: boolean;
   /**
    * Magpie 3-Tier partition:
-   * 0 = fine (healthy, used < lowThreshold 90%)
+   * 0 = fine (healthy, used < lowThreshold 90%, including rested 5h/7d windows)
    * 1 = low (reserve, 90% <= used < spentThreshold)
    * 2 = spent (exhausted, used >= spentThreshold)
-   * 3 = unavailable (auth expired, missing quota, or 7d inferred/exhausted)
+   * 3 = unavailable (auth expired, missing quota, or 0% remaining)
    */
   tier: 0 | 1 | 2 | 3;
   weeklyPacePctPerHour: number;
@@ -237,6 +237,65 @@ export type RelayEvaluation = {
   shouldRelayNow: boolean;
   relayTriggerKind: 'preferred_recovered' | 'current_spent' | 'better_candidate' | null;
 };
+
+export interface RelayPoolSummary {
+  includedCount: number;
+  readyCount: number;      // tier === 0
+  lowCount: number;        // tier === 1
+  spentCount: number;      // tier === 2
+  unavailableCount: number;// tier === 3
+  totalRem5hPct: number;   // sum of rem5h across included candidates with known quota (tier <= 2)
+  avgRem7dPct: number;     // rounded average of rem7d across included candidates with known quota (tier <= 2), or 0
+  soonestResetSec: number | null; // minimum positive (reset5h or reset7d > nowSec) among tier 1/2 candidates, or null
+}
+
+export function summarizeRelayPool(
+  candidates: readonly RelayCandidate[],
+  nowSec = 0,
+): RelayPoolSummary {
+  const included = candidates.filter(c => c.isIncluded);
+  let readyCount = 0;
+  let lowCount = 0;
+  let spentCount = 0;
+  let unavailableCount = 0;
+  let sumRem5h = 0;
+  let sumRem7d = 0;
+  let knownQuotaCount = 0;
+  let soonestResetSec: number | null = null;
+
+  for (const c of included) {
+    if (c.tier === 0) readyCount++;
+    else if (c.tier === 1) lowCount++;
+    else if (c.tier === 2) spentCount++;
+    else unavailableCount++;
+
+    if (c.tier <= 2 && c.known5h && c.known7d) {
+      sumRem5h += c.rem5h;
+      sumRem7d += c.rem7d;
+      knownQuotaCount++;
+    }
+
+    if (c.tier === 1 || c.tier === 2) {
+      if (typeof c.r5 === 'number' && c.r5 > nowSec) {
+        soonestResetSec = soonestResetSec === null ? c.r5 : Math.min(soonestResetSec, c.r5);
+      }
+      if (typeof c.r7 === 'number' && c.r7 > nowSec) {
+        soonestResetSec = soonestResetSec === null ? c.r7 : Math.min(soonestResetSec, c.r7);
+      }
+    }
+  }
+
+  return {
+    includedCount: included.length,
+    readyCount,
+    lowCount,
+    spentCount,
+    unavailableCount,
+    totalRem5hPct: Math.round(sumRem5h),
+    avgRem7dPct: knownQuotaCount > 0 ? Math.round(sumRem7d / knownQuotaCount) : 0,
+    soonestResetSec,
+  };
+}
 
 const LOW_SHARE_PCT = 90;
 const FRESH_WEEKLY_PACE = 100 / 168;
@@ -271,7 +330,7 @@ export function evaluateSmartRelay(
         ? Math.floor(acc.subscription_expires_at / 3600)
         : null;
 
-    if (!q || !q.known5h || !q.known7d || q.inferred7d || acc.auth_status === 'expired') {
+    if (!q || !q.known5h || !q.known7d || acc.auth_status === 'expired') {
       return {
         id: acc.id,
         name: acc.name,
@@ -291,7 +350,7 @@ export function evaluateSmartRelay(
         r7: q?.r7 ?? null,
         effectiveUsed: 100,
         effectiveRem: 0,
-        inferred: Boolean(q && !q.recommendable),
+        inferred: Boolean(q?.inferred7d),
         tier: 3,
         weeklyPacePctPerHour: 0,
         paceBandIndex: 999,
@@ -336,7 +395,7 @@ export function evaluateSmartRelay(
       r7: q.r7,
       effectiveUsed,
       effectiveRem,
-      inferred: !q.recommendable,
+      inferred: Boolean(q.inferred7d),
       tier,
       weeklyPacePctPerHour,
       paceBandIndex: 0,
@@ -460,14 +519,26 @@ export function evaluateSmartRelay(
       ? (rawCandidates.find(c => c.id === config.preferredAccountId) ?? null)
       : null;
 
+  const sessionSpentThreshold =
+    config.spentThresholdPct >= 95 ? 100 : Math.max(effectiveSpentThreshold, 95);
+  const sessionLockActive =
+    config.affinityMode === 'session' &&
+    Boolean(
+      currentCandidate &&
+        currentCandidate.tier < 3 &&
+        currentCandidate.effectiveUsed < sessionSpentThreshold,
+    );
+
   // Check if preferred account is ready to return to (Magpie hysteresis return: used < preferredReturnThresholdPct)
   const preferredReadyToReturn =
     Boolean(
-      config.returnToPreferred &&
+      !sessionLockActive &&
+        config.returnToPreferred &&
         preferredCandidate &&
         !preferredCandidate.isCurrent &&
         preferredCandidate.isIncluded &&
         preferredCandidate.tier === 0 &&
+        !preferredCandidate.inferred &&
         preferredCandidate.effectiveUsed < config.preferredReturnThresholdPct,
     );
 
@@ -482,17 +553,23 @@ export function evaluateSmartRelay(
   if (preferredReadyToReturn && preferredCandidate) {
     recommended = preferredCandidate;
     relayTriggerKind = 'preferred_recovered';
-    shouldRelayNow = true;
+    shouldRelayNow =
+      config.affinityMode !== 'manual' &&
+      Boolean(recommended && (!currentCandidate || recommended.name !== currentCandidate.name || !recommended.isCurrent));
   } else if (topStrategySaved) {
     const currentSpentOrMissing =
       !currentCandidate ||
-      currentCandidate.tier >= 2 ||
-      currentCandidate.effectiveUsed >= (config.affinityMode === 'session' ? 100 : effectiveSpentThreshold);
+      currentCandidate.tier >= 3 ||
+      (config.affinityMode === 'session'
+        ? currentCandidate.effectiveUsed >= sessionSpentThreshold
+        : currentCandidate.tier >= 2 || currentCandidate.effectiveUsed >= effectiveSpentThreshold);
 
     recommended = topStrategySaved;
     if (currentSpentOrMissing) {
       relayTriggerKind = 'current_spent';
-      shouldRelayNow = true;
+      shouldRelayNow =
+        config.affinityMode !== 'manual' &&
+        Boolean(recommended && (!currentCandidate || recommended.name !== currentCandidate.name || !recommended.isCurrent));
     } else {
       relayTriggerKind = 'better_candidate';
       shouldRelayNow = false;

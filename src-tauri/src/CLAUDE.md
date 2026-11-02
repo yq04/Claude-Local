@@ -19,9 +19,9 @@ main.rs: 本地版 Tauri 生命周期、主窗口尺寸恢复与事件/退出保
 window_state.rs / window_state_model.rs: 仅主窗口正常逻辑尺寸/最大化记忆，忽略最小化；Windows 以系统 WINDOWPLACEMENT 恢复外框、正常样式非客户区和窗口 DPI 换算，避免最大化过渡缓存/实时客户区污染，不采集移动；按工作区约束居中，resize 有界防抖与关闭/退出私有原子保存；512字节读取上限，纯合成测试覆盖过渡期与 DPI，不访问实际窗口。
 quota_core.rs: GUI/Python writer 共用的逐窗状态、观测百分比有限性/边界验证、可信服务端窗口到期后的 reset_inferred 推定、观测顺序与同窗单调合并；保留过去边界和原观测，不伪造新 reset/观测。schema 1 的 --quota-core stdin/stdout 有界协议（最多 1MiB / 256 窗口），不接路径、不读文件或联网，非法输入只报固定错误。
 local_runtime.rs: 启动参数明确门控配套浏览器，普通启动不启动引擎；含纯输入策略回归。
-ui_language.rs: 受 zh/en 白名单限制的界面偏好，原子持久化后发布内存状态；本地版托盘菜单，独立于电脑与浏览器语言。
+ui_language.rs: 受 zh/en 白名单限制的界面偏好，原子持久化后发布内存状态；含「额度小窗 / Quota HUD」快捷切换与穿透恢复入口的本地版托盘菜单，独立于电脑与浏览器语言。
 ui_appearance.rs: 界面外观偏好（主题、6 色强调色、字体栈、五层光学毛玻璃无级参数与 8 款壁纸画布）及自定义壁纸 Data URI 的原生白名单校验、Win32 私有 ACL 原子落盘（ui-appearance.json / ui-wallpaper.json）与主窗口原生标题栏明暗主题同步（set_theme）。
-monitor_window.rs: 独立可开关无边框「实时额度悬浮监控窗」（monitor）生命周期、三态尺寸（340×258 / 340×152 / 52×138，切换尺寸前先解除旧 min/max 约束防 Win32 截断）、置顶/位置锁定/边缘磁吸/贴边隐藏（基于实际 outer_size 与 4px 边距防右侧 DWM 边框裁切）与透明度机制；复用 identities::usage 的 5s 节流增量采集和严格当前账号账本查询，展示5h四类Token、去重响应、固定近10分钟均值速率、缓存命中及最近非 unknown 实际模型。无可靠账号证据显示未确认，不借用全库或历史fallback；不独立扫描JSONL、不猜成本或上下文上限，5h/7d配额与倒计时保留。
+monitor_window.rs: 独立可开关无边框「实时额度悬浮监控窗」（monitor）生命周期、静态配置与启动期隐式预热及 Windows 主窗 WebView2 Environment 共享复用、三态尺寸（340×258 / 340×152 / 52×138，切换尺寸前先解除旧 min/max 约束防 Win32 截断）、置顶/位置锁定/鼠标穿透（click_through，主窗开关与托盘菜单联动解除防困死）/边缘磁吸/贴边隐藏（基于实际 outer_size 与 4px 边距防右侧 DWM 边框裁切）、跨显示器坐标安全夹持与私有 ACL 状态持久化（monitor-window-state.json）；复用 identities::usage 的 5s 节流增量采集和严格当前账号账本查询，展示5h四类Token、去重响应、固定近10分钟均值速率、缓存命中及最近非 unknown 实际模型。无可靠账号证据显示未确认，不借用全库或历史fallback；不独立扫描JSONL、不猜成本或上下文上限，5h/7d配额与倒计时保留。
 browser/: 指纹浏览器、资料与缓存边界、真实浏览器回报及目标地区环境核验；见其 CLAUDE.md。
 risk_check.rs / risk_config_source.rs: 只读六项风险审计，受限已知核心配置来源证据、有界无链接文件投影、加密DNS与明文分开、解析不完整保持未知；HTTP出口探针冻结浏览器槽位/配置/有效路由，变化拒收，不读取或轮换凭据、不修改系统设置。
 windows.rs: Win32 剪贴板、当前用户 TokenUser/TokenOwner/管理员组文件所有权与权限保留回退、Win32 与注册表读取时区/首选语言/定位偏好/系统代理（跳过空白环境变量并区分 SOCKS4/5）、缓存系统版本与用户触发设置；控制台工具隐藏窗口，外部链接；拒绝凭据管理器自动读取和 SSH 操作。

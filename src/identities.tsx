@@ -1,16 +1,17 @@
 /**
- * [INPUT]: 原生身份命令、手动/自动订阅到期与充值日命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、保留策略、逐窗观测、隐私偏好、本地刷新事件与诊断状态。
- * [OUTPUT]: 同风格计数的CLI身份/养号工牌、资料选择与窗口运行三态、冻结账号的浏览器返回核验/用量页入口、用量详情抗封温和提示及原生额度批次。
+ * [INPUT]: 原生身份命令、手动/自动订阅到期与充值日命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、智能接力池摘要与悬浮窗穿透态、保留策略、逐窗观测、隐私偏好、顶部横条卡片拖拽排序、无闪烁静默本地额度修订合并轮询与诊断状态。
+ * [OUTPUT]: 同风格计数的166×286 CLI身份/养号工牌（支持顶部横条拖拽排序与待登录结构化引导）、资料选择与窗口运行三态、冻结账号的浏览器返回核验/用量页入口、跨机防关联环境交接卡一键复制、智能接力池容量摘要条、未知/过期账号定向批次查询、悬浮窗穿透态一键恢复、用量详情抗封温和提示及原生额度批次。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {useEffect, useRef, useState, useSyncExternalStore, type ReactNode} from 'react';
+import {useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode} from 'react';
 import {Button, Checkbox, Disclosure, Input, Switch, useReducedMotionConfig, useSpring} from 'cromma-ui';
 import {DropdownMenu} from 'radix-ui';
 import {listen} from '@tauri-apps/api/event';
-import {addOneCalendarMonthYmd, epochSecToCalendarYmd, formatOnlineQuotaStatus, formatSubscriptionAndResets, formatSubscriptionExpiryBadge, formatYmdAsShortMd, ForegroundQuotaScheduler, isExpectedCurrentTarget, isExpectedSavedTarget, isValidCalendarYmd, buildBatchTargets, generateBatchRequestId, formatBatchProgress, isSuccessfulOnlineResult, aggregateBatchProgress, summarizeBatchResult, isTerminalBatchState, isMatchingBatchTarget, readNativeWakeupSnapshot, subscribeNativeWakeup, configureNativeWakeup, resumeNativeWakeup, formatMinuteOfDay, parseMinuteOfDay, isConfirmedNewWakeup5h, type OnlineQuotaResult, type OnlineQuotaStatus, type BatchQuotaResult, type QuotaBatchProgress, type BatchProgressSummary, type QuotaBatchTarget, type AutoWakeupConfig, type SubscriptionExpiryBadge} from './identity-online-quota';
+import {addOneCalendarMonthYmd, epochSecToCalendarYmd, formatOnlineQuotaStatus, formatSubscriptionAndResets, formatSubscriptionExpiryBadge, formatYmdAsShortMd, ForegroundQuotaScheduler, isExpectedCurrentTarget, isExpectedSavedTarget, isValidCalendarYmd, buildBatchTargets, buildStaleOrUnknownBatchTargets, generateBatchRequestId, formatBatchProgress, isSuccessfulOnlineResult, aggregateBatchProgress, summarizeBatchResult, isTerminalBatchState, isMatchingBatchTarget, readNativeWakeupSnapshot, subscribeNativeWakeup, configureNativeWakeup, resumeNativeWakeup, formatMinuteOfDay, parseMinuteOfDay, isConfirmedNewWakeup5h, type OnlineQuotaResult, type OnlineQuotaStatus, type BatchQuotaResult, type QuotaBatchProgress, type BatchProgressSummary, type QuotaBatchTarget, type AutoWakeupConfig, type SubscriptionExpiryBadge} from './identity-online-quota';
 import type {IdentitySubscriptionMetadata} from './identity-model';
 import {WarmingLibrary} from './warming-cards';
+import {CURRENT_IDENTITY_ORDER_TOKEN, IDENTITY_CARD_ORDER_STORAGE_KEY, useCardRailReorder} from './card-order';
 import type {WarmingCard, WarmingFields, WarmingOpenMode} from './warming-model';
 import type {BrowserState} from './browser-model';
 import {useBrowserRuntime} from './use-browser-runtime';
@@ -37,6 +38,7 @@ import {
   updateSmartRelayConfig,
   resetSmartRelayConfig,
   evaluateSmartRelay,
+  summarizeRelayPool,
   noteRelayAccountSwitch,
   RELAY_STRATEGIES,
   RELAY_RATE_LIMIT_MODES,
@@ -230,6 +232,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [wakingAccountId, setWakingAccountId] = useState<string | null>(null);
   const wakingRef = useRef(false);
   const [syncedFeedback, setSyncedFeedback] = useState(false);
+  const [manualSyncing, setManualSyncing] = useState(false);
   const syncedTimerRef = useRef<number | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   const batchBusyRef = useRef(false);
@@ -314,20 +317,39 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   }, [currentTargetSetKey]);
   const active = state?.records.find(row => row.id === state.active);
   const current = state?.current;
-  const saved = state?.records.filter(row => !current?.present || row.id !== state.active) ?? [];
+  const rawSaved = state?.records.filter(row => !current?.present || row.id !== state.active) ?? [];
   const currentName = active?.name || current?.display_name || current?.email?.split('@')[0] || t('当前身份');
+  const blocked = locked || batchBusy || loading || !state || !!state?.recovery;
+  type IdentityRailItem =
+    | {kind: 'current'; id: string}
+    | {kind: 'saved'; id: string; row: Identity};
+  const rawRailItems: IdentityRailItem[] = [
+    ...(loading || current?.present ? [{kind: 'current' as const, id: CURRENT_IDENTITY_ORDER_TOKEN}] : []),
+    ...rawSaved.map(row => ({kind: 'saved' as const, id: row.id, row})),
+  ];
+  const identityReorder = useCardRailReorder({
+    storageKey: IDENTITY_CARD_ORDER_STORAGE_KEY,
+    items: rawRailItems,
+    getId: item => item.id,
+    pinFirstToken: CURRENT_IDENTITY_ORDER_TOKEN,
+    disabled: blocked,
+  });
+  const saved = identityReorder.orderedItems
+    .filter((item): item is {kind: 'saved'; id: string; row: Identity} => item.kind === 'saved')
+    .map(item => item.row);
   const connectionQueueItems = connectionHistory.matching(quotaTargets).map(item => {
     const row = state?.records.find(record => record.id === item.target.account_id);
     const email = item.target.account_id === 'current' ? current?.email : state?.summaries?.[item.target.account_id]?.email;
     const label = item.target.account_id === 'current' ? currentName : row?.name ?? t('quotaOnline.unknownAccount');
     return {...item, label: maskDisplayName(label, email, prefs.privacyMask)};
   });
-  const blocked = locked || batchBusy || loading || !state || !!state?.recovery;
   const kept = policyRows.filter(([key]) => policy[key]).map(([, label]) => t(label));
   const removed = policyRows.filter(([key]) => !policy[key]).map(([, label]) => t(label));
   const isDefaultPolicy = policyRows.every(([key]) => policy[key] === defaultPolicy[key]);
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   const [monitorOpen, setMonitorOpen] = useState(false);
+  const [monitorClickThrough, setMonitorClickThrough] = useState(false);
+  const staleQuotaTargets = buildStaleOrUnknownBatchTargets(state, nowSec);
   const currentQuota = evaluateQuota(current, nowSec);
   const detailsAreCurrent = quotaDetails?.id === 'current' || (!!quotaDetails && quotaDetails.id === state?.active);
   const detailsSummary = detailsAreCurrent ? current : quotaDetails ? state?.summaries[quotaDetails.id] : undefined;
@@ -382,6 +404,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     }),
   ];
   const relayEval = evaluateSmartRelay(relayAccounts, smartRelay, nowSec);
+  const relayPoolSummary = summarizeRelayPool(relayEval.candidates, nowSec);
   const relayRecommendedSaved =
     smartRelay.enabled && relayEval.recommended && !relayEval.recommended.isCurrent
       ? (() => {
@@ -407,12 +430,16 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     ) {
       void invoke<MonitorWindowState>('monitor_window_state')
         .then(s => {
-          if (mountedRef.current && s && typeof s.open === 'boolean') setMonitorOpen(s.open);
+          if (mountedRef.current && s && typeof s.open === 'boolean') {
+            setMonitorOpen(s.open);
+            setMonitorClickThrough(Boolean(s.clickThrough));
+          }
         })
         .catch(() => {});
       void listen<MonitorWindowState>('monitor-window-state', event => {
         if (mountedRef.current && event.payload && typeof event.payload.open === 'boolean') {
           setMonitorOpen(event.payload.open);
+          setMonitorClickThrough(Boolean(event.payload.clickThrough));
         }
       })
         .then(fn => {
@@ -429,6 +456,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           const msg = event.data;
           if (msg && typeof msg === 'object' && msg.type === 'window-state' && msg.state) {
             setMonitorOpen(Boolean(msg.state.open));
+            setMonitorClickThrough(Boolean(msg.state.clickThrough));
           }
         };
       } catch {
@@ -553,19 +581,25 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let revision: string | undefined;
+    const isFixture = typeof window !== 'undefined' && 'identityFixture' in window;
+    const pollIntervalMs = isFixture ? 2000 : 5000;
     const check = async () => {
       try {
         if (!document.hidden && !busyRef.current && !batchBusyRef.current && !actionLockedRef.current) {
           const next = await invoke<string>('identities_quota_revision');
-          if (!cancelled && (revision === undefined || next !== revision)) {
-            // A failed or superseded read must leave the change pending for the next check.
-            if (await read(false)) revision = next;
+          if (!cancelled) {
+            if (revision === undefined && !isFixture && readSeqRef.current > 0) {
+              revision = next;
+            } else if (revision === undefined || next !== revision) {
+              // A failed or superseded read must leave the change pending for the next check.
+              if (await read(false)) revision = next;
+            }
           }
         }
       } catch {
         // A failed local metadata check does not clear any quota observation.
       } finally {
-        if (!cancelled) timer = setTimeout(() => void check(), 2000);
+        if (!cancelled) timer = setTimeout(() => void check(), pollIntervalMs);
       }
     };
     void check();
@@ -969,7 +1003,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
   async function read(invalidateResidue = true) {
     const seq = ++readSeqRef.current;
-    setLoading(true);
+    if (!stateRef.current) {
+      setLoading(true);
+    }
     try {
       const next = await invoke<IdentityState>('identities_read');
       if (!mountedRef.current || seq < readSeqRef.current) {
@@ -997,22 +1033,45 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     }
   }
   async function manualSyncLocalQuota() {
-    const ok = await read(false);
-    if (ok && mountedRef.current) {
-      setSyncedFeedback(true);
-      if (syncedTimerRef.current !== null) window.clearTimeout(syncedTimerRef.current);
-      syncedTimerRef.current = window.setTimeout(() => {
-        if (mountedRef.current) setSyncedFeedback(false);
-      }, 1400);
+    setManualSyncing(true);
+    try {
+      const ok = await read(false);
+      if (ok && mountedRef.current) {
+        setSyncedFeedback(true);
+        if (syncedTimerRef.current !== null) window.clearTimeout(syncedTimerRef.current);
+        syncedTimerRef.current = window.setTimeout(() => {
+          if (mountedRef.current) setSyncedFeedback(false);
+        }, 1400);
+      }
+    } finally {
+      if (mountedRef.current) setManualSyncing(false);
     }
   }
   async function toggleMonitorWindow() {
+    if (monitorOpen && monitorClickThrough) {
+      setMonitorClickThrough(false);
+      try {
+        const state = await invoke<MonitorWindowState>('monitor_window_set_click_through', {clickThrough: false});
+        if (mountedRef.current && state) {
+          setMonitorOpen(Boolean(state.open));
+          setMonitorClickThrough(Boolean(state.clickThrough));
+          postMonitorBusMessage({type: 'window-state', state});
+        }
+      } catch (e) {
+        if (mountedRef.current) {
+          setMonitorClickThrough(true);
+          setError(t(String(e)));
+        }
+      }
+      return;
+    }
     const next = !monitorOpen;
     setMonitorOpen(next);
     try {
       const state = await invoke<MonitorWindowState>('monitor_window_set_open', {open: next});
       if (mountedRef.current && state && typeof state.open === 'boolean') {
         setMonitorOpen(state.open);
+        setMonitorClickThrough(Boolean(state.clickThrough));
         postMonitorBusMessage({type: 'window-state', state});
       }
     } catch (e) {
@@ -1396,6 +1455,50 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       if (mountedRef.current) setBusy(false);
     }
   }
+  async function copyIdentityHandoffSpec(
+    accountId: string,
+    label: string,
+    meta: (IdentitySubscriptionMetadata & {quota_identity?: string | null; email?: string | null; plan?: string | null; proxy?: string | null; subscription_expires_at?: number | null}) | null | undefined,
+  ) {
+    const shownLabel = maskDisplayName(label, meta?.email, prefs.privacyMask);
+    const shownEmail = meta?.email ? maskEmailAddress(meta.email, prefs.privacyMask) : (locale === 'zh' ? '未记录' : 'Not recorded');
+    const planLabel = meta?.plan ? meta.plan.toUpperCase() : 'CLI';
+    const profileKey = meta?.quota_identity ? `baga:${meta.quota_identity.slice(0, 12)}` : `slot:${accountId}`;
+    const proxyEndpoint = (!prefs.privacyMask && meta?.proxy) ? meta.proxy : 'socks5://127.0.0.1:7899';
+    const expiryYmd = formatSubscriptionExpiryBadge(meta)?.fullYmd || (locale === 'zh' ? '未设置' : 'Not set');
+    const lines = locale === 'zh'
+      ? [
+          '### Claude-Local 跨机防关联环境交接卡',
+          `- **身份标识**: ${shownLabel} (${planLabel}) · ${shownEmail}`,
+          `- **浏览器指纹绑定**: \`${profileKey}\` (保持同一 .baga 归档与固定指纹种子)`,
+          '- **目标区域 / 时区 / 语言**: `US · America/Los_Angeles · en-US`',
+          `- **推荐本地代理监听**: \`${proxyEndpoint}\` (零 WebRTC / DNS 泄漏)`,
+          `- **订阅到期日**: ${expiryYmd}`,
+          '- **抗封铁律 (单机单活)**: 严禁两台设备同时在线或并发发起 CLI/网页请求；交接前请先在旧设备停止 `claude.exe` 并等待 5–10 分钟后再在新设备挂载同一出口 IP。',
+        ]
+      : [
+          '### Claude-Local Anti-Association Handoff Spec',
+          `- **Identity**: ${shownLabel} (${planLabel}) · ${shownEmail}`,
+          `- **Browser Profile Binding**: \`${profileKey}\` (preserve .baga archive & deterministic fingerprint seed)`,
+          '- **Target Region / Timezone / Locale**: `US · America/Los_Angeles · en-US`',
+          `- **Recommended Local Proxy Listener**: \`${proxyEndpoint}\` (zero WebRTC / DNS leak)`,
+          `- **Subscription Expiry**: ${expiryYmd}`,
+          '- **Anti-Ban Rule (1-Device-at-a-Time)**: Never run CLI or web sessions on two machines simultaneously; stop `claude.exe` on the source machine and wait 5–10 minutes before mounting the same residential exit IP on the target machine.',
+        ];
+    const text = lines.join('\n');
+    try {
+      await invoke('copy_result', {text});
+      setQuotaFeedback('identities.handoffSpecCopied');
+    } catch {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+        await navigator.clipboard.writeText(text);
+        setQuotaFeedback('identities.handoffSpecCopied');
+      } catch {
+        setQuotaFeedback('identities.handoffSpecCopyFailed');
+      }
+    }
+  }
 
   const options = (
     <div className="identity-policy-body">
@@ -1505,19 +1608,32 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             <Button
               variant="secondary"
               size="small"
-              className="monitor-toggle-btn"
-              title={t('monitor.toggleHint')}
+              className={`monitor-toggle-btn${monitorOpen && monitorClickThrough ? ' is-click-through' : ''}`}
+              title={
+                monitorOpen && monitorClickThrough
+                  ? locale === 'en'
+                    ? 'HUD is in Ghost (click-through) mode — click to restore mouse interaction'
+                    : '悬浮窗正处于鼠标穿透模式，点击立即恢复鼠标交互'
+                  : t('monitor.toggleHint')
+              }
               onClick={() => void toggleMonitorWindow()}
             >
-              <span className={`monitor-toggle-dot${monitorOpen ? ' is-open' : ''}`} aria-hidden="true" />
-              {t(monitorOpen ? 'monitor.toggleButtonOpen' : 'monitor.toggleButton')}
+              <span
+                className={`monitor-toggle-dot${monitorOpen ? (monitorClickThrough ? ' is-click-through' : ' is-open') : ''}`}
+                aria-hidden="true"
+              />
+              {monitorOpen && monitorClickThrough
+                ? locale === 'en'
+                  ? 'Quota HUD · Ghost'
+                  : '额度小窗 · 穿透中'
+                : t(monitorOpen ? 'monitor.toggleButtonOpen' : 'monitor.toggleButton')}
             </Button>
             <Button
               variant="secondary"
               size="small"
-              disabled={actionLocked || loading}
-              loading={loading}
-              leftIcon={<Refresh aria-hidden size={16} className={loading ? 'spin' : ''} />}
+              disabled={actionLocked || loading || manualSyncing}
+              loading={loading || manualSyncing}
+              leftIcon={<Refresh aria-hidden size={16} className={loading || manualSyncing ? 'spin' : ''} />}
               title={t('identityCard.localQuotaSync')}
               onClick={() => void manualSyncLocalQuota()}
             >
@@ -1581,6 +1697,17 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             {batchBusy && batchSummary.total > 0
               ? t('quotaOnline.queryingCount', {completed: batchSummary.completed, total: batchSummary.total})
               : t('identityCard.queryOnlineNow')}
+          </Button>
+          <Button
+            variant="secondary"
+            size="small"
+            data-query-stale-unknown
+            disabled={actionLocked || batchBusy || loading || staleQuotaTargets.length === 0}
+            onClick={() => void refreshAllQuotas(true, staleQuotaTargets)}
+          >
+            {locale === 'en'
+              ? `Query Stale/Unknown (${staleQuotaTargets.length})`
+              : `仅查未知/过期 (${staleQuotaTargets.length})`}
           </Button>
           <label className="identity-auto-refresh-toggle" title={t('identityCard.foregroundAutoRefreshHint')}>
             <Switch
@@ -1795,6 +1922,27 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                 aria-label={t('settings.relayEnableLabel')}
               />
             </label>
+          </div>
+
+          <div className="identity-relay-pool-summary" data-relay-pool-summary>
+            <span className="identity-relay-pool-stat">
+              <span>{locale === 'en' ? 'Ready:' : '就绪账号:'}</span>
+              <strong>{relayPoolSummary.readyCount}/{relayPoolSummary.includedCount}</strong>
+            </span>
+            <span className="identity-relay-pool-stat">
+              <span>{locale === 'en' ? 'Pool 5h Rem:' : '池内 5h 总余量:'}</span>
+              <strong>{relayPoolSummary.totalRem5hPct}%</strong>
+            </span>
+            <span className="identity-relay-pool-stat">
+              <span>{locale === 'en' ? 'Avg 7d Rem:' : '7d 平均余量:'}</span>
+              <strong>{relayPoolSummary.avgRem7dPct}%</strong>
+            </span>
+            {relayPoolSummary.soonestResetSec && (
+              <span className="identity-relay-pool-stat">
+                <span>{locale === 'en' ? 'Next Reset:' : '最早回血:'}</span>
+                <strong>{formatCompactEta(relayPoolSummary.soonestResetSec, nowSec)}</strong>
+              </span>
+            )}
           </div>
 
           <section className="identity-relay-section" aria-label={t('relay.accountsLabel')}>
@@ -2083,7 +2231,16 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             <span className="identity-onboarding-chip">{t('identitySafety.cliStep')}</span>
           </div>
         </div>
-        <div className="identity-card-rail" ref={rail} tabIndex={0} role="region" aria-label={t('身份')}>
+        <div
+          className="identity-card-rail"
+          ref={node => {
+            rail.current = node;
+            identityReorder.railRef.current = node;
+          }}
+          tabIndex={0}
+          role="region"
+          aria-label={t('身份')}
+        >
           {current?.present === false && (
             <IdentityCard className="identity-card empty selected" label={`${t('新身份')} · ${t('当前身份')}`}>
               <div className="identity-card-head">
@@ -2094,6 +2251,22 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               </div>
               <h3>{t('新身份')}</h3>
               <p className="identity-empty-note">{t('identitySafety.emptyGuide')}</p>
+              <div className="identity-quota-stack identity-empty-steps">
+                <div className="identity-quota-window identity-empty-step-window">
+                  <div className="identity-quota-copy">
+                    <strong>{t('identityCard.emptyStep1Title')}</strong>
+                    <span className="identity-quota-value">Step 1</span>
+                  </div>
+                  <span className="identity-empty-step-desc">{t('identityCard.emptyStep1Desc')}</span>
+                </div>
+                <div className="identity-quota-window identity-empty-step-window">
+                  <div className="identity-quota-copy">
+                    <strong>{t('identityCard.emptyStep2Title')}</strong>
+                    <span className="identity-quota-value">Step 2</span>
+                  </div>
+                  <span className="identity-empty-step-desc">{t('identityCard.emptyStep2Desc')}</span>
+                </div>
+              </div>
               <div className="identity-card-footer">
                 <Button variant="secondary" size="small" disabled={blocked} onClick={() => void retryBrowser()}>
                   {t('打开内置浏览器')}
@@ -2101,89 +2274,119 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               </div>
             </IdentityCard>
           )}
-          {(loading || current?.present) && (
-            <IdentityCard className={`identity-card current ${state?.running ? 'running' : 'stopped'}`} running={state?.running} label={t('当前身份')}>
-              <div className="identity-card-head">
-                <div className="identity-avatar" aria-hidden="true">
-                  {active?.name || current?.display_name || current?.email ? Array.from(currentName)[0]?.toUpperCase() : <ShieldCheck size={20} />}
-                </div>
-                <span className={`identity-live-badge ${state?.running ? 'running' : 'stopped'}`}>{loading ? t('检查中') : state?.running ? t('运行中') : t('进程已停止')}</span>
-                <DropdownMenu.Root>
-                  <DropdownMenu.Trigger asChild>
-                    <button type="button" className="identity-menu-trigger" aria-label={t('identityCard.moreActions')}>
-                      ⋯
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
-                      <DropdownMenu.Item className="identity-menu-item" disabled={blocked || !current?.quota_identity} onSelect={() => {
-                        if (current?.quota_identity) void returnToCliBrowserDirect(current.quota_identity, 'claude_ai');
-                      }}>
-                        {t('browser.enterClaudeAi')}
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item className="identity-menu-item" disabled={blocked || !current?.quota_identity} onSelect={() => {
-                        if (current?.quota_identity) void openAccountBrowser({account_id: 'current', expected_identity: current.quota_identity}, 'usage');
-                      }}>
-                        {t('browser.openAccountUsage')}
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item className="identity-menu-item" data-return-cli-browser disabled={blocked || !current?.quota_identity} onSelect={() => {
-                        if (current?.quota_identity) setReturnCliBrowser({expectedIdentity: current.quota_identity, name: maskDisplayName(currentName, current.email, prefs.privacyMask)});
-                      }}>
-                        {t('browser.returnToCli')}
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={() => void syncSubscription()}>
-                        {t('identityCard.syncSubscription')}
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={() => openExpiryEditor('current', currentName, current)}>
-                        {t('identityCard.setSubscriptionExpiry')}
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={openSnapshot}>
-                        {t(active ? '更新备份' : '保存备份')}
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Separator className="identity-menu-separator" />
-                      <DropdownMenu.Item className="identity-menu-item danger" disabled={blocked} onSelect={() => confirmDelete('current')}>
-                        {t('直接删除')}
-                      </DropdownMenu.Item>
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
-              </div>
-              <IdentityName
-                name={currentName}
-                email={current?.email}
-                accountName={current?.display_name}
-                plan={current?.plan}
-                expiry={formatSubscriptionExpiryBadge(current)}
-                onEditExpiry={blocked ? undefined : () => openExpiryEditor('current', currentName, current)}
-                privacyMask={prefs.privacyMask}
-                t={t}
-              />
-              <div className="identity-account identity-email-line">
-                {current?.email ? (
-                  <span className="identity-email" title={maskEmailAddress(current.email, prefs.privacyMask)}>{maskEmailAddress(current.email, prefs.privacyMask)}</span>
-                ) : (
-                  <span className="identity-account-unknown">{t(current?.unavailable ? '账号信息暂不可读' : '账号信息未识别')}</span>
-                )}
-              </div>
-              {current?.auth_status === 'expired' && !hasRecentOnlineVerification('current', current.quota_identity) && (
-                <div className="identity-meta-line" title={prefs.privacyMask ? undefined : current?.proxy || undefined}>
-                  <span className="identity-meta-badge auth-expired">{t('identityCard.reauthRequired')}</span>
-                </div>
-              )}
-              <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:active?.id || 'current', name:currentName, expectedIdentity:current?.quota_identity || null});setQuotaFeedback('');}} />
-              <SubscriptionAndResets meta={current} locale={locale} t={t} />
-              <div className="identity-card-footer">
-                <Button variant="secondary" size="small" disabled={blocked} onClick={openSnapshot}>
-                  {t(active ? '更新备份' : '保存备份')}
-                </Button>
-              </div>
-            </IdentityCard>
-          )}
-          {saved.map(row => {
+          {identityReorder.orderedItems.map(item => {
+            const isDragging = identityReorder.draggingId === item.id;
+            if (item.kind === 'current') {
+              return (
+                <IdentityCard
+                  key={CURRENT_IDENTITY_ORDER_TOKEN}
+                  className={`identity-card current ${state?.running ? 'running' : 'stopped'}${isDragging ? ' is-dragging' : ''}`}
+                  running={state?.running}
+                  label={t('当前身份')}
+                  reorderId={CURRENT_IDENTITY_ORDER_TOKEN}
+                  isDragging={isDragging}
+                  dragOffsetX={identityReorder.dragOffsetX}
+                  dragTiltDeg={identityReorder.dragTiltDeg}
+                  dragHandleLabel={t('identityCard.dragReorderHint')}
+                  onDragStart={e => identityReorder.startCardDrag(CURRENT_IDENTITY_ORDER_TOKEN, e)}
+                  onDragKeyDown={e => identityReorder.handleCardKeyDown(CURRENT_IDENTITY_ORDER_TOKEN, e)}
+                >
+                  <div className="identity-card-head">
+                    <div className="identity-avatar" aria-hidden="true">
+                      {active?.name || current?.display_name || current?.email ? Array.from(currentName)[0]?.toUpperCase() : <ShieldCheck size={20} />}
+                    </div>
+                    <span className={`identity-live-badge ${state?.running ? 'running' : 'stopped'}`}>{loading ? t('检查中') : state?.running ? t('运行中') : t('进程已停止')}</span>
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger asChild>
+                        <button type="button" className="identity-menu-trigger" aria-label={t('identityCard.moreActions')}>
+                          ⋯
+                        </button>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content className="identity-menu-content" sideOffset={5} align="end">
+                          <DropdownMenu.Item className="identity-menu-item" disabled={blocked || !current?.quota_identity} onSelect={() => {
+                            if (current?.quota_identity) void returnToCliBrowserDirect(current.quota_identity, 'claude_ai');
+                          }}>
+                            {t('browser.enterClaudeAi')}
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item className="identity-menu-item" disabled={blocked || !current?.quota_identity} onSelect={() => {
+                            if (current?.quota_identity) void openAccountBrowser({account_id: 'current', expected_identity: current.quota_identity}, 'usage');
+                          }}>
+                            {t('browser.openAccountUsage')}
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item className="identity-menu-item" data-return-cli-browser disabled={blocked || !current?.quota_identity} onSelect={() => {
+                            if (current?.quota_identity) setReturnCliBrowser({expectedIdentity: current.quota_identity, name: maskDisplayName(currentName, current.email, prefs.privacyMask)});
+                          }}>
+                            {t('browser.returnToCli')}
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={() => void syncSubscription()}>
+                            {t('identityCard.syncSubscription')}
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={() => openExpiryEditor('current', currentName, current)}>
+                            {t('identityCard.setSubscriptionExpiry')}
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item className="identity-menu-item" data-identity-handoff-copy="current" disabled={blocked} onSelect={() => void copyIdentityHandoffSpec('current', currentName, current)}>
+                            {t('identities.copyHandoffSpec')}
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item className="identity-menu-item" disabled={blocked} onSelect={openSnapshot}>
+                            {t(active ? '更新备份' : '保存备份')}
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Separator className="identity-menu-separator" />
+                          <DropdownMenu.Item className="identity-menu-item danger" disabled={blocked} onSelect={() => confirmDelete('current')}>
+                            {t('直接删除')}
+                          </DropdownMenu.Item>
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
+                  </div>
+                  <IdentityName
+                    name={currentName}
+                    email={current?.email}
+                    accountName={current?.display_name}
+                    plan={current?.plan}
+                    expiry={formatSubscriptionExpiryBadge(current)}
+                    onEditExpiry={blocked ? undefined : () => openExpiryEditor('current', currentName, current)}
+                    privacyMask={prefs.privacyMask}
+                    t={t}
+                  />
+                  <div className="identity-account identity-email-line">
+                    {current?.email ? (
+                      <span className="identity-email" title={maskEmailAddress(current.email, prefs.privacyMask)}>{maskEmailAddress(current.email, prefs.privacyMask)}</span>
+                    ) : (
+                      <span className="identity-account-unknown">{t(current?.unavailable ? '账号信息暂不可读' : '账号信息未识别')}</span>
+                    )}
+                  </div>
+                  {current?.auth_status === 'expired' && !hasRecentOnlineVerification('current', current.quota_identity) && (
+                    <div className="identity-meta-line" title={prefs.privacyMask ? undefined : current?.proxy || undefined}>
+                      <span className="identity-meta-badge auth-expired">{t('identityCard.reauthRequired')}</span>
+                    </div>
+                  )}
+                  <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:active?.id || 'current', name:currentName, expectedIdentity:current?.quota_identity || null});setQuotaFeedback('');}} />
+                  <SubscriptionAndResets meta={current} locale={locale} t={t} />
+                  <div className="identity-card-footer">
+                    <Button variant="secondary" size="small" disabled={blocked} onClick={openSnapshot}>
+                      {t(active ? '更新备份' : '保存备份')}
+                    </Button>
+                  </div>
+                </IdentityCard>
+              );
+            }
+            const row = item.row;
             const summary = state?.summaries?.[row.id];
             const savedQuota = evaluateQuota(summary, nowSec);
             return (
-              <IdentityCard className="identity-card" key={row.id} title={`${new Date(row.saved_at).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})} · ${formatBytes(row.bytes)}`}>
+              <IdentityCard
+                className={`identity-card${isDragging ? ' is-dragging' : ''}`}
+                key={row.id}
+                title={`${new Date(row.saved_at).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})} · ${formatBytes(row.bytes)}`}
+                reorderId={row.id}
+                isDragging={isDragging}
+                dragOffsetX={identityReorder.dragOffsetX}
+                dragTiltDeg={identityReorder.dragTiltDeg}
+                dragHandleLabel={t('identityCard.dragReorderHint')}
+                onDragStart={e => identityReorder.startCardDrag(row.id, e)}
+                onDragKeyDown={e => identityReorder.handleCardKeyDown(row.id, e)}
+              >
                 <div className="identity-card-head">
                   <div className="identity-avatar" aria-hidden="true">
                     {Array.from(row.name)[0]?.toUpperCase()}
@@ -2221,6 +2424,14 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                           onSelect={() => openExpiryEditor(row.id, row.name, summary)}
                         >
                           {t('identityCard.setSubscriptionExpiry')}
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item
+                          className="identity-menu-item"
+                          data-identity-handoff-copy={row.id}
+                          disabled={blocked}
+                          onSelect={() => void copyIdentityHandoffSpec(row.id, row.name, summary)}
+                        >
+                          {t('identities.copyHandoffSpec')}
                         </DropdownMenu.Item>
                         <DropdownMenu.Item
                           className="identity-menu-item"
@@ -2333,7 +2544,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         title={t('quota.details')}
         description={t('quota.localOnly')}
         footer={<>
-          <Button variant="secondary" disabled={busy || loading} onClick={() => void manualSyncLocalQuota()}>{t('quota.refreshLocal')}</Button>
+          <Button variant="secondary" disabled={busy || loading || manualSyncing} onClick={() => void manualSyncLocalQuota()}>{t('quota.refreshLocal')}</Button>
           {(detailsQuota?.inferred5h || detailsQuota?.expired5h) && detailsSummary?.quota_identity && (
             <Button
               variant="secondary"
@@ -2557,9 +2768,18 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         }
       >
         <div className="identity-confirm">
-          {warmingPromotion && <div className="identity-confirm-target"><span>{t('warming.promoteHint')}</span><strong>{maskDisplayName(warmingPromotion.name, warmingPromotion.email, prefs.privacyMask)}</strong><p>{t('warming.promotionContinuity')}</p></div>}
-          <label htmlFor="identity-current-name">{t('当前身份保存为')}</label>
-          <Input id="identity-current-name" maxLength={64} value={name} onChange={e => setName(e.target.value)} />
+          {warmingPromotion && <div className="identity-confirm-target warming-promote-target"><span>{t('warming.promoteHint')}</span><strong>{maskDisplayName(warmingPromotion.name, warmingPromotion.email, prefs.privacyMask)}</strong><p>{t('warming.promotionContinuity')}</p></div>}
+          {current?.present !== false || review === 'recovery' ? (
+            <>
+              <label htmlFor="identity-current-name">{t('当前身份保存为')}</label>
+              <Input id="identity-current-name" maxLength={64} value={name} onChange={e => setName(e.target.value)} />
+            </>
+          ) : (
+            <div className="identity-confirm-target">
+              <span>{t('当前工作区')}</span>
+              <strong>{t('待登录')}</strong>
+            </div>
+          )}
           {review === 'recovery' && <div className="identity-confirm-target"><span>{t('identitySafety.restoreIdentity')}</span><strong>{maskDisplayName(recoveryRecord?.name, undefined, prefs.privacyMask) || t('identitySafety.originalUnavailable')}</strong></div>}
           {typeof review === 'object' && review && (
             <div className="identity-confirm-target">
@@ -2867,14 +3087,56 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 }
 
 // ----- 工牌保留清晰文字与 CSS 阴影悬停，不用 3D 变换栅格化文字 -----
-function IdentityCard({className, children, label, title, running}: {className: string; children: ReactNode; label?: string; title?: string; running?: boolean}) {
+function IdentityCard({
+  className,
+  children,
+  label,
+  title,
+  running,
+  reorderId,
+  isDragging,
+  dragOffsetX = 0,
+  dragTiltDeg = 0,
+  dragHandleLabel,
+  onDragStart,
+  onDragKeyDown,
+}: {
+  className: string;
+  children: ReactNode;
+  label?: string;
+  title?: string;
+  running?: boolean;
+  reorderId?: string;
+  isDragging?: boolean;
+  dragOffsetX?: number;
+  dragTiltDeg?: number;
+  dragHandleLabel?: string;
+  onDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
+  onDragKeyDown?: (event: ReactKeyboardEvent<HTMLElement>) => void;
+}) {
+  const dragStyle = isDragging
+    ? {transform: `translate3d(${dragOffsetX}px, -4px, 0) scale(1.025) rotate(${dragTiltDeg}deg)`}
+    : undefined;
   return (
     <article
       className={className}
       aria-label={label}
       title={title}
       data-running={running !== undefined ? (running ? "true" : "false") : undefined}
+      data-reorder-card-id={reorderId}
+      style={dragStyle}
     >
+      {reorderId && (
+        <div
+          className="identity-card-drag-handle"
+          data-card-drag-handle
+          title={dragHandleLabel}
+          aria-label={dragHandleLabel}
+          tabIndex={0}
+          onPointerDown={onDragStart}
+          onKeyDown={onDragKeyDown}
+        />
+      )}
       {children}
     </article>
   );

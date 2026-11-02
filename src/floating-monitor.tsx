@@ -1,11 +1,12 @@
 /**
- * [INPUT]: 原生 monitor_live_telemetry 零轮询本地遥测、当前外观/壁纸/玻璃/字体/隐私偏好与 BroadcastChannel 跨窗同步消息。
- * [OUTPUT]: 无边框置顶多态「实时额度悬浮监控窗」（FloatingMonitorApp），支持置顶固定、位置锁定、边缘磁吸、贴边自动隐藏胶囊、透明度调节及 5h/7d 额度；共享账本展示当前已确认账号的Token构成、10分钟均值速率、去重响应及最近实际模型。
+ * [INPUT]: 原生 monitor_live_telemetry 零轮询本地遥测、monitor-window-state 原生事件、当前外观/壁纸/玻璃/字体/隐私偏好与 BroadcastChannel 跨窗同步消息。
+ * [OUTPUT]: 无边框置顶多态「实时额度悬浮监控窗」（FloatingMonitorApp），支持隐藏态零轮询休眠、置顶固定、位置锁定、鼠标穿透幽灵模式、边缘磁吸、贴边自动隐藏胶囊、透明度调节及 5h/7d 额度与时间步调刻度线；共享账本展示当前已确认账号的Token构成、10分钟均值速率、去重响应及最近实际模型。
  * [POS]: 独立桌面悬浮 HUD 视图（?window=monitor）；100% 本地只读遥测，零后台 OAuth 请求，零跨进程内存读取。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
+import {listen} from '@tauri-apps/api/event';
 import {getCurrentWindow} from '@tauri-apps/api/window';
 import {useI18n, setLocale, type Locale} from './i18n';
 import {
@@ -24,6 +25,7 @@ import {
 import {
   clampMonitorOpacityPct,
   computeMonitorWindowBar,
+  computeWindowTimePace,
   cycleMonitorOpacityPct,
   deriveMonitorActivityMode,
   formatCompactCount,
@@ -54,9 +56,11 @@ export function FloatingMonitorApp() {
   const prefs = usePreferences();
   const [telemetry, setTelemetry] = useState<MonitorLiveTelemetry | null>(null);
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  const [windowOpen, setWindowOpen] = useState(false);
   const [alwaysOnTop, setAlwaysOnTop] = useState(true);
   const [compact, setCompact] = useState(false);
   const [locked, setLocked] = useState(false);
+  const [clickThrough, setClickThrough] = useState(false);
   const [autoHide, setAutoHide] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [dockedEdge, setDockedEdge] = useState<MonitorDockEdge | null>('right');
@@ -66,9 +70,11 @@ export function FloatingMonitorApp() {
   const telemetryPendingRef = useRef(false);
 
   const applyWindowState = useCallback((w: MonitorWindowState) => {
+    setWindowOpen(Boolean(w.open));
     setAlwaysOnTop(w.alwaysOnTop);
     setCompact(w.compact);
     if (typeof w.locked === 'boolean') setLocked(w.locked);
+    if (typeof w.clickThrough === 'boolean') setClickThrough(w.clickThrough);
     if (typeof w.autoHide === 'boolean') setAutoHide(w.autoHide);
     if (typeof w.collapsed === 'boolean') setCollapsed(w.collapsed);
     if (w.dockedEdge !== undefined) setDockedEdge(w.dockedEdge ?? null);
@@ -108,18 +114,34 @@ export function FloatingMonitorApp() {
   const pollIntervalMs = recommendedMonitorPollIntervalMs(activityMode);
 
   useEffect(() => {
+    if (!windowOpen) return;
+    void fetchTelemetry();
     const id = window.setInterval(() => {
       void fetchTelemetry();
     }, pollIntervalMs);
     return () => window.clearInterval(id);
-  }, [fetchTelemetry, pollIntervalMs]);
+  }, [fetchTelemetry, pollIntervalMs, windowOpen]);
 
   useEffect(() => {
+    if (!windowOpen) return;
+    setNowSec(Math.floor(Date.now() / 1000));
     const clockId = window.setInterval(() => {
       setNowSec(Math.floor(Date.now() / 1000));
     }, 1_000);
     return () => window.clearInterval(clockId);
-  }, []);
+  }, [windowOpen]);
+
+  useEffect(() => {
+    const unlistenPromise = listen<MonitorWindowState>('monitor-window-state', event => {
+      applyWindowState(event.payload);
+      if (event.payload.open) {
+        void fetchTelemetry();
+      }
+    });
+    return () => {
+      void unlistenPromise.then(unlisten => unlisten());
+    };
+  }, [applyWindowState, fetchTelemetry]);
 
   useEffect(() => {
     const onStorage = () => {
@@ -191,6 +213,20 @@ export function FloatingMonitorApp() {
       postMonitorBusMessage({type: 'window-state', state});
     } catch {
       setLocked(!next);
+    }
+  };
+
+  const handleToggleClickThrough = async () => {
+    const next = !clickThrough;
+    setClickThrough(next);
+    try {
+      const state = await invoke<MonitorWindowState>('monitor_window_set_click_through', {
+        clickThrough: next,
+      });
+      applyWindowState(state);
+      postMonitorBusMessage({type: 'window-state', state});
+    } catch {
+      setClickThrough(!next);
     }
   };
 
@@ -397,6 +433,22 @@ export function FloatingMonitorApp() {
       ? evaluateWeeklyPace(bar7d.used, evaluated.r7, nowSec)
       : null;
 
+  const pace5h = computeWindowTimePace(evaluated?.r5, 5 * 3600, bar5h.used, nowSec);
+  const pace7d = computeWindowTimePace(evaluated?.r7, 7 * 86400, bar7d.used, nowSec);
+
+  const formatPaceTooltip = (pace: ReturnType<typeof computeWindowTimePace>) => {
+    if (!pace.available || pace.elapsedPct === null) return '';
+    if (pace.projectedEndPct !== null) {
+      return t('monitor.paceTickTooltip', {
+        elapsed: pace.elapsedPct,
+        projected: pace.projectedEndPct,
+      });
+    }
+    return t('monitor.paceTickTooltipNoProj', {
+      elapsed: pace.elapsedPct,
+    });
+  };
+
   const usageAvailable = metrics?.available === true;
   const velocityText = formatVelocityLabel(usageAvailable ? metrics.tokensPerMin : undefined);
   const totalText = usageAvailable ? formatCompactCount(metrics.tokens5hTotal) : '—';
@@ -415,7 +467,7 @@ export function FloatingMonitorApp() {
   if (collapsed) {
     return (
       <div
-        className={`monitor-hud-shell is-collapsed dock-${dockedEdge || 'right'}`}
+        className={`monitor-hud-shell fm-viewport fm-shell is-collapsed${clickThrough ? ' is-click-through' : ''} dock-${dockedEdge || 'right'}`}
         style={shellStyle}
         onMouseEnter={handleShellMouseEnter}
         onClick={() => void handleSetCollapsed(false)}
@@ -460,7 +512,7 @@ export function FloatingMonitorApp() {
 
   return (
     <div
-      className={`monitor-hud-shell${locked ? ' is-locked' : ''}${dockedEdge ? ` dock-${dockedEdge}` : ''}`}
+      className={`monitor-hud-shell fm-viewport fm-shell${locked ? ' is-locked' : ''}${clickThrough ? ' is-click-through' : ''}${dockedEdge ? ` dock-${dockedEdge}` : ''}`}
       data-compact={compact ? 'true' : 'false'}
       style={shellStyle}
       onMouseEnter={handleShellMouseEnter}
@@ -498,7 +550,7 @@ export function FloatingMonitorApp() {
             {activityMode === 'active' ? t('monitor.statusActive') : t('monitor.statusIdle')}
           </span>
         </div>
-        <div className="monitor-hud-controls" data-no-drag>
+        <div className="monitor-hud-controls fm-controls" data-no-drag>
           <button
             type="button"
             className={`monitor-hud-icon-btn${opacityMenuOpen || opacityPct < 94 ? ' is-active-mode' : ''}`}
@@ -563,6 +615,23 @@ export function FloatingMonitorApp() {
                 stroke="currentColor"
                 strokeWidth="1.35"
                 strokeLinecap="round"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`monitor-hud-icon-btn fm-icon-btn${clickThrough ? ' is-active is-active-mode' : ''}`}
+            title={t(clickThrough ? 'monitor.clickThroughOn' : 'monitor.clickThroughOff')}
+            aria-label={t(clickThrough ? 'monitor.clickThroughOn' : 'monitor.clickThroughOff')}
+            onClick={() => void handleToggleClickThrough()}
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none">
+              <path
+                d="M4.2 2.4 12.1 7.6 8.6 8.5 10.4 12.5 8.8 13.2 7 9.2 4.2 11.4V2.4Z"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinejoin="round"
+                strokeDasharray={clickThrough ? '1.8 1.4' : undefined}
               />
             </svg>
           </button>
@@ -714,7 +783,7 @@ export function FloatingMonitorApp() {
             <span className="monitor-limit-label">5h</span>
             <span className="monitor-limit-pct">{pctLabel5h}</span>
           </div>
-          <div className="monitor-hud-track">
+          <div className="monitor-hud-track fm-bar-track">
             <div
               className={`monitor-hud-fill tone-${bar5h.tone}`}
               style={{
@@ -727,6 +796,15 @@ export function FloatingMonitorApp() {
                 }%`,
               }}
             />
+            {pace5h.available && pace5h.elapsedPct !== null && (
+              <span
+                className={`monitor-hud-pace-tick fm-bar-pace-tick tone-${pace5h.tone}`}
+                title={formatPaceTooltip(pace5h)}
+                style={{
+                  left: `${pace5h.elapsedPct}%`,
+                }}
+              />
+            )}
           </div>
           <div className="monitor-limit-reset">
             <span className="monitor-limit-reset-text" title={reset5hLabel}>
@@ -740,7 +818,7 @@ export function FloatingMonitorApp() {
             <span className="monitor-limit-label">7d</span>
             <span className="monitor-limit-pct">{pctLabel7d}</span>
           </div>
-          <div className="monitor-hud-track">
+          <div className="monitor-hud-track fm-bar-track">
             <div
               className={`monitor-hud-fill tone-${bar7d.tone}`}
               style={{
@@ -753,21 +831,12 @@ export function FloatingMonitorApp() {
                 }%`,
               }}
             />
-            {weeklyPace && !weeklyPace.suppressed && (
+            {pace7d.available && pace7d.elapsedPct !== null && (
               <span
-                className="monitor-hud-pace-tick"
-                title={t('quota.paceTickLabel', {
-                  expected:
-                    displayMode === 'used'
-                      ? weeklyPace.expectedUsedPct
-                      : weeklyPace.expectedRemPct,
-                })}
+                className={`monitor-hud-pace-tick fm-bar-pace-tick tone-${pace7d.tone}`}
+                title={formatPaceTooltip(pace7d)}
                 style={{
-                  left: `${
-                    displayMode === 'used'
-                      ? weeklyPace.expectedUsedPct
-                      : weeklyPace.expectedRemPct
-                  }%`,
+                  left: `${pace7d.elapsedPct}%`,
                 }}
               />
             )}

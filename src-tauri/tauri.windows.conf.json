@@ -14,6 +14,26 @@
         "minHeight": 640,
         "visible": false,
         "decorations": true
+      },
+      {
+        "label": "monitor",
+        "title": "Claude-Local Monitor",
+        "url": "index.html?window=monitor",
+        "width": 340,
+        "height": 258,
+        "minWidth": 340,
+        "minHeight": 258,
+        "maxWidth": 340,
+        "maxHeight": 258,
+        "resizable": false,
+        "maximizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false
       }
     ]
   },

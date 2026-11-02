@@ -16,6 +16,14 @@ fn local_runtime_has_no_official_update_authority() {
         .is_none());
     let capabilities: Value =
         serde_json::from_str(include_str!("../capabilities/main.json")).unwrap();
+    let cap_windows: Vec<&str> = capabilities["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap())
+        .collect();
+    assert!(cap_windows.contains(&"main"));
+    assert!(cap_windows.contains(&"monitor"));
     assert!(capabilities["permissions"]
         .as_array()
         .unwrap()
@@ -24,11 +32,22 @@ fn local_runtime_has_no_official_update_authority() {
             let permission = p.as_str().unwrap();
             !permission.starts_with("updater:") && !permission.starts_with("process:")
         }));
+    let app_windows = config["app"]["windows"].as_array().unwrap();
+    assert_eq!(app_windows[0]["label"], "main");
+    let monitor_cfg = app_windows
+        .iter()
+        .find(|w| w["label"] == "monitor")
+        .expect("tauri.conf.json must declare monitor window");
+    assert_eq!(monitor_cfg["visible"], false);
+    assert_eq!(monitor_cfg["skipTaskbar"], true);
     let main = include_str!("main.rs");
     assert!(!main.contains("tauri_plugin_updater"));
     assert!(!main.contains("tauri_plugin_process"));
     let windows: Value = serde_json::from_str(include_str!("../tauri.windows.conf.json")).unwrap();
     assert_eq!(windows["app"]["windows"][0]["title"], "Claude-Local");
+    assert_eq!(windows["app"]["windows"][1]["label"], "monitor");
+    assert_eq!(windows["app"]["windows"][1]["visible"], false);
+    assert_eq!(windows["app"]["windows"][1]["skipTaskbar"], true);
     assert!(windows.get("plugins").is_none());
 }
 

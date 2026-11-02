@@ -1,10 +1,11 @@
 /**
  * [INPUT]: 在线额度状态/原因白名单、持久批次结果契约、前台轮询设置与订阅重置元数据（含浏览器自动同步与手动充值/到期日历）。
- * [OUTPUT]: 批次/额度纯模型、订阅到期短标签（MM/DD）与 +1 自然月推算、独立浏览器失败与原生调度门禁倒计时、严格新5h确认、单例快照订阅、受限迁移和显式设置IPC。
+ * [OUTPUT]: 批次/额度纯模型（含未知/过期目标过滤 buildStaleOrUnknownBatchTargets）、订阅到期短标签（MM/DD）与 +1 自然月推算、独立浏览器失败与原生调度门禁倒计时、严格新5h确认、单例快照订阅、受限迁移和显式设置IPC。
  * [POS]: 仅原生owner调度唤醒；前端桥不设唤醒timer、不读取凭据或发HTTP，不写额度账本。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { IdentitySubscriptionMetadata } from './identity-model';
+import { evaluateQuota, type QuotaInput } from './identity-quota';
 
 export type OnlineQuotaStatus =
   | 'updated'
@@ -642,6 +643,114 @@ export function buildBatchTargets(state: {
   const fingerprintSetKey = uniqueFpList.join(',');
 
   return { targets, unverifiedCount, fingerprintSetKey };
+}
+
+export type StaleOrUnknownAccountInput = QuotaInput & {
+  id?: string;
+  present?: boolean;
+  quota_identity?: string | null;
+  observed_at_ms?: number | null;
+  quota?: (QuotaInput & { observed_at_ms?: number | null }) | null;
+};
+
+export type StaleOrUnknownBatchState = {
+  active?: string | null;
+  current?: StaleOrUnknownAccountInput | null;
+  records?: Array<{ id: string }>;
+  summaries?: Record<string, StaleOrUnknownAccountInput>;
+};
+
+function isAccountQuotaStaleOrUnknown(
+  acc: StaleOrUnknownAccountInput | null | undefined,
+  nowSec: number,
+  staleAfterHours: number,
+): boolean {
+  if (!acc) return true;
+  const nested = acc.quota ?? null;
+  const merged: QuotaInput = {
+    ...acc,
+    ...(nested ?? {}),
+    quota_observed_at_ms:
+      nested?.observed_at_ms ??
+      nested?.quota_observed_at_ms ??
+      acc.quota_observed_at_ms ??
+      acc.observed_at_ms ??
+      null,
+  };
+  const q = evaluateQuota(merged, nowSec);
+  if (!q || !q.known5h || !q.known7d || q.inferred5h || q.inferred7d) {
+    return true;
+  }
+  const observedMs =
+    merged.quota_observed_at_ms ??
+    merged.quota_5h_observed_at_ms ??
+    merged.quota_7d_observed_at_ms ??
+    null;
+  if (typeof observedMs !== 'number' || !Number.isFinite(observedMs) || observedMs <= 0) {
+    return true;
+  }
+  const maxAgeMs = Math.max(0, staleAfterHours) * 3600 * 1000;
+  return nowSec * 1000 - observedMs > maxAgeMs;
+}
+
+export function buildStaleOrUnknownBatchTargets(
+  stateOrCurrent: StaleOrUnknownBatchState | StaleOrUnknownAccountInput | null | undefined,
+  savedOrNowSec?: readonly StaleOrUnknownAccountInput[] | number,
+  nowSecArg?: number,
+  staleAfterHoursArg = 6,
+): QuotaBatchTarget[] {
+  if (!stateOrCurrent && (!Array.isArray(savedOrNowSec) || savedOrNowSec.length === 0)) {
+    return [];
+  }
+
+  if (Array.isArray(savedOrNowSec)) {
+    const currentAcc = stateOrCurrent as StaleOrUnknownAccountInput | null | undefined;
+    const savedList = savedOrNowSec;
+    const resolvedNowSec =
+      typeof nowSecArg === 'number' && Number.isFinite(nowSecArg)
+        ? nowSecArg
+        : Math.floor(Date.now() / 1000);
+    const staleAfterHours =
+      typeof staleAfterHoursArg === 'number' && Number.isFinite(staleAfterHoursArg)
+        ? staleAfterHoursArg
+        : 6;
+    const syntheticState: StaleOrUnknownBatchState = {
+      current: currentAcc
+        ? { ...currentAcc, present: currentAcc.present ?? true }
+        : null,
+      records: savedList.map((item, idx) => ({ id: item.id || `saved_${idx}` })),
+      summaries: Object.fromEntries(
+        savedList.map((item, idx) => [item.id || `saved_${idx}`, item]),
+      ),
+    };
+    const baseTargets = buildBatchTargets(syntheticState).targets;
+    return baseTargets.filter(target => {
+      const summary =
+        target.account_id === 'current'
+          ? syntheticState.current
+          : syntheticState.summaries?.[target.account_id];
+      return isAccountQuotaStaleOrUnknown(summary, resolvedNowSec, staleAfterHours);
+    });
+  }
+
+  const state = stateOrCurrent as StaleOrUnknownBatchState | null | undefined;
+  if (!state) return [];
+  const resolvedNowSec =
+    typeof savedOrNowSec === 'number' && Number.isFinite(savedOrNowSec)
+      ? savedOrNowSec
+      : Math.floor(Date.now() / 1000);
+  const staleAfterHours =
+    typeof nowSecArg === 'number' && Number.isFinite(nowSecArg)
+      ? nowSecArg
+      : staleAfterHoursArg;
+  const baseTargets = buildBatchTargets(state).targets;
+  return baseTargets.filter(target => {
+    const summary =
+      target.account_id === 'current'
+        ? state.current
+        : state.summaries?.[target.account_id];
+    return isAccountQuotaStaleOrUnknown(summary, resolvedNowSec, staleAfterHours);
+  });
 }
 
 export function aggregateBatchProgress(

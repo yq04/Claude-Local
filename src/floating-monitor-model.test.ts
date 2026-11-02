@@ -1,5 +1,5 @@
 // [INPUT]: Pure floating-monitor-model functions and synthetic account-scoped telemetry inputs.
-// [OUTPUT]: Assertions for disjoint token composition, unavailable rates, activity mode, compact formatting, opacity and quota window tones.
+// [OUTPUT]: Assertions for disjoint token composition, window time pace, unavailable rates, activity mode, compact formatting, opacity and quota window tones.
 // [POS]: Bun test suite for src/floating-monitor-model.ts.
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -8,6 +8,7 @@ import {
   clampMonitorOpacityPct,
   computeContextMeter,
   computeMonitorWindowBar,
+  computeWindowTimePace,
   cycleMonitorOpacityPct,
   deriveMonitorActivityMode,
   formatCompactCount,
@@ -140,6 +141,66 @@ describe('floating-monitor-model', () => {
     expect(formatWindowResetLabel('', true, '5h', 'zh')).toBe('重置 5h')
     expect(formatWindowResetLabel('', true, '5h', 'en')).toBe('Reset 5h')
     expect(formatWindowResetLabel('', false, '5h', 'zh')).toBe('—')
+  })
+
+  test('computes 5h/7d window time pace, delta, projected end and tone', () => {
+    const now = 1_760_000_000
+    const win5h = 5 * 3600
+
+    expect(computeWindowTimePace(null, win5h, 40, now)).toEqual({
+      available: false,
+      elapsedPct: null,
+      paceDeltaPct: null,
+      projectedEndPct: null,
+      tone: 'unknown',
+    })
+    expect(computeWindowTimePace(now - 10, win5h, 40, now).available).toBe(false)
+    expect(computeWindowTimePace(now + win5h + 60, win5h, 40, now).available).toBe(false)
+
+    // 50% time elapsed, unknown usedPct
+    expect(computeWindowTimePace(now + win5h / 2, win5h, null, now)).toEqual({
+      available: true,
+      elapsedPct: 50,
+      paceDeltaPct: null,
+      projectedEndPct: null,
+      tone: 'unknown',
+    })
+
+    // 50% time elapsed, 52% used -> steady (+2%, projected 104%)
+    expect(computeWindowTimePace(now + win5h / 2, win5h, 52, now)).toEqual({
+      available: true,
+      elapsedPct: 50,
+      paceDeltaPct: 2,
+      projectedEndPct: 104,
+      tone: 'steady',
+    })
+
+    // 40% time elapsed, 60% used -> ahead (+20%, projected 150%)
+    expect(computeWindowTimePace(now + win5h * 0.6, win5h, 60, now)).toEqual({
+      available: true,
+      elapsedPct: 40,
+      paceDeltaPct: 20,
+      projectedEndPct: 150,
+      tone: 'ahead',
+    })
+
+    // 60% time elapsed, 30% used -> safe (-30%, projected 50%)
+    expect(computeWindowTimePace(now + win5h * 0.4, win5h, 30, now)).toEqual({
+      available: true,
+      elapsedPct: 60,
+      paceDeltaPct: -30,
+      projectedEndPct: 50,
+      tone: 'safe',
+    })
+
+    // < 5% elapsed suppresses projectedEndPct
+    expect(computeWindowTimePace(now + win5h * 0.98, win5h, 10, now)).toEqual({
+      available: true,
+      elapsedPct: 2,
+      paceDeltaPct: 8,
+      projectedEndPct: null,
+      tone: 'steady',
+    })
   })
 
   test('cross-window storage reload synchronizes preferences and custom wallpaper', () => {

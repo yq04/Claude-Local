@@ -5,6 +5,7 @@ import {
   getSmartRelayConfig,
   noteRelayAccountSwitch,
   resetSmartRelayConfig,
+  summarizeRelayPool,
   updateSmartRelayConfig,
   type RelayAccountInput,
 } from './smart-relay-model';
@@ -145,4 +146,138 @@ test('Sink-to-end (排到最后) and Rotate (轮流) demote switched-out account
   const evalSink = evaluateSmartRelay(accounts, afterSwitch, NOW);
   expect(evalSink.recommended?.id).toBe('acc-b');
   resetSmartRelayConfig();
+});
+
+test('inferred7d rested accounts classify as Tier 0 (ready) with gentle tie-breaker and inferred5h has inferred === false', () => {
+  const accounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    {
+      id: 'rested-7d',
+      name: 'Rested 7d Account',
+      email: 'rested7d@example.invalid',
+      plan: 'pro',
+      auth_status: 'valid',
+      isCurrent: false,
+      listIndex: 1,
+      summary: {
+        quota_source: 'server_anchor',
+        quota_observed_at_ms: (NOW - 3 * DAY) * 1000,
+        quota_5h_used: 80,
+        quota_5h_reset_at: NOW - 2 * DAY,
+        quota_7d_used: 95,
+        quota_7d_reset_at: NOW - HOUR, // 7d window already reset -> inferred7d = true, 100% remaining
+      },
+    },
+    {
+      id: 'rested-5h-active-7d',
+      name: 'Rested 5h Account',
+      email: 'rested5h@example.invalid',
+      plan: 'pro',
+      auth_status: 'valid',
+      isCurrent: false,
+      listIndex: 2,
+      summary: {
+        quota_source: 'server_anchor',
+        quota_observed_at_ms: (NOW - 6 * HOUR) * 1000,
+        quota_5h_used: 85,
+        quota_5h_reset_at: NOW - HOUR, // 5h rested -> 100% rem5h, inferred5h = true
+        quota_7d_used: 0,
+        quota_7d_reset_at: NOW + 4 * DAY, // active 7d anchor -> 100% rem7d, inferred7d = false
+      },
+    },
+  ];
+
+  const evaluation = evaluateSmartRelay(
+    accounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'least_used'},
+    NOW,
+  );
+
+  const c7d = evaluation.candidates.find(c => c.id === 'rested-7d')!;
+  const c5h = evaluation.candidates.find(c => c.id === 'rested-5h-active-7d')!;
+
+  expect(c7d.tier).toBe(0);
+  expect(c7d.rem7d).toBe(100);
+  expect(c7d.rem5h).toBe(100);
+  expect(c7d.inferred).toBe(true);
+
+  expect(c5h.tier).toBe(0);
+  expect(c5h.rem5h).toBe(100);
+  expect(c5h.inferred).toBe(false);
+
+  // Tie-breaker prefers live-anchored 7d (inferred === false) over inferred7d (inferred === true) when effectiveRem is equal
+  expect(evaluation.recommended?.id).toBe('rested-5h-active-7d');
+});
+
+test('affinityMode session suppresses preferred_recovered while current is healthy (< 95%) and manual always sets shouldRelayNow === false', () => {
+  const accounts: RelayAccountInput[] = [
+    makeAccount('current-active', 0, 40, 35, 3, 4, true), // 40% used (< 95%)
+    makeAccount('preferred-star', 1, 10, 20, 4, 5, false), // Recovered to 20% used (< 90%)
+  ];
+
+  const evalSession = evaluateSmartRelay(
+    accounts,
+    {
+      ...defaultSmartRelayConfig,
+      enabled: true,
+      affinityMode: 'session',
+      preferredAccountId: 'preferred-star',
+      returnToPreferred: true,
+      preferredReturnThresholdPct: 90,
+    },
+    NOW,
+  );
+  expect(evalSession.relayTriggerKind).not.toBe('preferred_recovered');
+  expect(evalSession.shouldRelayNow).toBe(false);
+
+  // In manual mode, preferred_recovered and recommended are still computed for inspection, but shouldRelayNow is false
+  const evalManual = evaluateSmartRelay(
+    accounts,
+    {
+      ...defaultSmartRelayConfig,
+      enabled: true,
+      affinityMode: 'manual',
+      preferredAccountId: 'preferred-star',
+      returnToPreferred: true,
+      preferredReturnThresholdPct: 90,
+    },
+    NOW,
+  );
+  expect(evalManual.recommended?.id).toBe('preferred-star');
+  expect(evalManual.relayTriggerKind).toBe('preferred_recovered');
+  expect(evalManual.shouldRelayNow).toBe(false);
+});
+
+test('summarizeRelayPool accurately aggregates ready, low, spent, unavailable, and excluded accounts', () => {
+  const accounts: RelayAccountInput[] = [
+    makeAccount('ready-1', 0, 20, 30, 3, 4, true), // Tier 0: rem5h=80, rem7d=70
+    makeAccount('ready-2', 1, 40, 50, 4, 5, false), // Tier 0: rem5h=60, rem7d=50
+    makeAccount('low-1', 2, 92, 40, 2, 3, false), // Tier 1: rem5h=8, rem7d=60, r5 = NOW + 2h
+    makeAccount('spent-1', 3, 99, 60, 1, 2, false), // Tier 2: rem5h=1, rem7d=40, r5 = NOW + 1h (soonest!)
+    {
+      ...makeAccount('expired-1', 4, 10, 10, 3, 4, false),
+      auth_status: 'expired', // Tier 3: unavailable
+    },
+    makeAccount('excluded-1', 5, 0, 0, 4, 6, false), // Excluded from pool
+  ];
+
+  const evaluation = evaluateSmartRelay(
+    accounts,
+    {
+      ...defaultSmartRelayConfig,
+      enabled: true,
+      excludedAccountIds: ['excluded-1'],
+    },
+    NOW,
+  );
+
+  const summary = summarizeRelayPool(evaluation.candidates, NOW);
+  expect(summary.includedCount).toBe(5);
+  expect(summary.readyCount).toBe(2);
+  expect(summary.lowCount).toBe(1);
+  expect(summary.spentCount).toBe(1);
+  expect(summary.unavailableCount).toBe(1);
+  expect(summary.totalRem5hPct).toBe(80 + 60 + 8 + 1);
+  expect(summary.avgRem7dPct).toBe(Math.round((70 + 50 + 60 + 40) / 4));
+  expect(summary.soonestResetSec).toBe(NOW + 1 * HOUR);
 });

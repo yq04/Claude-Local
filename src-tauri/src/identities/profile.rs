@@ -1779,6 +1779,7 @@ fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
         }
         if current.auth_status.is_none() && (has_primary_api_key || has_settings_api) {
             current.auth_status = Some("api_key".into());
+            current.present = true;
         }
     }
     current.present |= crate::cleaner::identity::desktop_present(home);

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生只读环境快照（risk_inspect_local_env）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好与双语文案。
- * [OUTPUT]: 明确所选浏览器范围的六项配置与HTTP出口诊断、Mihomo strict-route 闭环修复向导、过期结果隔离；桥接安全随机源缺失时局部停用。
+ * [OUTPUT]: 明确所选浏览器范围的六项配置与HTTP出口诊断、Mihomo strict-route 闭环修复向导、PayPal/Stripe 区域染色站点数据清理直达助手、过期结果隔离；桥接安全随机源缺失时局部停用。
  * [POS]: 风控验证主页面；零上游凭据读取、零临时口令落盘、严格拦截非 RFC1918 内网暴露，所有修复通过可审计 AI 提示词或用户显式下载完成。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -1051,6 +1051,29 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                   {t('risk.action.resetChecklist')}
                 </Button>
               )}
+            </div>
+          </div>
+
+          <div className="risk-checklist-head" data-paypal-cookie-helper>
+            <div className="risk-callout">
+              <strong>{t('risk.checklist.paypalCookieBadge')}</strong>
+              <span>{t('risk.checklist.paypalCookieNote')}</span>
+            </div>
+            <div className="risk-action-group">
+              <Button
+                variant="secondary"
+                size="small"
+                data-copy-paypal-clear-url
+                leftIcon={copiedId === 'paypal-cookie-url' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
+                onClick={() =>
+                  void copyText(
+                    'paypal-cookie-url',
+                    'chrome://settings/content/all?searchSubpage=paypal.com',
+                  )
+                }
+              >
+                {copiedId === 'paypal-cookie-url' ? t('已复制') : t('risk.action.copyPaypalClearUrl')}
+              </Button>
             </div>
           </div>
 

@@ -83,7 +83,7 @@ try{
  assert.equal(await cards.locator('.identity-user-name,.identity-saved-name').count(),0,'Account names must not add a second visible title row');
  assert.match(await page.locator('.identity-library:not(.identity-warming-library) .identity-onboarding-bar').innerText(),/添加新号 3 步法/);checks++;
  const geometry=await cards.evaluateAll(nodes=>nodes.slice(0,3).map(node=>{const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}));
- assert.equal(geometry[0].y,geometry[2].y);assert(geometry[2].x+geometry[2].width<1040-150);assert(Math.abs(geometry[0].width/geometry[0].height-54/85.6)<.01);checks++;
+ assert.equal(geometry[0].y,geometry[2].y);assert(geometry[2].x+geometry[2].width<1040-150);assert(Math.abs(geometry[0].width-166)<1);assert.equal(geometry[0].height,286);checks++;
  assert.equal(await page.getByRole('checkbox',{name:'联动浏览器',exact:true}).isChecked(),true);
  await page.getByRole('checkbox',{name:'联动浏览器',exact:true}).click();
  let linking=page.getByRole('dialog');await linking.waitFor();
@@ -159,6 +159,7 @@ try{
  await page.waitForFunction(()=>!(window as any).identityFixture.state.current.present);
  assert.equal(await page.locator('.identity-card.current').count(),0);
  assert.equal(await cards.first().getByRole('heading').innerText(),'新身份');
+ assert.equal(await cards.first().locator('.identity-empty-step-window').count(),2,'Empty identity card must show structured onboarding step boxes instead of a blank area');
  const request=await page.evaluate(()=>((window as any).identityFixture.commands as any[]).find(row=>row.command==='identities_switch').args);
  assert.equal(request.policy.skills,false);assert.equal(request.targetId,'empty');assert.equal(request.currentName,'First archive');checks++;
  const target=page.locator('.identity-card:not(.current)').filter({has:page.getByRole('heading',{name:'Identity 3',exact:true})});
@@ -184,7 +185,7 @@ try{
  assert.equal(await renamed.locator('.identity-user-name,.identity-saved-name').count(),0);
  assert.equal(await renamed.locator('.identity-email').count(),1);
  const afterRename=await renamed.evaluate(node=>{const card=node.getBoundingClientRect(),heading=node.querySelector('h3')!.getBoundingClientRect(),email=node.querySelector('.identity-email')!.getBoundingClientRect(),title=getComputedStyle(node.querySelector('h3 > strong')!);return {width:card.width,height:card.height,headingHeight:heading.height,emailOffset:email.top-card.top,whiteSpace:title.whiteSpace,overflow:title.overflow,textOverflow:title.textOverflow};});
- assert.deepEqual({width:afterRename.width,height:afterRename.height},{width:180,height:286});
+ assert.deepEqual({width:afterRename.width,height:afterRename.height},{width:166,height:286});
  assert.equal(afterRename.headingHeight,beforeRename.headingHeight,'A long rename must not grow the title row');
  assert.equal(afterRename.emailOffset,beforeRename.emailOffset,'Renaming must not push the email or quota content down');
  assert.equal(afterRename.whiteSpace,'nowrap');assert.equal(afterRename.overflow,'hidden');assert.equal(afterRename.textOverflow,'ellipsis');

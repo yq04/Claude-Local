@@ -501,6 +501,9 @@ test('buildMihomoStrictRouteSnippet and strict-route detection flag tun_strict_r
   expect(desktopYaml.configText).toContain('claudemcpcontent.com');
   expect(desktopYaml.configText).toContain('persona.com');
   expect(desktopYaml.configText).toContain('stripecdn.com');
+  expect(desktopYaml.configText).toContain('paypal.com');
+  expect(desktopYaml.configText).toContain('paypalobjects.com');
+  expect(desktopYaml.configText).toContain('braintreegateway.com');
   expect(desktopYaml.configText).toContain('featuregates.org');
   expect(desktopYaml.configText).toContain('intercomcdn.com');
   expect(desktopYaml.configText).toContain('8.8.4.4/32');

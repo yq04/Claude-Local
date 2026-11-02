@@ -1,10 +1,10 @@
 /**
  * [INPUT]: Native numeric usage aggregates, shared locale and display/privacy preferences.
- * [OUTPUT]: Token-first overview with four-part composition, equivalent API USD cost & cache savings cards, full model distribution with per-model/effort cost, a concise All/account selector, responsive trend/data views and scoped TSV actions.
+ * [OUTPUT]: Token-first overview with four-part composition, per-request token/cost telemetry, equivalent API USD cost & cache savings cards, peak period badge, full model distribution with per-model/effort cost, sortable account breakdown, responsive trend/data views and scoped TSV + Markdown summary actions.
  * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh, no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
-import {useEffect, useState, type ReactNode} from 'react';
+import {useEffect, useRef, useState, type ReactNode} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {Button, Disclosure, Select, Tabs} from 'cromma-ui';
 import {Refresh} from 'cromma-ui/pika';
@@ -27,7 +27,7 @@ import {
 } from './usage-model';
 import {UsageTrend} from './usage-trend';
 import {UsageTrendTable} from './usage-table';
-import {buildUsageTsv} from './usage-export';
+import {buildUsageTsv, formatUsageMarkdownSummary} from './usage-export';
 import {formatTimezoneContext, getDstDayType, maskAccountLabel} from './usage-attribution';
 
 const periods: readonly [UsagePeriod, string][] = [['today', 'usage.today'], ['yesterday', 'usage.yesterday'], ['week', 'usage.week'], ['month', 'usage.month'], ['all', 'usage.allTime']];
@@ -73,16 +73,29 @@ function TokenComposition({totals, details = false}: {totals: UsageTotals; detai
   </div>;
 }
 
+type AccountSortField = 'total_tokens' | 'cost' | 'savings' | 'cache_hit' | 'requests';
+
 export function UsageStatisticsPanel() {
   const {t, locale} = useI18n();
+  const tx = (key: string, zhFallback: string, enFallback: string, values?: Record<string, string | number>) => {
+    const raw = t(key, values);
+    if (raw !== key) return raw;
+    const tpl = locale === 'en' ? enFallback : zhFallback;
+    return values ? tpl.replace(/\{(\w+)\}/g, (slot, name) => values[name] === undefined ? slot : String(values[name])) : tpl;
+  };
   const prefs = usePreferences();
   const [period, setPeriod] = useState<UsagePeriod>('all');
   const [account, setAccount] = useState('all');
   const [trendView, setTrendView] = useState<'chart' | 'data'>('chart');
+  const [accountSortBy, setAccountSortBy] = useState<AccountSortField>('total_tokens');
+  const [accountSortDir, setAccountSortDir] = useState<'desc' | 'asc'>('desc');
   const [revision, setRevision] = useState(0);
   const [result, setResult] = useState<{key: string; value: UsageSnapshot} | null>(null);
   const [status, setStatus] = useState<{key: string; busy: boolean; error: string}>({key: '', busy: true, error: ''});
   const [exportStatus, setExportStatus] = useState('');
+  const [copiedMd, setCopiedMd] = useState(false);
+  const copiedMdTimerRef = useRef<number | null>(null);
+  useEffect(() => () => { if (copiedMdTimerRef.current) window.clearTimeout(copiedMdTimerRef.current); }, []);
   const timezone = (() => { try { const value = Intl.DateTimeFormat().resolvedOptions().timeZone; new Intl.DateTimeFormat('en', {timeZone: value}); return value; } catch { return ''; } })();
   const queryKey = `${period}:${account}:${timezone || `offset:${-new Date().getTimezoneOffset()}`}`;
   const snapshot = result?.key === queryKey ? result.value : null;
@@ -126,7 +139,6 @@ export function UsageStatisticsPanel() {
   const accounts = result?.value.accounts ?? [];
   const days = dailySeries(snapshot?.daily ?? [], period, snapshot ? new Date(snapshot.generated_at * 1000) : new Date(), snapshot?.generated_at);
   const models = [...(snapshot?.models ?? [])].sort((a, b) => b.totals.total_tokens - a.totals.total_tokens);
-  const sortedAccounts = [...(snapshot?.accounts ?? [])].sort((a, b) => Number(b.current) - Number(a.current) || b.totals.total_tokens - a.totals.total_tokens || a.id.localeCompare(b.id));
   const stamp = snapshot ? new Date(snapshot.generated_at * 1000).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US', {hour: '2-digit', minute: '2-digit', second: '2-digit'}) : '';
   const rate = (value: UsageTotals) => percent(cacheHitRate(value));
   const trend = summarizeUsageTrend(snapshot ? days : []);
@@ -155,6 +167,59 @@ export function UsageStatisticsPanel() {
   const dstType = isHourly ? getDstDayType(days) : null;
   const primaryModel = models[0]?.model;
   const costSummary = estimateSnapshotCostUsd(totals, models);
+  const avgTokensPerRequest = totals && totals.requests > 0 ? Math.round(totals.total_tokens / totals.requests) : null;
+  const avgCostPerReq = totals && totals.requests > 0 ? costSummary.costUsd / totals.requests : null;
+  const accountRows = (snapshot?.accounts ?? []).map(row => {
+    const est = estimateTotalsCostUsd(row.totals, primaryModel);
+    return {
+      ...row,
+      cost: est.costUsd,
+      savings: est.cacheSavingsUsd,
+      cacheHit: cacheHitRate(row.totals),
+      requests: row.totals.requests,
+    };
+  }).sort((a, b) => {
+    const cmp =
+      accountSortBy === 'total_tokens'
+        ? a.totals.total_tokens - b.totals.total_tokens
+        : accountSortBy === 'cost'
+          ? a.cost - b.cost
+          : accountSortBy === 'savings'
+            ? a.savings - b.savings
+            : accountSortBy === 'cache_hit'
+              ? (a.cacheHit ?? -1) - (b.cacheHit ?? -1)
+              : a.requests - b.requests;
+    if (cmp !== 0) return cmp * (accountSortDir === 'desc' ? -1 : 1);
+    return Number(b.current) - Number(a.current) || b.totals.total_tokens - a.totals.total_tokens || a.id.localeCompare(b.id);
+  });
+  const selectAccountSort = (field: AccountSortField) => {
+    if (accountSortBy === field) {
+      setAccountSortDir(dir => (dir === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setAccountSortBy(field);
+      setAccountSortDir('desc');
+    }
+  };
+  const accountSortHeader = (field: AccountSortField, label: string) => {
+    const active = accountSortBy === field;
+    const descending = accountSortDir === 'desc';
+    return (
+      <th scope="col" aria-sort={active ? (descending ? 'descending' : 'ascending') : 'none'}>
+        <button
+          type="button"
+          className={`usage-sort-button${active ? ' is-active' : ''}`}
+          title={t('usage.sortColumn', {column: label})}
+          onClick={() => selectAccountSort(field)}
+        >
+          {label}
+          <svg className="usage-sort-icon" width="12" height="14" viewBox="0 0 12 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m3 5 3-3 3 3" opacity={active && !descending ? 1 : 0.3} />
+            <path d="m3 9 3 3 3-3" opacity={active && descending ? 1 : 0.3} />
+          </svg>
+        </button>
+      </th>
+    );
+  };
   const elapsedBuckets = days.filter(d => !d.future);
   const elapsedUnits = (() => {
     if (!elapsedBuckets.length) return 0;
@@ -179,6 +244,31 @@ export function UsageStatisticsPanel() {
     catch { if (!navigator.clipboard?.writeText) {setExportStatus(t('usage.exportFailed')); return;} try {await navigator.clipboard.writeText(contents);} catch {setExportStatus(t('usage.exportFailed')); return;} }
     setExportStatus(t('usage.exportCopied'));
   };
+  const copyMarkdownSummary = async () => {
+    if (!snapshot || busy) return;
+    setExportStatus('');
+    const contents = formatUsageMarkdownSummary(snapshot, {
+      period,
+      periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'),
+      rangeLabel: range,
+      accountId: account,
+      accountLabel: selectedAccount,
+      accountIsAll: account === 'all',
+      timezone: snapshot.timezone || timezone || offsetZone,
+      privacyMask: prefs.privacyMask,
+      locale,
+      costUsd: totals ? formatUsdCost(costSummary.costUsd) : '—',
+      cacheSavedUsd: totals ? formatUsdCost(costSummary.cacheSavingsUsd, true) : '—',
+      cacheHitPct: totals ? rate(totals) : '—',
+      cacheMultiplier: costSummary.cacheReuseRatio != null ? `${costSummary.cacheReuseRatio.toFixed(1)}×` : undefined,
+    });
+    try { await invoke('copy_result', {text: contents}); }
+    catch { if (!navigator.clipboard?.writeText) {setExportStatus(t('usage.exportFailed')); return;} try {await navigator.clipboard.writeText(contents);} catch {setExportStatus(t('usage.exportFailed')); return;} }
+    setCopiedMd(true);
+    if (copiedMdTimerRef.current) window.clearTimeout(copiedMdTimerRef.current);
+    copiedMdTimerRef.current = window.setTimeout(() => setCopiedMd(false), 2000);
+    setExportStatus(t('usage.markdownCopied'));
+  };
 
   return (
     <section className="system-page usage-page">
@@ -190,6 +280,7 @@ export function UsageStatisticsPanel() {
             {busy ? t('usage.loading') : stamp ? t('usage.updated', {time: stamp}) : t('usage.localOnly')}
           </span>
           <div className="usage-action-group">
+            <Button variant="secondary" size="small" data-usage-copy-markdown disabled={busy || !snapshot} onClick={() => void copyMarkdownSummary()}>{copiedMd ? `✓ ${t('usage.copiedMarkdown')}` : t('usage.copyMarkdown')}</Button>
             <Button variant="secondary" size="small" disabled={busy || !snapshot} onClick={() => void exportTsv(false)}>{t('usage.copyTsv')}</Button>
             <Button variant="secondary" size="small" disabled={busy || !snapshot} onClick={() => void exportTsv(true)}>{t('usage.downloadTsv')}</Button>
             <Button variant="secondary" size="small" disabled={busy} leftIcon={<Refresh size={15} aria-hidden="true" className={busy ? 'spin' : ''} />} onClick={() => setRevision(value => value + 1)}>{t('usage.refresh')}</Button>
@@ -220,7 +311,7 @@ export function UsageStatisticsPanel() {
 
         <div className="usage-overview" aria-busy={busy}>
           <section data-usage-metric="total" className="settings-card usage-total-card">
-            <div className="usage-metric-heading"><MetricGlyph kind="total" /><span>{t('usage.total')}</span>{totals && <small className="usage-total-badge">{num(totals.requests, true)} {t('usage.requests')}</small>}</div>
+            <div className="usage-metric-heading"><MetricGlyph kind="total" /><span>{t('usage.total')}</span>{totals && <small className="usage-total-badge" title={avgTokensPerRequest != null ? `${num(avgTokensPerRequest)} tok/req` : undefined}>{num(totals.requests, true)} {t('usage.requests')}{avgTokensPerRequest != null ? ` · ${tx('usage.avgTokensPerRequest', '平均 {avg} tok/次', 'Avg {avg} tok/req', {avg: num(avgTokensPerRequest, true)})}` : ''}</small>}</div>
             <strong className="usage-total-value" title={num(totals?.total_tokens)}>{num(totals?.total_tokens, true)}<small>Token</small></strong>
             {totals ? <TokenComposition totals={totals} details /> : <div className="usage-composition-placeholder">{t('usage.totalHint')}</div>}
           </section>
@@ -228,7 +319,7 @@ export function UsageStatisticsPanel() {
             <div data-usage-metric="cost" className="settings-card usage-metric" title={totals ? t('usage.costTooltipBreakdown', {input: formatUsdCost(costSummary.inputCostUsd), output: formatUsdCost(costSummary.outputCostUsd), write: formatUsdCost(costSummary.cacheWriteCostUsd), read: formatUsdCost(costSummary.cacheReadCostUsd)}) : t('usage.estimatedCostHint')}>
               <div className="usage-metric-heading"><MetricGlyph kind="cost" /><span>{t('usage.estimatedCost')}</span></div>
               <strong>{totals ? formatUsdCost(costSummary.costUsd) : '—'}</strong>
-              <small>{totals && costSummary.costUsd > 0 ? t('usage.costBreakdownSub', {output: formatUsdCost(costSummary.outputCostUsd, true), cache: formatUsdCost(costSummary.cacheWriteCostUsd + costSummary.cacheReadCostUsd, true)}) : t('usage.estimatedCostHint')}</small>
+              <small>{totals && costSummary.costUsd > 0 ? `${t('usage.costBreakdownSub', {output: formatUsdCost(costSummary.outputCostUsd, true), cache: formatUsdCost(costSummary.cacheWriteCostUsd + costSummary.cacheReadCostUsd, true)})}${avgCostPerReq != null ? ` · ${tx('usage.avgCostPerRequest', '均值 {cost}/次', 'Avg {cost}/req', {cost: formatUsdCost(avgCostPerReq)})}` : ''}` : t('usage.estimatedCostHint')}</small>
             </div>
             <div data-usage-metric="savings" className="settings-card usage-metric" title={t('usage.cacheSavingsHint')}>
               <div className="usage-metric-heading"><MetricGlyph kind="savings" /><span>{t('usage.cacheSavings')}</span></div>
@@ -253,13 +344,13 @@ export function UsageStatisticsPanel() {
         {snapshot && <>
           <div className="usage-analysis-grid" data-trend-view={trendView}>
           <section className="settings-card usage-chart-card">
-            <div className="usage-panel-header"><div><GroupTitle>{t('usage.daily')}</GroupTitle></div><Tabs aria-label={t('usage.trendView')} size="small" value={trendView} onValueChange={value => setTrendView(value as 'chart' | 'data')} tabs={[{value: 'chart', label: t('usage.chartView')}, {value: 'data', label: t('usage.dataView')}]} /></div>
+            <div className="usage-panel-header"><div><GroupTitle aside={trend.peak && peakLabel ? tx('usage.peakPeriodBadge', '峰值: {label} ({tokens})', 'Peak: {label} ({tokens})', {label: peakLabel, tokens: num(trend.peak.totals.total_tokens, true)}) : undefined}>{t('usage.daily')}</GroupTitle></div><Tabs aria-label={t('usage.trendView')} size="small" value={trendView} onValueChange={value => setTrendView(value as 'chart' | 'data')} tabs={[{value: 'chart', label: t('usage.chartView')}, {value: 'data', label: t('usage.dataView')}]} /></div>
             <div className="usage-chart-summary" title={t('usage.averageHint')}>
               <div><span>{t(isHourly ? 'usage.averageHour' : 'usage.averageDay')}</span><strong title={num(trend.average)}>{num(trend.average, true)}<small>Token</small></strong></div>
               <div><span>{t(isHourly ? 'usage.peakHour' : 'usage.peakDay')}</span><strong title={num(trend.peak?.totals.total_tokens)}>{num(trend.peak?.totals.total_tokens, true)}<small>{peakLabel}</small></strong></div>
               <div><span>{t('usage.outputThroughput')}</span><strong title={num(totals?.output_tokens)}>{num(totals?.output_tokens, true)}<small>{avgOutputTokens != null ? t(isHourly ? 'usage.outputHourlyAvg' : 'usage.outputDailyAvg', {avg: num(Math.round(avgOutputTokens), true)}) : 'Token'}</small></strong></div>
             </div>
-            {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={isHourly} timezone={snapshot.timezone} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={isHourly} timezone={snapshot.timezone} />}
+            {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={isHourly} timezone={snapshot.timezone} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={isHourly} timezone={snapshot.timezone} primaryModel={primaryModel} />}
           </section>
           <section className="settings-card usage-model-card">
             <div className="usage-panel-header"><div><GroupTitle aside={String(models.length)}>{t('usage.models')}</GroupTitle></div></div>
@@ -315,13 +406,13 @@ export function UsageStatisticsPanel() {
           </div>
 
           <section className="settings-card usage-accounts-card">
-            <div className="usage-panel-header"><div><GroupTitle aside={String(sortedAccounts.length)}>{t('usage.accounts')}</GroupTitle></div></div>
+            <div className="usage-panel-header"><div><GroupTitle aside={String(accountRows.length)}>{t('usage.accounts')}</GroupTitle></div></div>
             <div className="usage-table-wrap" role="region" aria-label={t('usage.accounts')} tabIndex={0}>
-              <table className="usage-table" aria-label={t('usage.accounts')}><thead><tr><th scope="col">{t('usage.account')}</th><th scope="col">{t('usage.total')}</th><th scope="col">{t('usage.estimatedCost')}</th><th scope="col">{t('usage.input')}</th><th scope="col">{t('usage.output')}</th><th scope="col">{t('usage.cacheWrite')}</th><th scope="col">{t('usage.cacheRead')}</th><th scope="col">{t('usage.cacheHit')}</th></tr></thead>
-                <tbody>{sortedAccounts.map(row => <tr key={row.id} className={account === row.id ? 'usage-row-selected' : ''}><th scope="row"><button type="button" className="usage-account-name" onClick={() => setAccount(row.id)}><span>{maskDisplayName(row.name, row.email, prefs.privacyMask)}{row.current && <em>{t('usage.current')}</em>}</span>{row.email && <small>{maskEmailAddress(row.email, prefs.privacyMask)}</small>}</button></th><td title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</td><td title={formatUsdCost(estimateTotalsCostUsd(row.totals, primaryModel).costUsd)}>{formatUsdCost(estimateTotalsCostUsd(row.totals, primaryModel).costUsd)}</td><td title={num(row.totals.input_tokens)}>{num(row.totals.input_tokens, true)}</td><td title={num(row.totals.output_tokens)}>{num(row.totals.output_tokens, true)}</td><td title={num(row.totals.cache_creation_tokens)}>{num(row.totals.cache_creation_tokens, true)}</td><td title={num(row.totals.cache_read_tokens)}>{num(row.totals.cache_read_tokens, true)}</td><td>{rate(row.totals)}</td></tr>)}
+              <table className="usage-table" aria-label={t('usage.accounts')}><thead><tr><th scope="col">{t('usage.account')}</th>{accountSortHeader('total_tokens', t('usage.total'))}{accountSortHeader('cost', t('usage.estimatedCost'))}{accountSortHeader('savings', t('usage.cacheSavings'))}<th scope="col">{t('usage.input')}</th><th scope="col">{t('usage.output')}</th><th scope="col">{t('usage.cacheWrite')}</th><th scope="col">{t('usage.cacheRead')}</th>{accountSortHeader('cache_hit', t('usage.cacheHit'))}{accountSortHeader('requests', t('usage.requests'))}</tr></thead>
+                <tbody>{accountRows.map(row => <tr key={row.id} className={account === row.id ? 'usage-row-selected' : ''}><th scope="row"><button type="button" className="usage-account-name" onClick={() => setAccount(row.id)}><span>{maskDisplayName(row.name, row.email, prefs.privacyMask)}{row.current && <em>{t('usage.current')}</em>}</span>{row.email && <small>{maskEmailAddress(row.email, prefs.privacyMask)}</small>}</button></th><td title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</td><td title={formatUsdCost(row.cost)}>{formatUsdCost(row.cost)}</td><td title={formatUsdCost(row.savings)}>{formatUsdCost(row.savings, true)}</td><td title={num(row.totals.input_tokens)}>{num(row.totals.input_tokens, true)}</td><td title={num(row.totals.output_tokens)}>{num(row.totals.output_tokens, true)}</td><td title={num(row.totals.cache_creation_tokens)}>{num(row.totals.cache_creation_tokens, true)}</td><td title={num(row.totals.cache_read_tokens)}>{num(row.totals.cache_read_tokens, true)}</td><td>{rate(row.totals)}</td><td title={num(row.requests)}>{num(row.requests, true)}</td></tr>)}
                 </tbody>
               </table>
-              {!sortedAccounts.length && <p className="usage-model-empty">{t('usage.noAccounts')}</p>}
+              {!accountRows.length && <p className="usage-model-empty">{t('usage.noAccounts')}</p>}
             </div>
           </section>
         </>}

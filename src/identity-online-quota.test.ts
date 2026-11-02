@@ -745,6 +745,7 @@ test('auto-wakeup progressive same-account backoff, cross-account spacing and st
 
 import {
   addOneCalendarMonthYmd,
+  buildStaleOrUnknownBatchTargets,
   epochSecToCalendarYmd,
   formatSubscriptionExpiryBadge,
   formatYmdAsShortMd,
@@ -833,6 +834,85 @@ test('subscription calendar helpers compute +1 month, clamp month ends and forma
     }
   }
   setLocale('zh');
+});
+
+test('buildStaleOrUnknownBatchTargets filters out fresh known accounts and keeps unknown, inferred, or stale accounts', () => {
+  const nowSec = 1_780_000_000;
+  const fpFresh = '1'.repeat(64);
+  const fpUnknown = '2'.repeat(64);
+  const fpInferred = '3'.repeat(64);
+  const fpStale = '4'.repeat(64);
+
+  const state = {
+    active: 'rec_fresh',
+    current: {
+      present: true,
+      quota_identity: fpFresh,
+      quota_source: 'server_anchor' as const,
+      quota_observed_at_ms: (nowSec - 1800) * 1000, // 30m ago (fresh)
+      quota_5h_used: 25,
+      quota_5h_reset_at: nowSec + 3600,
+      quota_7d_used: 40,
+      quota_7d_reset_at: nowSec + 86400 * 3,
+    },
+    records: [
+      { id: 'rec_fresh' },
+      { id: 'rec_unknown' },
+      { id: 'rec_inferred' },
+      { id: 'rec_stale' },
+    ],
+    summaries: {
+      rec_fresh: {
+        quota_identity: fpFresh,
+      },
+      rec_unknown: {
+        quota_identity: fpUnknown,
+        quota_source: 'unknown' as const,
+      },
+      rec_inferred: {
+        quota_identity: fpInferred,
+        quota_source: 'server_anchor' as const,
+        quota_observed_at_ms: (nowSec - 7200) * 1000,
+        quota_5h_used: 60,
+        quota_5h_reset_at: nowSec - 60, // expired -> inferred5h = true
+        quota_7d_used: 30,
+        quota_7d_reset_at: nowSec + 86400 * 2,
+      },
+      rec_stale: {
+        quota_identity: fpStale,
+        quota_source: 'server_anchor' as const,
+        quota_observed_at_ms: (nowSec - 7 * 3600) * 1000, // 7h ago (> 6h staleAfterHours)
+        quota_5h_used: 10,
+        quota_5h_reset_at: nowSec + 7200,
+        quota_7d_used: 20,
+        quota_7d_reset_at: nowSec + 86400 * 4,
+      },
+    },
+  };
+
+  const targetsFromState = buildStaleOrUnknownBatchTargets(state, nowSec, 6);
+  expect(targetsFromState.map(t => t.account_id)).toEqual([
+    'rec_unknown',
+    'rec_inferred',
+    'rec_stale',
+  ]);
+
+  // Also test (current, saved, nowSec, staleAfterHours) signature
+  const targetsFromArgs = buildStaleOrUnknownBatchTargets(
+    state.current,
+    [
+      { id: 'rec_unknown', ...state.summaries.rec_unknown },
+      { id: 'rec_inferred', ...state.summaries.rec_inferred },
+      { id: 'rec_stale', ...state.summaries.rec_stale },
+    ],
+    nowSec,
+    6,
+  );
+  expect(targetsFromArgs.map(t => t.account_id)).toEqual([
+    'rec_unknown',
+    'rec_inferred',
+    'rec_stale',
+  ]);
 });
 
 

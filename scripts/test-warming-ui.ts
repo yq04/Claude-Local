@@ -445,7 +445,7 @@ export async function testWarmingUi(browser: Browser, base: string): Promise<num
             const rect = node.getBoundingClientRect();
             return {width: rect.width, height: rect.height, overflowX: node.scrollWidth > node.clientWidth + 1, overflowY: node.scrollHeight > node.clientHeight + 1};
           });
-          assert.deepEqual(dimensions, {width: 180, height: 286, overflowX: false, overflowY: false}, `${locale} privacy=${privacy}`);
+          assert.deepEqual(dimensions, {width: 166, height: 286, overflowX: false, overflowY: false}, `${locale} privacy=${privacy}`);
         }
         if (privacy) {
           assert.match(await c1.locator('.identity-email').innerText(), /\*\*\*/);
@@ -603,7 +603,7 @@ export async function testWarmingUi(browser: Browser, base: string): Promise<num
         clientHeight: node.clientHeight,
       };
     });
-    assert.equal(geometry.width, 180);
+    assert.equal(geometry.width, 166);
     assert.equal(geometry.height, 286);
     assert(geometry.scrollWidth <= geometry.clientWidth + 1, 'Card horizontal content must not overflow');
     assert(geometry.scrollHeight <= geometry.clientHeight + 1, 'Card vertical content must not overflow');
@@ -706,7 +706,7 @@ export async function testWarmingUi(browser: Browser, base: string): Promise<num
     checks++;
 
     assert.equal(errors.length, 0, errors.join('\n'));
-    await writeFile(resolve(evidence,'warming-ui-results.json'),JSON.stringify({checks,synthetic:true,externalRequests:'blocked',runtime:['selected-closed','external-close','external-reopen','unknown','late-old-slot'],returnToCli:['zh-cancel','en-cancel','confirm-browser-only'],usage:['frozen-cli-fingerprint','account-change-rejected','warming-selection-preserved'],browserPanel:['cli-and-warming-ownership','returned-cli-draft','no-unsaved-warning','launch-enabled','browser-only-command'],presentation,locales:['zh','en'],cardSize:{width:180,height:286},pageErrors:errors},null,2));
+    await writeFile(resolve(evidence,'warming-ui-results.json'),JSON.stringify({checks,synthetic:true,externalRequests:'blocked',runtime:['selected-closed','external-close','external-reopen','unknown','late-old-slot'],returnToCli:['zh-cancel','en-cancel','confirm-browser-only'],usage:['frozen-cli-fingerprint','account-change-rejected','warming-selection-preserved'],browserPanel:['cli-and-warming-ownership','returned-cli-draft','no-unsaved-warning','launch-enabled','browser-only-command'],presentation,locales:['zh','en'],cardSize:{width:166,height:286},pageErrors:errors},null,2));
     return checks;
   } finally {
     await context.close();

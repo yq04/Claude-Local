@@ -1,7 +1,17 @@
 /* [INPUT]: Global design tokens (--foreground, --muted-foreground, --panel, --card-elevated, --background, --border, --local-accent, --glass-blur, --glass-opacity, --wallpaper-dim, --custom-wallpaper-image) from style.css plus --monitor-opacity. */
-/* [OUTPUT]: Frameless HUD layout (340x258 / 340x152 / 52x138), glass/theme/opacity controls, account-scoped token composition, cache rate and bounded bilingual metrics. */
+/* [OUTPUT]: Frameless transparent HUD layout (340x258 / 340x152 / 52x138), click-through ghost state & main-window ghost restore badge, Smart Relay pool capacity strip, time-elapsed pace tick markers, glass/theme/opacity controls, account-scoped token composition, cache rate and bounded bilingual metrics. */
 /* [POS]: Dedicated stylesheet for src/floating-monitor.tsx and the main-window header toggle button. */
 /* [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md */
+
+html:has(.fm-viewport),
+body:has(.fm-viewport),
+#root:has(.fm-viewport),
+html:has(.monitor-hud-shell),
+body:has(.monitor-hud-shell),
+#root:has(.monitor-hud-shell) {
+  background: transparent !important;
+  background-color: transparent !important;
+}
 
 :root {
   --hud-ok: #16a34a;
@@ -61,6 +71,12 @@
 
 .monitor-hud-shell.dock-top {
   border-top-color: color-mix(in srgb, var(--local-accent) 48%, var(--panel-outline));
+}
+
+.monitor-hud-shell.is-click-through,
+.fm-shell.is-click-through {
+  opacity: 0.78;
+  border-style: dashed;
 }
 
 /* Inherit active ambient / artistic / custom wallpaper inside the floating HUD */
@@ -352,7 +368,9 @@
 }
 
 .monitor-hud-icon-btn.is-pinned,
-.monitor-hud-icon-btn.is-active-mode {
+.monitor-hud-icon-btn.is-active-mode,
+.monitor-hud-icon-btn.is-active,
+.fm-icon-btn.is-active {
   color: var(--local-accent);
   background: var(--local-accent-soft);
   border-color: color-mix(in srgb, var(--local-accent) 34%, transparent);
@@ -594,16 +612,33 @@
   background: var(--muted-foreground);
 }
 
-.monitor-hud-pace-tick {
+.monitor-hud-pace-tick,
+.fm-bar-pace-tick {
   position: absolute;
   top: -2px;
   bottom: -2px;
   width: 2px;
   border-radius: 1px;
-  background: var(--foreground);
-  opacity: 0.78;
+  background: rgba(15, 23, 42, 0.85);
+  box-shadow: 0 0 3px rgba(15, 23, 42, 0.35);
+  opacity: 0.9;
   transform: translateX(-1px);
-  pointer-events: none;
+  pointer-events: auto;
+  z-index: 1;
+}
+
+:root.dark .monitor-hud-pace-tick,
+:root.dark .fm-bar-pace-tick {
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.45);
+}
+
+.monitor-hud-pace-tick.tone-ahead,
+.monitor-hud-pace-tick.is-ahead,
+.fm-bar-pace-tick.tone-ahead,
+.fm-bar-pace-tick.is-ahead {
+  background: var(--hud-warn);
+  box-shadow: 0 0 4px var(--hud-warn-border);
 }
 
 .monitor-limit-reset {
@@ -952,6 +987,11 @@
   gap: 6px;
 }
 
+.monitor-toggle-btn.is-click-through {
+  border-color: var(--hud-warn-border);
+  background: var(--hud-warn-soft);
+}
+
 .monitor-toggle-dot {
   width: 7px;
   height: 7px;
@@ -965,4 +1005,37 @@
   opacity: 1;
   background: var(--hud-ok);
   box-shadow: 0 0 0 3px var(--hud-ok-soft);
+}
+
+.monitor-toggle-dot.is-click-through {
+  opacity: 1;
+  background: var(--hud-warn);
+  box-shadow: 0 0 0 3px var(--hud-warn-soft);
+}
+
+/* Smart Relay Pool Capacity Summary Strip in identities.tsx */
+.identity-relay-pool-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--card-elevated) 84%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.identity-relay-pool-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.identity-relay-pool-stat strong {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--foreground);
 }

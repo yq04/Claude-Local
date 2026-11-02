@@ -1,159 +1,124 @@
 <!--
-[INPUT]: Verified v0.2.5 end-to-end anti-ban & KYC/WebRTC/IPv6/DNS hardening, persistent (slot, config) 20-item browser verification & deterministic 32-bit FNV-1a Canvas pixel hash, redesigned Quota HUD (real 5h four-counter cache hit rate + exhaustion ETA) & Usage Analytics, v0.2.4 Smart Relay (default OFF), neutral Windows NSIS build audit, and GitHub Release v0.2.5.
-[OUTPUT]: Context-free handoff for a brand-new session covering task overview, completed deliverables, current state/remaining boundaries, next steps and critical pitfalls to avoid.
+[INPUT]: Verified v0.2.5 end-to-end anti-ban & KYC/WebRTC/IPv6/DNS hardening, Open-Source Benchmarked P0-P7 Full Optimization, Identity & Warming Card UX Refinement (166px compact card geometry + top-pill pointer drag-and-drop reordering with FLIP spring animation + Quota HUD unobstructed bottom metric tiles + flicker-free silent 5s local quota revision sync + Store::save_inner has_live_identity guard preventing phantom blank cards), and comprehensive Research Analysis Report & 4-Phase Implementation Plan for Single-Account Cross-Machine Portability & Friend Handoff (.bagapack / CLPACK01 + Kookeey US static residential IP binding) in docs/PORTABILITY_PLAN.md.
+[OUTPUT]: Context-free handoff covering verified deliveries and the latest owner decision: single-account .bagapack export/import is cancelled; friends configure their own network and sign in normally after source-side use stops. Historical portability research is not an implementation instruction.
 [POS]: Root maintenance handoff; real identities, IP/proxy values, process IDs, workstation paths and screenshots stay out of tracked files.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only updates do not build/deploy, reload proxies, operate accounts, package/upload or move release tags.
 -->
 # Claude-Local 新会话交接文档（无上下文直接接手）
 
-更新时间：2026-11-01 01:35 EDT（America/New_York）。当前最新正式发布至 GitHub Release（Latest）的版本为 **`v0.2.5`**（源码标签 `v0.2.5` 指向提交 `6d505a6`），本机安装目录 `%LOCALAPPDATA%\Programs\Claude-Local` 亦已热更新并同步运行最新构建的 **`v0.2.5`** 正式版（涵盖浏览/电脑/网络/风控验证全链路防关联与 IPv6/WebRTC/DNS/KYC 防泄露加固、伴生浏览器 20 项防封实测结果按 `(slot, config)` 跨关窗/切页持久保留与 Canvas FNV-1a 真实像素哈希、额度小窗真实 5h 缓存命中率与耗尽预计时间，以及用量分析与 README 旗舰重构）。
+> **2026-11-02 最新产品决定（覆盖下文历史可移植方案与实施指引）**：用户已明确取消单身份导入/导出功能，不开发 `.bagapack` / `CLPACK01`、跨机 OAuth/Cookie 搬运或相关向导。号主手动提供 Kookeey 节点信息，朋友在自己电脑配置 iKuuu + Kookeey、核验实际出口与解析路径后，在新建本地身份中正常登录同一账号。号主计划在朋友使用前通过现有确认流程删除该账号的本地资料；这只是后续人工计划，本轮未执行账号删除。先由用户自行结束相关 CLI/浏览器工作并关闭自动续杯、结束在线任务，再分别确认当前 CLI 登录、保存卡片及关联浏览器资料；删除保存卡片不等于清除当前登录，本地删除也不等于吊销所有服务端会话。现有整库 `.clbackup` 备份能力保留。`docs/PORTABILITY_PLAN.md` 仅为已取消的历史研究，不得据此继续实现。
+
+更新时间：2026-11-02 EST（America/New_York）。当前最新正式发布至 GitHub Release（Latest）的版本为 **`v0.2.5`**（源码标签 `v0.2.5` 指向提交 `6d505a6`），本机安装目录 `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 已热更新并运行包含 **「P0 ~ P7 全模块深度改进优化 + 额度小窗防遮挡与身份卡防闪烁 + 166px 紧凑卡片与顶部横条拖拽排序 + 养号 CLI 转正空白卡与幽灵『当前身份』卡根治」** 的最新正式版二进制（SHA-256: `D644D4B2DD889F534F81B7B8F622746FF824081E1D7B8E0241EE6D995E34DC09`）。
 
 > **给新会话的第一句话（必读）**：
-> 1. **`v0.2.5` 已全部开发完成、验证通过、更新至本机安装目录，并打包发布至 GitHub Release `v0.2.5`（Latest）**：在 `v0.2.4` 基础上新增了全链路 `ipv6: false` / `dns.ipv6: false` 防双栈旁路、补齐 Anthropic + Persona KYC + Stripe + Sentry + WorkOS 同源家宽分流规则、修复 `--accept-lang` 区域子标签与 `dns_prefetching` 泄露、实现伴生浏览器实测结果跨关窗与跨菜单持久保留（`last_observations`）、升级 `Canvas 2D` 为真实 32 位 FNV-1a 像素哈希探针、修正机房 ASN 词边界误判（`RCN` 等真家宽不再误触 `cn`）、重做「额度小窗」（真实 5h 四计数器缓存命中率 + 5h 耗尽预计时间）与「用量分析」2×2 卡片排版，并重构了中英文 `README.md` / `README_EN.md`（将四大防封与多身份物理隔离能力置于最核心位置）。
-> 2. **关于「智能接力（Smart Relay）」的明确产品定调（已与用户对齐确认）**：
->    - 目前智能接力采用**「纯本地余量推荐 + 手动点击走原生安全切号流程（含跨账号四维消毒与 `claude.exe` 进程检查）」**，**没有**采用本地 HTTP 反向代理网关，也**没有**开启后台自动无确认切号。
->    - 用户已明确指示：**「目前先不做接力了！但也不用删除现有功能！」** —— 因此请保持现有智能接力代码与界面原样保留（默认关闭 `enabled: false`），**切勿自行删除该功能，也切勿自行继续开发后台自动切号逻辑**。
-> 3. **请勿重复实现 `v0.2.5` 已交付功能，也不要回退或移动 `v0.2.5` 标签及已上传安装包资产。**
+> 0. **历史记录（下述功能已由用户取消）：「单账号跨机可移植与朋友交接能力」调研与四阶段草案**：
+>    - **用户核心诉求**：号主在自己电脑上使用 Kookeey 美国静态住宅 IP 养号并充值 Pro 后，希望将该单个账号（含 CLI OAuth 凭据、伴生浏览器确定性指纹、网页端登录态、手动订阅到期日及 Kookeey 美国家宽代理配置）打包为口令加密的独立便携胶囊（`.bagapack`），交给朋友在另一台 Windows 电脑上安全导入并绑定同一 Kookeey 美国家宽 IP 零风控使用。
+>    - **调研与设计成果**：已完成对 `CCBaga`、`cc-switch`、`Playwright/Puppeteer`（CDP `storageState`）、`HackBrowserData`（Windows DPAPI 机制）、`Fingerprint Chromium` 与 `Mihomo`（独立 `listeners` + `dialer-proxy` 链式代理）的深度对标，逐行定位了本仓库阻断跨机移交的 **5 个硬性源码壁垒**，并在 **`docs/PORTABILITY_PLAN.md`** 中给出了完整的二进制协议（`CLPACK01`）、数据结构、Tauri IPC 签名、Kookeey `127.0.0.1:7899` 专线桥接与五维预检门禁、跨 DPAPI 本地 CDP 网页会话快照、宿主机 `handed_off` 防双开冻结以及 **Phase 1 → Phase 4 分阶段实施蓝图**。
+>    - **接手行动指引**：该方案未实现且已取消，不按 Phase 1 → Phase 4 开工。下文的“零风控”与“100% 指纹恒定”等措辞为历史假设，不是经验证的能力或交付承诺。
+> 1. **本会话最新完成的 5 项界面交互打磨与核心 Bug 根治（均已通过全量单测、Rust 测试、Playwright 合成 UI 验证并热更新至本机）**：
+>    - **修复 1：移除额度小窗（Quota HUD）底部「接力备选」遮挡条（`src/floating-monitor.tsx`）**：
+>      - 此前额度小窗底部的 `接力备选: ... / 池内 X 就绪` 横条会遮挡底部三枚核心指标卡（`5h 消耗`、`近10分钟速率`、`5h 响应`）。现已彻底移除小窗内的接力备选展示（接力状态仅在身份管理页「智能接力」弹窗与横幅中呈现），小窗底部三项指标清晰完整无遮挡。
+>    - **修复 2：根治身份管理页卡片频繁闪烁与本地额度轮询过勤问题（`src/identities.tsx`、`src/use-browser-runtime.ts`）**：
+>      - **根因**：① 后台 `identities_quota_revision` 轮询触发 `read(false)` 时无条件执行了 `setLoading(true)`，导致每当 `.claude.json` 与 `quota_ledger.json` 先后落盘时，所有卡片按钮瞬间变灰禁用、`运行中` 徽章闪变为 `检查中`；② 轮询周期仅 2 秒，单次 CLI 对话中 `.claude.json` 与 `quota_ledger.json` 前后写入会触发 5 秒内连续 2 次重绘；③ `useBrowserRuntime` 每 3 秒轮询每次返回新对象引用触发重渲染。
+>      - **修复**：后台 `read(false)` 改为静默更新（仅在首次挂载尚无 `state` 时置 `loading = true`，并提供 `syncingQuota` 供顶部手动同步按钮使用）；桌面端 `identities_quota_revision` 轮询周期调整为 **5 秒**（合成测试态保持 2 秒），并在首次挂载时对齐初始 `revisionRef` 避免双重读取；`useBrowserRuntime` 增加全字段值相等比对去重。
+>    - **优化 3：卡片横向宽度适度收窄（`180px` → `166px`）且确保重置日期与倒计时零挤压（`src/style.css`、`src/identity-productivity.css`）**：
+>      - 将 `.identity-card` 宽度从 `180px` 收窄至 **`166px`**（缩窄 `14px`），同步微调卡片内边距（`11px 9px 6px`）、额度框内边距（`2px 4.5px`）与 `.identity-quota-reset` 字号（`11px`），实测进度条下方左侧重置日期时间（如 `🕒 11-02 00:30`）与右侧倒计时（如 `4h 30m`）之间保持约 **`23.5px`** 充足间距，绝不重叠或贴靠。
+>    - **优化 4：新增顶部药丸横条手动拖拽调换卡片顺序（`src/card-order.ts`、`src/identities.tsx`、`src/warming-cards.tsx`）**：
+>      - 支持在**「身份」栏**与**「养号」栏**中按住每张卡片顶部居中的药丸横条区域（`.identity-card-drag-handle`，`64px × 17px` 热区，悬停时药丸从 `28px` 平滑展宽至 `38px` 并显示 `grab` 手型）水平拖动调序；
+>      - 被拖卡片实时像素级跟随鼠标并微微浮起（`scale(1.018)` + 柔和投影），跨过相邻卡片中线时触发 **FLIP 弹簧换位动画**（`240ms cubic-bezier(0.22, 1, 0.36, 1)`），靠近轨道边缘自动平滑横滚，同时支持聚焦手柄后按键盘 `←` / `→` 方向键调序；
+>      - 自定义顺序分别持久化保存在 `localStorage`（`claude-local.identity-card-order.v1` 与 `claude-local.warming-card-order.v1`），且完全不干扰卡片内按钮点击与身份切换。
+>    - **修复 5：根治养号 Pro 登录 CLI 转正 / 新身份卡片空白区 & 切换/转正时产生多余空白「当前身份」卡（`src-tauri/src/identities/archive.rs`、`profile.rs`、`src/identities.tsx`、`src/warming-cards.tsx`）**：
+>      - **为什么会产生多余的空白「当前身份」卡**：当工作区处于「新身份 / 待登录」状态（无 `account_key`、无 OAuth 凭据、`profile.present == false`）但「保留在工作区」策略保留了 `.claude/projects`、`.claude/history.jsonl` 或 `.claude/cache` 等共享目录时，旧版 `Store::save_inner` 仅因为 `entries` 非空就判定 `record.empty = false`，并在用户再次点击切换或养号转正时把未登录工作区归档成一张名为 **`当前身份`（`邮箱未提供`、`5h/7d 未知`）** 的幽灵空白卡，甚至误消费浏览器预留草稿。
+>      - **后端根治**：在 `src-tauri/src/identities/archive.rs` 的 `Store::save_inner` 中新增 `has_live_identity = account_key.is_some() || !credentials.is_empty() || super::profile::read(&self.home).present;`。当 `reuse && !has_live_identity`（普通保存/切换/转正且工作区无实际登录身份）时，不消费 `browser_draft()` 并强制标记 `record.empty = true`（自动走空身份清理回收，绝不入库生成空白卡片）；同时 `save_checkpoint`（`reuse = false`）仍保留中断恢复语义。在 `profile.rs` 中同步为 API Key 模式设置 `current.present = true`。
+>      - **前端根治**：在处于激活态的 `.identity-card.empty.selected`（`新身份 / 待登录` 卡）中部填充结构化双步骤指引框（**步骤 1：内置浏览器验证并登录 Pro 账号** + **步骤 2：终端运行 `claude` 授权后点击「保存身份」自动归档**），消除卡片中部大片空白；当 `current?.present === false` 时在切换/转正确认弹窗中隐藏冗余的「当前身份保存为」输入框；并已安全备份后清理了本机 SQLite 中多余的空白「当前身份」记录与孤儿 `.baga` 归档。
+> 2. **此前已完成的对标 GitHub 高星开源项目（`EcoPaste`、`pot-desktop`、`yetone/magpie`、`ryoppippi/ccusage`、`Claude-Code-Usage-Monitor`、`Claude-Usage-Tracker`、`steipete/CodexBar`、`cc-switch`、`claude-gauge`、`claude-usage-widget`）的 P0 ~ P7 全模块优化与 PayPal 美国家宽分流加固均完整保留（详见下文第 2 节與 `docs/OPTIMIZATION_PLAN.md`）**。
+> 3. **关于「智能接力（Smart Relay）」的明确产品定调**：
+>    - 智能接力保持默认关闭（`enabled: false`），采用**「纯本地余量推荐 + 手动点击走原生安全切号流程（含跨账号四维消毒与 `claude.exe` 进程检查）」**，**严禁**开发本地 HTTP 反向代理网关或后台无确认自动偷换 Token。
+> 4. **请勿重复实现已交付功能，也不要擅自回退或移动 `v0.2.5` 标签及已上传安装包资产。**
 
-新会话接手时请依次阅读：本文（`HANDOFF.md`） → 根目录 `AGENTS.md`（切勿提交到 Git） → 根目录 `CLAUDE.md`；修改具体模块前先读对应子目录的 `CLAUDE.md` 与源文件头注释（`[INPUT]/[OUTPUT]/[POS]/[PROTOCOL]`）。本文受 Git 跟踪，**严禁写入任何真实账号、邮箱、身份指纹、真实 IP、代理凭据、个人绝对路径或真实截图**。
+新会话接手时请依次阅读：本文（`HANDOFF.md`） → 根目录 `AGENTS.md`（切勿提交到 Git） → 根目录 `CLAUDE.md`；已取消的 `docs/PORTABILITY_PLAN.md` 仅在需要查阅历史研究时阅读。修改具体模块前先读对应子目录的 `CLAUDE.md` 与源文件头注释（`[INPUT]/[OUTPUT]/[POS]/[PROTOCOL]`）。本文受 Git 跟踪，**严禁写入任何真实账号、邮箱、身份指纹、真实 IP、代理凭据、个人绝对路径或真实截图**。
 
 ---
 
 ## 1. 我们在做什么任务
 
 **Claude-Local** 是基于开源项目 [CCBaga](https://github.com/liseami/CCBaga) 二次开发并在本仓库独立维护的 **Windows 10 / 11 x64** 桌面工作台（技术栈：Tauri 2 + Rust 后端、React 19 + TypeScript 前端、Python 外部额度单写者与加密备份脚本）。目标是让普通用户也能一键配置、管理、安全使用多个 **Claude Code CLI** 与 **Claude Pro / Max / 待转正养号卡片** 账号，核心涵盖五大模块：
-1. **多身份加密保险库与零强杀安全切号**（`BAGAID01` / `.baga` 归档、SQLite `user_version = 3`、`claude.exe` 进程锁检查、1572 行跨账号四维残留消毒与 `--resume` / `-c` 会话签名剥离、全链路 `.clbackup` 口令加密备份）。
-2. **多账号智能接力与轮换（Smart Relay，默认关闭）**（借鉴 [yetone/magpie](https://github.com/yetone/magpie) 的余量与重置窗口评估模型，提供推荐顺位计算、首选号恢复滞回提醒与一键安全切换入口，零反向代理网关、零后台偷切）。
-3. **被动额度同步、原生进程内 5h 自动续杯调度与多模态悬浮窗（HUD）**（Python 独占写 `quota_ledger.json`，零后台 OAuth 轮询、零 `.claude.json` 写入）。
-4. **CPAMP / ccusage 风格本地 Token 与官方 API 美元等效花费（`$`）分析**（未缓存输入/输出/缓存写入/缓存读取四类构成、API 等效花费 `$`、缓存节省 `$` 与缓存复用倍数、模型与 Effort 分布、IANA/DST 时区与 TSV 导出）。
-5. **身份绑定的防关联伴生浏览器（Fingerprint Chromium）与风控 / KYC 环境核验**（每身份/每养号卡独立槽位与确定性指纹种子、WebRTC Network Limiter 三重强锁、按需无阻断防泄露断路器 Kill-Switch、20 项浏览器实测、6 项网络/DNS/Mihomo 运行时风控核验、桌面端一键 Clash 防漏覆写 YAML、手机同住宅出口 LAN 扫码桥接）。
+1. **多身份加密保险库与零强杀安全切号**（`BAGAID01` / `.baga` 归档、SQLite `user_version = 3`、`claude.exe` 进程锁检查、1572 行跨账号四维残留消毒与 `--resume` / `-c` 会话签名剥离、全链路 `.clbackup` 口令加密备份、单卡跨机防关联交接卡导出、`166×286` 紧凑卡片与顶部横条丝滑拖拽调序）。
+2. **多账号智能接力与轮换（Smart Relay，默认关闭）**（借鉴 [yetone/magpie](https://github.com/yetone/magpie) 的余量与重置窗口评估模型，支持五种路由策略、三态会话缓存亲和、账号池容量汇总、首选号恢复滞回提醒与一键安全切换入口，零反向代理网关、零后台偷切）。
+3. **被动额度同步、定向防风控在线查询、原生进程内 5h 自动续杯调度与多模态悬浮窗（HUD）**（Python 独占写 `quota_ledger.json`，零后台 OAuth 轮询、零 `.claude.json` 写入；支持 5 秒静默无闪烁本地修订同步、「仅查未知/过期」定向批次查询与带 5h/7d 时间进度游标、Win32 鼠标穿透、底部三指标无遮挡的桌面 HUD）。
+4. **CPAMP / ccusage 风格本地 Token 与官方 API 美元等效花费（`$`）分析**（未缓存输入/输出/缓存写入/缓存读取四类构成、API 等效花费 `$`、缓存节省 `$` 与缓存复用倍数、单次请求均值 `tok/req` 与 `$/req`、峰值时段徽章、五维可排序账号表、含花费/缓存率的时段明细表、模型与 Effort 分布、IANA/DST 时区及 Markdown 简报 / TSV 导出）。
+5. **身份绑定的防关联伴生浏览器（Fingerprint Chromium）与风控 / KYC / 支付环境核验**（每身份/每养号卡独立槽位与确定性指纹种子、WebRTC Network Limiter 三重强锁、按需无阻断防泄露断路器 Kill-Switch、20 项浏览器实测、6 项网络/DNS/Mihomo 运行时风控核验、桌面端一键 Clash 防漏覆写 YAML、手机同住宅出口 LAN 扫码桥接、PayPal/Stripe 跨区 Cookie 清理助手）。
+6. **【已取消，不开发】单账号跨机可移植与朋友交接能力（`.bagapack` / `CLPACK01`）**：仅保留历史研究。当前采用号主人工提供 Kookeey 信息、朋友独立配置网络并正常登录同一账号的流程；没有待实施的跨机身份包任务。
 
 ---
 
-## 2. 已经完成了什么（v0.2.5 & v0.2.4 完整交付清单）
+## 2. 已经完成了什么（v0.2.5 基线 + P0 ~ P7 全模块开源对标优化 + 本轮界面与转正流程根治完整清单）
 
-### 2.1 多账号智能接力与轮换（Smart Relay，`src/smart-relay-model.ts`、`src/identities.tsx`、`src/settings.tsx`）
-- **借鉴 `yetone/magpie` 的顺位评估与首选号滞回恢复，坚守单机安全切号边界**：
-  - **默认关闭（`enabled: false`）**：持久化于本地 `claude-local.smart-relay.v1`；支持在「身份管理」顶栏右侧胶囊 `[• 智能接力 | 策略]`、`[⋯]` 更多操作菜单，或「软件设置 → 通用」中按需开启。
-  - **平铺全量账号池（无嵌套滚动条）**：在弹窗内直接完整平铺当前身份与全部已保存身份（移除了早期 `max-height: 210px` 嵌套滚动条），展示 `5h / 7d` 已用进度条、重置时间、`当前` / `首选` / `下一顺位` 状态徽章，支持勾选参与轮换池与一键「设为首选」（Preferred）。
-  - **五大路由策略 + 限流处理 + 会话保持 + 换号阈值**：
-    - 路由策略：`智能`（三级余量池 `>90% / 10% / 耗尽` + 优先消耗最快重置窗口）、`按顺序`、`轮流`、`用量少的优先`、`重置前用完`；
-    - 被限流时：`保持原位` 或 `排到最后`；
-    - 会话保持：`自动`、`整个会话`、`仅手动`；换号阈值：`90% / 95% / 98% / 100%`。
-  - **首选号恢复滞回保护（Hysteresis）与手动一键安全接力**：开启「首选账号恢复后切回」后，当首选号 `5h` 已用低于阈值 `15%` 以上且 `7d < 85%` 时提示切回；弹窗底部与「身份管理」顶部横幅提供一键 **`切到 {目标账号}`** 按钮，点击后复用标准 `identities_switch` 确认弹窗与四维残留消毒事务（绝不后台无感偷换 Token，绝不把 `warming_cards` 养号卡混入接力池）。
+### 2.00 历史调研（功能已取消）：单账号跨机可移植与朋友交接草案（`docs/PORTABILITY_PLAN.md`）
+1. **源码级五重壁垒定位**：
+   - 查明现有 `.baga` 归档与 `.clbackup` 无法直接用于朋友跨机交接的 5 处源码壁垒：① `src-tauri/src/identities/archive.rs:126` 强制校验 `manifest.home == self.home` 且 `sources` 存储宿主机 `%USERPROFILE%` 绝对路径，异机解包直接拒绝；② `backup.rs` 的 `.clbackup` 耦合整库 `key.bin` 且 `catalog.rs:13` 的 `account_key` 为 `HMAC_SHA256(key.bin, ...)`，无法单卡合入朋友既有保险库；③ `src-tauri/src/browser/config.rs:150` 默认读取运行机器的 `machine.cores`、`machine.version` 且默认 `follow_machine: true`、`native_graphics: true`，跨不同硬件/中文系统的朋友电脑会导致 CPU 核数、系统版本、语言时区与 Canvas 哈希跳变；④ Windows Chromium `Default/Network/Cookies` 的 `os_crypt.encrypted_key` 经 DPAPI 绑定在宿主机 Windows 用户 SID 上，直接拷贝 `User Data` 目录必报 `0x80090005` 解密失败（而 CLI 的 `.claude/.credentials.json` 是纯 JSON，跨机重绑路径后天然可用）；⑤ `browser/config.rs:101` 拒绝带账密的 SOCKS5 URL，且缺少宿主机交接后防双开冻结与朋友端启动前 Kookeey 出口强预检。
+2. **四阶段完整实施方案（详见 `docs/PORTABILITY_PLAN.md`）**：
+   - **Phase 1（底层 `CLPACK01` 胶囊引擎、硬件指纹固化与跨机合入核心）**：在 `browser/config.rs` 新增 `pinned_cores` 与 `pinned_platform_version`；新增 `src-tauri/src/identities/portable.rs` 与 `portable_tests.rs`，实现宿主机单卡净室抽提（100% 剔除 `projects`/`history`/`mcp`）、朋友端非破坏性合入（路径重绑至朋友 `%USERPROFILE%` + 朋友 `key.bin` 重算 `account_key` 与重封 `.baga` + 原样保留 `seed`）及 `portable_state.json` 状态管理（宿主机 `handed_off` 冻结态与朋友端 `pending | verified` 预检态）。
+   - **Phase 2（Kookeey `127.0.0.1:7899` 专线 Mihomo 覆写生成与五维预检门禁）**：在 `src/risk-model.ts` 新增 `buildKookeeyFriendHandoffMihomoYaml`（生成独立 `7899` `mixed` 监听 + `dialer-proxy` 串联 `Kookeey-US-Static` 的 Clash Verge Rev Merge 配置，使 CLI 与伴生浏览器专走 7899 而不影响朋友主端口日常分流）；在后端实现 `identities_portable_preflight` 五维实测（7899 连通、`US` 国家、非机房住宅、`expected_ip_hash` / `expected_asn` 匹配、`claude.ai` vs `withpersona.com` 同出口且时区一致）。
+   - **Phase 3（可选跨 Windows DPAPI 便携网页会话快照）**：通过内置 Chromium 本地回环 CDP（`--remote-debugging-port=0`）在导出时执行 `Storage.getCookies` 提取 `.claude.ai` 明文 Cookie 入包，在朋友端首次启动通过预检的浏览器时执行一次性 `Storage.setCookies` 注入并销毁暂存快照。
+   - **Phase 4（前端导出/导入/预检向导、防双开冻结徽章与双语词条）**：严守 `166×286` 卡片几何红线，通过卡片顶部状态徽章、`⋯` 菜单与 `<AppDialog>` 弹窗完成全链路交互。
 
-### 2.2 伴生浏览器 WebRTC 全链路防泄露加固与桌面端 Clash 一键覆写配置（`.yaml`）
-- **调研 X 防封实践（`@gengdaJ` / `@ryuu_restart`、`ippure.com` 与 `ryuu-restart/agent-route`）并双端落地**：
-  1. **伴生浏览器底层 `Default/Preferences` 三重 WebRTC 强锁 + 启动参数加固**：
-     - `src-tauri/src/browser/profile.rs`（`preferences()`）：在每个受管浏览器资料的 `Default/Preferences` 中自动写入 Google 官方 `WebRTC Network Limiter` 扩展同款完整三项策略：
-       - `webrtc.ip_handling_policy = "disable_non_proxied_udp"`
-       - `webrtc.multiple_routes_enabled = false`（禁止枚举物理网卡与运营商原生双栈 IPv6 `host` 候选）
-       - `webrtc.nonproxied_udp_enabled = false`（彻底阻断未配置 UDP 代理时的直连 UDP 包）
-     - `src-tauri/src/browser/config.rs`（`arguments()`）：新增 `--enforce-webrtc-ip-permission-check`，去除 `--host-resolver-rules` 中重复的 `EXCLUDE 127.0.0.1`，并追加 `--test-type` 彻底消除 Chromium 顶部的 `"You are using an unsupported command-line flag"` 提醒条。
-  2. **「风控验证」内置桌面端 Clash Verge / Mihomo 一键覆写配置（`buildDesktopMihomoAntiLeakYaml`）**：
-     - 在 `src/risk-model.ts` 与 `src/risk-verification.tsx` 底部操作栏新增 **「查看一键覆写配置 (.yaml)」** 与 **「复制覆写配置 (.yaml)」**，一键生成可直接粘贴至 Clash Verge Rev 全局扩展覆写（Merge）的完整 YAML：
-       - 阻断 `UDP 443` QUIC 与 `UDP 3478/19302/5349` WebRTC STUN/TURN 端口及 `DOMAIN-KEYWORD,stun,REJECT`；
-       - 封锁 `IP-CIDR,198.18.0.0/15,REJECT,no-resolve` Fake-IP 回流，强制 `1.1.1.1/32`、`1.0.0.1/32`、`8.8.8.8/32` DoH 走家宽节点；
-       - 开启 `tun.strict-route: true`、`dns.respect-rules: true` 与 `:7899` 纯 TCP 独立监听（`udp: false`）；
-       - 将 `claude.ai`、`anthropic.com`、`withpersona.com`、`stripe.com`、`ipquery.io`、`ippure.com` 统一锁死至同一静态家宽出口；同步升级「复制电脑配置提示词」（`buildDesktopDnsFixPrompt`）。
-  3. **「网络环境 → 复制提示词」（`src/vps.tsx` `buildAiProxyPrompt`）全链路防漏与持久化配置加固**：
-     - 将中英文 AI 配置提示词升级为 8 行高密度可执行指令（严格兼容 `scripts/test-network-diagnostics.ts` 的 `assertCompactPrompt` 契约与 `src/risk-model.test.ts` 单元测试）：
-       - 明确 `iKuuu` 前置多节点自动测速/容灾组 → `Kookeey` 静态住宅 SOCKS5 出口（显式 `udp: false`）双跳 `dialer-proxy` 链路；
-       - 明确 Clash Verge Rev 四层持久化要求：写入全局扩展覆写（`Merge.yaml`）或扩展脚本防订阅刷新冲掉，并**在 `config.yaml` 与 `Merge.yaml` 同步开启 `tun.strict-route`**；
-       - 补齐全部 20 个 Claude / KYC / 支付 / 风控探针域名（含 `claudeusercontent.com`、`persona.org`、`personacustomer.com`、`stripe.network`、`siftscience.com`、`intercom.io`、`statsig.com`、`ippure.com`）与远程 DoH IP（`1.1.1.1/32`、`1.0.0.1/32`、`8.8.8.8/32`）同源家宽路由，拦截 `198.18.0.0/15` 防 Fake-IP 漏出，保持回环与私有内网直连；
-       - 开启 `sniffer`（`parse-pure-ip`）、`dns.respect-rules`、`dns.direct-nameserver-follow-policy`、`proxy-server-nameserver` 与纯 IP 远程加密 DoH，阻断 UDP `443`（QUIC）及 UDP `3478/19302/5349` 与 `stun`（WebRTC STUN/TURN），配置 `127.0.0.1:7899` 纯 TCP 独立监听（`udp: false`）并完成三路 `cdn-cgi/trace` 实测校验。
+### 2.0 本轮最新完成：界面交互打磨、卡片拖拽排序与养号转正空白卡/幽灵卡根治
+1. **额度小窗（Quota HUD）底部遮挡修复（`src/floating-monitor.tsx`）**：
+   - 移除了悬浮小窗底部的 `接力备选: ... / 池内 X 就绪` 横条，确保小窗底部 `5h 消耗`、`近10分钟速率`、`5h 响应` 三张指标卡完整显示、绝不重叠。
+2. **身份管理页卡片闪烁根治与 5s 静默同步（`src/identities.tsx`、`src/use-browser-runtime.ts`）**：
+   - 将后台 `identities_quota_revision` 触发的 `read(false)` 改为静默刷新（不置 `loading = true`，仅手动同步按钮置 `syncingQuota = true`），桌面端元数据检查间隔从 `2000ms` 调整为 **`5000ms`**，并对齐初始挂载 `revisionRef`，配合 `useBrowserRuntime` 值相等去重，彻底消除卡片闪烁。
+3. **166px 紧凑卡片宽度与重置时间行防挤压校准（`src/style.css`、`src/identity-productivity.css`）**：
+   - `.identity-card` 宽度从 `180px` 缩窄为 **`166px`**，微调内边距与 `.identity-quota-reset` 字号（`11px`），确保 `5h`/`7d` 进度条下方的重置日期时间与倒计时之间保持 **`~23.5px`** 安全间距。
+4. **顶部药丸手柄拖拽调序 + FLIP 弹簧动画 + 键盘无障碍调序（`src/card-order.ts`、`src/card-order.test.ts`、`src/identities.tsx`、`src/warming-cards.tsx`）**：
+   - 实现 `useCardRailReorder` Hook，支持在「身份」栏与「养号」栏按住卡片顶部横条拖动调序，含鼠标实时跟随、相邻卡片 `240ms cubic-bezier(0.22, 1, 0.36, 1)` FLIP 动画、边缘自动横滚、键盘 `ArrowLeft`/`ArrowRight` 调序及 `localStorage` 独立持久化。
+5. **养号 Pro 登录 CLI 转正 / 新身份卡片双步骤引导 & 未登录工作区防生成幽灵「当前身份」卡（`src-tauri/src/identities/archive.rs`、`profile.rs`、`tests.rs`、`src/identities.tsx`、`src/warming-cards.tsx`）**：
+   - 后端 `Store::save_inner` 增加 `has_live_identity` 判定：当工作区无登录身份（`account_key`、凭据、`profile.present` 均为空）且为普通保存/切换（`reuse == true`）时，不消费浏览器草稿并强制 `record.empty = true`，防止因保留的 `.claude/projects` / `history.jsonl` / `cache` 产生多余空白「当前身份」卡；新增回归测试 `switching_from_unauthenticated_workspace_with_cache_or_projects_never_creates_blank_identity_card`。
+   - 前端为激活态 `.identity-card.empty.selected` 补充结构化双步骤框（步骤 1 浏览器核验与登录、步骤 2 CLI 授权与自动接管），并在 `current?.present === false` 时隐藏切换/转正确认弹窗中的「当前身份保存为」输入框。
+   - 本机 `%APPDATA%\ai.local.claude-local\identity-vault\identities.sqlite` 中此前因转正产生的空白「当前身份」记录及孤儿归档已备份至 `.local/tasks/20261101-cleanup-empty-card/` 并清理完毕。
 
-### 2.3 用量分析（`用量分析`）官方 API 美元等效花费（`$`）与缓存节省升级
-- **替换低价值计数卡片，突出等效美元价值与缓存效率**：
-  - `src/usage-model.ts`、`src/usage-statistics.tsx`、`src/usage-statistics.css`：移除主摘要区右侧无实际指导意义的「会话数」、「去重响应数」与重复的「活跃天数」卡片，升级为四张核心价值卡片：
-    1. **API 等效花费（`$X.XX`）**：按 Anthropic 官方公开 API 模型阶梯单价折算四类 Token 的等效美元价值；
-    2. **缓存节省（`$X.XX`）**：量化 Prompt Caching 相比全量未缓存输入节省的美元金额与净省比例；
-    3. **缓存命中率（`XX.X%` + `X.Xx` 缓存复用倍数）**：同时展示缓存命中率与读取/写入复用倍数；
-    4. **日均 / 时均等效花费（`$X.XX`）**：配合趋势副卡、模型分布、Effort 档位与多账号对比表全面展示 `$` 花费与有效输出占比。
+### 2.1 对标开源项目的 P0 ~ P7 全链路改进优化（详见 `docs/OPTIMIZATION_PLAN.md`）
+- **P0：Tauri v2 额度小窗静态声明式生命周期、Capabilities ACL 授权、Win11 透明圆角与位置记忆**（`src-tauri/capabilities/main.json`、`tauri*.conf.json`、`src-tauri/src/monitor_window.rs`、`src/floating-monitor.css`）。
+- **P1：额度小窗 HUD 5h/7d 时间流逝刻度游标（`computeWindowTimePace`）、Win32 鼠标穿透幽灵模式（`monitor_window_set_click_through`）与系统托盘直达开关**。
+- **P2：「用量分析」脱敏 Markdown 简报一键复制（`formatUsageMarkdownSummary`）**。
+- **P3：单卡「复制跨机防关联交接卡 / Copy Handoff Spec」（`formatIdentityHandoffSpec` / `formatWarmingHandoffSpec`）**。
+- **P4：PayPal / Stripe / KYC 站点残留地区 Cookie 预检与一键清理地址复制（`chrome://settings/content/all?searchSubpage=paypal.com`）**。
+- **P5：智能接力 `inferred7d`/`inferred5h` 满血恢复账号归入 `Tier 0 (ready)`、三态会话保持（`auto | session | manual`）与账号池容量汇总条（`summarizeRelayPool`）**。
+- **P6：在线额度查询「仅查未知/过期 ({count})」定向防风控批次筛选（`buildStaleOrUnknownBatchTargets`）**。
+- **P7：用量分析单次请求均值（`tok/req`、`$/req`）、峰值时段徽章、账号表五维点击排序、时段明细表花费/缓存率列与 TSV 导出花费字段**。
+- **全量测试结果**：
+  - `bun x tsc --noEmit && bun test`：**173 passed, 0 failed**（26 个测试文件）；
+  - `cargo test --manifest-path src-tauri/Cargo.toml identities::tests -j 1`（**11 passed**）、`cargo test monitor_window -j 1`（**6 passed**）、`cargo test local_edition -j 1`（**2 passed**）；
+  - Playwright 合成 UI 测试：`--cards-only`（**28 passed**）、`--warming-only`（**29 passed**）、`--quota-reset-only`（**8 passed**）。
 
-### 2.4 风控验证两步状态去误报与手机小火箭（Shadowrocket）双栏桥接优化
-- **两步核验清晰无误报**：
-  - `src/risk-verification.tsx`、`src/risk-verification.css`：当第 1 步「本机 3 项静态防漏配置」全部就绪（`3/3`）而第 2 步尚未点击实测时，顶部横幅以绿色显示「第一步已完成：本机 3 项静态防漏配置全部就绪 (3/3)」，消除旧版黄色「配置缺失」误报；
-  - 移除页面右上角重复的「开始一致性实测」按钮以及无实际作用的「刷新本机配置」按钮，保留横幅右侧唯一主操作按钮。
-- **手机端 Shadowrocket 扫码桥接双栏重排与一键粘贴拆解**：
-  - 将「生成配置与二维码」与「手机扫码后 4 步核验」升级为左右均衡双栏卡片（`.risk-bridge-two-col`）；
-  - 支持在「住宅代理服务器」输入框直接粘贴完整代理串（如 `socks5://user:pass@host:port` 或 `host:port:user:pass`），自动智能拆解填入地址、端口、账号与密码。
-
-### 2.5 伴生浏览器实测页、养号返回 CLI 浏览器与操作日志关闭打磨
-- **`browser.html` 实测页深色一体化身份与范围卡**：
-  - `src/browser-start.tsx`、`src/style.css`：将原本游离在黑色工牌下方的「仅核验所选浏览器环境，不验证网页登录或 CLI 授权。」整合进 `.verification-identity` 深色卡片下层（`.verification-scope`），统一字体、圆角与视觉层级。
-- **养号后一键丝滑回到 CLI 浏览器**：
-  - `src/identities.tsx`、`src-tauri/src/browser/lifecycle.rs`、`src-tauri/src/browser/quota_connection.rs`：
-    - 在当前身份卡与已保存 Pro/Max 卡片的 `[⋯]` 菜单及「额度与重置权益」弹窗中新增 **「进入 Claude.ai」**、**「打开官方用量页」** 与 **「返回 CLI 浏览器」**；
-    - 当伴生浏览器正处于养号槽位时，身份栏顶部显式展示一键「返回 CLI 浏览器」按钮，且切换 CLI 身份时自动将伴生浏览器切回目标 CLI 身份槽位；
-    - 修复了此前先开养号卡再点当前身份打开网页时报“未检测到受管浏览器运行”的问题（自动拉起目标绑定浏览器资料）。
-- **操作日志彻底关闭与养号日志归位**：
-  - `src/cleaner-activity.tsx`、`src/claude-cli-panel.tsx`、`src/warming-cards.tsx`：
-    - 点击「关闭记录」后操作日志面板彻底隐藏（`return null`），不再残留「查看上次记录」小尾巴；
-    - 点击「检查更新」在未执行安装时不再弹出冗余的「CLI 安装记录」面板；
-    - 点击养号卡片的浏览器操作日志直接渲染在「养号」专区内部，不再错位出现在上方「身份」栏。
-
-### 2.6 额度小窗（Quota HUD）、用量分析视觉打磨与浏览/网络/风控全链路加固（v0.2.5 核心交付）
-- **额度小窗按钮文案统一、紧凑单行头部与真实 5h 指标（`src/identities.tsx`、`src/settings.tsx`、`src/floating-monitor.tsx`、`src/floating-monitor.css`、`src-tauri/src/monitor_window.rs`、`src-tauri/src/identities/usage.rs`）**：
-  - 将「身份管理」与「软件设置」右上角的悬浮窗切换按钮文案统一为 **`额度小窗` / `Quota HUD`**，仅由左侧状态圆点亮暗表达开启/关闭状态；
-  - 重构额度小窗展开态头部为高密度单行结构（`账号名 + 绿勾 + 套餐徽章 + 右侧当前模型胶囊`），彻底消除原版账号名与 `Pro` 标签之间的空白断层；
-  - **真实 5h 四计数器缓存命中率**：在 `usage.rs::monitor_snapshot()` 中直接基于 SQLite 近 5h 窗口计算 `cache_read / (uncached_input + cache_creation + cache_read)`，取代旧版近似估算公式，与「用量分析」口径完全对齐；
-  - **5h 耗尽预计时间（ETA）**：在 5h 卡片底部新增按当前消耗速率推算的 `预计 Xh Ym 耗尽` 指标，并修复贴边折叠胶囊（`52×138`）右侧边缘被 Win32 DWM 裁剪的问题。
-- **用量分析（`src/usage-statistics.tsx`、`src/usage-statistics.css`）排版与视觉重构**：
-  - 顶部筛选栏收口为紧凑单行，扫描跳过提示收纳入底部折叠区；
-  - 主摘要区采用左右双栏黄金比例（左侧 `总 Token + 2×2 四类构成子卡`，右侧 `2×2 核心财务与效率指标卡`：API 等效花费 `$`、缓存节省 `$`、缓存命中率 `%`、日均/时均等效花费 `$`），精简冗余小字备注。
-- **伴生浏览器 20 项防封实测深层加固与跨关窗/切页结果持久保留（`src/browser-start.tsx`、`src/browser.tsx`、`src-tauri/src/browser/mod.rs`、`server.rs`、`launch.rs`、`network.rs`、`config.rs`、`profile.rs`）**：
-  - **Canvas 2D 真实 32 位 FNV-1a 像素哈希探针**：在 `browser-start.tsx` 中绘制多图元测试图案并读取 `getImageData()` RGBA 像素流计算确定性 FNV-1a 哈希（如 `Canvas #xxxxxxxx · OfflineAudioContext 44100Hz 正常`），验证 `--fingerprint=<seed>` 噪声注入正常工作；
-  - **实测结果按 `(slot, config)` 跨关窗与跨菜单持久保留**：在 `Browser` 状态中新增 `last_observations: Mutex<HashMap<String, CachedObservation>>`，并在 `browser_launch` 时保留 `state.host`（机器出口检测结果）；用户完成浏览器实测与机器出口检测后，即使关闭伴生浏览器或切换到其他菜单再切回「浏览环境」，10 项绿勾与实测详情依然完整保留（状态药丸显示 `浏览器已关闭 · 保留 HH:MM:SS 实测结果`），仅在切换账号/资料、修改配置、清理重置浏览器或触发断路器时自动失效；
-  - **修复 `--accept-lang` 区域子标签与 `dns_prefetching`**：将 `en-US` 规范化为 `--accept-lang=en-US,en`，禁用 `dns_prefetching.enabled = false`；
-  - **修复机房 ASN 词边界匹配与探针状态显示**：对短词（`cn`/`aws`/`ovh`/`vps` 等）启用 ASCII 词边界匹配，避免美国真家宽 `RCN` (`AS6079`) 误触 `cn` 子串；消除「WebRTC 本地候选观察」重复文案，修正「真实设备与 CPU」及「防封特征与出口纯净度」通过态文案。
-- **Mihomo / Clash 全套域名分流与 IPv6 防旁路（`src/risk-model.ts`、`src/vps.tsx`、`src-tauri/src/risk_check.rs`）**：
-  - 在桌面端一键覆写 YAML、桌面修复提示词、网络环境 AI 提示词与四端手机桥接配置（Shadowrocket / Clash Mi / Stash / sing-box）中，全面强制 **`ipv6: false` 与 `dns.ipv6: false`**，切断双栈 IPv6 直连绕过；
-  - 补齐 `claude.com`、`claudemcpcontent.com`、`persona.com`、`stripecdn.com`、`stripe.global`、`sentry.io`、`workos.com`、`authkit.app`、`funcaptcha.com` 等完整 KYC/支付/风控域名及备用 DoH IP `8.8.4.4/32`；`risk_check.rs` 静态审计支持 `prepend-rules` / `append-rules`；
-  - 修复 `src/warming-cards.tsx` 同国不同时区漂移弹窗文案（明确显示 `US (America/Los_Angeles)` vs `US (America/New_York)`）。
-
-### 2.7 验证、本机热更新与 `v0.2.5` 打包发布回执
-- **自动化测试全部通过**：
-  - `bun x tsc --noEmit && bun test`：**162 passed, 0 failed**
-  - `cargo test -j 1 --manifest-path src-tauri/Cargo.toml browser::`：**44 passed, 0 failed**
-- **中性目录 NSIS 安装包构建与 29 项隐私探针解包审计**：
-  - 构建脚本：`scripts/build-windows-share.ps1`（中性根目录 `D:\ClaudeLocalBuild\20261101T051704Z-c2d03423ff1946e1beb70aa1dc2e9138`）
-  - 产出目录：`.local/artifacts/20261101T051704Z-c2d03423ff1946e1beb70aa1dc2e9138/`
-  - 安装包：`Claude-Local_0.2.5_x64-setup.exe`，大小 **`140,847,905` 字节（`134.32 MiB`）**，SHA-256 为 **`16c9320d05a2100047c602331e22f9318dbba93a712100185b9bab4aca344e95`**
-  - 隐私审计：108 个解包文件全部匹配资源白名单，29 项外置隐私探针扫描 **`0` 命中**。
-- **本机安装目录安全热更新**：
-  - 已将 `v0.2.5` Release 宿主与前端资源部署至 `%LOCALAPPDATA%\Programs\Claude-Local`（当前本机已安装 `claude-local.exe` SHA-256 为 `0c7238b8bfe90658d6c1e3d65c205af6f18b0d3d640aa8da98459496f40f06fd`），并通过 `schtasks /Create ... /IT` 在交互式桌面会话启动 GUI；**本机 `claude.exe` 进程零中断**。
-- **GitHub Release 正式发布与 README 旗舰重构**：
-  - 标签 `v0.2.5`（指向 `6d505a6`）及公开资产 `Claude-Local_0.2.5_x64-setup.exe`、`SHA256SUMS.txt` 已正式发布至 https://github.com/yq04/Claude-Local/releases/tag/v0.2.5 （`isDraft: false`、`isPrerelease: false`、Latest），GitHub 服务端返回 `digest` 与本地 SHA-256 完全一致；
-  - 重构了 `README.md`、`README_EN.md` 与 `docs/RELEASE_NOTES_0.2.5.md`，开篇新增「🔥 为什么选择 Claude-Local？（直击多账号风控四大痛点）」与「✨ 八大核心能力矩阵」，将防封隔离壁垒（独立指纹浏览器 + 20 项实测、WebRTC/IPv6/DNS/KYC 防漏与断路器、四维跨账号残留消毒、免费号科学养号与智能接力）置于最核心位置，而将额度小窗与用量分析定位为辅助效率能力。
+### 2.2 PayPal / Braintree 支付全链路美国家宽分流加固与 `v0.2.5` 基线
+- 本机 Clash Verge Rev 全局 `Script.js`、订阅绑定扩展脚本、主配置 `config.yaml`（`ipv6: false`）与服务模式 `runtime\config.yaml` 已将 `paypal.com`、`paypalobjects.com`、`paypal-mktg.com`、`paypal.me`、`py.pl`、`braintreegateway.com`、`braintree-api.com`、`venmo.com` 及远程 DoH IP（`1.1.1.1/32`、`1.0.0.1/32`、`8.8.8.8/32`、`8.8.4.4/32`）锁死至美国静态住宅家宽出口并阻断 `UDP 443`。
+- 伴生浏览器 `Default/Preferences` 三重 WebRTC 强锁 + `--enforce-webrtc-ip-permission-check` + `--test-type`，20 项实测结果按 `(slot, config)` 内存持久保留。
 
 ---
 
-## 3. 当前卡在哪（当前无阻塞，仅记录产品边界共识）
+## 3. 当前卡在哪（当前零阻塞，仅记录工作区状态与产品边界）
 
-当前**没有任何代码、构建、测试或发布阻塞**。工作区干净（仅保留用户原有的未提交 `AGENTS.md`，按规则绝不触碰或提交）。新会话只需了解以下已与用户对齐的产品边界：
-
-1. **为什么跨账号接力必须退出 `claude.exe` 后再 `claude -c` / `claude --resume`，而不能像 Magpie 那样靠本地网关热替换 Token**：
-   - `claude.exe` 启动时会将当前账号的 OAuth Token、组织 UUID 及本次进程的遥测 `sessionId` 缓存在进程内存中；若不退出 `claude.exe` 而在半途通过本地代理偷换 Token，会导致同一个 CLI 进程 `sessionId` 与旧账号加密的 `thinking` 签名直接发送给新账号，极易触发 Anthropic 服务端同人多号关联风控或 `400 Invalid signature in thinking block`。
-   - 因此，最安全的工作流是：**退出当前 CLI（`/exit` 或在切号弹窗中确认由软件安全关闭） → 点击 `Claude-Local` 切号（`cleaner_identity.rs` 自动剥离 `.jsonl` 会话中旧账号的 `userEmail`、`credential_org` 与 `thinking` 签名） → 在终端执行 `claude -c` 继续对话**。
-2. **「智能接力（Smart Relay）」保持当前默认关闭状态（不删不改）**：
-   - 用户已明确指示：**「目前先不做接力了！但也不用删除现有功能！」**。现有智能接力默认关闭（`enabled: false`），开启时作为余量/重置顺位计算器与手动一键切号入口保留即可。
-3. **坚持「前置专线 + 静态住宅 SOCKS5 双跳链式代理 + 软件三级验真防线」，不追求 VPS 自建面板**：
-   - 经对社区 VPS 自建教程（`3x-ui` / `VLESS+Reality` / `Sub-Store`）与 X 防封实测的交叉调研确认：自建 VPS 运维门槛极高、单 IP 易被墙/被邻居送中，且在注册/过 Persona KYC/绑 Stripe 卡阶段机房 IP（`hosting: true`）极易被拦截，而高阶 VPS 玩家最终解决 AI 解锁依然必须回归 `dialer-proxy` 链式落地架构。
-   - 针对市面上静态住宅可能混有“单 ISP 广播伪家宽”或高风险脏 IP 的情况，本项目不依赖盲信代理商宣传，而是由软件内置的 **三级验真防线** 兜底：① `classifyExitIsp` + `api.ipquery.io`（`is_datacenter`）零盲信红灯拦截机房/伪家宽；② 伴生浏览器起始页内置 `Ping0.cc` / `CheckCC.org` / `BrowserScan` / `IPHey` 及同源路由的 `ippure.com` 深度复核；③ 先验真确认双 ISP 原生低风险后再登号绑定。因此保持现有 `iKuuu + Kookeey + Clash Verge Rev 双跳防漏` 方案即可，无需引导用户折腾 VPS 自建机场。
+当前**没有任何代码、编译、测试或运行阻塞**。
+- **本机运行状态**：
+  - 最新编译的 Release 二进制（`src-tauri/target/release/claude-local.exe`，SHA-256: `D644D4B2DD889F534F81B7B8F622746FF824081E1D7B8E0241EE6D995E34DC09`）已热更新至 `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe`，并在交互式桌面会话（`SessionId 1`）中正常启动运行。
+  - 本机身份保险库（`%APPDATA%\ai.local.claude-local\identity-vault\identities.sqlite`）干净保留 **5 张正式 Pro 身份卡**与 **2 张养号卡**，0 张空白异常卡。
+- **当前 Git 工作区未提交改动说明**：
+  - `AGENTS.md`：用户本地规则文件，**按铁律永远保留在未暂存状态，绝不提交或还原**；
+  - `docs/PORTABILITY_PLAN.md`（本会话新增：单账号跨机可移植与朋友交接深度调研报告及四阶段实施方案）；
+  - `docs/OPTIMIZATION_PLAN.md`、`src/card-order.ts`、`src/card-order.test.ts`（新增）以及 `src-tauri/`、`src/`、`scripts/` 下的修改：包含 **P0 ~ P7 全模块开源对标优化**、**PayPal 支付域名分流加固**、**额度小窗防遮挡与身份卡防闪烁**、**166px 卡片与顶部横条拖拽排序** 以及 **养号 CLI 转正空白卡/幽灵卡根治**。
+  - 以上改动保持 `v0.2.5` 标签指向 `6d505a6` 不变，待用户后续指示后再决定是提交新 commit 还是打包新版本安装器。
 
 ---
 
 ## 4. 下一步计划是什么
 
-目前 `v0.2.5` 所有计划内目标均已圆满收官。新会话启动后：
-
-1. **先听取用户的新指令**：
-   - 若用户提出新的使用问题、界面细节调整或新功能需求，先阅读相关模块的 `CLAUDE.md` 与源码头，按需制定方案。
-   - **切勿**在用户未要求的情况下自行继续开发智能接力的后台自动切号，也**切勿**删除现有的智能接力功能。
+1. **新会话启动后先听取用户指令**：
+   - **单身份跨机导入/导出已取消**：不执行 `docs/PORTABILITY_PLAN.md` 的四阶段开发。朋友端沿用现有网络配置、环境核验与正常登录流程；没有为此次人工交接必须新增的业务功能。本机账号删除必须由用户完成必要确认，不能把本条产品决定视为 agent 操作真实账号或删除资料的授权。
+   - 若用户要求将当前已完成并验证的全部改进提交 Git commit 或打包新版本 NSIS 安装器（如 `v0.2.6` 或更新 `v0.2.5`），按标准流程执行（显式列出文件路径 `git add`，**严禁暂存 `AGENTS.md` 或 `.local/`**，打包前执行 29 项隐私探针扫描）。
+   - 若用户提出新的功能需求或界面微调，先阅读对应目录的 `CLAUDE.md` 与源文件头注释再动手。
 2. **远期可选储备方向（仅在用户明确要求时再启动，切勿自行开工）**：
-   - **多槽位浏览器完整并行 20 项回环实测会话**：将 `Browser.session` 升级为 `HashMap<String, SlotSession>`，支持多个槽位同时驻留各自的 `browser.html` 实测报告。
-   - **单身份便携包（`.bagapack`）**：支持将单个身份及其元数据独立导出到另一台设备（目前整库加密备份 `.clbackup` 已完整覆盖全部身份、养号卡与手动订阅记录）。
+   - **多槽位浏览器完整并行 20 项回环实测会话**：将 `Browser.session` 升级为 `HashMap<String, SlotSession>`。
 
 ---
 
@@ -161,63 +126,70 @@
 
 ### 5.1 进程、数据与工作区安全铁律（最高优先级）
 1. **绝不中断或强杀正在运行的 `claude.exe`（Claude Code CLI）**：
-   - 无论是开发调试、跑测试还是做本机热更新，都只允许操作 `claude-local.exe`（GUI 宿主），**严禁停止、重启或干扰任何 `claude.exe` 进程**。本机热更新前后必须记录并核对 `claude.exe` 的 PID 与 `StartTime` 完全不变。
+   - 无论是开发调试、热重载 Mihomo 还是热更新 `claude-local.exe`，**严禁停止、重启或干扰任何 `claude.exe` 进程**。
 2. **绝不提交或还原根目录 `AGENTS.md`，绝不将 `.local/` 或真实隐私数据带入 Git**：
-   - `AGENTS.md` 含有工作区本地规则修改，必须始终留在未暂存状态（`git add` 时显式指定文件路径，切勿 `git add .` 或 `git add -A`）。
+   - `git add` 时必须显式指定文件路径，严禁 `git add .` 或 `git add -A`。
    - 严禁使用 `git clean`、`git reset --hard`、`git checkout --`、`git restore` 或递归删除工作区。
-   - 提交或打包前必须确保零真实账号、零邮箱、零身份指纹、零代理凭据、零个人路径。
+   - 提交或写文档前必须确保零真实账号、零邮箱、零真实 `seed`、零真实 IP、零代理密码、零个人路径。
 3. **持久格式兼容性绝对不可破坏**：
-   - `BAGAID01` 魔数、`.baga` 归档格式、SQLite `user_version = 3`、账号 HMAC 计算规则以及历史 `CCBaga/browser/...` 确定性种子派生域字符串属于持久数据格式契约，严禁修改。
-   - `quota_ledger.json` 必须保持 **Python 唯一写入者**（跨进程文件锁 + 原子替换 + 较新锚点优先），Rust 端只读合并，绝不向 `~/.claude.json` 写入额度字段。
+   - `BAGAID01` 魔数、`.baga` 归档格式、SQLite `user_version = 3`、账号 HMAC 计算规则以及历史 `CCBaga/browser/...` 确定性种子派生域字符串严禁修改。
+   - `quota_ledger.json` 必须保持 **Python 唯一写入者**。
 
 ### 5.2 历次实施与调试中踩过的技术坑（重要经验）
-4. **伴生浏览器 WebRTC 防泄露坑：只设 `ip_handling_policy` 不够，必须三键齐下**：
-   - 在 Chromium `Default/Preferences` 中，仅设置 `webrtc.ip_handling_policy = "disable_non_proxied_udp"` 在部分内核分支下仍可能枚举多网卡或原生 IPv6 路由；必须像 Google 官方 `WebRTC Network Limiter` 扩展一样同时写入 `webrtc.multiple_routes_enabled = false` 与 `webrtc.nonproxied_udp_enabled = false`，并在启动参数加上 `--enforce-webrtc-ip-permission-check`。
-5. **Chromium 顶部不支持参数横幅坑**：
-   - 当传入 `--host-resolver-rules` 时，Chromium 默认会在窗口顶部弹出黄色提示条 `"You are using an unsupported command-line flag: --host-resolver-rules..."`。必须在 `src-tauri/src/browser/config.rs` 的启动参数中同时传入 `--test-type` 才能抑制该横幅，且需注意不要重复拼接 `EXCLUDE 127.0.0.1`。
-6. **养号浏览器与 CLI 浏览器切换坑**：
-   - 当用户先打开了某张养号卡的浏览器，随后在「身份管理」点击当前 CLI 身份打开网页或用量页时，不能因为当前 `browser.active` 指向养号槽位或目标 CLI 资料尚未启动就报错拒绝；`quota_connection.rs::launch_bound_profile_url_locked` 已改为自动确保回环服务就绪并直接拉起目标 CLI 身份绑定的独立浏览器资料。
-7. **备份白名单坑：修改 `.clbackup` 备份范围必须五处同步**：
-   - `src-tauri/src/identities/backup.rs` 的 `verify_staged()` 采用严格文件名白名单校验。若未来新增备份文件，必须同步更新 `collect_files`、`rescue_files`、`verify_staged`、`verify_rescue_staged` 与 `identities_backup_restore_new` 五处。
-8. **Clash Verge Rev 四层配置覆盖顺序与服务模式（`clash-verge-service`）路径确认坑**：
-   - Clash Verge Rev 在执行完订阅、`Merge.yaml` 与 `Script.js` **之后**，还会把 `%APPDATA%\io.github.clash-verge-rev.clash-verge-rev\config.yaml` 中的 `tun` 字段覆盖上去；持久化修改 `strict-route: true` 必须同步修改 `config.yaml` 与 `profiles\Merge.yaml`。
-   - 开启服务模式后，`verge-mihomo.exe` 的 `-f` 参数指向 `%PROGRAMDATA%\clash-verge-service\users\<64位hex>\runtime\config.yaml`，由 `src-tauri/src/risk_config_source.rs` 通过校验 `active-owner.json` / `.runtime-manifest.json` 归属当前用户 `%APPDATA%` 来确认 `running_core`。
-9. **Windows 构建、测试与 CRLF 编辑坑**：
-   - Windows 下没有预装 `rg`（ripgrep），搜索代码请使用 PowerShell `Select-String`。
-   - 运行 `cargo test` 或 `cargo build` 前务必设置 `$env:CARGO_INCREMENTAL="0"; $env:CARGO_BUILD_JOBS="1"` 并加 `-j 1`，防止 MSVC `link.exe` / PDB 锁冲突。
-   - 生产构建与本地部署必须带 `--features custom-protocol`；`scripts/build-windows-share.ps1` 需传入 `-SevenZipPath "C:\Program Files\AMD\CIM\Bin64\7z.exe"`（或本机已安装的 `7z.exe` 路径）。
-   - **在沙箱化 PowerShell 工具调用中启动 `claude-local.exe` GUI 窗口时，切勿直接使用 `Start-Process` 或 `Win32_Process Create`**：因为工具子进程运行在非交互式后台 WindowStation（`Service-0x0-...`），直接拉起的 `claude-local.exe` 会变成不可见的后台僵尸进程并霸占 `tauri_plugin_single_instance` 单实例锁，导致用户双击桌面快捷方式无法打开窗口！必须使用 `schtasks /Create /TN "ClaudeLocalLaunchTemp" /TR "\"$dstExe\"" /SC ONCE /ST 00:00 /IT /F` + `schtasks /Run` 将进程挂载到用户交互式桌面会话（`WinSta0\Default`）。
-   - 部分文件（如 `src/locales/zh.yaml`、`src/locales/en.yaml` 前半段及部分测试脚本）含 `CRLF` 行尾，若多行 `edit_file` 报未找到目标，优先使用单行锚点或 PowerShell `[System.IO.File]::ReadAllText/WriteAllText` 精确替换。
-10. **伴生浏览器实测结果缓存（`last_observations`）与机器出口 `state.host` 失效边界坑**：
-    - 关闭伴生浏览器或切换左侧菜单时，不能在 `snapshot()` 中简单用 `.filter(|_| running)` 丢弃 `session.report`，也不能在 `browser_launch` 时把 `state.host` 清空为 `None`（否则用户先点「检测机器出口」再点「打开浏览器实测」时机器出口结果会被冲掉）；
-    - `Browser.last_observations` 必须严格绑定 `(slot, config)`（`Config` 需实现 `PartialEq, Eq`），并在 `browser_save`（修改浏览器配置）、`browser_clear(reset=true)`（深度重置）、`browser_align`（对齐美国环境）与 `kill_switch`（触发断路器）时主动清除对应缓存，防止配置变更后仍展示旧绿勾。
-11. **机房 ASN / ISP 短词识别误判真家宽坑**：
-    - 像 `cn`、`aws`、`gcp`、`ovh`、`vps`、`idc`、`dmit` 等短词绝对不能用普通 `contains()` 子串匹配，否则美国老牌真家宽 `RCN` (`AS6079`) 会因包含字母 `cn` 被误判为机房；必须使用 ASCII 词边界匹配 `contains_word_bounded()`。
-12. **Mihomo / Clash Verge Rev Windows 命名管道热重载 `SAFE_PATHS` 坑**：
-    - 通过命名管道 `\\.\pipe\verge-mihomo-production-*` 调用 `PUT /configs?force=true` 热重载 Mihomo 时，若启用了 `clash-verge-service` 服务模式，直接传入 `%APPDATA%` 下的路径会报 `400 path is not a subpath of SAFE_PATHS`；必须先将生成的配置同步到 `%PROGRAMDATA%\clash-verge-service\users\<64位hex>\runtime\clash-verge.yaml` 再向该安全路径发起 `PUT /configs?force=true`。
+4. **`Store::save_inner` 中 `reuse && !has_live_identity` 与 `save_checkpoint`（`reuse = false`）的边界坑（本轮新踩重点坑）**：
+   - 在 `src-tauri/src/identities/archive.rs` 的 `Store::save_inner` 中，普通保存/切换/转正（`Store::save` -> `reuse = true`）在工作区无实际登录身份（`!has_live_identity`）时必须强制标记 `record.empty = true` 且不消费 `browser_draft()`，否则只要工作区保留了 `.claude/projects` 或 `.claude/history.jsonl`，就会生成一张多余的空白「当前身份」卡。
+   - **但切勿对 `reuse == false`（即 `Store::save_checkpoint`，用于中断恢复 `Store::recover`）强制设置 `record.empty = true`**！因为 `tests.rs::interrupted_switch_can_recover_and_preserves_pre_recovery_state` 要求在切换中断后的空白工作区中产生的新 `history.jsonl` 必须通过 `save_checkpoint` 归档保存为非空恢复检查点。因此判定条件必须严格保持 `if reuse && !has_live_identity`。
+5. **SQLite `identities.sqlite` 表结构字段名坑（本轮新踩重点坑）**：
+   - 在 `identities.sqlite`（`user_version = 3`）中，`browser_bindings` 表的主键列名为 **`identity`**（不是 `identity_id` 或 `id`），`identities` 表的时间戳列名为 **`saved_at`**（不是 `updated_at`）。编写诊断或维护脚本时务必先核对 `src-tauri/src/identities/database.rs` 或 `PRAGMA table_info(...)`。
+6. **Playwright 合成 UI 测试脚本中的卡片宽度断言同步坑（本轮新踩重点坑）**：
+   - `scripts/test-identities-ui.ts`、`scripts/test-warming-ui.ts` 和 `scripts/test-quota-reset.ts` 中均硬编码校验了 `.identity-card` 的 `width === 166` 与 `height === 286`（以及换行阈值 `clientWidth >= 344`）。若未来调整卡片尺寸，必须同步更新这三个测试脚本中的几何断言，且注意 `scripts/test-identities-ui.ts` 与 `scripts/test-warming-ui.ts` 使用 CRLF 换行符。
+7. **Tauri v2 多窗口 Capabilities ACL 权限遗漏坑**：
+   - `src-tauri/capabilities/main.json` 的 `"windows"` 数组必须包含 `["main", "monitor"]`，否则 `"monitor"` 额度小窗调用任何 `@tauri-apps/api` IPC 都会被 Tauri v2 ACL 拦截。
+8. **Windows Tauri v2 静态声明隐藏小窗 + `MainThreadEnv<T>` 线程亲和性坑**：
+   - `"monitor"` 小窗已在 `tauri*.conf.json` 中静态预声明为 `visible: false`，运行时仅调 `show()` / `hide()`；动态兜底提取 `ICoreWebView2Environment` 时必须全部在 `app.run_on_main_thread` 主线程闭包内同步完成。
+9. **沙箱 PowerShell `SessionId 0` 启动 GUI 进程坑**：
+   - AI 工具沙箱 PowerShell 位于 `SessionId 0`，直接运行 `Start-Process claude-local.exe` 会产生桌面不可见的僵尸进程。**热更新后重启 `claude-local.exe` 必须使用 `schtasks /Create ... /IT /F` + `schtasks /Run` 在 `SessionId 1` 交互式桌面拉起**。
+10. **智能接力 `inferred7d` / `inferred5h` 满血回血账号误判坑**：
+    - `inferred7d === true` 代表 7d 重置时间已过、本地判定 100% 满血恢复，在 `src/smart-relay-model.ts` 中必须归入 `Tier 0 (ready)`，切勿当作 `Tier 3 (unavailable)` 过滤。
+11. **Clash Verge Rev 订阅独立扩展脚本与 PayPal / 远程 DoH 规则坑**：
+    - 修改本机代理规则时必须同步更新全局 `Script.js`、订阅绑定脚本、主配置 `config.yaml`、`profiles\Merge.yaml` 与服务模式下的 `runtime\config.yaml`；PayPal 全系域名与远程 DoH IP（`1.1.1.1/32`、`8.8.8.8/32` 等）必须一并走美国静态家宽并阻断 `UDP 443`。
+12. **Windows 构建与代码搜索工具坑**：
+    - Windows 下无 `rg`，搜索代码用 `Get-ChildItem -Recurse | Select-String`；`cargo` 构建/测试务必加 `-j 1`。
+13. **【可移植开发必避坑 1】`.baga` 内部 `manifest.home` 强校验与 `account_key` 跨机重算坑**：
+    - `src-tauri/src/identities/archive.rs:126` 强制校验 `manifest.home == self.home` 且 `sources` 均为当前机器 `%USERPROFILE%` 下的路径；同时 `catalog.rs:13` 的 `account_key` 是用本机 `key.bin` 计算的 HMAC-SHA256。因此朋友端导入 `.bagapack` 时，绝不能直接把宿主机的 `.baga` 原封不动拷入朋友的 `identity-vault`，必须将相对槽位重写为朋友的 `friend_home.join(...)`，用朋友本机的 `vault/key.bin` 重算 `account_key` 并调用 `codec::Seal::new` 生成新 `.baga`，再通过 `Store::load` 验收。
+14. **【可移植开发必避坑 2】伴生浏览器跨机器硬件指纹漂移坑（`browser/config.rs`）**：
+    - `browser/config.rs:150` 默认把运行机器的 `machine.cores` 和 `machine.version` 传给 `--fingerprint-hardware-concurrency` 与 `--fingerprint-platform-version`，且默认 `follow_machine: true`、`native_graphics: true`。导出便携包时必须在 `Config` 中固化宿主机核数（`pinned_cores`）与平台版本（`pinned_platform_version`），并强制设 `follow_machine: false`、`native_graphics: false`，否则朋友电脑上的 20 项浏览器验证与 Canvas 哈希会发生跳变。
+15. **【可移植开发必避坑 3】Windows Chromium DPAPI (`os_crypt`) 阻断 Cookie 直接拷贝与扩展权限红线坑**：
+    - Windows 下 Chromium `Default/Network/Cookies` 的 AES 密钥经 DPAPI 绑定在宿主机 Windows 用户 SID 上，直接拷贝 `browser/contexts/{slot}/profile` 到朋友电脑必然报 `0x80090005` 解密失败；同时 `browser-runtime/CLAUDE.md` 规定内置 `quota-bridge` 扩展严禁读取 Cookie（`"never reads cookies"`）。因此跨机迁移网页登录态必须走内置 Chromium 的本地回环 CDP（`Storage.getCookies` / `Storage.setCookies`），切勿修改 `quota-bridge` 扩展权限或直接打包整个 `User Data` 目录。
+16. **【可移植开发必避坑 4】Kookeey SOCKS5 账密限制与双机同开碰撞坑**：
+    - `browser/config.rs:101` 拒绝带用户名密码的代理 URL，因此朋友端必须通过本地 Mihomo 独立监听端口 `127.0.0.1:7899`（`type: mixed, udp: false`）桥接 Kookeey 节点；且宿主机导出后必须默认将该卡标记为 `handed_off` 冻结态（从智能接力推荐与批量额度轮询中排除），防止两台不同 `machine-id` 的电脑并发刷新同一 `refreshToken`。
 
 ---
 
 ## 6. 关键源码与文档速查索引
 
-- **多账号智能接力与身份工作台**：
+- **单账号跨机可移植与朋友交接历史研究（已取消，不作为实施指令）**：
+  - `docs/PORTABILITY_PLAN.md`
+- **卡片横向拖拽排序、紧凑卡片样式与身份/养号工作台（本轮重点修改）**：
+  - `src/card-order.ts`、`src/card-order.test.ts`
+  - `src/identities.tsx`、`src/warming-cards.tsx`、`src/style.css`、`src/identity-productivity.css`
+  - `src-tauri/src/identities/archive.rs`、`src-tauri/src/identities/profile.rs`、`src-tauri/src/identities/tests.rs`
+  - `scripts/test-identities-ui.ts`、`scripts/test-warming-ui.ts`、`scripts/test-quota-reset.ts`
+- **额度小窗（Quota HUD）原生层、模型与界面（P0 / P1 / P5）**：
+  - `src-tauri/capabilities/main.json`、`src-tauri/tauri.conf.json`、`src-tauri/tauri.windows.conf.json`、`src-tauri/tauri.linux.conf.json`
+  - `src-tauri/src/monitor_window.rs`、`src-tauri/src/main.rs`、`src-tauri/src/ui_language.rs`、`src-tauri/src/local_edition_tests.rs`
+  - `src/floating-monitor-model.ts`、`src/floating-monitor-model.test.ts`、`src/floating-monitor.tsx`、`src/floating-monitor.css`
+- **多账号智能接力与在线额度定向查询（P3 / P5 / P6）**：
   - `src/smart-relay-model.ts`、`src/smart-relay-model.test.ts`
-  - `src/identities.tsx`、`src/identity-productivity.css`、`src/settings.tsx`
-- **伴生浏览器 WebRTC 加固、实测结果持久保留、断路器与生命周期**：
-  - `src-tauri/src/browser/mod.rs`（`last_observations` 跨关窗/切页持久保留）、`src-tauri/src/browser/server.rs`、`src-tauri/src/browser/launch.rs`、`src-tauri/src/browser/network.rs`
-  - `src-tauri/src/browser/profile.rs`、`src-tauri/src/browser/config.rs`、`src-tauri/src/browser/kill_switch.rs`
-  - `src-tauri/src/browser/lifecycle.rs`、`src-tauri/src/browser/quota_connection.rs`
-  - `src/browser.tsx`、`src/browser-start.tsx`、`src/style.css`
-- **风控核验、网络环境 AI 配置提示词、桌面端一键 Clash 覆写 YAML 与手机小火箭双栏桥接**：
-  - `src/vps.tsx`（`buildAiProxyPrompt`）、`src/risk-model.ts`（`buildDesktopMihomoAntiLeakYaml`、`buildDesktopDnsFixPrompt`）、`src/risk-verification.tsx`、`src/risk-verification.css`
-  - `src-tauri/src/risk_check.rs`、`src-tauri/src/risk_config_source.rs`
-- **额度小窗（Quota HUD）与用量分析（官方 API 美元等效花费 `$` 与缓存节省）**：
-  - `src/floating-monitor.tsx`、`src/floating-monitor.css`、`src-tauri/src/monitor_window.rs`、`src-tauri/src/identities/usage.rs`
-  - `src/usage-model.ts`、`src/usage-model.test.ts`、`src/usage-statistics.tsx`、`src/usage-statistics.css`
-- **操作日志彻底关闭与养号卡片**：
-  - `src/cleaner-activity.tsx`、`src/claude-cli-panel.tsx`、`src/warming-cards.tsx`、`src-tauri/src/identities/warming.rs`
-- **发布说明与主文档**：
-  - `docs/RELEASE_NOTES_0.2.5.md`、`docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md`、`README.md`、`README_EN.md`
-- **本轮本地备份与打包审计产物（均在 `.local/` 忽略目录内，切勿提交）**：
-  - `.local/artifacts/20261101T051704Z-c2d03423ff1946e1beb70aa1dc2e9138/`（`Claude-Local_0.2.5_x64-setup.exe`、`SHA256SUMS.txt`、`privacy-audit.json`、`resource-manifest.json`）
-  - `.local/tasks/20261101-v0.2.5-release/`（`HANDOFF` 历史备份与 SHA-256 备份回执）
+  - `src/identity-online-quota.ts`、`src/identity-online-quota.test.ts`、`src/identity-quota.ts`
+- **用量分析、单次效率、五维排序与 Markdown/TSV 导出（P2 / P7）**：
+  - `src/usage-statistics.tsx`、`src/usage-statistics.css`、`src/usage-table.tsx`
+  - `src/usage-export.ts`、`src/usage-export.test.ts`、`src/usage-model.ts`、`src/usage-model.test.ts`
+- **风控核验、PayPal/Stripe/KYC 同源家宽分流与 Cookie 清理助手（P4）**：
+  - `src/vps.tsx`、`src/risk-model.ts`、`src/risk-model.test.ts`、`src/risk-verification.tsx`
+- **本地备份与打包审计产物（均在 `.local/` 忽略目录内，切勿提交）**：
+  - `.local/tasks/20261102-handoff-portability-plan/HANDOFF.md.bak`（本会话重写 `HANDOFF.md` 前的 SHA-256 校验备份）
+  - `.local/artifacts/20261101T051704Z-c2d03423ff1946e1beb70aa1dc2e9138/`（`Claude-Local_0.2.5_x64-setup.exe`、`SHA256SUMS.txt`）
+  - `.local/tasks/20261101-cleanup-empty-card/`（本轮清理多余空白身份卡前的 SQLite 与 `.baga` 备份）
+  - `.local/tasks/20261101-paypal-us-residential/`（Clash Verge Rev 配置备份）
+  - `.local/tasks/20261101-handoff-p0-p7/`（`HANDOFF.md` 历史备份）
