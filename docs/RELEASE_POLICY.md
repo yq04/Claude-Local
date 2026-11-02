@@ -9,7 +9,7 @@ Claude-Local 基于 CCBaga 二次开发并独立维护。项目发行序列从 *
 
 ## 三类名称分别管理
 
-- **Git Tags** 使用 `v主版本.次版本.补丁版本`，标识发布所依据的固定源码提交。当前发行标签为 `v0.1.0` 至 `v0.1.5`。
+- **Git Tags** 使用 `v主版本.次版本.补丁版本`，标识发布所依据的固定源码提交。当前最新发行标签为 `v0.2.6`，此前发行标签保持不变。
 - **GitHub Releases** 对应发行标签，包含变更说明、Windows x64安装包、SHA256与已知限制。Pre-release和Latest由维护者根据该版本状态设置，不因数字小于1.0自动判为测试版。
 - **Repository Topics** 是项目发现关键词，例如`ccbaga`、`claude-code`、`windows-x64`、`identity-management`和`usage-analytics`；它们不指向源码版本，也不改变运行数据。
 

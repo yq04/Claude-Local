@@ -1,5 +1,5 @@
 # src-tauri/
-浏览器状态/归属接线：main.rs注册browser_runtime_read和browser_return_to_cli；browser_open_usage要求冻结expected_identity并按当前CLI已有绑定打开独立用量页，不沿用养号槽位。当前候选版本0.2.6，发布与本机部署以独立交付核验记录为准。
+浏览器状态/归属接线：main.rs注册browser_runtime_read和browser_return_to_cli；browser_open_usage要求冻结expected_identity并按当前CLI已有绑定打开独立用量页，不沿用养号槽位。0.2.6已发布并完成本机payload对齐，详见docs/RELEASE_VERIFICATION_0.2.6.md。
 > L2 | 父级: ../CLAUDE.md
 main.rs: 本地版 Tauri 生命周期、主窗口尺寸记忆接线、monitor 悬浮小窗静态预热与状态恢复、含「额度小窗」入口的双语托盘和命令注册；--quota-core 在启动诊断与单实例之前执行纯 JSON 合并；普通启动不打开浏览器，发布必须 custom-protocol；无官方应用更新或重启插件。
 window_state.rs: 仅 main 窗口的私有 app_data/window-state.json 尺寸/最大化状态、显示前恢复、当前工作区限制与居中、防抖 resize/move 保存及 Close/Exit 刷新；不保存最小化/隐藏状态，不涉及浏览器或账号数据。

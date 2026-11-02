@@ -1,14 +1,16 @@
 <!--
-[INPUT]: Verified v0.2.5 end-to-end anti-ban & KYC/WebRTC/IPv6/DNS hardening, Open-Source Benchmarked P0-P7 Full Optimization, Identity & Warming Card UX Refinement (166px compact card geometry + top-pill pointer drag-and-drop reordering with FLIP spring animation + Quota HUD unobstructed bottom metric tiles + flicker-free silent 5s local quota revision sync + Store::save_inner has_live_identity guard preventing phantom blank cards), and comprehensive Research Analysis Report & 4-Phase Implementation Plan for Single-Account Cross-Machine Portability & Friend Handoff (.bagapack / CLPACK01 + Kookeey US static residential IP binding) in docs/PORTABILITY_PLAN.md.
-[OUTPUT]: Context-free handoff covering verified deliveries and the latest owner decision: single-account .bagapack export/import is cancelled; friends configure their own network and sign in normally after source-side use stops. Historical portability research is not an implementation instruction.
-[POS]: Root maintenance handoff; real identities, IP/proxy values, process IDs, workstation paths and screenshots stay out of tracked files.
+[INPUT]: Released v0.2.6 source 8c1935a, passing Windows CI, audited NSIS payload (109 files / 29 private probes / 0 findings), matching GitHub asset digests and backed-up local deployment; single-account portability remains cancelled.
+[OUTPUT]: Context-free handoff of the delivered 0.2.6 release, retained product boundaries and owner-cancelled portability work; no pending packaging, upload or local-update task.
+[POS]: Root maintenance handoff; real identities, IP/proxy values, process IDs, workstation paths and screenshots remain outside tracked files.
 [PROTOCOL]: Back up and verify SHA256 before rewriting. Documentation-only updates do not build/deploy, reload proxies, operate accounts, package/upload or move release tags.
 -->
 # Claude-Local 新会话交接文档（无上下文直接接手）
 
 > **2026-11-02 最新产品决定（覆盖下文历史可移植方案与实施指引）**：用户已明确取消单身份导入/导出功能，不开发 `.bagapack` / `CLPACK01`、跨机 OAuth/Cookie 搬运或相关向导。号主手动提供 Kookeey 节点信息，朋友在自己电脑配置 iKuuu + Kookeey、核验实际出口与解析路径后，在新建本地身份中正常登录同一账号。号主计划在朋友使用前通过现有确认流程删除该账号的本地资料；这只是后续人工计划，本轮未执行账号删除。先由用户自行结束相关 CLI/浏览器工作并关闭自动续杯、结束在线任务，再分别确认当前 CLI 登录、保存卡片及关联浏览器资料；删除保存卡片不等于清除当前登录，本地删除也不等于吊销所有服务端会话。现有整库 `.clbackup` 备份能力保留。`docs/PORTABILITY_PLAN.md` 仅为已取消的历史研究，不得据此继续实现。
 
-更新时间：2026-11-02 EST（America/New_York）。当前最新正式发布至 GitHub Release（Latest）的版本为 **`v0.2.5`**（源码标签 `v0.2.5` 指向提交 `6d505a6`），本机安装目录 `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 已热更新并运行包含 **「P0 ~ P7 全模块深度改进优化 + 额度小窗防遮挡与身份卡防闪烁 + 166px 紧凑卡片与顶部横条拖拽排序 + 养号 CLI 转正空白卡与幽灵『当前身份』卡根治」** 的最新正式版二进制（SHA-256: `D644D4B2DD889F534F81B7B8F622746FF824081E1D7B8E0241EE6D995E34DC09`）。
+更新时间：2026-11-02 EST（America/New_York）。最新正式发布（Latest）为 **`v0.2.6`**，源码标签固定到 **`8c1935a`**。本机已更新为该安装包内的同一份0.2.6宿主并在交互式桌面启动；安装宿主 SHA-256 为 `481c6d154f864688fbcd5b42a21b062cab226ed3507c3d3e84353263fcbaba1c`。本版包含已实现的 P0–P7 优化、HUD 防遮挡、5秒静默刷新、166px 卡片调序与幽灵空白卡修复。
+
+> **本轮交付已完成**：新安装包、校验文件和 Latest 发布已上线，本机102个应用文件与审计后的安装包内容对齐；源码CI、173项Bun、65项合成UI、19项针对性Rust、11项Python验证通过。核验范围见 `docs/RELEASE_VERIFICATION_0.2.6.md`。只更新程序资源，未执行真实身份删除、切换、迁移或代理重载；本机更新前后的现存CLI进程身份保持一致。
 
 > **给新会话的第一句话（必读）**：
 > 0. **历史记录（下述功能已由用户取消）：「单账号跨机可移植与朋友交接能力」调研与四阶段草案**：
@@ -34,7 +36,7 @@
 > 2. **此前已完成的对标 GitHub 高星开源项目（`EcoPaste`、`pot-desktop`、`yetone/magpie`、`ryoppippi/ccusage`、`Claude-Code-Usage-Monitor`、`Claude-Usage-Tracker`、`steipete/CodexBar`、`cc-switch`、`claude-gauge`、`claude-usage-widget`）的 P0 ~ P7 全模块优化与 PayPal 美国家宽分流加固均完整保留（详见下文第 2 节與 `docs/OPTIMIZATION_PLAN.md`）**。
 > 3. **关于「智能接力（Smart Relay）」的明确产品定调**：
 >    - 智能接力保持默认关闭（`enabled: false`），采用**「纯本地余量推荐 + 手动点击走原生安全切号流程（含跨账号四维消毒与 `claude.exe` 进程检查）」**，**严禁**开发本地 HTTP 反向代理网关或后台无确认自动偷换 Token。
-> 4. **请勿重复实现已交付功能，也不要擅自回退或移动 `v0.2.5` 标签及已上传安装包资产。**
+> 4. **请勿重复实现已交付功能，也不要擅自回退或移动 `v0.2.5` / `v0.2.6` 标签及已上传安装包资产。**
 
 新会话接手时请依次阅读：本文（`HANDOFF.md`） → 根目录 `AGENTS.md`（切勿提交到 Git） → 根目录 `CLAUDE.md`；已取消的 `docs/PORTABILITY_PLAN.md` 仅在需要查阅历史研究时阅读。修改具体模块前先读对应子目录的 `CLAUDE.md` 与源文件头注释（`[INPUT]/[OUTPUT]/[POS]/[PROTOCOL]`）。本文受 Git 跟踪，**严禁写入任何真实账号、邮箱、身份指纹、真实 IP、代理凭据、个人绝对路径或真实截图**。
 
@@ -52,7 +54,7 @@
 
 ---
 
-## 2. 已经完成了什么（v0.2.5 基线 + P0 ~ P7 全模块开源对标优化 + 本轮界面与转正流程根治完整清单）
+## 2. 已经完成了什么（v0.2.6 已发布；保留 v0.2.5 基线与后续优化记录）
 
 ### 2.00 历史调研（功能已取消）：单账号跨机可移植与朋友交接草案（`docs/PORTABILITY_PLAN.md`）
 1. **源码级五重壁垒定位**：
@@ -97,17 +99,16 @@
 
 ---
 
-## 3. 当前卡在哪（当前零阻塞，仅记录工作区状态与产品边界）
+## 3. 当前状态与剩余边界
 
-当前**没有任何代码、编译、测试或运行阻塞**。
-- **本机运行状态**：
-  - 最新编译的 Release 二进制（`src-tauri/target/release/claude-local.exe`，SHA-256: `D644D4B2DD889F534F81B7B8F622746FF824081E1D7B8E0241EE6D995E34DC09`）已热更新至 `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe`，并在交互式桌面会话（`SessionId 1`）中正常启动运行。
-  - 本机身份保险库（`%APPDATA%\ai.local.claude-local\identity-vault\identities.sqlite`）干净保留 **5 张正式 Pro 身份卡**与 **2 张养号卡**，0 张空白异常卡。
-- **当前 Git 工作区未提交改动说明**：
-  - `AGENTS.md`：用户本地规则文件，**按铁律永远保留在未暂存状态，绝不提交或还原**；
-  - `docs/PORTABILITY_PLAN.md`（本会话新增：单账号跨机可移植与朋友交接深度调研报告及四阶段实施方案）；
-  - `docs/OPTIMIZATION_PLAN.md`、`src/card-order.ts`、`src/card-order.test.ts`（新增）以及 `src-tauri/`、`src/`、`scripts/` 下的修改：包含 **P0 ~ P7 全模块开源对标优化**、**PayPal 支付域名分流加固**、**额度小窗防遮挡与身份卡防闪烁**、**166px 卡片与顶部横条拖拽排序** 以及 **养号 CLI 转正空白卡/幽灵卡根治**。
-  - 以上改动保持 `v0.2.5` 标签指向 `6d505a6` 不变，待用户后续指示后再决定是提交新 commit 还是打包新版本安装器。
+当前没有待完成的打包、上传或本机更新任务。
+
+- **发布**：`v0.2.6` / 源码 `8c1935a` 已为 Latest，GitHub两项资产的服务端摘要与本地产物一致；`v0.2.5` 的标签和资产保持不变。
+- **安装包**：`Claude-Local_0.2.6_x64-setup.exe`，`140,900,020`字节；SHA-256 `75ff03b772919c0968b6d466d484dc3e3020e7ce1f43f63d3462fedcebfb78ae`。
+- **本机对齐**：安装宿主与NSIS内宿主同为 `481c6d154f864688fbcd5b42a21b062cab226ed3507c3d3e84353263fcbaba1c`，应用payload共102个文件核对一致，11个替换文件已有备份。工作区未打包宿主为 `35fa14d418bc604dd8316992036e45d987877eb385fc78ee2195455d0ff2e186`，与包内宿主仅差Tauri规定的三字节bundle sentinel，不能直接把两种宿主哈希混用。
+- **用户资料**：本轮没有读取真实保险库来核对账号数量，也没有执行删除/切号/迁移。旧文档中的卡片数量不能当作本轮重新验收结果。程序资源更新和本机身份删除是独立操作。
+- **Git**：实现和发布元数据已提交并推送；交付回执作为后续文档提交，不移动发布标签。`AGENTS.md`仍是用户本地规则文件，保留未暂存，绝不提交或还原。
+- **未实施建议**：额外网络门禁、删除范围提示和配置健康检查没有纳入本次代码变更；取消的`.bagapack`方案不再是待办。
 
 ---
 
@@ -115,7 +116,7 @@
 
 1. **新会话启动后先听取用户指令**：
    - **单身份跨机导入/导出已取消**：不执行 `docs/PORTABILITY_PLAN.md` 的四阶段开发。朋友端沿用现有网络配置、环境核验与正常登录流程；没有为此次人工交接必须新增的业务功能。本机账号删除必须由用户完成必要确认，不能把本条产品决定视为 agent 操作真实账号或删除资料的授权。
-   - 若用户要求将当前已完成并验证的全部改进提交 Git commit 或打包新版本 NSIS 安装器（如 `v0.2.6` 或更新 `v0.2.5`），按标准流程执行（显式列出文件路径 `git add`，**严禁暂存 `AGENTS.md` 或 `.local/`**，打包前执行 29 项隐私探针扫描）。
+   - **0.2.6交付已闭环**：无需重复打包、上传或更新本机；新改动应使用新的补丁版本，不替换现有安装包。提交仍须显式列文件，严禁暂存`AGENTS.md`或`.local/`；发布必须核对实际审计报告中的隐私探针数量。
    - 若用户提出新的功能需求或界面微调，先阅读对应目录的 `CLAUDE.md` 与源文件头注释再动手。
 2. **远期可选储备方向（仅在用户明确要求时再启动，切勿自行开工）**：
    - **多槽位浏览器完整并行 20 项回环实测会话**：将 `Browser.session` 升级为 `HashMap<String, SlotSession>`。
@@ -167,6 +168,8 @@
 ---
 
 ## 6. 关键源码与文档速查索引
+
+- **0.2.6发布说明与交付核验**：`docs/RELEASE_NOTES_0.2.6.md`、`docs/RELEASE_VERIFICATION_0.2.6.md`。
 
 - **单账号跨机可移植与朋友交接历史研究（已取消，不作为实施指令）**：
   - `docs/PORTABILITY_PLAN.md`
