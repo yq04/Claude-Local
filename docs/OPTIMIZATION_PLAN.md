@@ -9,8 +9,8 @@
 
 > **2026-11-02 范围澄清**：用户取消的是 P3 中未实现的单身份加密导入/导出（早期称 `.clpack`，后续称 `.bagapack`）及跨机登录态搬运，不是取消本文件全部调研或既有功能。HUD、用量摘要、定向额度查询、智能接力和卡片交互等现有成果继续保留。P3 已交付的是“复制交接说明”，不能当作已实现的加密包；`statusLine` 自检等独立建议不因本次取消自动变成新待办，也未在本轮确认全部落地。下文早期阶段安排仅为历史记录，当前状态以 `HANDOFF.md` 和源码为准。
 
-> **编制时间**：2026-11-01  
-> **基准版本**：`v0.2.5`（含 PayPal/Braintree 美国家宽分流加固与额度小窗预热修复）  
+> **编制时间**：2026-11-01
+> **基准版本**：`v0.2.5`（含 PayPal/Braintree 美国家宽分流加固与额度小窗预热修复）
 > **核心原则**：在严格坚守 `Claude-Local` 既有安全铁律（绝不中断运行中 `claude.exe`、绝不写 `.claude.json`、绝不发起后台 OAuth 轮询、`Python` 独占写 `quota_ledger.json`、智能接力保持默认关闭且手动确认）的前提下，深度吸收 GitHub 同类高星开源项目的成熟工程实践与交互设计。
 
 ---
@@ -148,4 +148,3 @@
 | **第一阶段（立即执行）** | **P0 + P1**（额度小窗 Tauri v2 静态声明 + Capabilities ACL 修复 + Win11 透明去白边 + 位置记忆 + 时间刻度游标 + 托盘开关） | `capabilities/main.json`, `tauri*.conf.json`, `monitor_window.rs`, `floating-monitor.tsx/css/model.ts`, `ui_language.rs`, `main.rs` | 1. `bun x tsc --noEmit && bun test` 全绿；<br>2. `cargo test` 全绿；<br>3. 真机点击「额度小窗」与托盘菜单 100% 瞬开、数据实时刷新、四角无白边、胶囊态贴边丝滑、跨重启保留位置。 |
 | **第二阶段（已完成）** | **P2 + P3 + P4**（Markdown 统计简报导出 + 跨机移交防关联配置卡 + 支付 Cookie 预检提示） | `usage-export.ts`, `usage-statistics.tsx`, `identities.tsx`, `warming-cards.tsx`, `risk-verification.tsx` | 1. 新增单测覆盖导出脱敏与跨机移交清单生成；<br>2. 全程零中断 `claude.exe`，零真实信息入库。 |
 | **第三阶段（已完成）** | **P5 + P6 + P7**（智能接力深度审计修复 + 额度查询未知/过期定向批次 + 用量分析单次请求效率与多维排序 + 身份页无闪烁静默同步） | `smart-relay-model.ts`, `identity-online-quota.ts`, `floating-monitor-model.ts`, `floating-monitor.tsx`, `identities.tsx`, `settings.tsx`, `usage-statistics.tsx`, `usage-table.tsx`, `usage-export.ts` | 1. 修复 `inferred7d`/`inferred5h` 已回血账号分级，补齐 `affinityMode` 三态语义与账号池容量汇总条；<br>2. 在线额度弹窗新增「仅查未知/过期」定向查询；<br>3. 用量分析新增单次请求均值（`tok/req`、`$/req`）、峰值时段徽章、账号表五维排序与时段明细花费/缓存列；<br>4. 悬浮小窗保持纯净 3 指标卡底栏（不显示接力备选条防遮挡），主窗口支持穿透模式一键恢复交互与 5s 合并无闪烁静默本地额度同步。 |
-
