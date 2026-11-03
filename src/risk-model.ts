@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生只读环境快照（浏览器远程 DNS 锁、Mihomo 结构特征、网卡 RFC1918 候选）与三路边缘 trace 一致性实测结果。
- * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属、严格 RFC1918 校验、Mihomo strict-route 覆写片段、安全随机源缺失即失败的内存桥接凭据与双语提示词。
+ * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属、严格 RFC1918 校验、Mihomo strict-route 覆写片段、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段、安全随机源缺失即失败的内存桥接凭据与双语提示词。
  * [POS]: 风控验证纯模型层；不持有上游家宽密码、不落盘临时口令、不向公网暴露任何监听配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -817,7 +817,7 @@ export function buildDesktopDnsFixPrompt(opts: {
     return [
       `Please inspect and harden my local ${clientName} configuration to eliminate WebRTC leaks, DNS leaks, and KYC split-routing between claude.ai and withpersona.com.`,
       '1. Back Up & Persist Across Subscription Updates: Back up the active profile and place all changes in the persistent Global Extend Config (Merge) or Extend Script so subscription refreshes never overwrite them, preserving all existing nodes and subscriptions.',
-      '2. Unified KYC & Anti-Fraud Residential Routing: Route ALL of the following domains and DoH resolver IPs to the EXACT SAME static residential exit used by claude.ai (never transit/fallback nodes): claude.ai, claude.com, anthropic.com, clau.de, claudeusercontent.com, claudemcpcontent.com, withpersona.com, persona.com, persona.org, personacustomer.com, persona-cdn.com, stripe.com, stripe.network, stripecdn.com, stripe.global, paypal.com, paypalobjects.com, paypal-mktg.com, braintreegateway.com, braintree-api.com, hcaptcha.com, challenges.cloudflare.com, arkoselabs.com, funcaptcha.com, workos.com, authkit.app, sift.com, siftscience.com, sentry.io, intercom.io, intercomcdn.com, intercomassets.com, statsig.com, statsigapi.net, featuregates.org, prodregistryv2.org, ipquery.io, ippure.com, plus IP-CIDR 1.1.1.1/32, 1.0.0.1/32, 8.8.8.8/32, 8.8.4.4/32 (no-resolve) and Fake-IP leak guard IP-CIDR,198.18.0.0/15,REJECT,no-resolve. Keep localhost, 127.0.0.1 and ::1 DIRECT.',
+      '2. Unified KYC & Anti-Fraud Residential Routing: Route ALL of the following domains and DoH resolver IPs to the EXACT SAME static residential exit used by claude.ai (never transit/fallback nodes): claude.ai, claude.com, anthropic.com, clau.de, claudeusercontent.com, claudemcpcontent.com, datadoghq.com, withpersona.com, persona.com, persona.org, personacustomer.com, persona-cdn.com, stripe.com, stripe.network, stripecdn.com, stripe.global, paypal.com, paypalobjects.com, paypal-mktg.com, braintreegateway.com, braintree-api.com, hcaptcha.com, challenges.cloudflare.com, arkoselabs.com, funcaptcha.com, workos.com, authkit.app, sift.com, siftscience.com, sentry.io, intercom.io, intercomcdn.com, intercomassets.com, statsig.com, statsigapi.net, featuregates.org, prodregistryv2.org, openai.com, chatgpt.com, oaistatic.com, oaiusercontent.com, auth0.com, ipquery.io, ippure.com, plus IP-CIDR 1.1.1.1/32, 1.0.0.1/32, 8.8.8.8/32, 8.8.4.4/32 (no-resolve) and Fake-IP leak guard IP-CIDR,198.18.0.0/15,REJECT,no-resolve. Keep localhost, 127.0.0.1 and ::1 DIRECT.',
       '3. Block WebRTC STUN/TURN, QUIC UDP & Dual-Stack IPv6 Leaks: Set top-level `ipv6: false` and `dns.ipv6: false` (preventing native IPv6 bypass when the residential SOCKS5 exit is IPv4-only), and add explicit rules rejecting UDP ports 443 (QUIC), 3478, 19302 and 5349 (WebRTC STUN/TURN) plus `DOMAIN-KEYWORD,stun,REJECT` (`AND,((NETWORK,UDP),(DST-PORT,443)),REJECT`, `AND,((NETWORK,UDP),(DST-PORT,3478)),REJECT`, `AND,((NETWORK,UDP),(DST-PORT,19302)),REJECT`, `AND,((NETWORK,UDP),(DST-PORT,5349)),REJECT`) so neither TUN nor system browsers can leak real ISP UDP/WebRTC candidates.',
       '4. Eliminate Domestic Plaintext DNS Leaks (Campus/Enterprise Safe): Enable `sniffer.enable: true` (`parse-pure-ip: true`), `dns.respect-rules: true`, and `dns.direct-nameserver-follow-policy: true`; configure `proxy-server-nameserver` (`system`, `https://223.5.5.5/dns-query`, `https://1.12.12.12/dns-query`) strictly for resolving proxy server hostnames; use IP-literal encrypted remote DoH (`https://1.1.1.1/dns-query`, `https://8.8.8.8/dns-query` — avoids campus UDP:53 bootstrap hangs) for non-CN / Claude / Persona domains while keeping `geosite:cn,private` on `system` + domestic DoH via `nameserver-policy`; and set `tun.strict-route: true` with `inet4-route-exclude-address: [127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` and `dns-hijack: [any:53, tcp://any:53]` so multi-homed Windows adapters never leak DNS while intranet/domestic traffic stays fast.',
       listenerLine,
@@ -835,7 +835,7 @@ export function buildDesktopDnsFixPrompt(opts: {
   return [
     `请检查并加固我本机的 ${clientName} 配置，彻底根治 WebRTC 穿透泄露、DNS 抢答泄露以及 claude.ai 与 KYC 核验服务 withpersona.com 跨域名分流不一致的问题：`,
     '1. 先备份并写入持久化覆写层：先完整备份当前生效配置文件与全局扩展覆写配置/脚本（Merge / Script），将修改写入不会被订阅刷新冲掉的扩展覆写层，保留原有订阅、节点与无关分流规则。',
-    '2. 补齐 KYC 与风控全链路同源家宽分流：将以下域名与远程 DoH 解析器 IP 全部强制指向与 claude.ai 完全相同的静态住宅出口策略组（严禁漏入默认中转节点或直连）：claude.ai、claude.com、anthropic.com、clau.de、claudeusercontent.com、claudemcpcontent.com、withpersona.com、persona.com、persona.org、personacustomer.com、persona-cdn.com、stripe.com、stripe.network、stripecdn.com、stripe.global、paypal.com、paypalobjects.com、paypal-mktg.com、braintreegateway.com、braintree-api.com、hcaptcha.com、challenges.cloudflare.com、arkoselabs.com、funcaptcha.com、workos.com、authkit.app、sift.com、siftscience.com、sentry.io、intercom.io、intercomcdn.com、intercomassets.com、statsig.com、statsigapi.net、featuregates.org、prodregistryv2.org、ipquery.io、ippure.com，以及 `IP-CIDR,1.1.1.1/32`、`IP-CIDR,1.0.0.1/32`、`IP-CIDR,8.8.8.8/32`、`IP-CIDR,8.8.4.4/32`（`no-resolve`）和防 Fake-IP 漏出规则 `IP-CIDR,198.18.0.0/15,REJECT,no-resolve`；同时确保 localhost、127.0.0.1、::1 本地回调保持 DIRECT。',
+    '2. 补齐 KYC 与风控全链路同源家宽分流：将以下域名与远程 DoH 解析器 IP 全部强制指向与 claude.ai 完全相同的静态住宅出口策略组（严禁漏入默认中转节点或直连）：claude.ai、claude.com、anthropic.com、clau.de、claudeusercontent.com、claudemcpcontent.com、datadoghq.com、withpersona.com、persona.com、persona.org、personacustomer.com、persona-cdn.com、stripe.com、stripe.network、stripecdn.com、stripe.global、paypal.com、paypalobjects.com、paypal-mktg.com、braintreegateway.com、braintree-api.com、hcaptcha.com、challenges.cloudflare.com、arkoselabs.com、funcaptcha.com、workos.com、authkit.app、sift.com、siftscience.com、sentry.io、intercom.io、intercomcdn.com、intercomassets.com、statsig.com、statsigapi.net、featuregates.org、prodregistryv2.org、openai.com、chatgpt.com、oaistatic.com、oaiusercontent.com、auth0.com、ipquery.io、ippure.com，以及 `IP-CIDR,1.1.1.1/32`、`IP-CIDR,1.0.0.1/32`、`IP-CIDR,8.8.8.8/32`、`IP-CIDR,8.8.4.4/32`（`no-resolve`）和防 Fake-IP 漏出规则 `IP-CIDR,198.18.0.0/15,REJECT,no-resolve`；同时确保 localhost、127.0.0.1、::1 本地回调保持 DIRECT。',
     '3. 阻断 WebRTC STUN/TURN 穿透、QUIC UDP 旁路与双栈 IPv6 泄露：显式设置顶层 `ipv6: false` 与 `dns.ipv6: false`（防止纯 IPv4 静态家宽下本地运营商原生 IPv6 旁路抢答），并添加 `AND,((NETWORK,UDP),(DST-PORT,443)),REJECT`（阻断 HTTP/3 QUIC）以及 `AND,((NETWORK,UDP),(DST-PORT,3478)),REJECT`、`AND,((NETWORK,UDP),(DST-PORT,19302)),REJECT`、`AND,((NETWORK,UDP),(DST-PORT,5349)),REJECT`、`DOMAIN-KEYWORD,stun,REJECT`（阻断 WebRTC STUN/TURN 探测），防止浏览器在 TUN 或直连下通过 UDP 暴露本机运营商真实公网 IP。',
     '4. 根治国内明文 DNS 抢答泄露（兼容校园网/企业内网）：开启 `sniffer.enable: true`（`parse-pure-ip: true`）、`dns.respect-rules: true` 与 `dns.direct-nameserver-follow-policy: true`；配置 `proxy-server-nameserver`（`system`、`https://223.5.5.5/dns-query`、`https://1.12.12.12/dns-query`）仅用于解析节点服务器域名；将海外及 Claude/Persona 域名的 `nameserver` 切换至纯 IP 远程加密 DoH（`https://1.1.1.1/dns-query`、`https://8.8.8.8/dns-query`，规避校园网封锁 UDP:53 导致的域名 DoH 引导死锁），并在 `nameserver-policy` 中让 `geosite:cn,private` 保留 `system` + 国内 DoH；若启用了 TUN，开启 `strict-route: true` 并配置 `inet4-route-exclude-address: [127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` 与 `dns-hijack: [any:53, tcp://any:53]`，既阻断双网卡明文 DNS 泄露又确保内网与国内直连秒开。',
     listenerLineZh,
@@ -985,6 +985,7 @@ export function buildDesktopMihomoAntiLeakYaml(port = DEFAULT_DEDICATED_LISTENER
       '  - DOMAIN-SUFFIX,clau.de,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,claudeusercontent.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,claudemcpcontent.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,datadoghq.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,withpersona.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,persona.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,persona.org,<你的静态家宽节点名称>',
@@ -1015,8 +1016,106 @@ export function buildDesktopMihomoAntiLeakYaml(port = DEFAULT_DEDICATED_LISTENER
       '  - DOMAIN-SUFFIX,statsigapi.net,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,featuregates.org,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,prodregistryv2.org,<你的静态家宽节点名称>',
+      '  # 4. Claude Code 协同调用 Codex / OpenAI 时的同源出口防割裂',
+      '  - DOMAIN-SUFFIX,openai.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,chatgpt.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,oaistatic.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,oaiusercontent.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,auth0.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,ipquery.io,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,ippure.com,<你的静态家宽节点名称>',
     ].join('\n'),
+  };
+}
+
+export function normalizeProxyEndpoint(raw: string | null | undefined): {
+  scheme: string;
+  hostPort: string;
+} | null {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return null;
+  try {
+    const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)
+      ? trimmed
+      : `http://${trimmed}`;
+    const parsed = new URL(withScheme);
+    const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
+    const rawHost = parsed.hostname.toLowerCase();
+    const host = rawHost === 'localhost' ? '127.0.0.1' : rawHost;
+    const port = parsed.port || (scheme === 'https' ? '443' : scheme === 'http' ? '80' : '1080');
+    if (!host || !port) return null;
+    return {scheme, hostPort: `${host}:${port}`};
+  } catch {
+    return null;
+  }
+}
+
+export function areCliAndBrowserProxiesAligned(
+  browserProxy: string | null | undefined,
+  cliProxy: string | null | undefined,
+): boolean {
+  const cliRaw = (cliProxy ?? '').trim();
+  if (!cliRaw) return true;
+  const browserRaw = (browserProxy ?? '').trim();
+  if (!browserRaw) return false;
+  if (browserRaw === cliRaw) return true;
+  const b = normalizeProxyEndpoint(browserRaw);
+  const c = normalizeProxyEndpoint(cliRaw);
+  if (!b || !c) return browserRaw === cliRaw;
+  // On the same host:port (e.g. Mihomo mixed listener 127.0.0.1:7899),
+  // browser SOCKS5 (remote DNS lock) and CLI HTTP/HTTPS are dual-protocol aligned.
+  if (
+    b.hostPort === c.hostPort &&
+    (b.scheme === 'socks5' || b.scheme === 'socks5h') &&
+    (c.scheme === 'http' || c.scheme === 'https' || c.scheme === 'socks5' || c.scheme === 'socks5h')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function toBrowserSocks5ProxyFromCli(cliProxy: string | null | undefined): string {
+  const trimmed = (cliProxy ?? '').trim();
+  if (!trimmed) return '';
+  const parsed = normalizeProxyEndpoint(trimmed);
+  if (!parsed) return trimmed;
+  return `socks5://${parsed.hostPort}`;
+}
+
+export function toCliHttpProxy(proxyUrl: string | null | undefined): string {
+  const trimmed = (proxyUrl ?? '').trim();
+  if (!trimmed) return `http://127.0.0.1:${DEFAULT_DEDICATED_LISTENER_PORT}`;
+  const parsed = normalizeProxyEndpoint(trimmed);
+  if (!parsed) return trimmed;
+  return `http://${parsed.hostPort}`;
+}
+
+export function buildClaudeCliAntiLeakSettingsJson(port = DEFAULT_DEDICATED_LISTENER_PORT): {
+  configText: string;
+  filename: string;
+} {
+  const safePort = isValidBridgePort(port) ? port : DEFAULT_DEDICATED_LISTENER_PORT;
+  const proxyUrl = `http://127.0.0.1:${safePort}`;
+  const noProxy = 'localhost,127.0.0.1,::1,*.local,.local,169.254.0.0/16,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16';
+  const obj = {
+    env: {
+      HTTP_PROXY: proxyUrl,
+      http_proxy: proxyUrl,
+      HTTPS_PROXY: proxyUrl,
+      https_proxy: proxyUrl,
+      ALL_PROXY: proxyUrl,
+      all_proxy: proxyUrl,
+      GRPC_PROXY: proxyUrl,
+      grpc_proxy: proxyUrl,
+      NO_PROXY: noProxy,
+      no_proxy: noProxy,
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      DISABLE_TELEMETRY: '1',
+      DISABLE_ERROR_REPORTING: '1',
+    },
+  };
+  return {
+    filename: 'claude-settings-env-override.json',
+    configText: JSON.stringify(obj, null, 2),
   };
 }

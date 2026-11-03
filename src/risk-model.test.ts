@@ -2,6 +2,8 @@ import {expect, test} from 'bun:test';
 import {translate} from './i18n';
 import {encodeQrMatrix, renderQrSvgPath} from './qrcode-svg';
 import {
+  areCliAndBrowserProxiesAligned,
+  buildClaudeCliAntiLeakSettingsJson,
   buildCloseLanBridgePrompt,
   buildDesktopDnsFixPrompt,
   buildDesktopMihomoAntiLeakYaml,
@@ -19,6 +21,8 @@ import {
   maskIpAddress,
   parsePortInput,
   summarizeRiskChecks,
+  toBrowserSocks5ProxyFromCli,
+  toCliHttpProxy,
   type ConsistencyProbeReport,
   type LocalRiskSnapshot,
 } from './risk-model';
@@ -506,5 +510,39 @@ test('buildMihomoStrictRouteSnippet and strict-route detection flag tun_strict_r
   expect(desktopYaml.configText).toContain('braintreegateway.com');
   expect(desktopYaml.configText).toContain('featuregates.org');
   expect(desktopYaml.configText).toContain('intercomcdn.com');
+  expect(desktopYaml.configText).toContain('datadoghq.com');
+  expect(desktopYaml.configText).toContain('openai.com');
+  expect(desktopYaml.configText).toContain('chatgpt.com');
   expect(desktopYaml.configText).toContain('8.8.4.4/32');
+});
+
+test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mixed port and preserves socks5:// on sync', () => {
+  expect(areCliAndBrowserProxiesAligned('socks5://127.0.0.1:7899', 'http://127.0.0.1:7899')).toBe(true);
+  expect(areCliAndBrowserProxiesAligned('socks5://localhost:7899', 'http://127.0.0.1:7899')).toBe(true);
+  expect(areCliAndBrowserProxiesAligned('socks5h://127.0.0.1:7899', 'https://127.0.0.1:7899')).toBe(true);
+  expect(areCliAndBrowserProxiesAligned('socks5://127.0.0.1:7899', null)).toBe(true);
+  expect(areCliAndBrowserProxiesAligned('socks5://127.0.0.1:7899', 'http://127.0.0.1:7890')).toBe(false);
+  expect(areCliAndBrowserProxiesAligned('', 'http://127.0.0.1:7899')).toBe(false);
+
+  expect(toBrowserSocks5ProxyFromCli('http://127.0.0.1:7890')).toBe('socks5://127.0.0.1:7890');
+  expect(toBrowserSocks5ProxyFromCli('http://localhost:7899')).toBe('socks5://127.0.0.1:7899');
+  expect(toCliHttpProxy('socks5://127.0.0.1:7899')).toBe('http://127.0.0.1:7899');
+  expect(toCliHttpProxy('socks5://localhost:17899')).toBe('http://127.0.0.1:17899');
+
+  const cliJson = buildClaudeCliAntiLeakSettingsJson(7899);
+  expect(cliJson.filename).toBe('claude-settings-env-override.json');
+  const parsed = JSON.parse(cliJson.configText);
+  expect(parsed.env.HTTP_PROXY).toBe('http://127.0.0.1:7899');
+  expect(parsed.env.http_proxy).toBe('http://127.0.0.1:7899');
+  expect(parsed.env.HTTPS_PROXY).toBe('http://127.0.0.1:7899');
+  expect(parsed.env.https_proxy).toBe('http://127.0.0.1:7899');
+  expect(parsed.env.ALL_PROXY).toBe('http://127.0.0.1:7899');
+  expect(parsed.env.all_proxy).toBe('http://127.0.0.1:7899');
+  expect(parsed.env.GRPC_PROXY).toBe('http://127.0.0.1:7899');
+  expect(parsed.env.grpc_proxy).toBe('http://127.0.0.1:7899');
+  expect(parsed.env.NO_PROXY).toContain('169.254.0.0/16');
+  expect(parsed.env.no_proxy).toBe(parsed.env.NO_PROXY);
+  expect(parsed.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
+  expect(parsed.env.DISABLE_TELEMETRY).toBe('1');
+  expect(parsed.env.DISABLE_ERROR_REPORTING).toBe('1');
 });

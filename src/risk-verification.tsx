@@ -14,6 +14,7 @@ import {useI18n} from './i18n';
 import type {Page} from './navigation';
 import {encodeQrMatrix, renderQrSvgPath} from './qrcode-svg';
 import {
+  buildClaudeCliAntiLeakSettingsJson,
   buildCloseLanBridgePrompt,
   buildDesktopDnsFixPrompt,
   buildDesktopMihomoAntiLeakYaml,
@@ -338,7 +339,9 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
 
   const srAntiLeakConf = useMemo(() => buildShadowrocketUniversalAntiLeakConf(), []);
   const desktopYaml = useMemo(() => buildDesktopMihomoAntiLeakYaml(safePort), [safePort]);
+  const cliSettingsJson = useMemo(() => buildClaudeCliAntiLeakSettingsJson(safePort), [safePort]);
   const [showDesktopYamlPreview, setShowDesktopYamlPreview] = useState(false);
+  const [showCliSettingsPreview, setShowCliSettingsPreview] = useState(false);
   const srStandaloneUri = useMemo(() => {
     const p = parsePortInput(srPort);
     return buildShadowrocketSocksQrUri({
@@ -546,6 +549,13 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               <Button
                 variant="secondary"
                 size="small"
+                onClick={() => setShowCliSettingsPreview(prev => !prev)}
+              >
+                {showCliSettingsPreview ? t('risk.action.hideCliSettingsJson') : t('risk.action.showCliSettingsJson')}
+              </Button>
+              <Button
+                variant="secondary"
+                size="small"
                 disabled={copyingId !== ''}
                 leftIcon={copiedId === 'desktop-fix' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
                 onClick={() => void copyText('desktop-fix', desktopFixPrompt)}
@@ -572,7 +582,25 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               <pre className="risk-conf-preview">{desktopYaml.configText}</pre>
             </div>
           )}
-          {(copiedId === 'desktop-fix' || copiedId === 'desktop-yaml') && (
+          {showCliSettingsPreview && (
+            <div className="risk-conf-preview-wrap">
+              <div className="risk-conf-preview-head">
+                <strong>{cliSettingsJson.filename}</strong>
+                <Button
+                  variant="secondary"
+                  size="small"
+                  disabled={copyingId !== ''}
+                  leftIcon={copiedId === 'cli-settings-json' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
+                  onClick={() => void copyText('cli-settings-json', cliSettingsJson.configText)}
+                >
+                  {t('risk.action.copyCliSettingsJson')}
+                </Button>
+              </div>
+              <p className="risk-remediation-hint">{t('risk.audit.cliSettingsMergeHint')}</p>
+              <pre className="risk-conf-preview">{cliSettingsJson.configText}</pre>
+            </div>
+          )}
+          {(copiedId === 'desktop-fix' || copiedId === 'desktop-yaml' || copiedId === 'cli-settings-json') && (
             <p className="risk-copy-feedback" role="status">
               {t('risk.feedback.copied')}
             </p>

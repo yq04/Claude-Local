@@ -1579,6 +1579,8 @@ fn extract_settings_meta(value: &Value) -> (Option<String>, bool) {
         "all_proxy",
         "HTTP_PROXY",
         "http_proxy",
+        "GRPC_PROXY",
+        "grpc_proxy",
     ] {
         let candidate = value
             .pointer(&format!("/env/{key}"))

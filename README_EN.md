@@ -15,7 +15,7 @@
 
 Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://github.com/liseami)) and independently maintained, retaining the original contributors' copyright and [MIT license](LICENSE) · 100% Local-First · Zero Cloud Credential Hosting · Never Force-Kills Running `claude.exe` Sessions
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.2.6-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.6)
+[![Latest Release](https://img.shields.io/badge/Release-v0.2.7-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.7)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@ Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://git
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.6/Claude-Local_0.2.6_x64-setup.exe"><strong>⬇️ Download v0.2.6 Installer (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.7/Claude-Local_0.2.7_x64-setup.exe"><strong>⬇️ Download v0.2.7 Installer (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.6"><strong>✨ v0.2.6 Release Notes</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.7"><strong>✨ v0.2.7 Release Notes</strong></a>
   ·
   <a href="#-why-claude-local-solving-the-4-multi-account-anti-ban-pain-points"><strong>🔥 Anti-Ban Core Architecture</strong></a>
   ·
@@ -83,7 +83,7 @@ For developers running **Claude Code CLI** heavily on Windows and managing multi
 
 ## ✨ Eight Core Capability Pillars
 
-**New in v0.2.6**: `166×286` identity/warming cards with drag and keyboard ordering, silent local sync every 5 seconds, blank-card promotion fixes, HUD click-through and unobstructed bottom metrics, relay pool capacity/three-state affinity, unknown/stale quota queries, and per-request analytics with Markdown/TSV export. [Full release notes](docs/RELEASE_NOTES_0.2.6.md).
+**New in v0.2.7**: Same-exit Mihomo co-routing for Claude Code direct telemetry (`datadoghq.com`) and OpenAI Codex CLI (`openai.com` / `chatgpt.com` / `oaistatic.com` / `oaiusercontent.com` / `auth0.com`), same-port dual-protocol proxy alignment (`socks5://` Browser vs. `http://` CLI), one-click CLI anti-leak `settings.json` snippet with safe merge hint, and native `GRPC_PROXY` vault archiving. [Full release notes](docs/RELEASE_NOTES_0.2.7.md).
 
 Full-vault `.clbackup` backup and Copy Handoff Spec remain available. Single-identity encrypted import/export and `.bagapack` portable identity packages are cancelled; handoff specs copy environment guidance only. Environment checks do not guarantee freedom from account enforcement.
 
@@ -187,29 +187,30 @@ While preserving 100% compatibility with existing `.baga` vaults and browser see
 
 ## 📦 Download, Installation & Release History
 
-### 1. Latest Windows x64 Installer (`v0.2.6`)
+### 1. Latest Windows x64 Installer (`v0.2.7`)
 
 | Asset | Platform | File Size | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.2.6_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.6/Claude-Local_0.2.6_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | See Release assets | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.2.6/SHA256SUMS.txt) |
+| **[Claude-Local_0.2.7_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.7/Claude-Local_0.2.7_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | See Release assets | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.2.7/SHA256SUMS.txt) |
 
-Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.2.6 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.6):
+Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.2.7 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.7):
 
 ```powershell
-Get-FileHash .\Claude-Local_0.2.6_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Claude-Local_0.2.7_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. Installation & Non-Disruptive Upgrade Notes
 
 1. **Install Location & Identifiers**: Per-user NSIS installer defaulting to `%LOCALAPPDATA%\Programs\Claude-Local`; main executable `claude-local.exe`, bundle identifier `ai.local.claude-local`, companion browser registration `Claude-Local-Browser`.
 2. **User Data Root**: All encrypted vaults, master keys, quota/usage ledgers, appearance settings, and browser profiles live under `%APPDATA%\ai.local.claude-local`.
-3. **Seamless Upgrades**: Upgrading from `0.1.x` or `0.2.x` to `0.2.6` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
+3. **Seamless Upgrades**: Upgrading from `0.1.x` or `0.2.x` to `0.2.7` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
 
-### 3. Public Release Series (`0.1.0` – `0.2.6`)
+### 3. Public Release Series (`0.1.0` – `0.2.7`)
 
 | Version | Date | Highlights | Documentation |
 | :--- | :--- | :--- | :--- |
-| **`v0.2.6`** *(Latest)* | 2026-11-02 | Compact drag/keyboard-reorderable cards, silent 5-second local sync, blank-card promotion fixes, HUD click-through and unobstructed metrics, relay pool capacity, targeted quota queries, per-request analytics and Markdown/TSV exports | [Release Notes](docs/RELEASE_NOTES_0.2.6.md) |
+| **`v0.2.7`** *(Latest)* | 2026-11-03 | CLI telemetry (`datadoghq.com`) & OpenAI Codex co-routing rules, same-port dual-protocol (`socks5://` Browser vs. `http://` CLI) alignment, one-click CLI anti-leak `settings.json` snippet, and native `GRPC_PROXY` vault archiving | [Release Notes](docs/RELEASE_NOTES_0.2.7.md) |
+| **`v0.2.6`** | 2026-11-02 | Compact drag/keyboard-reorderable cards, silent 5-second local sync, blank-card promotion fixes, HUD click-through and unobstructed metrics, relay pool capacity, targeted quota queries, per-request analytics and Markdown/TSV exports | [Release Notes](docs/RELEASE_NOTES_0.2.6.md) |
 | **`v0.2.5`** | 2026-11-01 | **End-to-end anti-ban & KYC/WebRTC/IPv6/DNS hardening (`ipv6: false` + Persona/Stripe/Sentry/WorkOS residential routing + `--accept-lang` & `dns_prefetching` lockdown)**, **persistent 20-item browser verification across close/tab switches + real 32-bit FNV-1a Canvas pixel hash**, **warming card IANA timezone drift clarity**, and **redesigned Quota HUD (real 5h cache hit rate + exhaustion ETA) & Usage Analytics** | [Release Notes](docs/RELEASE_NOTES_0.2.5.md) |
 | **`v0.2.4`** | 2026-10-31 | Magpie-inspired Multi-Account Smart Relay & Rotation (default OFF, 5 routing strategies + preferred hysteresis recovery), Companion Browser WebRTC Network Limiter lockdown + One-Click Desktop Clash Anti-Leak Override YAML, Official API USD Cost (`$`) & Cache Savings Analytics, 2-column Shadowrocket QR bridge, and one-click CLI browser return | [Release Notes](docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md) |
 | **`v0.2.3`** | 2026-10-30 | On-demand non-blocking Companion Browser Kill-Switch, layered `strict-route` remediation guide, warming card country/timezone lock & pre-open drift check, stage SOP reference, pace hints, and full-chain encrypted backup extension | [Release Notes](docs/RELEASE_NOTES_0.2.3_SECURITY.md) · [Verification](docs/RELEASE_VERIFICATION_0.2.3_SECURITY.md) |

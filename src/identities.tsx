@@ -32,6 +32,7 @@ import {usePageRefresh, type IdentityReviewRequest} from './app-events';
 import {formatObservationAge, quotaObservationAge} from './identity-list';
 import {serializeIdentityDiagnostic} from './identity-diagnostics';
 import {connectionHistory, IdentityConnections, isValidQuotaTargetSubset} from './identity-connections';
+import {toBrowserSocks5ProxyFromCli, toCliHttpProxy} from './risk-model';
 import {MONITOR_BUS_CHANNEL, postMonitorBusMessage, type MonitorBusMessage, type MonitorWindowState} from './floating-monitor-model';
 import {
   useSmartRelayConfig,
@@ -1464,7 +1465,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     const shownEmail = meta?.email ? maskEmailAddress(meta.email, prefs.privacyMask) : (locale === 'zh' ? '未记录' : 'Not recorded');
     const planLabel = meta?.plan ? meta.plan.toUpperCase() : 'CLI';
     const profileKey = meta?.quota_identity ? `baga:${meta.quota_identity.slice(0, 12)}` : `slot:${accountId}`;
-    const proxyEndpoint = (!prefs.privacyMask && meta?.proxy) ? meta.proxy : 'socks5://127.0.0.1:7899';
+    const rawProxy = (!prefs.privacyMask && meta?.proxy) ? meta.proxy : 'socks5://127.0.0.1:7899';
+    const browserProxyEndpoint = toBrowserSocks5ProxyFromCli(rawProxy) || 'socks5://127.0.0.1:7899';
+    const cliProxyEndpoint = toCliHttpProxy(rawProxy);
     const expiryYmd = formatSubscriptionExpiryBadge(meta)?.fullYmd || (locale === 'zh' ? '未设置' : 'Not set');
     const lines = locale === 'zh'
       ? [
@@ -1472,7 +1475,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           `- **身份标识**: ${shownLabel} (${planLabel}) · ${shownEmail}`,
           `- **浏览器指纹绑定**: \`${profileKey}\` (保持同一 .baga 归档与固定指纹种子)`,
           '- **目标区域 / 时区 / 语言**: `US · America/Los_Angeles · en-US`',
-          `- **推荐本地代理监听**: \`${proxyEndpoint}\` (零 WebRTC / DNS 泄漏)`,
+          `- **推荐本地代理监听**: 浏览器 \`${browserProxyEndpoint}\` · CLI \`${cliProxyEndpoint}\` (同端口双协议分轨，零 WebRTC / DNS 泄漏)`,
           `- **订阅到期日**: ${expiryYmd}`,
           '- **抗封铁律 (单机单活)**: 严禁两台设备同时在线或并发发起 CLI/网页请求；交接前请先在旧设备停止 `claude.exe` 并等待 5–10 分钟后再在新设备挂载同一出口 IP。',
         ]
@@ -1481,7 +1484,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           `- **Identity**: ${shownLabel} (${planLabel}) · ${shownEmail}`,
           `- **Browser Profile Binding**: \`${profileKey}\` (preserve .baga archive & deterministic fingerprint seed)`,
           '- **Target Region / Timezone / Locale**: `US · America/Los_Angeles · en-US`',
-          `- **Recommended Local Proxy Listener**: \`${proxyEndpoint}\` (zero WebRTC / DNS leak)`,
+          `- **Recommended Local Proxy Listener**: Browser \`${browserProxyEndpoint}\` · CLI \`${cliProxyEndpoint}\` (same-port dual-protocol split, zero WebRTC / DNS leak)`,
           `- **Subscription Expiry**: ${expiryYmd}`,
           '- **Anti-Ban Rule (1-Device-at-a-Time)**: Never run CLI or web sessions on two machines simultaneously; stop `claude.exe` on the source machine and wait 5–10 minutes before mounting the same residential exit IP on the target machine.',
         ];

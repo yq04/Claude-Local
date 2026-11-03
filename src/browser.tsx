@@ -16,6 +16,7 @@ import { formatBytes } from './cleaner-model';
 import { usePageRefresh } from './app-events';
 import {maskDisplayName, usePreferences} from './settings-model';
 import {useBrowserRuntime} from './use-browser-runtime';
+import {areCliAndBrowserProxiesAligned, toBrowserSocks5ProxyFromCli} from './risk-model';
 
 export function BrowserPanel({ onBusy }: {
     onBusy?: (busy: boolean) => void;
@@ -203,17 +204,17 @@ export function BrowserPanel({ onBusy }: {
                     {!!state && !state.cli_expected_identity && <p className="identity-policy-hint">{t('browser.cliIdentityUnavailable')}</p>}
                 </div>
                 {((state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status)) ||
-                  (state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim())) && (
+                  (state?.identity?.cli_proxy && !areCliAndBrowserProxiesAligned(draft?.proxy, state.identity.cli_proxy))) && (
                     <div className="browser-hero-body">
                         {state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status) && (
                             <p className="identity-policy-hint">
                                 {t(`browserSafety.status_${state.identity.status}`)}
                             </p>
                         )}
-                        {state?.identity?.cli_proxy && (draft?.proxy || '').trim() !== state.identity.cli_proxy.trim() && (
+                        {state?.identity?.cli_proxy && !areCliAndBrowserProxiesAligned(draft?.proxy, state.identity.cli_proxy) && (
                             <p className="identity-policy-hint">
                                 {t("browserSafety.cliProxyMismatch", { cliProxy: state.identity.cli_proxy, browserProxy: (draft?.proxy || '').trim() || t("browserSafety.proxyManaged") })}{' '}
-                                <Button variant="secondary" size="small" disabled={disabled} onClick={() => { edit('proxy', state?.identity?.cli_proxy || ''); setAdvancedOpen(true); }}>{t("browserSafety.syncCliProxy")}</Button>
+                                <Button variant="secondary" size="small" disabled={disabled} onClick={() => { edit('proxy', toBrowserSocks5ProxyFromCli(state?.identity?.cli_proxy)); setAdvancedOpen(true); }}>{t("browserSafety.syncCliProxy")}</Button>
                             </p>
                         )}
                     </div>

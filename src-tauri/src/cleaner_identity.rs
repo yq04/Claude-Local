@@ -39,10 +39,12 @@ pub(crate) const SETTINGS_IDENTITY_KEYS: &[&str] = &[
     "env.HTTP_PROXY",
     "env.HTTPS_PROXY",
     "env.ALL_PROXY",
+    "env.GRPC_PROXY",
     "env.NO_PROXY",
     "env.http_proxy",
     "env.https_proxy",
     "env.all_proxy",
+    "env.grpc_proxy",
     "env.no_proxy",
     "apiKeyHelper",
 ];
