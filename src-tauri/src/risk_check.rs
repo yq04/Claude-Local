@@ -1,5 +1,5 @@
-// [INPUT]: 当前绑定浏览器快照、本机网卡、当前用户已知代理内核的只读配置投影与手动触发的三路 trace。
-// [OUTPUT]: 带配置来源/解析不确定性的 DNS 结构诊断、本机 TUN/明文 DNS 布尔状态、同上下文的遮罩浏览器归属、安全内网候选与绑定上下文一致的跨域出口结果。
+// [INPUT]: 当前绑定浏览器快照、本机网卡、当前用户已知代理内核的只读配置投影、Claude CLI 只读遥测/MCP 安全边界与手动触发的三路 trace。
+// [OUTPUT]: 带配置来源/解析不确定性的 DNS 结构诊断、本机 TUN/明文 DNS 布尔状态、CLI 遥测护盾/MCP 供应链计数、同上下文的遮罩浏览器归属、安全内网候选与绑定上下文一致的跨域出口结果。
 // [POS]: 风控验证原生只读边界；绝不读取或输出任何代理密码、节点域名、订阅地址或账号凭据，不修改系统设置或中断运行进程。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -43,9 +43,24 @@ pub struct MihomoAudit {
     pub dns_has_nameserver_policy: bool,
     pub has_claude_rules: bool,
     pub has_persona_rules: bool,
+    #[serde(default)]
+    pub has_telemetry_rules: bool,
     pub has_quic_reject: bool,
     pub has_geoip_cn: bool,
     pub dedicated_listener_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CliSecurityAudit {
+    pub settings_present: bool,
+    pub telemetry_shield_active: bool,
+    pub proxy_env_complete: bool,
+    pub socks5_in_cli_env: bool,
+    pub has_custom_hooks_or_helpers: bool,
+    pub unpinned_npx_count: usize,
+    pub remote_http_mcp_count: usize,
+    pub windows_bare_npx_count: usize,
+    pub pending_failed_telemetry_files: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -71,6 +86,8 @@ pub struct LocalRiskSnapshot {
     pub browser: BrowserDnsGuard,
     pub mihomo: MihomoAudit,
     pub system: SystemNetworkAudit,
+    #[serde(default)]
+    pub cli_security: Option<CliSecurityAudit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -493,6 +510,12 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                 {
                     audit.has_persona_rules = true;
                 }
+                if lower.contains("datadoghq")
+                    || lower.contains("growthbook.io")
+                    || lower.contains("claudeusercontent.com")
+                {
+                    audit.has_telemetry_rules = true;
+                }
                 if (lower.contains("443") && lower.contains("udp") && lower.contains("reject"))
                     || (lower.contains("quic") && lower.contains("reject"))
                 {
@@ -864,6 +887,257 @@ pub(crate) fn system_tun_and_dns_status() -> (bool, bool) {
     )
 }
 
+fn is_loopback_mcp_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    let rest = lower
+        .strip_prefix("http://")
+        .or_else(|| lower.strip_prefix("https://"))
+        .unwrap_or("");
+    if rest.is_empty() {
+        return false;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = if authority.starts_with('[') {
+        authority
+            .split(']')
+            .next()
+            .map(|h| format!("{h}]"))
+            .unwrap_or_default()
+    } else {
+        authority.split(':').next().unwrap_or("").to_string()
+    };
+    matches!(
+        host.as_str(),
+        "localhost" | "127.0.0.1" | "[::1]" | "0.0.0.0"
+    )
+}
+
+fn scan_mcp_servers_map(
+    servers: &serde_json::Map<String, serde_json::Value>,
+    audit: &mut CliSecurityAudit,
+) {
+    for server in servers.values() {
+        let Some(obj) = server.as_object() else {
+            continue;
+        };
+        let command = obj
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        let url = obj
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        let server_type = obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        let is_http_or_sse = url.starts_with("http://")
+            || url.starts_with("https://")
+            || server_type == "sse"
+            || server_type == "http";
+        if is_http_or_sse && (url.is_empty() || !is_loopback_mcp_url(&url)) {
+            audit.remote_http_mcp_count += 1;
+        }
+        let is_wsl_path =
+            command.starts_with("\\\\wsl$") || command.starts_with("\\\\wsl.localhost");
+        let file_name = command
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(command.as_str());
+        let cmd_stem = file_name
+            .strip_suffix(".cmd")
+            .or_else(|| file_name.strip_suffix(".exe"))
+            .or_else(|| file_name.strip_suffix(".bat"))
+            .unwrap_or(file_name);
+        if !is_http_or_sse
+            && !is_wsl_path
+            && matches!(cmd_stem, "npx" | "npm" | "pnpm" | "yarn" | "uvx" | "bunx")
+        {
+            audit.windows_bare_npx_count += 1;
+        }
+        let is_npx_family = matches!(cmd_stem, "npx" | "uvx" | "bunx")
+            || cmd_stem == "cmd"
+                && obj
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|args| {
+                        args.iter().any(|a| {
+                            a.as_str().is_some_and(|s| {
+                                let sub = s.trim().to_ascii_lowercase();
+                                let sub_name = sub.rsplit(['/', '\\']).next().unwrap_or(sub.as_str());
+                                let sub_stem = sub_name
+                                    .strip_suffix(".cmd")
+                                    .or_else(|| sub_name.strip_suffix(".exe"))
+                                    .unwrap_or(sub_name);
+                                matches!(sub_stem, "npx" | "uvx" | "bunx")
+                            })
+                        })
+                    });
+        if is_npx_family {
+            let mut has_pinned = false;
+            if let Some(args) = obj.get("args").and_then(|v| v.as_array()) {
+                for raw in args.iter().filter_map(|v| v.as_str()) {
+                    let s = raw.trim();
+                    if s.is_empty()
+                        || s.starts_with('-')
+                        || matches!(s.to_ascii_lowercase().as_str(), "/c" | "npx" | "uvx" | "bunx")
+                    {
+                        continue;
+                    }
+                    let without_scope = s.strip_prefix('@').map_or(s, |rest| {
+                        rest.find('/').map_or(rest, |idx| &rest[idx + 1..])
+                    });
+                    if let Some((_, ver)) = without_scope.rsplit_once('@') {
+                        if !ver.is_empty() && ver != "latest" {
+                            has_pinned = true;
+                        }
+                    }
+                }
+            }
+            if !has_pinned {
+                audit.unpinned_npx_count += 1;
+            }
+        }
+    }
+}
+
+/// 纯只读审计 Claude CLI 遥测护盾、代理环境变量协议、自定义 Hook/Helper 与 MCP 供应链边界（零秘密提取）。
+pub fn audit_claude_cli_security_dir(root: &std::path::Path) -> CliSecurityAudit {
+    let mut audit = CliSecurityAudit::default();
+    let claude_dir = root.join(".claude");
+    let settings_path = claude_dir.join("settings.json");
+
+    if let Some(raw) = config_source::read_bounded_utf8(&settings_path, 512 * 1024) {
+        if let Ok(serde_json::Value::Object(settings)) = serde_json::from_str(&raw) {
+            audit.settings_present = true;
+            for key in ["hooks", "apiKeyHelper", "awsAuthRefresh", "otelHeadersHelper"] {
+                if match settings.get(key) {
+                    Some(serde_json::Value::String(s)) => !s.trim().is_empty(),
+                    Some(serde_json::Value::Object(m)) => !m.is_empty(),
+                    Some(serde_json::Value::Array(a)) => !a.is_empty(),
+                    _ => false,
+                } {
+                    audit.has_custom_hooks_or_helpers = true;
+                }
+            }
+            if settings
+                .get("skipDangerousModePermissionPrompt")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                || settings
+                    .get("dangerouslySkipPermissions")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                || settings
+                    .get("permissions")
+                    .and_then(|v| v.get("allow"))
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|allow| {
+                        allow.iter().any(|item| {
+                            item.as_str().is_some_and(|s| {
+                                let t = s.trim();
+                                t.eq_ignore_ascii_case("Bash(*)") || t.eq_ignore_ascii_case("Bash")
+                            })
+                        })
+                    })
+            {
+                audit.has_custom_hooks_or_helpers = true;
+            }
+            if let Some(env) = settings.get("env").and_then(|v| v.as_object()) {
+                let truthy = |k: &str| {
+                    env.get(k)
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true"))
+                };
+                audit.telemetry_shield_active = truthy("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
+                    && truthy("DISABLE_TELEMETRY")
+                    && truthy("DISABLE_ERROR_REPORTING");
+                let proxy_keys = [
+                    "HTTP_PROXY",
+                    "http_proxy",
+                    "HTTPS_PROXY",
+                    "https_proxy",
+                    "ALL_PROXY",
+                    "all_proxy",
+                    "GRPC_PROXY",
+                    "grpc_proxy",
+                ];
+                let mut all_http = true;
+                for k in proxy_keys {
+                    let val = env
+                        .get(k)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_ascii_lowercase();
+                    if val.starts_with("socks5://") || val.starts_with("socks5h://") {
+                        audit.socks5_in_cli_env = true;
+                    }
+                    if !val.starts_with("http://") && !val.starts_with("https://") {
+                        all_http = false;
+                    }
+                }
+                let no_proxy_ok = ["NO_PROXY", "no_proxy"].iter().all(|k| {
+                    env.get(*k)
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|s| !s.trim().is_empty())
+                });
+                audit.proxy_env_complete = all_http && no_proxy_ok && !audit.socks5_in_cli_env;
+            }
+            if let Some(mcp) = settings.get("mcpServers").and_then(|v| v.as_object()) {
+                scan_mcp_servers_map(mcp, &mut audit);
+            }
+        }
+    }
+
+    for mcp_path in [root.join(".claude.json"), claude_dir.join(".mcp.json")] {
+        if let Some(raw) = config_source::read_bounded_utf8(&mcp_path, 1024 * 1024) {
+            if let Ok(serde_json::Value::Object(doc)) = serde_json::from_str(&raw) {
+                if let Some(mcp) = doc.get("mcpServers").and_then(|v| v.as_object()) {
+                    scan_mcp_servers_map(mcp, &mut audit);
+                }
+                if let Some(projects) = doc.get("projects").and_then(|v| v.as_object()) {
+                    for (_, proj) in projects.iter().take(64) {
+                        if let Some(proj_mcp) = proj
+                            .as_object()
+                            .and_then(|o| o.get("mcpServers"))
+                            .and_then(|v| v.as_object())
+                        {
+                            scan_mcp_servers_map(proj_mcp, &mut audit);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(entries) = std::fs::read_dir(claude_dir.join("telemetry")) {
+        for entry in entries.flatten().take(256) {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.starts_with("1p_failed_events.") && name.ends_with(".json") {
+                    audit.pending_failed_telemetry_files += 1;
+                }
+            }
+        }
+    }
+
+    audit
+}
+
+fn inspect_local_cli_security() -> Option<CliSecurityAudit> {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)?;
+    Some(audit_claude_cli_security_dir(&home))
+}
+
 pub fn parse_cloudflare_trace(domain: &str, body: &str, latency_ms: u64) -> TraceEndpointResult {
     let mut ip: Option<String> = None;
     let mut country: Option<String> = None;
@@ -1132,6 +1406,7 @@ pub async fn risk_inspect_local_env(app: tauri::AppHandle) -> Result<LocalRiskSn
         );
         let mihomo = inspect_local_mihomo();
         let system = inspect_system_network();
+        let cli_security = inspect_local_cli_security();
         if expected != crate::browser::current_risk_browser_context(&app) {
             return Err("risk_context_changed".to_string());
         }
@@ -1141,6 +1416,7 @@ pub async fn risk_inspect_local_env(app: tauri::AppHandle) -> Result<LocalRiskSn
             browser,
             mihomo,
             system,
+            cli_security,
         })
     })
     .await
@@ -1446,5 +1722,74 @@ Windows IP 配置
         assert_eq!(report.same_country, Some(false));
         assert_eq!(report.same_exit_ip, Some(false));
         assert_eq!(report.unlisted_same_country, Some(false));
+    }
+
+    #[test]
+    fn cli_security_dir_audit_detects_shield_proxy_and_mcp_risks() {
+        let dir = std::env::temp_dir().join(format!(
+            "claude-local-risk-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let claude_dir = dir.join(".claude");
+        std::fs::create_dir_all(claude_dir.join("telemetry")).unwrap();
+        std::fs::write(
+            claude_dir.join("telemetry").join("1p_failed_events.sample.json"),
+            "{}",
+        )
+        .unwrap();
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{
+                "env": {
+                    "HTTP_PROXY": "http://127.0.0.1:7899",
+                    "http_proxy": "http://127.0.0.1:7899",
+                    "HTTPS_PROXY": "http://127.0.0.1:7899",
+                    "https_proxy": "http://127.0.0.1:7899",
+                    "ALL_PROXY": "http://127.0.0.1:7899",
+                    "all_proxy": "http://127.0.0.1:7899",
+                    "GRPC_PROXY": "http://127.0.0.1:7899",
+                    "grpc_proxy": "http://127.0.0.1:7899",
+                    "NO_PROXY": "localhost,127.0.0.1",
+                    "no_proxy": "localhost,127.0.0.1",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                    "DISABLE_TELEMETRY": "1",
+                    "DISABLE_ERROR_REPORTING": "1"
+                }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(".claude.json"),
+            r#"{
+                "mcpServers": {
+                    "pinned": {"command": "cmd.exe", "args": ["/c", "npx", "-y", "@scope/pkg@1.2.3"]},
+                    "unpinned": {"command": "npx", "args": ["-y", "@scope/pkg@latest"]},
+                    "remote": {"url": "https://mcp.example.invalid/sse"}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let audit = audit_claude_cli_security_dir(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(audit.settings_present);
+        assert!(audit.telemetry_shield_active);
+        assert!(audit.proxy_env_complete);
+        assert!(!audit.socks5_in_cli_env);
+        assert!(!audit.has_custom_hooks_or_helpers);
+        assert_eq!(audit.unpinned_npx_count, 1);
+        assert_eq!(audit.windows_bare_npx_count, 1);
+        assert_eq!(audit.remote_http_mcp_count, 1);
+        assert_eq!(audit.pending_failed_telemetry_files, 1);
+
+        let mihomo = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-KEYWORD,datadoghq,ClaudeGroup\n",
+            None,
+        );
+        assert!(mihomo.has_telemetry_rules);
     }
 }

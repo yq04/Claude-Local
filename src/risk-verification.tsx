@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生只读环境快照（risk_inspect_local_env）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好与双语文案。
- * [OUTPUT]: 明确所选浏览器范围的六项配置与HTTP出口诊断、Mihomo strict-route 闭环修复向导、PayPal/Stripe 区域染色站点数据清理直达助手、过期结果隔离；桥接安全随机源缺失时局部停用。
+ * [INPUT]: 原生只读环境快照（risk_inspect_local_env 含 CLI 遥测护盾/MCP 供应链审计）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好与双语文案。
+ * [OUTPUT]: 明确所选浏览器范围的六项配置与HTTP出口诊断、CLI 遥测护盾/MCP 边界状态徽章、Mihomo strict-route 闭环修复向导、PayPal/Stripe 区域染色站点数据清理直达助手、过期结果隔离；桥接安全随机源缺失时局部停用。
  * [POS]: 风控验证主页面；零上游凭据读取、零临时口令落盘、严格拦截非 RFC1918 内网暴露，所有修复通过可审计 AI 提示词或用户显式下载完成。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -464,6 +464,32 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                 <span className={`risk-context-pill${local.mihomo.config_source === 'running_core' && local.mihomo.config_source_status === 'confirmed' ? ' ok' : ''}`}>
                   {t(local.mihomo.config_source === 'running_core' && local.mihomo.config_source_status === 'confirmed' ? 'risk.audit.runningSource' : local.mihomo.config_source === 'candidate_file' ? 'risk.audit.candidateSource' : 'risk.audit.unknownSource')}
                 </span>
+              )}
+              {local?.mihomo.has_telemetry_rules && (
+                <span className="risk-context-pill ok" data-risk-telemetry-rules>
+                  {t('risk.cliSecurity.telemetryRulesOk')}
+                </span>
+              )}
+              {local?.cli_security && (
+                <>
+                  <span
+                    className={`risk-context-pill${local.cli_security.telemetry_shield_active ? ' ok' : ''}`}
+                    data-risk-cli-shield={local.cli_security.telemetry_shield_active ? 'ok' : 'warn'}
+                  >
+                    {t(local.cli_security.telemetry_shield_active ? 'risk.cliSecurity.shieldOk' : 'risk.cliSecurity.shieldWarn')}
+                  </span>
+                  <span
+                    className={`risk-context-pill${local.cli_security.unpinned_npx_count === 0 && local.cli_security.remote_http_mcp_count === 0 && local.cli_security.windows_bare_npx_count === 0 && !local.cli_security.has_custom_hooks_or_helpers ? ' ok' : ''}`}
+                    data-risk-mcp-audit={local.cli_security.unpinned_npx_count === 0 && local.cli_security.remote_http_mcp_count === 0 && local.cli_security.windows_bare_npx_count === 0 && !local.cli_security.has_custom_hooks_or_helpers ? 'ok' : 'warn'}
+                  >
+                    {local.cli_security.unpinned_npx_count === 0 && local.cli_security.remote_http_mcp_count === 0 && local.cli_security.windows_bare_npx_count === 0 && !local.cli_security.has_custom_hooks_or_helpers
+                      ? t('risk.cliSecurity.mcpOk')
+                      : t('risk.cliSecurity.mcpWarn', {
+                          unpinned: Math.max(local.cli_security.unpinned_npx_count, local.cli_security.windows_bare_npx_count),
+                          remote: local.cli_security.remote_http_mcp_count + (local.cli_security.has_custom_hooks_or_helpers ? 1 : 0),
+                        })}
+                  </span>
+                </>
               )}
               <span className="risk-context-note" data-browser-owner-scope>{t('risk.browserOwnerScope')}</span>
             </div>

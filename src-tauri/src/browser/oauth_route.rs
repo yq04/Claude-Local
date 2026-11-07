@@ -28,9 +28,12 @@ struct ValidatedClaudeOAuthUrl(String);
 fn authorization_endpoint(value: &str) -> bool {
     reqwest::Url::parse(value).ok().is_some_and(|url| {
         url.scheme() == "https"
-            && url.host_str() == Some("claude.ai")
             && url.port_or_known_default() == Some(443)
-            && url.path() == "/oauth/authorize"
+            && matches!(
+                (url.host_str(), url.path()),
+                (Some("claude.ai"), "/oauth/authorize")
+                    | (Some("claude.com"), "/cai/oauth/authorize")
+            )
     })
 }
 pub(super) fn needs_identity_guard(urls: &[String]) -> bool {
@@ -233,10 +236,17 @@ mod tests {
         let valid = authorization();
         assert!(validate_authorization(&valid).is_ok());
         assert!(needs_identity_guard(&[valid.clone()]));
+        let valid_v2_cai = valid.replace(
+            "https://claude.ai/oauth/authorize",
+            "https://claude.com/cai/oauth/authorize",
+        );
+        assert!(validate_authorization(&valid_v2_cai).is_ok());
+        assert!(needs_identity_guard(&[valid_v2_cai]));
         for value in [
             "https://claude.ai/login",
             "https://claude.ai/settings/billing",
             "https://claude.ai/new",
+            "https://claude.com/oauth/authorize",
             "https://payments.example.invalid/oauth/authorize",
             "https://claude.ai.example.invalid/oauth/authorize",
             "https://platform.claude.com/oauth/authorize",

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Local identity records, passive/online quota snapshots, current timestamp and browser localStorage.
- * [OUTPUT]: Magpie-inspired 3-tier account classification (with rested inferred7d/inferred5h Tier 0 promotion), 5 routing strategies (Smart / Pace / Ordered / LeastUsed / Rotate), 3-state affinityMode (auto / session / manual), preferred-account hysteresis return, rate-limit queue demotion, pool capacity summary (summarizeRelayPool), and reactive Smart Relay configuration store.
+ * [OUTPUT]: Magpie-inspired 3-tier account classification (with rested inferred7d/inferred5h Tier 0 promotion), truthful percentage formatter (formatTruthfulPercent), 5h/7d window burn-pace delta (computeWindowPaceDelta), dynamic anti-ping-pong switch margin (computeDynamicSwitchMarginPct / meetsDynamicSwitchMargin), per-account cooldown jail & rate-limit helper (noteRelayAccountRateLimited), one-way noReturnAccountId lock, 5 routing strategies (Smart / Pace / Ordered / LeastUsed / Rotate), 3-state affinityMode (auto / session / manual), preferred-account hysteresis return, rate-limit queue demotion, pool capacity summary (summarizeRelayPool), and reactive Smart Relay configuration store.
  * [POS]: Pure frontend multi-account rotation & smart relay model; default OFF, never terminates running claude.exe or bypasses vault isolation.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -11,11 +11,108 @@ export type RelayStrategy = 'smart' | 'ordered' | 'rotate' | 'least_used' | 'pac
 export type RelayRateLimitMode = 'keep_position' | 'sink_to_end';
 export type RelayAffinityMode = 'auto' | 'session' | 'manual';
 export type RelaySpentThreshold = 90 | 95 | 98 | 100;
+export type WindowPaceStatus = 'ahead' | 'on_track' | 'behind' | 'unknown';
+
+export type WindowPaceDelta = {
+  status: WindowPaceStatus;
+  elapsedPct: number;
+  usedPct: number;
+  deltaPct: number;
+};
 
 export const RELAY_STRATEGIES: readonly RelayStrategy[] = ['smart', 'ordered', 'rotate', 'least_used', 'pace'];
 export const RELAY_RATE_LIMIT_MODES: readonly RelayRateLimitMode[] = ['keep_position', 'sink_to_end'];
 export const RELAY_AFFINITY_MODES: readonly RelayAffinityMode[] = ['auto', 'session', 'manual'];
 export const RELAY_SPENT_THRESHOLDS: readonly RelaySpentThreshold[] = [90, 95, 98, 100];
+
+/**
+ * Formats a quota percentage truthfully without misleading rounding near 0% or 100%.
+ * - Never rounds 99.0%..99.99% up to '100%' (caps at '99.9%').
+ * - Never rounds 0.01%..0.99% down to '0%' (floors at '0.1%').
+ */
+export function formatTruthfulPercent(pct: number | null | undefined): string {
+  if (pct === null || pct === undefined || !Number.isFinite(pct)) {
+    return '--%';
+  }
+  const v = Math.max(0, Math.min(100, pct));
+  if (v >= 100) return '100%';
+  if (v <= 0) return '0%';
+  if (v >= 99.0) {
+    return `${Math.min(99.9, Math.round(v * 10) / 10).toFixed(1)}%`;
+  }
+  if (v < 1.0) {
+    return `${Math.max(0.1, Math.round(v * 10) / 10).toFixed(1)}%`;
+  }
+  return `${Math.round(v)}%`;
+}
+
+/**
+ * Computes the burn-pace delta between percentage of quota used and percentage of window time elapsed.
+ */
+export function computeWindowPaceDelta(
+  usedPct: number | null | undefined,
+  resetSec: number | null | undefined,
+  nowSec: number,
+  windowHours: 5 | 168,
+): WindowPaceDelta {
+  if (
+    usedPct === null ||
+    usedPct === undefined ||
+    !Number.isFinite(usedPct) ||
+    typeof resetSec !== 'number' ||
+    !Number.isFinite(resetSec) ||
+    resetSec <= nowSec
+  ) {
+    return {status: 'unknown', elapsedPct: 0, usedPct: 0, deltaPct: 0};
+  }
+  const windowSec = windowHours * 3600;
+  const remainingSec = Math.min(windowSec, Math.max(0, resetSec - nowSec));
+  const elapsedSec = Math.max(0, windowSec - remainingSec);
+  const elapsedPct = Math.max(0, Math.min(100, (elapsedSec / windowSec) * 100));
+  const clampedUsed = Math.max(0, Math.min(100, usedPct));
+  const deltaPct = Math.round(clampedUsed - elapsedPct);
+  const suppressWeeklyLeadInAhead = windowHours === 168 && elapsedSec < 24 * 3600;
+  const status: WindowPaceStatus =
+    deltaPct >= 10
+      ? suppressWeeklyLeadInAhead
+        ? 'on_track'
+        : 'ahead'
+      : deltaPct <= -10
+        ? 'behind'
+        : 'on_track';
+  return {
+    status,
+    elapsedPct,
+    usedPct: clampedUsed,
+    deltaPct,
+  };
+}
+
+/**
+ * Computes the minimum remaining percentage required for a candidate to beat an active account
+ * without ping-pong switching (`min(activeRem * 2, activeRem + 3)`, capped at 100).
+ */
+export function computeDynamicSwitchMarginPct(activeRemPct: number): number {
+  const clamped = Math.max(0, Math.min(100, activeRemPct));
+  return Math.min(100, Math.min(clamped * 2, clamped + 3));
+}
+
+/**
+ * Checks whether a candidate exceeds the dynamic switch margin on both 5h and 7d windows
+ * (or rescues a starving 5h window with >= +20% 5h headroom while maintaining >= 7d headroom).
+ */
+export function meetsDynamicSwitchMargin(
+  candidate: Pick<RelayCandidate, 'rem5h' | 'rem7d'>,
+  active: Pick<RelayCandidate, 'rem5h' | 'rem7d'>,
+): boolean {
+  const meets5h = candidate.rem5h >= computeDynamicSwitchMarginPct(active.rem5h);
+  const meets7d = candidate.rem7d >= computeDynamicSwitchMarginPct(active.rem7d);
+  if (meets5h && meets7d) return true;
+  if (active.rem5h < 10 && candidate.rem5h >= active.rem5h + 20 && candidate.rem7d >= active.rem7d) {
+    return true;
+  }
+  return false;
+}
 
 export type SmartRelayConfig = {
   enabled: boolean;
@@ -30,6 +127,9 @@ export type SmartRelayConfig = {
   excludedAccountIds: string[];
   sunkOrder: Record<string, number>;
   rotationTick: Record<string, number>;
+  cooldownUntilSec: Record<string, number>;
+  noReturnAccountId: string | null;
+  noReturnUntilSec: number;
 };
 
 const STORAGE_KEY = 'claude-local.smart-relay.v1';
@@ -47,6 +147,9 @@ export const defaultSmartRelayConfig: SmartRelayConfig = {
   excludedAccountIds: [],
   sunkOrder: {},
   rotationTick: {},
+  cooldownUntilSec: {},
+  noReturnAccountId: null,
+  noReturnUntilSec: 0,
 };
 
 function sanitizeRecordMap(raw: unknown): Record<string, number> {
@@ -87,6 +190,14 @@ export function sanitizeSmartRelayConfig(raw: unknown): SmartRelayConfig {
     typeof input.preferredAccountId === 'string' && input.preferredAccountId.trim().length > 0 && input.preferredAccountId.length <= 80
       ? input.preferredAccountId.trim()
       : null;
+  const noReturnAccountId =
+    typeof input.noReturnAccountId === 'string' && input.noReturnAccountId.trim().length > 0 && input.noReturnAccountId.length <= 80
+      ? input.noReturnAccountId.trim()
+      : null;
+  const noReturnUntilSec =
+    typeof input.noReturnUntilSec === 'number' && Number.isFinite(input.noReturnUntilSec) && input.noReturnUntilSec >= 0
+      ? Math.floor(input.noReturnUntilSec)
+      : defaultSmartRelayConfig.noReturnUntilSec;
   const excludedAccountIds = Array.isArray(input.excludedAccountIds)
     ? Array.from(
         new Set(
@@ -109,6 +220,9 @@ export function sanitizeSmartRelayConfig(raw: unknown): SmartRelayConfig {
     excludedAccountIds,
     sunkOrder: sanitizeRecordMap(input.sunkOrder),
     rotationTick: sanitizeRecordMap(input.rotationTick),
+    cooldownUntilSec: sanitizeRecordMap(input.cooldownUntilSec),
+    noReturnAccountId,
+    noReturnUntilSec,
   };
 }
 
@@ -160,7 +274,52 @@ export function resetSmartRelayConfig(): SmartRelayConfig {
   return publishRelayConfig({...defaultSmartRelayConfig});
 }
 
-export function noteRelayAccountSwitch(fromAccountId: string | null, toAccountId: string): SmartRelayConfig {
+export function setAccountCooldown(accountId: string, untilSec: number): SmartRelayConfig {
+  const cooldownUntilSec = {
+    ...currentRelayConfig.cooldownUntilSec,
+    [accountId]: Math.max(0, Math.floor(untilSec)),
+  };
+  return updateSmartRelayConfig({cooldownUntilSec});
+}
+
+export function clearAccountCooldown(accountId: string): SmartRelayConfig {
+  const cooldownUntilSec = {...currentRelayConfig.cooldownUntilSec};
+  delete cooldownUntilSec[accountId];
+  return updateSmartRelayConfig({cooldownUntilSec});
+}
+
+export function isAccountInCooldown(
+  config: SmartRelayConfig,
+  accountId: string,
+  nowSec: number,
+): boolean {
+  return (config.cooldownUntilSec?.[accountId] ?? 0) > nowSec;
+}
+
+export function noteRelayAccountRateLimited(
+  accountId: string,
+  retryAtMs?: number | null,
+  nowSec = Math.floor(Date.now() / 1000),
+): SmartRelayConfig {
+  const untilSec =
+    typeof retryAtMs === 'number' && Number.isFinite(retryAtMs) && retryAtMs > nowSec * 1000
+      ? Math.ceil(retryAtMs / 1000)
+      : nowSec + 15 * 60;
+  const next = setAccountCooldown(accountId, untilSec);
+  if (next.rateLimitMode === 'sink_to_end') {
+    const sunkOrder = {...next.sunkOrder};
+    const nextSink = Math.max(0, ...Object.values(sunkOrder)) + 1;
+    sunkOrder[accountId] = nextSink;
+    return updateSmartRelayConfig({sunkOrder});
+  }
+  return next;
+}
+
+export function noteRelayAccountSwitch(
+  fromAccountId: string | null,
+  toAccountId: string,
+  fromReset5hSec?: number | null,
+): SmartRelayConfig {
   const nextTick = Math.max(0, ...Object.values(currentRelayConfig.rotationTick)) + 1;
   const rotationTick = {...currentRelayConfig.rotationTick, [toAccountId]: nextTick};
   const sunkOrder = {...currentRelayConfig.sunkOrder};
@@ -168,7 +327,17 @@ export function noteRelayAccountSwitch(fromAccountId: string | null, toAccountId
     const nextSink = Math.max(0, ...Object.values(sunkOrder)) + 1;
     sunkOrder[fromAccountId] = nextSink;
   }
-  return updateSmartRelayConfig({rotationTick, sunkOrder});
+  let noReturnAccountId = currentRelayConfig.noReturnAccountId;
+  let noReturnUntilSec = currentRelayConfig.noReturnUntilSec;
+  if (toAccountId === noReturnAccountId) {
+    noReturnAccountId = null;
+    noReturnUntilSec = 0;
+  }
+  if (fromAccountId && typeof fromReset5hSec === 'number' && Number.isFinite(fromReset5hSec) && fromReset5hSec > 0) {
+    noReturnAccountId = fromAccountId;
+    noReturnUntilSec = Math.floor(fromReset5hSec);
+  }
+  return updateSmartRelayConfig({rotationTick, sunkOrder, noReturnAccountId, noReturnUntilSec});
 }
 
 export function subscribeSmartRelayConfig(listener: () => void): () => void {
@@ -212,12 +381,15 @@ export type RelayCandidate = {
   effectiveUsed: number;
   effectiveRem: number;
   inferred: boolean;
+  inCooldown: boolean;
+  cooldownRemainingSec: number;
+  pace5hDeltaPct: number;
   /**
    * Magpie 3-Tier partition:
    * 0 = fine (healthy, used < lowThreshold 90%, including rested 5h/7d windows)
    * 1 = low (reserve, 90% <= used < spentThreshold)
    * 2 = spent (exhausted, used >= spentThreshold)
-   * 3 = unavailable (auth expired, missing quota, or 0% remaining)
+   * 3 = unavailable (auth expired, missing quota, cooldown jail, or 0% remaining)
    */
   tier: 0 | 1 | 2 | 3;
   weeklyPacePctPerHour: number;
@@ -233,6 +405,7 @@ export type RelayEvaluation = {
   candidates: RelayCandidate[];
   currentCandidate: RelayCandidate | null;
   recommended: RelayCandidate | null;
+  standbyCandidate?: RelayCandidate | null;
   preferredCandidate: RelayCandidate | null;
   shouldRelayNow: boolean;
   relayTriggerKind: 'preferred_recovered' | 'current_spent' | 'better_candidate' | null;
@@ -244,6 +417,7 @@ export interface RelayPoolSummary {
   lowCount: number;        // tier === 1
   spentCount: number;      // tier === 2
   unavailableCount: number;// tier === 3
+  cooldownCount: number;   // included candidates where inCooldown === true
   totalRem5hPct: number;   // sum of rem5h across included candidates with known quota (tier <= 2)
   avgRem7dPct: number;     // rounded average of rem7d across included candidates with known quota (tier <= 2), or 0
   soonestResetSec: number | null; // minimum positive (reset5h or reset7d > nowSec) among tier 1/2 candidates, or null
@@ -258,12 +432,14 @@ export function summarizeRelayPool(
   let lowCount = 0;
   let spentCount = 0;
   let unavailableCount = 0;
+  let cooldownCount = 0;
   let sumRem5h = 0;
   let sumRem7d = 0;
   let knownQuotaCount = 0;
   let soonestResetSec: number | null = null;
 
   for (const c of included) {
+    if (c.inCooldown) cooldownCount++;
     if (c.tier === 0) readyCount++;
     else if (c.tier === 1) lowCount++;
     else if (c.tier === 2) spentCount++;
@@ -291,6 +467,7 @@ export function summarizeRelayPool(
     lowCount,
     spentCount,
     unavailableCount,
+    cooldownCount,
     totalRem5hPct: Math.round(sumRem5h),
     avgRem7dPct: knownQuotaCount > 0 ? Math.round(sumRem7d / knownQuotaCount) : 0,
     soonestResetSec,
@@ -325,6 +502,12 @@ export function evaluateSmartRelay(
     const isPreferred = config.preferredAccountId === acc.id;
     const sinkSeq = config.rateLimitMode === 'sink_to_end' ? (config.sunkOrder[acc.id] ?? 0) : 0;
     const rotationSeq = config.rotationTick[acc.id] ?? 0;
+    const inCooldown = isAccountInCooldown(config, acc.id, nowSec);
+    const cooldownRemainingSec = inCooldown
+      ? Math.max(0, (config.cooldownUntilSec?.[acc.id] ?? 0) - nowSec)
+      : 0;
+    const pace5hDeltaPct =
+      q && q.known5h ? computeWindowPaceDelta(q.used5h, q.r5, nowSec, 5).deltaPct : 0;
     const subscriptionExpiresHour =
       typeof acc.subscription_expires_at === 'number' && acc.subscription_expires_at > nowSec
         ? Math.floor(acc.subscription_expires_at / 3600)
@@ -351,24 +534,41 @@ export function evaluateSmartRelay(
         effectiveUsed: 100,
         effectiveRem: 0,
         inferred: Boolean(q?.inferred7d),
+        inCooldown,
+        cooldownRemainingSec,
+        pace5hDeltaPct,
         tier: 3,
         weeklyPacePctPerHour: 0,
         paceBandIndex: 999,
         sinkSeq,
         rotationSeq,
         subscriptionExpiresHour,
-        reasonKey: acc.auth_status === 'expired' ? 'relay.reason.authExpired' : 'relay.reason.quotaUnknown',
+        reasonKey: inCooldown
+          ? 'relay.reason.cooldown'
+          : acc.auth_status === 'expired'
+            ? 'relay.reason.authExpired'
+            : 'relay.reason.quotaUnknown',
+        reasonParams: inCooldown
+          ? {mins: Math.max(1, Math.ceil(cooldownRemainingSec / 60))}
+          : undefined,
       };
     }
 
     const effectiveRem = q.effectiveRem;
     const effectiveUsed = Math.max(0, Math.min(100, 100 - effectiveRem));
+    // Magpie WeekLow rule (internal/routes/strategies.go:33-48): in 'smart' and 'pace' modes,
+    // an account with plenty of 5h quota (< lowThreshold) whose 7d quota is in the low band (90%..97%)
+    // stays in Tier 0 so perishable weekly quota is burned before reset rather than held back.
+    const isWeekLowPromoted =
+      (config.strategy === 'smart' || config.strategy === 'pace') &&
+      q.used5h < lowThreshold &&
+      effectiveUsed < effectiveSpentThreshold;
     const tier: 0 | 1 | 2 | 3 =
-      effectiveRem <= 0 || q.rem7d <= 0
+      inCooldown || effectiveRem <= 0 || q.rem7d <= 0
         ? 3
         : effectiveUsed >= effectiveSpentThreshold
           ? 2
-          : effectiveUsed >= lowThreshold
+          : effectiveUsed >= lowThreshold && !isWeekLowPromoted
             ? 1
             : 0;
 
@@ -396,13 +596,19 @@ export function evaluateSmartRelay(
       effectiveUsed,
       effectiveRem,
       inferred: Boolean(q.inferred7d),
+      inCooldown,
+      cooldownRemainingSec,
+      pace5hDeltaPct,
       tier,
       weeklyPacePctPerHour,
       paceBandIndex: 0,
       sinkSeq,
       rotationSeq,
       subscriptionExpiresHour,
-      reasonKey: 'relay.reason.smart',
+      reasonKey: inCooldown ? 'relay.reason.cooldown' : 'relay.reason.smart',
+      reasonParams: inCooldown
+        ? {mins: Math.max(1, Math.ceil(cooldownRemainingSec / 60))}
+        : undefined,
     };
   });
 
@@ -445,11 +651,22 @@ export function evaluateSmartRelay(
     }
   }
 
+  const isNoReturnLocked = (c: RelayCandidate): boolean =>
+    Boolean(
+      config.noReturnAccountId === c.id &&
+        (config.noReturnUntilSec ?? 0) > nowSec &&
+        !c.isCurrent,
+    );
+
   const compareByStrategy = (a: RelayCandidate, b: RelayCandidate): number => {
     // 1. Included accounts always beat excluded accounts
     if (a.isIncluded !== b.isIncluded) return a.isIncluded ? -1 : 1;
     // 2. Magpie 3-Tier partition: fine (0) -> low (1) -> spent (2) -> unavailable (3)
     if (a.tier !== b.tier) return a.tier - b.tier;
+    // 2b. One-way no-return lock demotes recently-exhausted account until its 5h window resets
+    const aLocked = isNoReturnLocked(a);
+    const bLocked = isNoReturnLocked(b);
+    if (aLocked !== bLocked) return aLocked ? 1 : -1;
     // 3. Rate-limit / exhaustion demotion ('sink_to_end' / '排到最后') within the same tier
     if (config.rateLimitMode === 'sink_to_end' && a.sinkSeq !== b.sinkSeq) {
       return a.sinkSeq - b.sinkSeq;
@@ -537,13 +754,16 @@ export function evaluateSmartRelay(
         preferredCandidate &&
         !preferredCandidate.isCurrent &&
         preferredCandidate.isIncluded &&
+        !isNoReturnLocked(preferredCandidate) &&
         preferredCandidate.tier === 0 &&
         !preferredCandidate.inferred &&
         preferredCandidate.effectiveUsed < config.preferredReturnThresholdPct,
     );
 
-  // Pick top saved candidate
-  const savedEligible = sorted.filter(c => !c.isCurrent && c.isIncluded && c.tier <= 1);
+  // Pick top saved candidate (skipping no-return locked candidate unless no other Tier 0/1 candidate exists)
+  const allSavedEligible = sorted.filter(c => !c.isCurrent && c.isIncluded && c.tier <= 1);
+  const unlockedSavedEligible = allSavedEligible.filter(c => !isNoReturnLocked(c));
+  const savedEligible = unlockedSavedEligible.length > 0 ? unlockedSavedEligible : allSavedEligible;
   const topStrategySaved = savedEligible[0] ?? null;
 
   let recommended: RelayCandidate | null = null;
@@ -564,13 +784,14 @@ export function evaluateSmartRelay(
         ? currentCandidate.effectiveUsed >= sessionSpentThreshold
         : currentCandidate.tier >= 2 || currentCandidate.effectiveUsed >= effectiveSpentThreshold);
 
-    recommended = topStrategySaved;
     if (currentSpentOrMissing) {
+      recommended = topStrategySaved;
       relayTriggerKind = 'current_spent';
       shouldRelayNow =
         config.affinityMode !== 'manual' &&
         Boolean(recommended && (!currentCandidate || recommended.name !== currentCandidate.name || !recommended.isCurrent));
-    } else {
+    } else if (!currentCandidate || meetsDynamicSwitchMargin(topStrategySaved, currentCandidate)) {
+      recommended = topStrategySaved;
       relayTriggerKind = 'better_candidate';
       shouldRelayNow = false;
     }
@@ -580,6 +801,7 @@ export function evaluateSmartRelay(
     candidates: sorted,
     currentCandidate,
     recommended,
+    standbyCandidate: recommended ?? topStrategySaved,
     preferredCandidate,
     shouldRelayNow,
     relayTriggerKind,

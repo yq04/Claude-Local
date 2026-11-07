@@ -26,7 +26,7 @@ credentials.rs: 默认 Code 凭据按用户策略合并身份与共享 MCP/插�
 archive.rs: 新身份复用空浏览器预留编号，当工作区无实际登录身份（account_key/凭据/profile.present 均空）且普通保存/切换（reuse=true）时不消费浏览器预留草稿并标记 empty=true（避免仅因未清理的 projects/history/cache 生成多余空白「当前身份」卡，而恢复检查点 reuse=false 仍保留中断后工作区文件）；tar/Zstd 与旧 gzip 兼容验收，代次与卡片编号分离；源文件写完后才递增完成数，压缩/认证落盘和完整解包验收分阶段报告；完整认证后才交目录事务，解包区可丢弃，归档本体保持 fsync。
 catalog.rs: 有界读取账号 UUID/组织（缺失时邮箱/组织），以本机 HMAC 匹配稳定槽位并同步脱敏身份摘要与离线额度；旧副本验收后索引，提交后去重/回收；未知账号与恢复检查点不猜测合并，Desktop-only 暂存保守保留。
 compression.rs: Zstandard 级别 3 流式压缩与校验和，读取侧限制窗口并按魔数兼容旧 gzip；外层认证协议不变。
-optimization_tests.rs: 虚构 A/B 连续切换、原地保存与离线额度摘要回填、空身份往返无泄漏、独立代理与仓库路径隔离、跨账号 plugins/model-catalog/groveConfigCache 与共享会话风控脱敏（含 api-request-blob/bridge-session 剥离、中断 tool_use/tool_result 成对自愈、tengu_exit 拆弹）、旧归档历史会话与项目映射无损合并、凭据刷新、跨组织隔离、覆盖崩溃恢复、压缩兼容与认证尾部拒绝；手动 500 会话性能样本不设不稳定的 CI 时间阈值。
+optimization_tests.rs: 虚构 A/B 连续切换、原地保存与离线额度摘要回填、空身份往返无泄漏、独立代理与仓库路径隔离、跨账号 plugins/model-catalog/statsig/1p_failed_events/groveConfigCache 与共享会话风控脱敏（含 api-request-blob/bridge-session 剥离、中断 tool_use/tool_result 成对自愈）、旧归档历史会话与项目映射无损合并、凭据刷新、跨组织隔离、覆盖崩溃恢复、压缩兼容与认证尾部拒绝；手动 500 会话性能样本不设不稳定的 CI 时间阈值。
 codec.rs: 压缩流与 ring AES-256-GCM 帧，独立归档密钥和认证结尾；封装密钥/帧的明文缓冲预留标签空间避免重分配并使用Zeroizing；保持BAGAID01格式，拒绝篡改、截断与非法归档成员。
 archive_limits.rs / archive_limits_tests.rs: 普通加载的有界tar读取，先于GNU/PAX元数据分配检查成员/路径/声明大小，兼容GNU长路径和PAX size；成员内容8GiB与有tar开销余量的实际展开流独立限额，清单1MiB/键控配置64MiB；末尾排空仍验证完整认证，不将超限视为EOF。所有回归仅使用合成归档与注入小预算。
 private.rs: POSIX 0700/0600 与 Windows 创建时指定当前用户所有者/独占 DACL、原子写入；提供原子独占私有目录创建与子目录可继承所有者访问控制自愈（ensure_owner_dacl，保留 Chromium AppContainer SID），拒绝所有者变化、链接和特殊文件。

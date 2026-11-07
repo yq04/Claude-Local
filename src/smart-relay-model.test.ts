@@ -1,10 +1,18 @@
 import {expect, test} from 'bun:test';
 import {
+  clearAccountCooldown,
+  computeDynamicSwitchMarginPct,
+  computeWindowPaceDelta,
   defaultSmartRelayConfig,
   evaluateSmartRelay,
+  formatTruthfulPercent,
   getSmartRelayConfig,
+  isAccountInCooldown,
+  meetsDynamicSwitchMargin,
+  noteRelayAccountRateLimited,
   noteRelayAccountSwitch,
   resetSmartRelayConfig,
+  setAccountCooldown,
   summarizeRelayPool,
   updateSmartRelayConfig,
   type RelayAccountInput,
@@ -277,7 +285,217 @@ test('summarizeRelayPool accurately aggregates ready, low, spent, unavailable, a
   expect(summary.lowCount).toBe(1);
   expect(summary.spentCount).toBe(1);
   expect(summary.unavailableCount).toBe(1);
+  expect(summary.cooldownCount).toBe(0);
   expect(summary.totalRem5hPct).toBe(80 + 60 + 8 + 1);
   expect(summary.avgRem7dPct).toBe(Math.round((70 + 50 + 60 + 40) / 4));
   expect(summary.soonestResetSec).toBe(NOW + 1 * HOUR);
+});
+
+test('formatTruthfulPercent never rounds 99.0%..99.99% up to 100% or 0.01%..0.99% down to 0%', () => {
+  expect(formatTruthfulPercent(null)).toBe('--%');
+  expect(formatTruthfulPercent(undefined)).toBe('--%');
+  expect(formatTruthfulPercent(Number.NaN)).toBe('--%');
+  expect(formatTruthfulPercent(0)).toBe('0%');
+  expect(formatTruthfulPercent(-5)).toBe('0%');
+  expect(formatTruthfulPercent(0.04)).toBe('0.1%');
+  expect(formatTruthfulPercent(0.4)).toBe('0.4%');
+  expect(formatTruthfulPercent(0.94)).toBe('0.9%');
+  expect(formatTruthfulPercent(50.4)).toBe('50%');
+  expect(formatTruthfulPercent(98.6)).toBe('99%');
+  expect(formatTruthfulPercent(99.0)).toBe('99.0%');
+  expect(formatTruthfulPercent(99.4)).toBe('99.4%');
+  expect(formatTruthfulPercent(99.91)).toBe('99.9%');
+  expect(formatTruthfulPercent(99.99)).toBe('99.9%');
+  expect(formatTruthfulPercent(100)).toBe('100%');
+  expect(formatTruthfulPercent(105)).toBe('100%');
+});
+
+test('computeWindowPaceDelta computes burn-pace status and deltaPct across 5h and 7d windows', () => {
+  expect(computeWindowPaceDelta(null, NOW + HOUR, NOW, 5).status).toBe('unknown');
+  expect(computeWindowPaceDelta(50, null, NOW, 5).status).toBe('unknown');
+  expect(computeWindowPaceDelta(50, NOW - 10, NOW, 5).status).toBe('unknown');
+
+  // 5h window: 2h remaining -> 3h elapsed (60% elapsed). Used 80% -> delta +20% ('ahead')
+  const fast5h = computeWindowPaceDelta(80, NOW + 2 * HOUR, NOW, 5);
+  expect(fast5h.status).toBe('ahead');
+  expect(fast5h.elapsedPct).toBeCloseTo(60, 1);
+  expect(fast5h.deltaPct).toBe(20);
+
+  // 5h window: 2h remaining (60% elapsed). Used 55% -> delta -5% ('on_track')
+  const steady5h = computeWindowPaceDelta(55, NOW + 2 * HOUR, NOW, 5);
+  expect(steady5h.status).toBe('on_track');
+  expect(steady5h.deltaPct).toBe(-5);
+
+  // 7d (168h) window: 84h remaining (50% elapsed). Used 20% -> delta -30% ('behind')
+  const reserve7d = computeWindowPaceDelta(20, NOW + 84 * HOUR, NOW, 168);
+  expect(reserve7d.status).toBe('behind');
+  expect(reserve7d.deltaPct).toBe(-30);
+});
+
+test('computeDynamicSwitchMarginPct and meetsDynamicSwitchMargin enforce anti-ping-pong hysteresis', () => {
+  expect(computeDynamicSwitchMarginPct(0)).toBe(0);
+  expect(computeDynamicSwitchMarginPct(1)).toBe(2); // min(2, 4) = 2
+  expect(computeDynamicSwitchMarginPct(2)).toBe(4); // min(4, 5) = 4
+  expect(computeDynamicSwitchMarginPct(10)).toBe(13); // min(20, 13) = 13
+  expect(computeDynamicSwitchMarginPct(98)).toBe(100);
+
+  const active = {rem5h: 10, rem7d: 50};
+  expect(meetsDynamicSwitchMargin({rem5h: 12, rem7d: 60}, active)).toBe(false);
+  expect(meetsDynamicSwitchMargin({rem5h: 13, rem7d: 52}, active)).toBe(false);
+  expect(meetsDynamicSwitchMargin({rem5h: 13, rem7d: 53}, active)).toBe(true);
+});
+
+test('account cooldown jail demotes candidate to Tier 3 with relay.reason.cooldown and updates cooldownCount', () => {
+  resetSmartRelayConfig();
+  const cfgWithCooldown = setAccountCooldown('acc-cool', NOW + 15 * 60);
+  expect(isAccountInCooldown(cfgWithCooldown, 'acc-cool', NOW)).toBe(true);
+  expect(isAccountInCooldown(cfgWithCooldown, 'acc-cool', NOW + 16 * 60)).toBe(false);
+
+  const accounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    makeAccount('acc-cool', 1, 5, 10, 4, 6, false), // Would be best, but in cooldown!
+    makeAccount('acc-ready', 2, 30, 30, 3, 5, false),
+  ];
+
+  const evalDuringCooldown = evaluateSmartRelay(
+    accounts,
+    {...cfgWithCooldown, enabled: true, strategy: 'least_used'},
+    NOW,
+  );
+  const coolCand = evalDuringCooldown.candidates.find(c => c.id === 'acc-cool')!;
+  expect(coolCand.inCooldown).toBe(true);
+  expect(coolCand.cooldownRemainingSec).toBe(15 * 60);
+  expect(coolCand.tier).toBe(3);
+  expect(coolCand.reasonKey).toBe('relay.reason.cooldown');
+  expect(coolCand.reasonParams).toEqual({mins: 15});
+  expect(evalDuringCooldown.recommended?.id).toBe('acc-ready');
+
+  const poolSummary = summarizeRelayPool(evalDuringCooldown.candidates, NOW);
+  expect(poolSummary.cooldownCount).toBe(1);
+  expect(poolSummary.unavailableCount).toBe(1);
+
+  const cfgCleared = clearAccountCooldown('acc-cool');
+  expect(isAccountInCooldown(cfgCleared, 'acc-cool', NOW)).toBe(false);
+  resetSmartRelayConfig();
+});
+
+test('noReturnAccountId one-way lock prevents bouncing back to switched-out account until its 5h window resets', () => {
+  resetSmartRelayConfig();
+  updateSmartRelayConfig({enabled: true, strategy: 'least_used'});
+  const resetAt = NOW + 2 * HOUR;
+  const lockedCfg = noteRelayAccountSwitch('acc-from', 'acc-to', resetAt);
+  expect(lockedCfg.noReturnAccountId).toBe('acc-from');
+  expect(lockedCfg.noReturnUntilSec).toBe(resetAt);
+
+  const accounts: RelayAccountInput[] = [
+    makeAccount('acc-to', 0, 99, 40, 4, 4, true), // Now spent
+    makeAccount('acc-from', 1, 10, 10, 4, 5, false), // Higher rem, but locked until resetAt
+    makeAccount('acc-third', 2, 40, 40, 4, 4, false), // Unlocked Tier 0 alternative
+  ];
+
+  // Before 5h reset: skips 'acc-from' in favor of 'acc-third'
+  const evalBeforeReset = evaluateSmartRelay(accounts, lockedCfg, NOW + HOUR);
+  expect(evalBeforeReset.recommended?.id).toBe('acc-third');
+
+  // After 5h reset: lock expires, 'acc-from' is eligible again
+  const evalAfterReset = evaluateSmartRelay(accounts, lockedCfg, resetAt + 1);
+  expect(evalAfterReset.recommended?.id).toBe('acc-from');
+
+  // Switching back to noReturnAccountId clears the lock
+  const unlockedCfg = noteRelayAccountSwitch('acc-to', 'acc-from');
+  expect(unlockedCfg.noReturnAccountId).toBeNull();
+  expect(unlockedCfg.noReturnUntilSec).toBe(0);
+  resetSmartRelayConfig();
+});
+
+test('evaluateSmartRelay suppresses better_candidate ping-pong when saved candidate fails meetsDynamicSwitchMargin', () => {
+  // Active has rem5h=50, rem7d=50 -> requires candidate rem5h >= 53 and rem7d >= 53
+  const accountsFailMargin: RelayAccountInput[] = [
+    makeAccount('current', 0, 50, 50, 3, 4, true), // rem5h=50, rem7d=50
+    makeAccount('marginal-saved', 1, 48, 49, 3, 4, false), // rem5h=52, rem7d=51 (fails +3% margin)
+  ];
+
+  const evalSuppressed = evaluateSmartRelay(
+    accountsFailMargin,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'least_used'},
+    NOW,
+  );
+  expect(evalSuppressed.shouldRelayNow).toBe(false);
+  expect(evalSuppressed.relayTriggerKind).toBeNull();
+  expect(evalSuppressed.recommended).toBeNull();
+  expect(evalSuppressed.standbyCandidate?.id).toBe('marginal-saved');
+
+  // Saved candidate with rem5h=60, rem7d=60 satisfies meetsDynamicSwitchMargin
+  const accountsPassMargin: RelayAccountInput[] = [
+    makeAccount('current', 0, 50, 50, 3, 4, true),
+    makeAccount('clear-winner', 1, 40, 40, 3, 4, false), // rem5h=60, rem7d=60 (>= 53)
+  ];
+  const evalBetter = evaluateSmartRelay(
+    accountsPassMargin,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'least_used'},
+    NOW,
+  );
+  expect(evalBetter.shouldRelayNow).toBe(false);
+  expect(evalBetter.relayTriggerKind).toBe('better_candidate');
+  expect(evalBetter.recommended?.id).toBe('clear-winner');
+  expect(evalBetter.standbyCandidate?.id).toBe('clear-winner');
+});
+
+test('Magpie WeekLow rule promotes 7d-low accounts with healthy 5h headroom to Tier 0 in smart/pace modes and suppresses 24h weekly lead-in pace noise', () => {
+  const accounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    makeAccount('week-low-perishable', 1, 20, 92, 3, 1, false), // used5h=20 (<90), used7d=92 (90..97) -> WeekLow!
+    makeAccount('fresh-later', 2, 10, 10, 4, 6, false),
+  ];
+
+  const evalSmart = evaluateSmartRelay(
+    accounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'smart'},
+    NOW,
+  );
+  expect(evalSmart.candidates.find(c => c.id === 'week-low-perishable')?.tier).toBe(0);
+  expect(evalSmart.recommended?.id).toBe('week-low-perishable');
+
+  // In least_used mode, week-low-perishable remains Tier 1 reserve
+  const evalLeast = evaluateSmartRelay(
+    accounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'least_used'},
+    NOW,
+  );
+  expect(evalLeast.candidates.find(c => c.id === 'week-low-perishable')?.tier).toBe(1);
+  expect(evalLeast.recommended?.id).toBe('fresh-later');
+
+  // 24h weekly lead-in silence: 12h elapsed out of 168h (156h remaining), 25% used -> suppressed to 'on_track'
+  const leadIn7d = computeWindowPaceDelta(25, NOW + 156 * HOUR, NOW, 168);
+  expect(leadIn7d.status).toBe('on_track');
+
+  // Starving 5h (rem5h=5) with equal 7d (rem7d=80) passes meetsDynamicSwitchMargin when candidate has rem5h=80, rem7d=80
+  expect(meetsDynamicSwitchMargin({rem5h: 80, rem7d: 80}, {rem5h: 5, rem7d: 80})).toBe(true);
+});
+
+test('noteRelayAccountRateLimited places account into cooldown and demotes sunkOrder when sink_to_end is enabled', () => {
+  resetSmartRelayConfig();
+  updateSmartRelayConfig({enabled: true, strategy: 'ordered', rateLimitMode: 'sink_to_end'});
+
+  const retryAtMs = (NOW + 600) * 1000;
+  const cfgAfterRl = noteRelayAccountRateLimited('acc-rl', retryAtMs, NOW);
+  expect(isAccountInCooldown(cfgAfterRl, 'acc-rl', NOW)).toBe(true);
+  expect(cfgAfterRl.cooldownUntilSec['acc-rl']).toBe(NOW + 600);
+  expect(cfgAfterRl.sunkOrder['acc-rl']).toBe(1);
+
+  const accounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    makeAccount('acc-rl', 1, 10, 10, 4, 5, false),
+    makeAccount('acc-healthy', 2, 30, 30, 4, 5, false),
+  ];
+  const evalRl = evaluateSmartRelay(accounts, cfgAfterRl, NOW);
+  const rlCandidate = evalRl.candidates.find(c => c.id === 'acc-rl')!;
+  expect(rlCandidate.inCooldown).toBe(true);
+  expect(rlCandidate.tier).toBe(3);
+  expect(evalRl.recommended?.id).toBe('acc-healthy');
+
+  // Default 15-minute cooldown when retryAtMs is omitted
+  const cfgDefaultRl = noteRelayAccountRateLimited('acc-rl-default', undefined, NOW);
+  expect(cfgDefaultRl.cooldownUntilSec['acc-rl-default']).toBe(NOW + 15 * 60);
+  resetSmartRelayConfig();
 });

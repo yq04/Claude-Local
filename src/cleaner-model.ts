@@ -1,11 +1,12 @@
 /**
- * [INPUT]: 原生层返回的脱敏清理快照。
+ * [INPUT]: 原生层返回的脱敏清理快照与 CLI 遥测护盾/MCP 供应链布尔计数摘要。
  * [OUTPUT]: 分类、预设选择、跨平台路径父子去重、子项排除、重新扫描选择映射与规模格式化。
  * [POS]: 身份页残留扫描/清理的脱敏契约，复用既有快照选择与路径去重规则。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
+import type {CliSecurityAudit} from './risk-model';
 export type Item = {id:string;path:string;title:string;group:string;risk:string;impact:string;bytes:number;files:number;exact:boolean;keys:string[]};
-export type Scan = {folder:string;items:Item[];running:boolean;processes:{pid:number;name:string}[];message:string;warnings:string[];diagnostics:{title:string;detail:string;status:string}[];org_id:string};
+export type Scan = {folder:string;items:Item[];running:boolean;processes:{pid:number;name:string}[];message:string;warnings:string[];diagnostics:{title:string;detail:string;status:string}[];org_id:string;cli_security?:CliSecurityAudit|null};
 export type CleanResult = {cleaned:number;errors:string[];completed:boolean};
 export type Preset = 'cache'|'reset'|'full';
 export const groups = [

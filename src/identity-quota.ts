@@ -1,10 +1,11 @@
 /**
  * [INPUT]: Bounded local quota values, independent window evidence/reset timestamps and an explicit clock.
- * [OUTPUT]: Independent quota-window presentation, explicit trusted-reset inference, elapsed reset duration, 7d linear burn pace and conservative recommendations.
+ * [OUTPUT]: Independent quota-window presentation, truthful percentage badge/detail formatting, explicit trusted-reset inference, elapsed reset duration, 7d linear burn pace and conservative recommendations.
  * [POS]: Pure frontend quota model; no network, ledger writes or account operations.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
 import type {QuotaEvidence} from './identity-model';
+import {formatTruthfulPercent} from './smart-relay-model';
 
 export type QuotaInput = QuotaEvidence & {quota_5h_used?: number | null; quota_5h_reset_at?: number | null; quota_7d_used?: number | null; quota_7d_reset_at?: number | null};
 export type WeeklyPace = {expectedUsedPct: number; expectedRemPct: number; deltaUsedPct: number; suppressed: boolean; ahead: boolean};
@@ -87,8 +88,8 @@ export function evaluateQuota(item: QuotaInput | null | undefined, nowSec: numbe
   const clock5h = formatResetClock(r5, false);
   const clock7d = formatResetClock(r7, true);
   const primaryEta = rem7d === 0 ? eta7d : eta5h && eta7d ? `${eta5h}/${eta7d}` : eta5h || eta7d;
-  const badge = `5h ${known5h ? rem5h + '%' : '?'} · 7d ${known7d ? rem7d + '%' : '?'}${primaryEta ? ` (${primaryEta})` : ''}`;
-  const detail = `5h: ${known5h ? rem5h + '%' : '?'}${eta5h ? ` (${eta5h} · ${clock5h})` : ''} | 7d: ${known7d ? rem7d + '%' : '?'}${eta7d ? ` (${eta7d} · ${clock7d})` : ''}`;
+  const badge = `5h ${known5h ? formatTruthfulPercent(rem5h) : '?'} · 7d ${known7d ? formatTruthfulPercent(rem7d) : '?'}${primaryEta ? ` (${primaryEta})` : ''}`;
+  const detail = `5h: ${known5h ? formatTruthfulPercent(rem5h) : '?'}${eta5h ? ` (${eta5h} · ${clock5h})` : ''} | 7d: ${known7d ? formatTruthfulPercent(rem7d) : '?'}${eta7d ? ` (${eta7d} · ${clock7d})` : ''}`;
   const pace7d = known7d && !inferred7d ? evaluateWeeklyPace(used7d, r7, nowSec) : null;
   return {rem5h, rem7d, effectiveRem, level, level5h, level7d, primaryEta, badge, detail, used5h, used7d, r5, r7, inferredReset5h, inferredReset7d, expired5h, expired7d, known5h, known7d, inferred5h, inferred7d, pace7d, source5h: inferred5h ? 'reset_inferred' as const : source5h, source7d: inferred7d ? 'reset_inferred' as const : source7d, recommendable: known5h && known7d && !inferred5h && !inferred7d};
 }

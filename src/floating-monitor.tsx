@@ -15,6 +15,7 @@ import {
   maskDisplayName,
   maskEmailAddress,
   reloadPreferencesFromStorage,
+  stepUiScale,
   usePreferences,
 } from './settings-model';
 import {
@@ -24,24 +25,29 @@ import {
 } from './identity-quota';
 import {
   clampMonitorOpacityPct,
+  computeMonitorBarFillPct,
   computeMonitorWindowBar,
   computeWindowTimePace,
   cycleMonitorOpacityPct,
   deriveMonitorActivityMode,
   formatCompactCount,
   formatMonitorCacheStats,
+  formatTruthfulPercent,
   formatVelocityLabel,
+  formatWindowPaceBadge,
   formatWindowResetLabel,
   monitorTokenComposition,
   MONITOR_BUS_CHANNEL,
   MONITOR_OPACITY_PRESETS,
   postMonitorBusMessage,
   readMonitorOpacityPct,
+  readMonitorRelayStandbyHint,
   recommendedMonitorPollIntervalMs,
   writeMonitorOpacityPct,
   type MonitorBusMessage,
   type MonitorDockEdge,
   type MonitorLiveTelemetry,
+  type MonitorRelayStandbyHint,
   type MonitorWindowState,
 } from './floating-monitor-model';
 import {
@@ -66,6 +72,7 @@ export function FloatingMonitorApp() {
   const [dockedEdge, setDockedEdge] = useState<MonitorDockEdge | null>('right');
   const [opacityPct, setOpacityPct] = useState<number>(readMonitorOpacityPct);
   const [opacityMenuOpen, setOpacityMenuOpen] = useState(false);
+  const [relayHint, setRelayHint] = useState<MonitorRelayStandbyHint | null>(readMonitorRelayStandbyHint);
   const collapseTimerRef = useRef<number | null>(null);
   const telemetryPendingRef = useRef(false);
 
@@ -148,6 +155,7 @@ export function FloatingMonitorApp() {
       reloadPreferencesFromStorage();
       reloadCustomWallpaperFromStorage();
       setOpacityPct(readMonitorOpacityPct());
+      setRelayHint(readMonitorRelayStandbyHint());
       void fetchTelemetry();
     };
     window.addEventListener('storage', onStorage);
@@ -168,6 +176,9 @@ export function FloatingMonitorApp() {
           if (msg.type === 'window-state') {
             applyWindowState(msg.state);
           }
+          if (msg.type === 'relay-standby-updated') {
+            setRelayHint(msg.hint);
+          }
           void fetchTelemetry();
         };
       } catch {
@@ -179,6 +190,43 @@ export function FloatingMonitorApp() {
       if (channel) channel.close();
     };
   }, [applyWindowState, fetchTelemetry]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      const editableTarget =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          !!target.closest('[contenteditable="true"],input,textarea,select,[role="textbox"]'));
+      if (event.key === 'Escape' && !event.isComposing) {
+        event.preventDefault();
+        if (opacityMenuOpen) {
+          setOpacityMenuOpen(false);
+        } else {
+          void handleClose();
+        }
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.isComposing && !editableTarget) {
+        if (event.key === '=' || event.key === '+' || event.code === 'NumpadAdd') {
+          event.preventDefault();
+          stepUiScale('in');
+          return;
+        }
+        if (event.key === '-' || event.key === '_' || event.code === 'NumpadSubtract') {
+          event.preventDefault();
+          stepUiScale('out');
+          return;
+        }
+        if (event.key === '0' || event.code === 'Numpad0') {
+          event.preventDefault();
+          stepUiScale('reset');
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [opacityMenuOpen]);
 
   useEffect(() => {
     return () => {
@@ -376,29 +424,29 @@ export function FloatingMonitorApp() {
     bar5h.used === null
       ? '—'
       : displayMode === 'used'
-        ? `${bar5h.used}%`
-        : `${bar5h.remaining}%`;
+        ? bar5h.usedLabel
+        : bar5h.remainingLabel;
 
   const pctValue7d =
     bar7d.used === null
       ? '—'
       : displayMode === 'used'
-        ? `${bar7d.used}%`
-        : `${bar7d.remaining}%`;
+        ? bar7d.usedLabel
+        : bar7d.remainingLabel;
 
   const pctLabel5h =
     bar5h.used === null
       ? '—'
       : displayMode === 'used'
-        ? `${t('identityCard.used')} ${bar5h.used}%`
-        : `${t('identityCard.remaining')} ${bar5h.remaining}%`;
+        ? `${t('identityCard.used')} ${bar5h.usedLabel}`
+        : `${t('identityCard.remaining')} ${bar5h.remainingLabel}`;
 
   const pctLabel7d =
     bar7d.used === null
       ? '—'
       : displayMode === 'used'
-        ? `${t('identityCard.used')} ${bar7d.used}%`
-        : `${t('identityCard.remaining')} ${bar7d.remaining}%`;
+        ? `${t('identityCard.used')} ${bar7d.usedLabel}`
+        : `${t('identityCard.remaining')} ${bar7d.remainingLabel}`;
 
   const reset5hCountdown =
     evaluated?.r5 && evaluated.r5 > nowSec
@@ -435,17 +483,23 @@ export function FloatingMonitorApp() {
 
   const pace5h = computeWindowTimePace(evaluated?.r5, 5 * 3600, bar5h.used, nowSec);
   const pace7d = computeWindowTimePace(evaluated?.r7, 7 * 86400, bar7d.used, nowSec);
+  const pace5hBadge = formatWindowPaceBadge(pace5h, locale);
 
-  const formatPaceTooltip = (pace: ReturnType<typeof computeWindowTimePace>) => {
+  const formatPaceTooltip = (
+    pace: ReturnType<typeof computeWindowTimePace>,
+    bar: ReturnType<typeof computeMonitorWindowBar>,
+  ) => {
     if (!pace.available || pace.elapsedPct === null) return '';
     if (pace.projectedEndPct !== null) {
       return t('monitor.paceTickTooltip', {
         elapsed: pace.elapsedPct,
+        used: bar.usedLabel,
         projected: pace.projectedEndPct,
       });
     }
     return t('monitor.paceTickTooltipNoProj', {
       elapsed: pace.elapsedPct,
+      used: bar.usedLabel,
     });
   };
 
@@ -787,19 +841,13 @@ export function FloatingMonitorApp() {
             <div
               className={`monitor-hud-fill tone-${bar5h.tone}`}
               style={{
-                width: `${
-                  bar5h.used === null
-                    ? 0
-                    : displayMode === 'used'
-                      ? bar5h.used
-                      : bar5h.fillWidthPct
-                }%`,
+                width: `${computeMonitorBarFillPct(bar5h, displayMode)}%`,
               }}
             />
             {pace5h.available && pace5h.elapsedPct !== null && (
               <span
                 className={`monitor-hud-pace-tick fm-bar-pace-tick tone-${pace5h.tone}`}
-                title={formatPaceTooltip(pace5h)}
+                title={formatPaceTooltip(pace5h, bar5h)}
                 style={{
                   left: `${pace5h.elapsedPct}%`,
                 }}
@@ -810,6 +858,14 @@ export function FloatingMonitorApp() {
             <span className="monitor-limit-reset-text" title={reset5hLabel}>
               {reset5hLabel}
             </span>
+            {pace5hBadge && (
+              <span
+                className={`monitor-hud-burn-tag${pace5h.tone === 'ahead' ? ' is-ahead' : ''}`}
+                title={formatPaceTooltip(pace5h, bar5h) || pace5hBadge}
+              >
+                {pace5hBadge}
+              </span>
+            )}
           </div>
         </div>
 
@@ -822,19 +878,13 @@ export function FloatingMonitorApp() {
             <div
               className={`monitor-hud-fill tone-${bar7d.tone}`}
               style={{
-                width: `${
-                  bar7d.used === null
-                    ? 0
-                    : displayMode === 'used'
-                      ? bar7d.used
-                      : bar7d.fillWidthPct
-                }%`,
+                width: `${computeMonitorBarFillPct(bar7d, displayMode)}%`,
               }}
             />
             {pace7d.available && pace7d.elapsedPct !== null && (
               <span
                 className={`monitor-hud-pace-tick fm-bar-pace-tick tone-${pace7d.tone}`}
-                title={formatPaceTooltip(pace7d)}
+                title={formatPaceTooltip(pace7d, bar7d)}
                 style={{
                   left: `${pace7d.elapsedPct}%`,
                 }}
@@ -853,6 +903,25 @@ export function FloatingMonitorApp() {
           </div>
         </div>
       </section>
+
+      {relayHint?.enabled && relayHint.candidateName && (
+        <div
+          className={`monitor-relay-standby-pill${relayHint.shouldRelayNow ? ' is-urgent' : ''}`}
+          data-monitor-relay-standby
+        >
+          <span className="monitor-relay-standby-label">
+            {locale === 'en' ? 'Next relay' : '接力备选'}
+          </span>
+          <strong className="monitor-relay-standby-name">
+            {maskDisplayName(relayHint.candidateName, relayHint.candidateEmail, hideAccount)}
+          </strong>
+          {relayHint.effectiveRemPct !== null && (
+            <span className="monitor-relay-standby-rem">
+              {formatTruthfulPercent(relayHint.effectiveRemPct)}
+            </span>
+          )}
+        </div>
+      )}
 
       {!compact ? (
         <div className="monitor-hud-detail-body">

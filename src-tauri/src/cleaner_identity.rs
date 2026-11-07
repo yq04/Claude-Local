@@ -1,5 +1,5 @@
 // [INPUT]: Cleaner 白名单、共享 Code 登录键常量、完整目录快照、用户保留策略与 JSON 配置。
-// [OUTPUT]: 账号凭据/归属与必要缓存的受限身份目标；旧归档只读兼容、写回前投影保护设备和 UI/实验状态；显式切换后的窄账号缓存维护不改诊断或历史正文。
+// [OUTPUT]: 账号凭据/归属与必要缓存的受限身份目标；写回前主动清理残留互斥三锁（.oauth_refresh.lock / .storage-write.lock / .claude.json.lock）、投影保护设备和 UI/实验状态；显式切换或置空后的窄账号缓存维护（含 .claude/statsig 与跨号 1p_failed_events 遥测死信箱清理）不改诊断或历史正文。
 // [POS]: 身份保险库复用原有路径边界；不扫描项目源码、Shell 或系统代理配置。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -300,6 +300,19 @@ pub(crate) fn extract(source: &Source, text: &str) -> Result<serde_json::Value, 
     ))
 }
 pub(crate) fn apply_config(source: &Source, saved: &serde_json::Value) -> Result<(), String> {
+    if let Some(root_dir) = if source.path.file_name().is_some_and(|n| n == ".claude.json") {
+        source.path.parent()
+    } else {
+        source.path.parent().and_then(|p| {
+            if p.file_name().is_some_and(|n| n == ".claude") {
+                p.parent()
+            } else {
+                None
+            }
+        })
+    } {
+        clear_stale_locks(root_dir);
+    }
     if source.path.exists() {
         crate::identities::private::protect(&source.path)?;
     }
@@ -470,12 +483,13 @@ fn is_lock_stale(path: &Path, stale_secs: u64) -> bool {
 }
 
 /// 清理 Claude Code 在异常退出、进程强杀或切换账号后遗留的 OAuth / 配置互斥锁文件及已退出进程的孤儿会话描述文件，防止下次启动阻塞或报锁冲突。
-/// 借鉴 `realiti4/claude-swap` (`claude_locks.py`) 锁协议：当无 Claude 进程运行时立即清理全部残留锁；若仍有进程运行，则严格遵循 Claude Code `proper-lockfile` 过期阈值（凭据锁 60s、配置锁 10s）。
+/// 借鉴 `realiti4/claude-swap` (`claude_locks.py`) 与 `cc-switch` 锁协议：当无 Claude 进程运行时立即清理全部残留锁；若仍有进程运行，则严格遵循 Claude Code 锁过期阈值（凭据锁 60s、存储写锁 15s、配置锁 10s）。
 pub(crate) fn clear_stale_locks(root: &Path) {
     let is_running = root_has_running_claude(root);
     for (rel, stale_secs) in [
         (".claude/.oauth_refresh.lock", 60u64),
         (".claude/.oauth_refresh.lock.owner", 60u64),
+        (".claude/.storage-write.lock", 15u64),
         (".claude/daemon.lock", 60u64),
         (".claude.lock", 60u64),
         (".claude.json.lock", 10u64),
@@ -1052,72 +1066,125 @@ fn sanitize_project_sessions(
     foreign_session_ids
 }
 
-/// 在明确的身份切换或恢复完成后，只维护账号绑定的缓存白名单。
+/// 在明确的身份切换或恢复完成后，只维护账号绑定的缓存白名单与跨号遥测死信箱。
 /// 不扫描或改写会话、项目遥测、凭据及其他用户工作区内容。
 pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
-    let claude_json = root.join(".claude.json");
-    let meta = match fs::symlink_metadata(&claude_json) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(_) => return Ok(()),
-    };
-    if linked(&meta)
-        || !meta.is_file()
-        || meta.len() > 8 * 1024 * 1024
-        || canonicalize(&claude_json).ok().as_deref() != Some(claude_json.as_path())
-    {
-        return Ok(());
-    }
+    clear_stale_locks(root);
     crate::identities::private::parents(root)?;
-    crate::identities::private::safe(&claude_json)?;
-    let bytes = fs::read(&claude_json).map_err(|_| "身份配置无法读取。")?;
-    let mut value: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|_| "身份配置不是有效 JSON。")?;
-    let Some(acct) = value["oauthAccount"]["accountUuid"]
-        .as_str()
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && s.len() <= 254 && !s.chars().any(char::is_control))
-        .map(str::to_string)
-    else {
-        return Ok(());
-    };
-    let org = value["oauthAccount"]["organizationUuid"]
-        .as_str()
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && s.len() <= 254 && !s.chars().any(char::is_control))
-        .map(str::to_string);
+    let claude_json = root.join(".claude.json");
+    let mut acct: Option<String> = None;
+    let mut org: Option<String> = None;
 
-    let mut modified = false;
-    if let Some(obj) = value.as_object_mut() {
-        if let Some(active_org) = org.as_deref() {
-            for key in ["s1mAccessCache", "passesEligibilityCache"] {
-                if let Some(entries) = obj.get_mut(key).and_then(|v| v.as_object_mut()) {
-                    let before = entries.len();
-                    entries.retain(|k, _| k == active_org);
-                    modified |= entries.len() != before;
+    if let Ok(meta) = fs::symlink_metadata(&claude_json) {
+        if !linked(&meta)
+            && meta.is_file()
+            && meta.len() <= 8 * 1024 * 1024
+            && canonicalize(&claude_json).ok().as_deref() == Some(claude_json.as_path())
+        {
+            crate::identities::private::safe(&claude_json)?;
+            let bytes = fs::read(&claude_json).map_err(|_| "身份配置无法读取。")?;
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| "身份配置不是有效 JSON。")?;
+            acct = value["oauthAccount"]["accountUuid"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && s.len() <= 254 && !s.chars().any(char::is_control))
+                .map(str::to_string);
+            org = value["oauthAccount"]["organizationUuid"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && s.len() <= 254 && !s.chars().any(char::is_control))
+                .map(str::to_string);
+
+            let mut modified = false;
+            if let Some(obj) = value.as_object_mut() {
+                if let Some(ref active_acct) = acct {
+                    let active_org = org.as_deref();
+                    for key in [
+                        "s1mAccessCache",
+                        "passesEligibilityCache",
+                        "additionalModelOptionsCache",
+                        "additionalModelOptionsAnsweredAt",
+                        "additionalModelCostsCache",
+                        "artifactRosterDenied",
+                        "modelAccessCache",
+                        "orgModelDefaultCache",
+                        "lastSeenOrgDefaultUpdatedAt",
+                        "autoCompactWindowsCache",
+                        "metricsStatusCache",
+                        "unusedLimitResetStatusCache",
+                    ] {
+                        if let Some(entries) = obj.get_mut(key).and_then(|v| v.as_object_mut()) {
+                            let before = entries.len();
+                            entries.retain(|k, _| {
+                                k == active_acct
+                                    || active_org.is_some_and(|org_id| k == org_id)
+                            });
+                            modified |= entries.len() != before;
+                        }
+                    }
+                    for key in [
+                        "cachedUsageUtilization",
+                        "cachedArtifactRoster",
+                        "githubWebConnectionStatusCache",
+                        "clientDataCache",
+                        "clientDataCacheSlots",
+                        "connectorOAuthCache",
+                    ] {
+                        let foreign_acct = obj
+                            .get(key)
+                            .and_then(|v| v.get("accountUuid"))
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|u| !u.is_empty() && u != active_acct);
+                        let foreign_org = active_org.is_some_and(|org_id| {
+                            obj.get(key)
+                                .and_then(|v| v.get("organizationUuid"))
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|u| !u.is_empty() && u != org_id)
+                        });
+                        if foreign_acct || foreign_org {
+                            obj.remove(key);
+                            modified = true;
+                        }
+                    }
+                } else {
+                    for key in [
+                        "s1mAccessCache",
+                        "passesEligibilityCache",
+                        "additionalModelOptionsCache",
+                        "additionalModelOptionsAnsweredAt",
+                        "additionalModelCostsCache",
+                        "artifactRosterDenied",
+                        "modelAccessCache",
+                        "orgModelDefaultCache",
+                        "lastSeenOrgDefaultUpdatedAt",
+                        "autoCompactWindowsCache",
+                        "metricsStatusCache",
+                        "unusedLimitResetStatusCache",
+                        "startupPrefetchedAt",
+                        "cachedExtraUsageDisabledReason",
+                        "cachedUsageUtilization",
+                        "cachedArtifactRoster",
+                        "githubWebConnectionStatusCache",
+                        "clientDataCache",
+                        "clientDataCacheSlots",
+                        "claudeAiMcpEverConnected",
+                        "penguinModeOrgEnabled",
+                        "connectorOAuthCache",
+                    ] {
+                        if obj.remove(key).is_some() {
+                            modified = true;
+                        }
+                    }
                 }
             }
-        }
-        for key in [
-            "cachedUsageUtilization",
-            "cachedArtifactRoster",
-            "githubWebConnectionStatusCache",
-        ] {
-            if obj
-                .get(key)
-                .and_then(|v| v.get("accountUuid"))
-                .and_then(|v| v.as_str())
-                .is_some_and(|u| !u.is_empty() && u != acct)
-            {
-                obj.remove(key);
-                modified = true;
+            if modified {
+                let text =
+                    serde_json::to_string_pretty(&value).map_err(|_| "身份配置无法更新缓存。")?;
+                file_io::atomic_write(&claude_json, format!("{text}\n").as_bytes(), 0o600)
+                    .map_err(|_| "身份配置无法更新缓存。")?;
             }
         }
-    }
-    if modified {
-        let text = serde_json::to_string_pretty(&value).map_err(|_| "身份配置无法更新缓存。")?;
-        file_io::atomic_write(&claude_json, format!("{text}\n").as_bytes(), 0o600)
-            .map_err(|_| "身份配置无法更新缓存。")?;
     }
 
     for relative in [".claude/plugins/synced", ".claude/cache/model-catalog"] {
@@ -1131,13 +1198,57 @@ pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
                     name.ends_with("-cc.json")
                 };
                 let matches_active = if is_plugins {
-                    name.contains(&acct) || org.as_deref().is_some_and(|o| name.contains(o))
+                    acct.as_deref().is_some_and(|a| name.contains(a))
+                        || org.as_deref().is_some_and(|o| name.contains(o))
                 } else {
-                    name.starts_with(&acct) || org.as_deref().is_some_and(|o| name.starts_with(o))
+                    acct.as_deref().is_some_and(|a| name.starts_with(a))
+                        || org.as_deref().is_some_and(|o| name.starts_with(o))
                 };
                 if candidate && !matches_active {
                     remove_safe_entry(&entry.path());
                 }
+            }
+        }
+    }
+
+    remove_safe_entry(&root.join(".claude/statsig"));
+
+    // 清理 `.claude/telemetry/1p_failed_events.*.json` 中属于旧账号的未发送遥测批次，
+    // 阻断 `claude.exe` 启动时 `retryPreviousBatches()` 用新账号 Token 重发旧账号 `account_uuid` 的跨号投毒。
+    if let Ok(entries) = fs::read_dir(root.join(".claude/telemetry")) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.starts_with("1p_failed_events.") || !name.ends_with(".json") {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(meta) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if linked(&meta) || !meta.is_file() {
+                continue;
+            }
+            if meta.len() > 4 * 1024 * 1024 {
+                remove_safe_entry(&path);
+                continue;
+            }
+            let Some(ref active_acct) = acct else {
+                remove_safe_entry(&path);
+                continue;
+            };
+            let should_remove = match fs::read_to_string(&path) {
+                Ok(text) => {
+                    let missing_acct = !text.contains(active_acct.as_str());
+                    let foreign_org = org.as_deref().is_some_and(|active_org| {
+                        (text.contains("organizationUuid") || text.contains("organization_uuid"))
+                            && !text.contains(active_org)
+                    });
+                    missing_acct || foreign_org
+                }
+                Err(_) => true,
+            };
+            if should_remove {
+                remove_safe_entry(&path);
             }
         }
     }

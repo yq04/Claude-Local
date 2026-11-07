@@ -5,7 +5,12 @@
  */
 import {expect, test} from 'bun:test';
 import {defaultAccountWakeupRuntime, type NativeWakeupAccount} from './identity-online-quota';
-import {formatWakeupWait, presentWakeupAccount, type WakeupPresentationInput} from './wakeup-presentation';
+import {
+  formatWakeupWait,
+  presentWakeupAccount,
+  verifyWakeupAnchorAdvancement,
+  type WakeupPresentationInput,
+} from './wakeup-presentation';
 
 const now = 1_800_000_000_000;
 const runtime = (): NativeWakeupAccount => ({...defaultAccountWakeupRuntime(), decision: '', capability: '', unknown: false, authBlocked: false, recoveryAllowed: false});
@@ -48,4 +53,33 @@ test('a ready local account does not remain unknown when automatic dispatch is d
   expect(presentWakeupAccount(row)).toMatchObject({stateKey: 'wakeup.view.state.checking', canWake: false, canRecover: false});
   row.storageError = true;
   expect(presentWakeupAccount(row)).toMatchObject({stateKey: 'wakeup.view.state.unavailable', canWake: false, canRecover: false});
+});
+
+test('verifyWakeupAnchorAdvancement distinguishes new 5h cycle advancement from active cycle reuse and unverified anchor', () => {
+  const nowSec = 1_800_000_000;
+  // Previous window expired (or null) and new reset is 5 hours ahead -> advanced_new_cycle
+  expect(verifyWakeupAnchorAdvancement(nowSec - 300, nowSec + 18_000, nowSec)).toEqual({
+    status: 'advanced_new_cycle',
+    labelKey: 'wakeup.anchor.advancedNewCycle',
+    beforeSec: nowSec - 300,
+    afterSec: nowSec + 18_000,
+  });
+  expect(verifyWakeupAnchorAdvancement(null, nowSec + 18_000, nowSec).status).toBe('advanced_new_cycle');
+
+  // Previous window was already active and reset timestamp did not advance -> reused_active_cycle
+  expect(verifyWakeupAnchorAdvancement(nowSec + 7_200, nowSec + 7_215, nowSec)).toEqual({
+    status: 'reused_active_cycle',
+    labelKey: 'wakeup.anchor.reusedActive',
+    beforeSec: nowSec + 7_200,
+    afterSec: nowSec + 7_215,
+  });
+
+  // Missing or already-past afterResetSec -> unverified_anchor
+  expect(verifyWakeupAnchorAdvancement(nowSec - 600, nowSec - 600, nowSec)).toEqual({
+    status: 'unverified_anchor',
+    labelKey: 'wakeup.anchor.unverified',
+    beforeSec: nowSec - 600,
+    afterSec: nowSec - 600,
+  });
+  expect(verifyWakeupAnchorAdvancement(nowSec - 600, null, nowSec).status).toBe('unverified_anchor');
 });

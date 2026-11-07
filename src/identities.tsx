@@ -15,13 +15,13 @@ import {CURRENT_IDENTITY_ORDER_TOKEN, IDENTITY_CARD_ORDER_STORAGE_KEY, useCardRa
 import type {WarmingCard, WarmingFields, WarmingOpenMode} from './warming-model';
 import type {BrowserState} from './browser-model';
 import {useBrowserRuntime} from './use-browser-runtime';
-import {formatWakeupWait, presentWakeupAccount} from './wakeup-presentation';
+import {formatWakeupWait, presentWakeupAccount, verifyWakeupAnchorAdvancement, type WakeupAnchorVerificationResult} from './wakeup-presentation';
 import {ShieldCheck, Refresh} from 'cromma-ui/pika';
 import {invoke} from '@tauri-apps/api/core';
 import {getVersion} from '@tauri-apps/api/app';
 import {useI18n} from './i18n';
 import {AppDialog} from './dialog';
-import {IdentityOperationProgress, useCleanupActivity} from './cleaner-activity';
+import {IdentityOperationProgress, recordAuditHistoryItem, useCleanupActivity} from './cleaner-activity';
 import {formatBytes} from './cleaner-model';
 import {ClaudeCliPanel} from './claude-cli-panel';
 import {ClaudeResiduePanel} from './claude-residue-panel';
@@ -33,14 +33,17 @@ import {formatObservationAge, quotaObservationAge} from './identity-list';
 import {serializeIdentityDiagnostic} from './identity-diagnostics';
 import {connectionHistory, IdentityConnections, isValidQuotaTargetSubset} from './identity-connections';
 import {toBrowserSocks5ProxyFromCli, toCliHttpProxy} from './risk-model';
-import {MONITOR_BUS_CHANNEL, postMonitorBusMessage, type MonitorBusMessage, type MonitorWindowState} from './floating-monitor-model';
+import {MONITOR_BUS_CHANNEL, postMonitorBusMessage, writeMonitorRelayStandbyHint, type MonitorBusMessage, type MonitorWindowState} from './floating-monitor-model';
 import {
   useSmartRelayConfig,
   updateSmartRelayConfig,
   resetSmartRelayConfig,
   evaluateSmartRelay,
   summarizeRelayPool,
+  noteRelayAccountRateLimited,
   noteRelayAccountSwitch,
+  clearAccountCooldown,
+  formatTruthfulPercent,
   RELAY_STRATEGIES,
   RELAY_RATE_LIMIT_MODES,
   RELAY_AFFINITY_MODES,
@@ -52,6 +55,8 @@ import './floating-monitor.css';
 
 type Target = Identity | 'empty' | 'recovery';
 type QuotaSetupStatus={state:'not_configured'|'custom_statusline'|'invalid_settings_path'|'invalid_settings_json'|'invalid_statusline';collector_bundled:boolean;has_statusline:boolean};
+
+let persistedWakeupAnchorMap: Record<string, WakeupAnchorVerificationResult> = {};
 
 function authBadgeLabel(status: string | null | undefined, t: (key: string) => string) {
   if (status === 'valid') return t('凭据有效');
@@ -89,13 +94,14 @@ function QuotaWindow({label, used, remaining, resetAt, inferredResetAt = null, r
   const resetDateTime = resetDate && Number.isFinite(resetDate.getTime()) ? resetDate.toISOString() : undefined;
   const paceExpected = pace ? (display === 'used' ? pace.expectedUsedPct : pace.expectedRemPct) : null;
   const clockIcon = <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.6" /><path d="M8 4.5V8l2.2 1.4" /></svg>;
+  const pctText = formatTruthfulPercent(value);
   return (
-    <div className={`identity-quota-window ${known ? `quota-${level}` : 'quota-unknown'}`} data-quota-window={label} data-quota-inferred={inferred || undefined} title={inferred ? t('quota.resetInferredHint') : undefined} aria-label={`${label} ${known ? `${t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')} ${Math.round(value)}%` : t('identityCard.quotaUnknown')}${inferred ? ` · ${resetLabel}` : ''}`}>
+    <div className={`identity-quota-window ${known ? `quota-${level}` : 'quota-unknown'}`} data-quota-window={label} data-quota-inferred={inferred || undefined} title={inferred ? t('quota.resetInferredHint') : undefined} aria-label={`${label} ${known ? `${t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')} ${pctText}` : t('identityCard.quotaUnknown')}${inferred ? ` · ${resetLabel}` : ''}`}>
       <div className="identity-quota-copy">
         <strong>{label}</strong>
-        <span className="identity-quota-value">{known ? <><span>{t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')}</span>{' '}<strong>{Math.round(value)}%</strong></> : t('identityCard.unknown')}</span>
+        <span className="identity-quota-value">{known ? <><span>{t(display === 'used' ? 'identityCard.used' : 'identityCard.remaining')}</span>{' '}<strong>{pctText}</strong></> : t('identityCard.unknown')}</span>
       </div>
-      <span className={`identity-quota-track ${inferred ? "quota-track-inferred" : ""}`} role="img" aria-label={known ? `${Math.round(value)}%` : t('identityCard.quotaUnknown')}>
+      <span className={`identity-quota-track ${inferred ? "quota-track-inferred" : ""}`} role="img" aria-label={known ? pctText : t('identityCard.quotaUnknown')}>
         {known && <i style={{width: `${Math.max(0, Math.min(100, value))}%`}} />}
         {known && !inferred && pace && !pace.suppressed && paceExpected !== null && (
           <b
@@ -231,6 +237,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const autoWakeState = nativeWakeup;
   const [autoWakeSaving, setAutoWakeSaving] = useState(false);
   const [wakingAccountId, setWakingAccountId] = useState<string | null>(null);
+  const [wakeupAnchorMap, setWakeupAnchorMap] = useState<Record<string, WakeupAnchorVerificationResult>>(() => persistedWakeupAnchorMap);
   const wakingRef = useRef(false);
   const [syncedFeedback, setSyncedFeedback] = useState(false);
   const [manualSyncing, setManualSyncing] = useState(false);
@@ -406,11 +413,12 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   ];
   const relayEval = evaluateSmartRelay(relayAccounts, smartRelay, nowSec);
   const relayPoolSummary = summarizeRelayPool(relayEval.candidates, nowSec);
+  const relayTargetCand = relayEval.recommended ?? relayEval.standbyCandidate ?? null;
   const relayRecommendedSaved =
-    smartRelay.enabled && relayEval.recommended && !relayEval.recommended.isCurrent
+    smartRelay.enabled && relayTargetCand && !relayTargetCand.isCurrent
       ? (() => {
-          const row = saved.find(r => r.id === relayEval.recommended!.id);
-          return row ? {row, effectiveRem: relayEval.recommended.effectiveRem, inferred: relayEval.recommended.inferred} : null;
+          const row = saved.find(r => r.id === relayTargetCand.id);
+          return row ? {row, effectiveRem: relayTargetCand.effectiveRem, inferred: relayTargetCand.inferred} : null;
         })()
       : null;
   const recommendSaved = smartRelay.enabled
@@ -419,6 +427,26 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       ? bestSaved
       : null;
   const totalIdentities = (current?.present ? 1 : 0) + saved.length;
+
+  const standbyCandId = relayRecommendedSaved?.row.id ?? null;
+  const standbyCandName = relayRecommendedSaved?.row.name ?? null;
+  const standbyCandEmail = standbyCandId ? (state?.summaries?.[standbyCandId]?.email ?? null) : null;
+  const standbyCandRem = relayRecommendedSaved?.effectiveRem ?? null;
+  const standbyUrgent = Boolean(relayEval.shouldRelayNow);
+  useEffect(() => {
+    const hint =
+      smartRelay.enabled && standbyCandName
+        ? {
+            enabled: true,
+            candidateName: standbyCandName,
+            candidateEmail: standbyCandEmail,
+            effectiveRemPct: standbyCandRem,
+            shouldRelayNow: standbyUrgent,
+          }
+        : null;
+    writeMonitorRelayStandbyHint(hint);
+    postMonitorBusMessage({type: 'relay-standby-updated', hint});
+  }, [smartRelay.enabled, standbyCandEmail, standbyCandName, standbyCandRem, standbyUrgent]);
 
   useEffect(() => {
     void read();
@@ -517,6 +545,10 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       setBatchSummary(nextSummary);
 
       const statusInfo = formatOnlineQuotaStatus(payload.result, Date.now(), tRef.current);
+      if (payload.result.status === 'rate_limited' || payload.result.reason === 'rate_limited') {
+        const relayAccId = payload.account_id === 'current' ? (stateRef.current?.active || 'current') : payload.account_id;
+        noteRelayAccountRateLimited(relayAccId, payload.result.retry_at_ms);
+      }
       setCardStatusMap(prev => ({
         ...prev,
         [payload.account_id]: {
@@ -673,13 +705,34 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         expiredResetAt: expiredResetSec,
       });
       const nowMs = Date.now();
+      if (res.status === 'rate_limited' || res.reason === 'rate_limited') {
+        const relayAccId = accountId === 'current' ? (stateRef.current?.active || 'current') : accountId;
+        noteRelayAccountRateLimited(relayAccId, res.retry_at_ms, Math.floor(nowMs / 1000));
+      }
+      const anchorCheck = verifyWakeupAnchorAdvancement(expiredResetSec, res.wakeup_5h_reset_at, Math.floor(nowMs / 1000));
+      persistedWakeupAnchorMap = {...persistedWakeupAnchorMap, [accountId]: anchorCheck};
+      if (mountedRef.current) {
+        setWakeupAnchorMap(persistedWakeupAnchorMap);
+      }
       if (isConfirmedNewWakeup5h(res) && res.wakeup_5h_reset_at > Math.floor(nowMs / 1000) && expiredResetSec !== null && res.wakeup_5h_reset_at > expiredResetSec) {
-        if (mountedRef.current) { await read(false); setQuotaFeedback(tRef.current(res.wakeup_audit_status === 'unavailable' ? 'wakeup.auditUnavailable' : 'wakeup.wokenSuccess')); }
+        const baseMsg = tRef.current(res.wakeup_audit_status === 'unavailable' ? 'wakeup.auditUnavailable' : 'wakeup.wokenSuccess');
+        const fullMsg = `${baseMsg} · ${tRef.current(anchorCheck.labelKey)}`;
+        recordAuditHistoryItem({
+          kind: 'identity',
+          title: 'wakeup.toggleOn',
+          status: anchorCheck.status === 'advanced_new_cycle' ? 'ok' : 'warning',
+          message: fullMsg,
+          elapsed_ms: Math.max(100, nowMs - (res.observed_at_ms ?? nowMs)),
+        });
+        if (mountedRef.current) {
+          await read(false);
+          setQuotaFeedback(fullMsg);
+        }
         return true;
       }
       if (mountedRef.current) setQuotaFeedback(res.stage === 'scheduler' ? formatOnlineQuotaStatus(res, nowMs, tRef.current).message : res.wakeup_effect === 'outcome_unknown'
         ? tRef.current('wakeup.outcomeUnknown') : res.status === 'auth_required' ? tRef.current('wakeup.authBlocked')
-        : res.wakeup_effect ? tRef.current('wakeup.notConfirmed') : formatOnlineQuotaStatus(res, nowMs, tRef.current).message);
+        : res.wakeup_effect ? `${tRef.current('wakeup.notConfirmed')} · ${tRef.current(anchorCheck.labelKey)}` : formatOnlineQuotaStatus(res, nowMs, tRef.current).message);
       return false;
     } catch (error) {
       if (mountedRef.current) setQuotaFeedback(tRef.current(String(error) === 'wakeup.notReady' ? 'wakeup.notReady' : String(error) === 'wakeup.stateSaveFailed' ? 'wakeup.stateSaveFailed' : 'wakeup.requestFailed'));
@@ -835,6 +888,12 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     })), currentTargets);
     const resultsById = Object.fromEntries(validResults.map(item => [item.account_id, item.result]));
     batchResultsMapRef.current = resultsById;
+    for (const item of validResults) {
+      if (item.result.status === 'rate_limited' || item.result.reason === 'rate_limited') {
+        const relayAccId = item.account_id === 'current' ? (stateRef.current?.active || 'current') : item.account_id;
+        noteRelayAccountRateLimited(relayAccId, item.result.retry_at_ms);
+      }
+    }
     setCardStatusMap(previous => {
       const next = {...previous};
       for (const item of validResults) {
@@ -1281,6 +1340,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     try {
       await stop();
       const previousActiveId = stateRef.current?.active ?? null;
+      const previousReset5hSec = stateRef.current?.current?.quota_5h_reset_at ?? null;
       let next = warmingPromotion ? await invoke<IdentityState>('identities_warming_promote', {
         id: warmingPromotion.id, currentName: name.trim(), policy, onProgress,
       }) : await invoke<IdentityState>('identities_switch', {
@@ -1291,7 +1351,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         onProgress,
       });
       if (typeof target === 'object') {
-        noteRelayAccountSwitch(previousActiveId, target.id);
+        noteRelayAccountSwitch(previousActiveId, target.id, previousReset5hSec);
       }
       if (
         !warmingPromotion &&
@@ -1833,6 +1893,14 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   <div className="identity-wakeup-account-head">
                     <span className="identity-wakeup-account-name">{label}</span>
                     <span className={`identity-wakeup-status-pill tone-${view.tone}`}>{t(view.stateKey)}</span>
+                    {wakeupAnchorMap[target.account_id] && (
+                      <span
+                        className={`identity-wakeup-status-pill tone-${wakeupAnchorMap[target.account_id].status === 'advanced_new_cycle' ? 'ok' : 'warn'}`}
+                        data-wakeup-anchor={wakeupAnchorMap[target.account_id].status}
+                      >
+                        {t(wakeupAnchorMap[target.account_id].labelKey)}
+                      </span>
+                    )}
                     <span className="identity-wakeup-local-auth">{t(view.localAuthKey)}</span>
                   </div>
                   <div className="identity-wakeup-account-actions">
@@ -1990,6 +2058,25 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                         {isRecommendedNext && (
                           <span className="identity-relay-recommended-pill">{t('relay.recommendedBadge')}</span>
                         )}
+                        {acc.inCooldown && (
+                          <>
+                            <span className="identity-relay-cooling-pill">{t('relay.coolingBadge')}</span>
+                            <button
+                              type="button"
+                              className="identity-relay-set-preferred"
+                              onClick={() => clearAccountCooldown(acc.id)}
+                            >
+                              {t('relay.clearCooldown')}
+                            </button>
+                          </>
+                        )}
+                        {acc.known5h && Math.abs(acc.pace5hDeltaPct) >= 10 && (
+                          <span className={`identity-relay-pace-pill${acc.pace5hDeltaPct >= 10 ? ' is-ahead' : ' is-safe'}`}>
+                            {t(acc.pace5hDeltaPct >= 10 ? 'relay.paceAheadBadge' : 'relay.paceSafeBadge', {
+                              delta: Math.round(acc.pace5hDeltaPct),
+                            })}
+                          </span>
+                        )}
                         <div className="identity-relay-account-spacer" />
                         {isPreferred ? (
                           <span className="identity-relay-preferred-pill">{t('relay.preferredBadge')}</span>
@@ -2012,7 +2099,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                               style={{width: `${Math.min(100, Math.max(2, used5h))}%`}}
                             />
                           </div>
-                          <strong>{acc.known5h ? `${t('已用')} ${used5h}%` : '—'}</strong>
+                          <strong>{acc.known5h ? `${t('已用')} ${formatTruthfulPercent(acc.used5h)}` : '—'}</strong>
                         </div>
                         <div className="identity-relay-account-bars-sep" />
                         <div className="identity-relay-mini-quota">
@@ -2023,7 +2110,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                               style={{width: `${Math.min(100, Math.max(2, used7d))}%`}}
                             />
                           </div>
-                          <strong>{acc.known7d ? `${t('已用')} ${used7d}%` : '—'}</strong>
+                          <strong>{acc.known7d ? `${t('已用')} ${formatTruthfulPercent(acc.used7d)}` : '—'}</strong>
                         </div>
                       </div>
                     </div>
@@ -2131,10 +2218,10 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                         state?.summaries?.[relayRecommendedSaved.row.id]?.email,
                         prefs.privacyMask,
                       ),
-                      rem: Math.round(relayRecommendedSaved.effectiveRem),
+                      rem: formatTruthfulPercent(relayRecommendedSaved.effectiveRem).replace(/%$/, ''),
                     })
                   : t('relay.banner.currentSpent', {
-                      used: Math.round(relayEval.currentCandidate?.effectiveUsed ?? smartRelay.spentThresholdPct),
+                      used: formatTruthfulPercent(relayEval.currentCandidate?.effectiveUsed ?? smartRelay.spentThresholdPct).replace(/%$/, ''),
                       name: maskDisplayName(
                         relayRecommendedSaved.row.name,
                         state?.summaries?.[relayRecommendedSaved.row.id]?.email,
@@ -2149,7 +2236,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                       state?.summaries?.[relayRecommendedSaved.row.id]?.email,
                       prefs.privacyMask,
                     ),
-                    rem: Math.round(relayRecommendedSaved.effectiveRem),
+                    rem: formatTruthfulPercent(relayRecommendedSaved.effectiveRem).replace(/%$/, ''),
                   })}
             </span>
           </div>

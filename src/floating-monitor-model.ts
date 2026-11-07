@@ -1,10 +1,13 @@
 // [INPUT]: Native monitor_live_telemetry payload, active-account quota windows, and account-scoped shared-ledger token counters.
-// [OUTPUT]: Pure token composition/formatting, window time-pace calculation, quota labels, HUD opacity persistence, adaptive local polling cadence, and cross-window BroadcastChannel helpers.
+// [OUTPUT]: Pure token composition/formatting, window time-pace calculation & badge formatting, truthful quota labels, HUD opacity persistence, adaptive local polling cadence, and cross-window BroadcastChannel helpers.
 // [POS]: Pure model layer for the toggleable Floating Monitor HUD and main-window live telemetry strip; zero network I/O.
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 import type { Locale } from './i18n'
 import type { QuotaSource } from './identity-model'
+import { formatTruthfulPercent } from './smart-relay-model'
+
+export { formatTruthfulPercent }
 
 export type MonitorDockEdge = 'left' | 'right' | 'top'
 
@@ -70,10 +73,19 @@ export function computeWindowTimePace(
   }
   const clampedUsed = Math.max(0, Math.min(100, Math.round(usedPct)))
   const paceDeltaPct = clampedUsed - elapsedPct
+  const suppressWeeklyLeadIn = windowSeconds >= 7 * 86400 && elapsedSec < 86400
   const projectedEndPct =
-    elapsedPct >= 5 ? Math.min(999, Math.round((clampedUsed / elapsedPct) * 100)) : null
+    elapsedPct >= 5 && !suppressWeeklyLeadIn
+      ? Math.min(999, Math.round((clampedUsed / elapsedPct) * 100))
+      : null
   const tone: WindowTimePace['tone'] =
-    paceDeltaPct >= 15 ? 'ahead' : paceDeltaPct <= -10 ? 'safe' : 'steady'
+    paceDeltaPct >= 15
+      ? suppressWeeklyLeadIn
+        ? 'steady'
+        : 'ahead'
+      : paceDeltaPct <= -10
+        ? 'safe'
+        : 'steady'
   return {
     available: true,
     elapsedPct,
@@ -81,6 +93,26 @@ export function computeWindowTimePace(
     projectedEndPct,
     tone,
   }
+}
+
+export function formatWindowPaceBadge(
+  pace: WindowTimePace,
+  language: Locale = 'zh',
+): string | null {
+  if (!pace.available || pace.paceDeltaPct === null || !Number.isFinite(pace.paceDeltaPct)) {
+    return null
+  }
+  if (pace.paceDeltaPct > 0) {
+    return language === 'en'
+      ? `+${pace.paceDeltaPct}% vs time`
+      : `超前 +${pace.paceDeltaPct}%`
+  }
+  if (pace.paceDeltaPct < 0) {
+    return language === 'en'
+      ? `${pace.paceDeltaPct}% vs time`
+      : `余量 ${pace.paceDeltaPct}%`
+  }
+  return language === 'en' ? 'On pace' : '匀速'
 }
 
 export interface LiveUsageMetrics {
@@ -151,13 +183,24 @@ export type MonitorBarTone = 'ok' | 'warn' | 'danger' | 'unknown'
 export interface MonitorWindowBar {
   used: number | null
   remaining: number | null
+  usedLabel: string
+  remainingLabel: string
   fillWidthPct: number
   tone: MonitorBarTone
 }
 
 export const MONITOR_BUS_CHANNEL = 'claude-local:monitor-bus'
 export const MONITOR_OPACITY_STORAGE_KEY = 'claude-local.monitor.opacity.v1'
+export const MONITOR_RELAY_STANDBY_STORAGE_KEY = 'claude-local.monitor.relay-standby.v1'
 export const MONITOR_OPACITY_PRESETS = [100, 88, 75, 62] as const
+
+export interface MonitorRelayStandbyHint {
+  enabled: boolean
+  candidateName: string | null
+  candidateEmail?: string | null
+  effectiveRemPct: number | null
+  shouldRelayNow: boolean
+}
 
 export type MonitorBusMessage =
   | { type: 'telemetry-updated'; revision?: string }
@@ -165,6 +208,42 @@ export type MonitorBusMessage =
   | { type: 'privacy-updated'; hideAccount: boolean }
   | { type: 'language-updated'; language: Locale }
   | { type: 'window-state'; state: MonitorWindowState }
+  | { type: 'relay-standby-updated'; hint: MonitorRelayStandbyHint | null }
+
+export function readMonitorRelayStandbyHint(): MonitorRelayStandbyHint | null {
+  if (typeof window === 'undefined' || !window.localStorage) return null
+  try {
+    const raw = window.localStorage.getItem(MONITOR_RELAY_STANDBY_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<MonitorRelayStandbyHint>
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.enabled !== 'boolean') return null
+    return {
+      enabled: parsed.enabled,
+      candidateName: typeof parsed.candidateName === 'string' ? parsed.candidateName : null,
+      candidateEmail: typeof parsed.candidateEmail === 'string' ? parsed.candidateEmail : null,
+      effectiveRemPct:
+        typeof parsed.effectiveRemPct === 'number' && Number.isFinite(parsed.effectiveRemPct)
+          ? parsed.effectiveRemPct
+          : null,
+      shouldRelayNow: Boolean(parsed.shouldRelayNow),
+    }
+  } catch {
+    return null
+  }
+}
+
+export function writeMonitorRelayStandbyHint(hint: MonitorRelayStandbyHint | null): void {
+  if (typeof window === 'undefined' || !window.localStorage) return
+  try {
+    if (!hint) {
+      window.localStorage.removeItem(MONITOR_RELAY_STANDBY_STORAGE_KEY)
+    } else {
+      window.localStorage.setItem(MONITOR_RELAY_STANDBY_STORAGE_KEY, JSON.stringify(hint))
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 export function clampMonitorOpacityPct(value: number | undefined | null): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 94
@@ -322,20 +401,39 @@ export function computeMonitorWindowBar(usedPct: number | undefined | null): Mon
     return {
       used: null,
       remaining: null,
+      usedLabel: formatTruthfulPercent(null),
+      remainingLabel: formatTruthfulPercent(null),
       fillWidthPct: 0,
       tone: 'unknown',
     }
   }
-  const used = Math.max(0, Math.min(100, Math.round(usedPct)))
+  const clampedUsed = Math.max(0, Math.min(100, usedPct))
+  const clampedRemaining = 100 - clampedUsed
+  const used = Math.max(0, Math.min(100, Math.round(clampedUsed)))
   const remaining = 100 - used
+  const usedLabel = formatTruthfulPercent(clampedUsed)
+  const remainingLabel = formatTruthfulPercent(clampedRemaining)
   const tone: MonitorBarTone =
     used >= 90 ? 'danger' : used >= 75 ? 'warn' : 'ok'
   return {
     used,
     remaining,
-    fillWidthPct: remaining === 0 ? 0 : Math.max(4, remaining),
+    usedLabel,
+    remainingLabel,
+    fillWidthPct: clampedRemaining <= 0 ? 0 : Math.max(4, remaining),
     tone,
   }
+}
+
+export function computeMonitorBarFillPct(
+  bar: MonitorWindowBar,
+  displayMode: 'remaining' | 'used',
+): number {
+  if (bar.used === null) return 0
+  if (displayMode === 'remaining') return bar.fillWidthPct
+  if (bar.usedLabel === '0%') return 0
+  if (bar.usedLabel === '100%') return 100
+  return Math.max(4, Math.min(96, bar.used))
 }
 
 export function computeContextMeter(contextUsedPct: number | undefined | null): MonitorContextMeter {

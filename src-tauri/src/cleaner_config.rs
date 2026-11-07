@@ -12,7 +12,15 @@ pub(super) enum EditKind {
     Npm,
     Git,
 }
-pub(super) const CREDENTIAL_KEYS: &[&str] = &["claudeAiOauth", "trustedDeviceToken"];
+pub(super) const CREDENTIAL_KEYS: &[&str] = &[
+    "claudeAiOauth",
+    "trustedDeviceToken",
+    "organizationUuid",
+    "enterpriseGateway",
+    "designOauth",
+    "trustedDeviceEnrolledAfterRefusalAtMs",
+    "cloudSessionsOauth",
+];
 fn sensitive_key(key: &str) -> bool {
     matches!(
         key.to_ascii_uppercase().as_str(),
@@ -28,6 +36,23 @@ pub(super) const ACCOUNT_KEYS: &[&str] = &[
     "githubWebConnectionStatusCache",
     "passesEligibilityCache",
     "s1mAccessCache",
+    "additionalModelOptionsCache",
+    "additionalModelOptionsAnsweredAt",
+    "additionalModelCostsCache",
+    "artifactRosterDenied",
+    "modelAccessCache",
+    "orgModelDefaultCache",
+    "lastSeenOrgDefaultUpdatedAt",
+    "autoCompactWindowsCache",
+    "metricsStatusCache",
+    "unusedLimitResetStatusCache",
+    "startupPrefetchedAt",
+    "cachedExtraUsageDisabledReason",
+    "clientDataCache",
+    "clientDataCacheSlots",
+    "claudeAiMcpEverConnected",
+    "penguinModeOrgEnabled",
+    "connectorOAuthCache",
 ];
 pub(super) fn transform(text: &str, kind: EditKind) -> Result<(String, Vec<String>), String> {
     let mut names = Vec::new();

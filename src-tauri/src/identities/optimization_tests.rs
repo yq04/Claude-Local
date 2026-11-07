@@ -600,6 +600,18 @@ fn store_open_is_read_only_for_workspace_and_explicit_cache_maintenance_is_narro
                 active_org: {"eligible": true},
                 foreign_org: {"eligible": false}
             },
+            "additionalModelOptionsCache": {
+                active_org: {"models": ["claude-opus-4-6"]},
+                foreign_org: {"models": ["claude-sonnet-4-6"]}
+            },
+            "modelAccessCache": {
+                active_org: {"opus": true},
+                foreign_org: {"opus": false}
+            },
+            "clientDataCache": {
+                "accountUuid": foreign_acct,
+                "organizationUuid": foreign_org
+            },
             "metricsStatusCacheByPrincipal": {
                 active_acct: {"enabled": true},
                 foreign_acct: {"enabled": true}
@@ -636,6 +648,21 @@ fn store_open_is_read_only_for_workspace_and_explicit_cache_maintenance_is_narro
         b"{}",
     );
     f.write(".claude/cache/model-catalog/foreign-org-123-cc.json", b"{}");
+    f.write(
+        &format!(".claude/telemetry/1p_failed_events.active.1.json"),
+        format!(r#"[{{"account_uuid":"{active_acct}","organization_uuid":"{active_org}"}}]"#)
+            .as_bytes(),
+    );
+    f.write(
+        ".claude/telemetry/1p_failed_events.foreign.1.json",
+        format!(r#"[{{"account_uuid":"{foreign_acct}","organization_uuid":"{foreign_org}"}}]"#)
+            .as_bytes(),
+    );
+    f.write(
+        ".claude/statsig/statsig.cached.evaluations.foreign",
+        b"{\"gates\":{}}",
+    );
+    f.write(".claude/.storage-write.lock", b"stale-lock");
     let original_config = fs::read(f.home.join(".claude.json")).unwrap();
     #[cfg(target_os = "windows")]
     {
@@ -701,6 +728,10 @@ fn store_open_is_read_only_for_workspace_and_explicit_cache_maintenance_is_narro
         .home
         .join(".claude/cache/model-catalog/foreign-org-123-cc.json")
         .exists());
+    assert!(f
+        .home
+        .join(".claude/statsig/statsig.cached.evaluations.foreign")
+        .exists());
 
     crate::cleaner::identity::maintain_account_caches(&f.home).unwrap();
     let cfg: serde_json::Value =
@@ -709,6 +740,21 @@ fn store_open_is_read_only_for_workspace_and_explicit_cache_maintenance_is_narro
     assert!(cfg["s1mAccessCache"].get(foreign_org).is_none());
     assert!(cfg["passesEligibilityCache"].get(active_org).is_some());
     assert!(cfg["passesEligibilityCache"].get(foreign_org).is_none());
+    assert!(cfg["additionalModelOptionsCache"].get(active_org).is_some());
+    assert!(cfg["additionalModelOptionsCache"].get(foreign_org).is_none());
+    assert!(cfg["modelAccessCache"].get(active_org).is_some());
+    assert!(cfg["modelAccessCache"].get(foreign_org).is_none());
+    assert!(cfg.get("clientDataCache").is_none());
+    assert!(f
+        .home
+        .join(".claude/telemetry/1p_failed_events.active.1.json")
+        .exists());
+    assert!(!f
+        .home
+        .join(".claude/telemetry/1p_failed_events.foreign.1.json")
+        .exists());
+    assert!(!f.home.join(".claude/statsig").exists());
+    assert!(!f.home.join(".claude/.storage-write.lock").exists());
     assert!(cfg["metricsStatusCacheByPrincipal"]
         .get(active_acct)
         .is_some());

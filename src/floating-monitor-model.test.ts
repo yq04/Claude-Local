@@ -1,5 +1,5 @@
 // [INPUT]: Pure floating-monitor-model functions and synthetic account-scoped telemetry inputs.
-// [OUTPUT]: Assertions for disjoint token composition, window time pace, unavailable rates, activity mode, compact formatting, opacity and quota window tones.
+// [OUTPUT]: Assertions for disjoint token composition, window time pace & pace badges, truthful quota percentage labels, unavailable rates, activity mode, compact formatting, opacity and quota window tones.
 // [POS]: Bun test suite for src/floating-monitor-model.ts.
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -7,6 +7,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   clampMonitorOpacityPct,
   computeContextMeter,
+  computeMonitorBarFillPct,
   computeMonitorWindowBar,
   computeWindowTimePace,
   cycleMonitorOpacityPct,
@@ -16,9 +17,12 @@ import {
   formatExhaustionEta,
   formatMonitorCacheStats,
   formatVelocityLabel,
+  formatWindowPaceBadge,
   formatWindowResetLabel,
   monitorTokenComposition,
+  readMonitorRelayStandbyHint,
   recommendedMonitorPollIntervalMs,
+  writeMonitorRelayStandbyHint,
 } from './floating-monitor-model'
 import {
   defaultPreferences,
@@ -105,21 +109,61 @@ describe('floating-monitor-model', () => {
     expect(monitorTokenComposition(undefined).every(part => part.share === 0)).toBe(true)
   })
 
-  test('computes remaining percentage and semantic tone for 5h/7d bars', () => {
+  test('computes remaining percentage, truthful labels and semantic tone for 5h/7d bars', () => {
     expect(computeMonitorWindowBar(undefined)).toEqual({
       used: null,
       remaining: null,
+      usedLabel: '--%',
+      remainingLabel: '--%',
       fillWidthPct: 0,
       tone: 'unknown',
     })
     expect(computeMonitorWindowBar(38)).toEqual({
       used: 38,
       remaining: 62,
+      usedLabel: '38%',
+      remainingLabel: '62%',
       fillWidthPct: 62,
+      tone: 'ok',
+    })
+    expect(computeMonitorWindowBar(99.4)).toEqual({
+      used: 99,
+      remaining: 1,
+      usedLabel: '99.4%',
+      remainingLabel: '0.6%',
+      fillWidthPct: 4,
+      tone: 'danger',
+    })
+    expect(computeMonitorWindowBar(99.6)).toEqual({
+      used: 100,
+      remaining: 0,
+      usedLabel: '99.6%',
+      remainingLabel: '0.4%',
+      fillWidthPct: 4,
+      tone: 'danger',
+    })
+    expect(computeMonitorWindowBar(100)).toEqual({
+      used: 100,
+      remaining: 0,
+      usedLabel: '100%',
+      remainingLabel: '0%',
+      fillWidthPct: 0,
+      tone: 'danger',
+    })
+    expect(computeMonitorWindowBar(0.4)).toEqual({
+      used: 0,
+      remaining: 100,
+      usedLabel: '0.4%',
+      remainingLabel: '99.6%',
+      fillWidthPct: 100,
       tone: 'ok',
     })
     expect(computeMonitorWindowBar(80).tone).toBe('warn')
     expect(computeMonitorWindowBar(92).tone).toBe('danger')
+    expect(computeMonitorBarFillPct(computeMonitorWindowBar(99.6), 'used')).toBe(96)
+    expect(computeMonitorBarFillPct(computeMonitorWindowBar(100), 'used')).toBe(100)
+    expect(computeMonitorBarFillPct(computeMonitorWindowBar(0.4), 'used')).toBe(4)
+    expect(computeMonitorBarFillPct(computeMonitorWindowBar(0), 'used')).toBe(0)
   })
 
   test('computes context meter and window reset labels cleanly', () => {
@@ -201,6 +245,22 @@ describe('floating-monitor-model', () => {
       projectedEndPct: null,
       tone: 'steady',
     })
+
+    // formatWindowPaceBadge in zh and en
+    expect(formatWindowPaceBadge(computeWindowTimePace(null, win5h, 40, now), 'zh')).toBeNull()
+    expect(formatWindowPaceBadge(computeWindowTimePace(now + win5h / 2, win5h, null, now), 'en')).toBeNull()
+
+    const aheadPace = computeWindowTimePace(now + win5h * 0.6, win5h, 60, now)
+    expect(formatWindowPaceBadge(aheadPace, 'zh')).toBe('超前 +20%')
+    expect(formatWindowPaceBadge(aheadPace, 'en')).toBe('+20% vs time')
+
+    const safePace = computeWindowTimePace(now + win5h * 0.4, win5h, 30, now)
+    expect(formatWindowPaceBadge(safePace, 'zh')).toBe('余量 -30%')
+    expect(formatWindowPaceBadge(safePace, 'en')).toBe('-30% vs time')
+
+    const onPace = computeWindowTimePace(now + win5h * 0.5, win5h, 50, now)
+    expect(formatWindowPaceBadge(onPace, 'zh')).toBe('匀速')
+    expect(formatWindowPaceBadge(onPace, 'en')).toBe('On pace')
   })
 
   test('cross-window storage reload synchronizes preferences and custom wallpaper', () => {
@@ -256,6 +316,17 @@ describe('floating-monitor-model', () => {
       setCustomWallpaper({ ...sampleRecord, suggestedAccent: 'amber' })
       expect(getCustomWallpaper()?.suggestedAccent).toBe('amber')
       clearCustomWallpaper()
+
+      writeMonitorRelayStandbyHint({
+        enabled: true,
+        candidateName: 'Pro Backup',
+        candidateEmail: 'backup@example.invalid',
+        effectiveRemPct: 92,
+        shouldRelayNow: false,
+      })
+      expect(readMonitorRelayStandbyHint()?.candidateName).toBe('Pro Backup')
+      writeMonitorRelayStandbyHint(null)
+      expect(readMonitorRelayStandbyHint()).toBeNull()
     } finally {
       ;(globalThis as { window?: unknown }).window = prevWindow
     }

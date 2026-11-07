@@ -1111,3 +1111,108 @@
   line-height: 1.38;
   color: var(--muted-foreground);
 }
+
+/* ----- v0.3.0 Cleanroom 3-Stage Pipeline, Smart Relay Pace/Cooling & Window-Hidden Animation Pause ----- */
+.cleanroom-macro-pipeline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.cleanroom-macro-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 550;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.cleanroom-macro-pill.macro-running {
+  border-color: color-mix(in srgb, var(--local-accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--local-accent) 14%, var(--card));
+  color: var(--foreground);
+}
+
+.cleanroom-macro-pill.macro-ok {
+  border-color: rgba(16, 185, 129, 0.34);
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+}
+
+:root.dark .cleanroom-macro-pill.macro-ok {
+  color: #6ee7b7;
+  background: rgba(52, 211, 153, 0.16);
+}
+
+.cleanroom-macro-pill.macro-error {
+  border-color: rgba(239, 68, 68, 0.38);
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.identity-relay-cooling-pill,
+.identity-relay-pace-pill {
+  padding: 1.5px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.identity-relay-cooling-pill {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+:root.dark .identity-relay-cooling-pill {
+  background: rgba(251, 191, 36, 0.16);
+  color: #fbbf24;
+}
+
+.identity-relay-pace-pill.is-ahead {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.identity-relay-pace-pill.is-safe {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+
+:root.dark .identity-relay-pace-pill.is-safe {
+  color: #6ee7b7;
+}
+
+@keyframes clActiveCardAura {
+  0%, 100% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--local-accent) 28%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--local-accent) 48%, transparent),
+      0 6px 18px -6px color-mix(in srgb, var(--local-accent) 18%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .identity-card.current,
+  .identity-card.current-identity {
+    animation: clActiveCardAura 4.5s ease-in-out infinite;
+  }
+}
+
+html[data-window-hidden="true"] *,
+html[data-window-hidden="true"] *::before,
+html[data-window-hidden="true"] *::after {
+  animation-play-state: paused !important;
+}

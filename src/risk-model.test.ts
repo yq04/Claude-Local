@@ -3,6 +3,7 @@ import {translate} from './i18n';
 import {encodeQrMatrix, renderQrSvgPath} from './qrcode-svg';
 import {
   areCliAndBrowserProxiesAligned,
+  auditClaudeCliSecurityBoundary,
   buildClaudeCliAntiLeakSettingsJson,
   buildCloseLanBridgePrompt,
   buildDesktopDnsFixPrompt,
@@ -256,6 +257,13 @@ test('buildMobileBridgeConfig generates hardened profiles for all 4 mobile clien
   expect(parsed.outbounds[0].network).toBe('tcp');
   expect(parsed.route.rules[1].port).toEqual([443, 3478, 19302]);
 
+  for (const profileText of [sr!.configText, cm!.configText, stash!.configText, sb!.configText]) {
+    expect(profileText).toContain('browser-intake-us5-datadoghq.com');
+    expect(profileText).toContain('growthbook.io');
+    expect(profileText).toContain('claude.com');
+    expect(profileText).toContain('withpersona.com');
+  }
+
   const matrix = encodeQrMatrix(sr!.qrUri);
   expect(matrix.length).toBeGreaterThanOrEqual(21);
   // Top-left 7x7 finder outer corner modules are dark
@@ -299,6 +307,10 @@ test('Shadowrocket standalone SOCKS5 QR generator produces RFC 3986 socks5:// au
   expect(conf.configText).toContain('udp-policy-not-supported-behaviour = REJECT');
   expect(conf.configText).toContain('dns-server = https://1.1.1.1/dns-query, https://8.8.8.8/dns-query');
   expect(conf.configText).toContain('AND,((PROTOCOL,UDP),(DEST-PORT,443)),REJECT-NO-DROP');
+  expect(conf.configText).toContain('browser-intake-us5-datadoghq.com');
+  expect(conf.configText).toContain('growthbook.io');
+  expect(conf.configText).toContain('claude.com');
+  expect(conf.configText).toContain('withpersona.com');
   expect(conf.configText).toContain('FINAL,PROXY,dns-failed');
   expect(conf.configText).not.toContain('user_01');
 });
@@ -545,4 +557,50 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
   expect(parsed.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
   expect(parsed.env.DISABLE_TELEMETRY).toBe('1');
   expect(parsed.env.DISABLE_ERROR_REPORTING).toBe('1');
+
+  const desktopYamlFull = buildDesktopMihomoAntiLeakYaml(7899).configText;
+  expect(desktopYamlFull).toContain('DOMAIN-KEYWORD,datadoghq,');
+  expect(desktopYamlFull).toContain('DOMAIN-SUFFIX,browser-intake-us5-datadoghq.com,');
+  expect(desktopYamlFull).toContain('DOMAIN-SUFFIX,growthbook.io,');
+  expect(desktopYamlFull).toContain('DOMAIN-SUFFIX,storage.googleapis.com,');
+
+  const hardenedAudit = auditClaudeCliSecurityBoundary({
+    settingsJson: parsed,
+    claudeJson: {
+      mcpServers: {
+        pinnedLocal: {command: 'cmd.exe', args: ['/c', 'npx', '-y', '@modelcontextprotocol/server-filesystem@0.6.2']},
+      },
+    },
+    pendingFailedTelemetryFiles: 0,
+  });
+  expect(hardenedAudit.settings_present).toBe(true);
+  expect(hardenedAudit.telemetry_shield_active).toBe(true);
+  expect(hardenedAudit.proxy_env_complete).toBe(true);
+  expect(hardenedAudit.socks5_in_cli_env).toBe(false);
+  expect(hardenedAudit.has_custom_hooks_or_helpers).toBe(false);
+  expect(hardenedAudit.unpinned_npx_count).toBe(0);
+  expect(hardenedAudit.windows_bare_npx_count).toBe(0);
+  expect(hardenedAudit.remote_http_mcp_count).toBe(0);
+
+  const riskyAudit = auditClaudeCliSecurityBoundary({
+    settingsJson: {
+      env: {HTTP_PROXY: 'socks5://127.0.0.1:7899', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'},
+      apiKeyHelper: 'echo token',
+    },
+    claudeJson: {
+      mcpServers: {
+        bareFloating: {command: 'npx', args: ['-y', '@scope/pkg@latest']},
+        remoteHttp: {url: 'https://mcp.example.com/sse'},
+      },
+    },
+    pendingFailedTelemetryFiles: 2,
+  });
+  expect(riskyAudit.telemetry_shield_active).toBe(false);
+  expect(riskyAudit.proxy_env_complete).toBe(false);
+  expect(riskyAudit.socks5_in_cli_env).toBe(true);
+  expect(riskyAudit.has_custom_hooks_or_helpers).toBe(true);
+  expect(riskyAudit.unpinned_npx_count).toBe(1);
+  expect(riskyAudit.windows_bare_npx_count).toBe(1);
+  expect(riskyAudit.remote_http_mcp_count).toBe(1);
+  expect(riskyAudit.pending_failed_telemetry_files).toBe(2);
 });

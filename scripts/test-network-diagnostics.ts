@@ -33,7 +33,7 @@ export async function testNetworkDiagnostics(browser:Browser,base:string) {
   assert.equal(await cards.count(),3);
   for(const card of await cards.all()){
    assert.equal(await card.getByRole('button').count(),1);
-   assert.doesNotMatch(await card.evaluate(node=>node.outerHTML),/ikuuu\.top|kookeey\.com|uXqM|14151075|legacy\.example\.invalid/i,'Referral URLs and invitation codes must stay out of card text and attributes');
+   assert.doesNotMatch(await card.evaluate(node=>node.outerHTML),/ikuuu\.top|kookeey\.com|j6Vd|uXqM|14151075|legacy\.example\.invalid/i,'Referral URLs and invitation codes must stay out of card text and attributes');
   }
   assert.equal(await page.locator('.network-page input,.network-page textarea,.network-prompt-preview').count(),0);
   const beforeCopyUrl=page.url();
@@ -46,7 +46,7 @@ export async function testNetworkDiagnostics(browser:Browser,base:string) {
    assert.equal(await button.innerText(),name,'Copy success must preserve the action label');
   }
   const copied=await page.evaluate(()=>(window as any).networkFixture.copied as string[]);
-  assert.equal(copied[0],'https://ikuuu.top/auth/register?code=uXqM');
+  assert.equal(copied[0],'https://ikuuu.top/auth/register?code=j6Vd');
   assert.equal(copied[1],'https://www.kookeey.com/?aff=14151075');
   assertCompactPrompt(copied[2]);
   assert.equal(page.url(),beforeCopyUrl);assert.equal(popups,0);assert.deepEqual(externalRequests,[],'Copy actions must not navigate to referral destinations');
@@ -101,7 +101,7 @@ export async function testNetworkDiagnostics(browser:Browser,base:string) {
   await cards.first().getByRole('button',{name:'Copy link',exact:true}).click();
   await page.locator('.network-copy-status[role="alert"]').filter({hasText:'Copy failed. Try again.'}).waitFor();
   assert.equal(await page.locator('.network-copy-status[role="status"]').count(),0);
-  for(const card of await cards.all())assert.doesNotMatch(await card.evaluate(node=>node.outerHTML),/ikuuu\.top|kookeey\.com|uXqM|14151075|legacy\.example\.invalid/i);
+  for(const card of await cards.all())assert.doesNotMatch(await card.evaluate(node=>node.outerHTML),/ikuuu\.top|kookeey\.com|j6Vd|uXqM|14151075|legacy\.example\.invalid/i);
   assert.match(await panel.locator('.domain-outcome').innerText(),/Check failed/);
   await panel.getByRole('button',{name:'Check again',exact:true}).waitFor();
   assert.deepEqual(await page.evaluate(()=>(window as any).networkFixture.commands),Array(5).fill('network_diagnose_domains'));

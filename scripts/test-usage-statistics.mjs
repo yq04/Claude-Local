@@ -461,7 +461,7 @@ try {
   assert.equal(await networkCards.count(),3);
   for(let index=0;index<3;index++)assert.equal(await networkCards.nth(index).getByRole('button').count(),1);
   assert.equal(await network.locator('input,textarea,a,.network-prompt-preview').count(),0);
-  for(const card of await networkCards.all())assert.doesNotMatch(await card.evaluate(node=>node.outerHTML),/ikuuu\.top|kookeey\.com|uXqM|14151075|legacy\.example\.invalid/i,'Fixed referral links and invite codes must be hidden from card text and attributes');
+  for(const card of await networkCards.all())assert.doesNotMatch(await card.evaluate(node=>node.outerHTML),/ikuuu\.top|kookeey\.com|j6Vd|uXqM|14151075|legacy\.example\.invalid/i,'Fixed referral links and invite codes must be hidden from card text and attributes');
   await page.screenshot({path:join(output,'network-copy-only-zh.png'),fullPage:true});
   const beforeCopyUrl=page.url();
   for(const [index,name] of [[0,'复制链接'],[1,'复制链接'],[2,'复制提示词']]){
@@ -473,7 +473,7 @@ try {
     assert.equal(await button.innerText(),name,'Copy success must preserve the button label');
   }
   const copied=await page.evaluate(()=>window.usageFixture.copied);
-  assert.deepEqual(copied.slice(0,2),['https://ikuuu.top/auth/register?code=uXqM','https://www.kookeey.com/?aff=14151075']);
+  assert.deepEqual(copied.slice(0,2),['https://ikuuu.top/auth/register?code=j6Vd','https://www.kookeey.com/?aff=14151075']);
   for(const intent of [/iKuuu/i,/Kookeey/i,/Clash Verge Rev/i,/SOCKS5/i,/dialer-proxy/,/TUN/i,/DNS/i,/备份/,/回环|本地回调/,/版本/,/验证/,/回滚/])assert.match(copied[2],intent);
   assert.ok(copied[2].trim().split(/\r?\n/).filter(line=>line.trim()).length<=8,'The copied prompt must remain a concise configuration brief');
   assert.doesNotMatch(copied[2],/function\s+main|tcp-concurrent|mixed-port|7890|rules\s*[:=]/i);
@@ -679,7 +679,7 @@ try {
   const englishNetworkCards=page.locator('.network-page .network-action-card');
   for(const [index,name] of [[0,'Copy link'],[1,'Copy link'],[2,'Copy prompt']]){
     const card=englishNetworkCards.nth(index),button=card.getByRole('button',{name,exact:true});
-    assert.doesNotMatch(await card.evaluate(node=>node.outerHTML),/ikuuu\.top|kookeey\.com|uXqM|14151075|legacy\.example\.invalid/i);
+    assert.doesNotMatch(await card.evaluate(node=>node.outerHTML),/ikuuu\.top|kookeey\.com|j6Vd|uXqM|14151075|legacy\.example\.invalid/i);
     const beforeCopy=await page.evaluate(()=>window.usageFixture.copied.length);
     await button.click();
     await page.waitForFunction(count=>window.usageFixture.copied.length===count+1,beforeCopy);
@@ -687,7 +687,7 @@ try {
     assert.equal(await button.innerText(),name);
   }
   const copiedEnglish=await page.evaluate(()=>window.usageFixture.copied.slice(-3));
-  assert.deepEqual(copiedEnglish.slice(0,2),['https://ikuuu.top/auth/register?code=uXqM','https://www.kookeey.com/?aff=14151075']);
+  assert.deepEqual(copiedEnglish.slice(0,2),['https://ikuuu.top/auth/register?code=j6Vd','https://www.kookeey.com/?aff=14151075']);
   assert.match(copiedEnglish[2],/US static residential/i);assert.match(copiedEnglish[2],/dialer-proxy/);
   assert.ok(copiedEnglish[2].trim().split(/\r?\n/).filter(line=>line.trim()).length<=8);
   assert.equal(page.url(),beforeCopyUrl);assert.equal(context.pages().length,1);

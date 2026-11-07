@@ -938,6 +938,48 @@ body:has(.monitor-hud-shell),
   text-overflow: ellipsis;
 }
 
+.monitor-relay-standby-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 7px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--card-elevated) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--muted-foreground);
+}
+
+.monitor-relay-standby-pill.is-urgent {
+  border-color: var(--hud-warn-border);
+  background: var(--hud-warn-soft);
+  color: var(--hud-warn);
+}
+
+.monitor-relay-standby-label {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.monitor-relay-standby-name {
+  font-weight: 650;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.monitor-relay-standby-rem {
+  font-family: var(--font-mono);
+  font-weight: 650;
+  color: var(--hud-ok);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .monitor-hud-compact-footer {
   display: flex;
   align-items: center;

@@ -139,6 +139,8 @@ pub struct Scan {
     warnings: Vec<String>,
     diagnostics: Vec<Diagnostic>,
     org_id: String,
+    #[serde(default)]
+    pub cli_security: Option<crate::risk_check::CliSecurityAudit>,
 }
 #[derive(Default)]
 pub struct Cleaner {

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Claude-Local 品牌与座舱页面、共享页面图标和 YAML 文案、Cromma UI、任务锁与本地刷新/身份确认事件。
- * [OUTPUT]: 可折叠侧栏、命令面板快捷键、手动刷新、九个页面（含风控验证）及常驻原生唤醒迁移/快照桥（不调度请求）。
+ * [OUTPUT]: 可折叠侧栏、命令面板快捷键、手动刷新、九个页面（含风控验证）、窗口隐藏态动画暂停同步（data-window-hidden）及常驻原生唤醒迁移/快照桥（不调度请求）。
  * [POS]: 独立产品编排层；命令快捷键尊重输入、模态与任务锁，只读身份列表仅在面板打开时读取。根 MotionRoot 读取减少动画偏好。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -85,28 +85,38 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.isComposing && !locked) {
-        if (event.key === '=' || event.key === '+') {
+      const target = event.target;
+      const editableTarget =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          !!target.closest('[contenteditable="true"],input,textarea,select,[role="textbox"]'));
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.isComposing &&
+        !locked &&
+        !editableTarget
+      ) {
+        if (event.key === '=' || event.key === '+' || event.code === 'NumpadAdd') {
           event.preventDefault();
           stepUiScale('in');
           return;
         }
-        if (event.key === '-' || event.key === '_') {
+        if (event.key === '-' || event.key === '_' || event.code === 'NumpadSubtract') {
           event.preventDefault();
           stepUiScale('out');
           return;
         }
-        if (event.key === '0') {
+        if (event.key === '0' || event.code === 'Numpad0') {
           event.preventDefault();
           stepUiScale('reset');
           return;
         }
       }
-      const target = event.target;
       const action = commandPaletteShortcutAction({
         key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, isComposing: event.isComposing,
         keyCode: event.keyCode, paletteOpen, locked, dialogOpen: !!document.querySelector('[role="dialog"], [role="alertdialog"]'),
-        editableTarget: target instanceof HTMLElement && (target.isContentEditable || !!target.closest('[contenteditable="true"],input,textarea,select,[role="textbox"]')),
+        editableTarget,
       });
       if (action === 'close') {
         event.preventDefault();
@@ -225,6 +235,19 @@ function App() {
 
 function Root() {
   const {reduceMotion} = usePreferences();
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const syncVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        document.documentElement.dataset.windowHidden = 'true';
+      } else {
+        delete document.documentElement.dataset.windowHidden;
+      }
+    };
+    syncVisibility();
+    document.addEventListener('visibilitychange', syncVisibility);
+    return () => document.removeEventListener('visibilitychange', syncVisibility);
+  }, []);
   const isMonitorWindow =
     typeof window !== 'undefined' &&
     (new URLSearchParams(window.location.search).get('window') === 'monitor' ||

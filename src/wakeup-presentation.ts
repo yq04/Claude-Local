@@ -1,10 +1,76 @@
 /**
  * [INPUT]: Local authentication metadata, native wakeup evidence and the current quota window.
- * [OUTPUT]: One short account state, one explanation and truthful manual/recovery admission hints.
+ * [OUTPUT]: One short account state, one explanation, truthful manual/recovery admission hints, and 5h anchor advancement verification.
  * [POS]: Read-only presentation; a local login never clears server auth, rate limits or unknown requests.
- * [PROTOCOL]: Keep bilingual wakeup.view/localAuth/wait keys and src/CLAUDE.md aligned.
+ * [PROTOCOL]: Keep bilingual wakeup.view/localAuth/wait/anchor keys and src/CLAUDE.md aligned.
  */
 import type {NativeWakeupAccount, OnlineQuotaReason} from './identity-online-quota';
+
+export type WakeupAnchorVerificationStatus =
+  | 'advanced_new_cycle'
+  | 'reused_active_cycle'
+  | 'unverified_anchor';
+
+export interface WakeupAnchorVerificationResult {
+  status: WakeupAnchorVerificationStatus;
+  labelKey: string;
+  beforeSec: number | null;
+  afterSec: number | null;
+}
+
+/**
+ * Verifies whether a wakeup probe genuinely advanced the 5-hour quota reset anchor (`resets_at`)
+ * into a new cycle, reused an already active window, or left the anchor unverified.
+ */
+export function verifyWakeupAnchorAdvancement(
+  beforeResetSec: number | null | undefined,
+  afterResetSec: number | null | undefined,
+  nowSec: number,
+): WakeupAnchorVerificationResult {
+  const before =
+    typeof beforeResetSec === 'number' && Number.isFinite(beforeResetSec) && beforeResetSec > 0
+      ? Math.floor(beforeResetSec)
+      : null;
+  const after =
+    typeof afterResetSec === 'number' && Number.isFinite(afterResetSec) && afterResetSec > 0
+      ? Math.floor(afterResetSec)
+      : null;
+  const now = Number.isFinite(nowSec) ? Math.floor(nowSec) : 0;
+
+  const maxValidWindowSec = Math.ceil(5.5 * 3600);
+  if (after === null || after <= now || after > now + maxValidWindowSec) {
+    return {
+      status: 'unverified_anchor',
+      labelKey: 'wakeup.anchor.unverified',
+      beforeSec: before,
+      afterSec: after,
+    };
+  }
+  if (before !== null && before > now) {
+    if (Math.abs(after - before) <= 60) {
+      return {
+        status: 'reused_active_cycle',
+        labelKey: 'wakeup.anchor.reusedActive',
+        beforeSec: before,
+        afterSec: after,
+      };
+    }
+    if (after < before - 60) {
+      return {
+        status: 'unverified_anchor',
+        labelKey: 'wakeup.anchor.unverified',
+        beforeSec: before,
+        afterSec: after,
+      };
+    }
+  }
+  return {
+    status: 'advanced_new_cycle',
+    labelKey: 'wakeup.anchor.advancedNewCycle',
+    beforeSec: before,
+    afterSec: after,
+  };
+}
 
 type Translator = (key: string, slots?: Record<string, string | number>) => string;
 export function formatWakeupWait(seconds: number, t: Translator): string {

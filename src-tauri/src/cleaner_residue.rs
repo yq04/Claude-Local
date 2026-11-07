@@ -1,5 +1,5 @@
-// [INPUT]: 默认 Claude 文件白名单、完整元数据快照、独立扫描计划、身份恢复状态和 Cleaner 共用事务锁。
-// [OUTPUT]: 手动文件残留扫描与按快照 ID 选择清理及逐目标完成进度；界面仅接收路径、计数、影响和固定键名。
+// [INPUT]: 默认 Claude 文件白名单、完整元数据快照、CLI 遥测护盾/MCP 供应链只读审计、独立扫描计划、身份恢复状态和 Cleaner 共用事务锁。
+// [OUTPUT]: 手动文件残留扫描（附带 CLI 遥测护盾与 MCP 供应链布尔/计数摘要）与按快照 ID 选择清理及逐目标完成进度；界面仅接收路径、计数、影响和固定键名。
 // [POS]: 身份页的文件维护边界；不访问钥匙串、不停止进程、不处理 Shell/共享代理、保险库或浏览器资料。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -66,6 +66,7 @@ fn definitions(root: &Path) -> (Vec<targets::Target>, Vec<String>) {
 fn collect_progress(root: &Path, reporter: &Reporter) -> (Scan, usize) {
     let mut scan = Scan {
         folder: root.to_string_lossy().into_owned(),
+        cli_security: Some(crate::risk_check::audit_claude_cli_security_dir(root)),
         ..Scan::default()
     };
     let batch = generation();

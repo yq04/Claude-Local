@@ -57,7 +57,7 @@ _WAKEUP_PROMPTS = (
     ("reply 1", 16),
 )
 ANTHROPIC_VERSION = "2023-06-01"
-DEFAULT_CLI_VERSION = "2.1.304"
+DEFAULT_CLI_VERSION = "2.1.318"
 DEFAULT_ALLOWED_EXIT_COUNTRIES = ("US",)
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\.exe)?$", re.IGNORECASE)
 

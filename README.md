@@ -15,7 +15,7 @@
 
 基于开源项目 [CCBaga](https://github.com/liseami/CCBaga)（[@liseami](https://github.com/liseami)）二次开发并独立维护，保留原贡献者版权与 [MIT 许可](LICENSE) · 纯本地单机优先（Local-First） · 零云端凭据托管 · 绝不强杀运行中的 `claude.exe`
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.2.7-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.2.7)
+[![Latest Release](https://img.shields.io/badge/Release-v0.3.0-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.0)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.2.7/Claude-Local_0.2.7_x64-setup.exe"><strong>⬇️ 下载 v0.2.7 安装包 (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.0/Claude-Local_0.3.0_x64-setup.exe"><strong>⬇️ 下载 v0.3.0 安装包 (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.2.7"><strong>✨ v0.2.7 Release 页面</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.0"><strong>✨ v0.3.0 Release 页面</strong></a>
   ·
   <a href="#-为什么选择-claude-local直击多账号风控四大痛点"><strong>🔥 四大防封壁垒</strong></a>
   ·
@@ -76,7 +76,7 @@
 
 ## ✨ 八大核心能力矩阵
 
-**v0.2.7 最新亮点**：新增 Claude Code CLI 直连遥测（`datadoghq.com`）与 OpenAI Codex 协同域名组（`openai.com` / `chatgpt.com` / `oaistatic.com` / `oaiusercontent.com` / `auth0.com`）同源家宽覆写规则、修复同端口双协议（伴生浏览器 `socks5://` vs CLI `http://`）误报与同步覆盖问题、新增一键复制 CLI 防漏 `settings.json` 片段及原生 `GRPC_PROXY` 身份保险库归档支持。[完整发布说明](docs/RELEASE_NOTES_0.2.7.md)。
+**v0.3.0 最新亮点**：全链路对标 6 大开源多账号工具（`magpie` / `cc-switch` / `claude-swap` / `orca` / `Antigravity-Manager` / `cockpit-tools`），实现 **Claude Code v2.1.309~2.1.318 净室隔离与三锁协议（7 凭据键 + 25 账号缓存键 + `1p_failed_events` 遥测清扫 + `statsig` 净室重建 + 8 类锁文件/孤儿会话清理）**、**OAuth 授权 URL 零泄露剪贴板直投伴生浏览器**、**CLI 遥测护盾与 MCP 供应链安全审计（含本机/项目级 MCP 版本锁定与 Windows 裸命令检测）**、**智能接力 2.0（防乒乓动态阈值、429 冷却监狱、单向不回跳锁、WeekLow 周末冲刺晋升与真实小数百分比 `99.9%`）**、**悬浮窗 2.0（接力备选胶囊、时间消耗步调与 24h 周初静默、快捷键缩放）** 及 **三段式净室切换管线与 5h 续杯锚点核验**。[完整发布说明](docs/RELEASE_NOTES_0.3.0.md)。
 
 现有全库 `.clbackup` 备份与「复制跨机防关联交接卡」保留；单身份加密导入/导出及 `.bagapack` 跨机身份包方案已取消，交接卡仅复制环境说明。环境核验不保证账号不受风控。
 
@@ -186,29 +186,30 @@ Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **W
 
 ## 📦 获取、安装与版本记录
 
-### 1. 下载最新安装包（`v0.2.7`）
+### 1. 下载最新安装包（`v0.3.0`）
 
 | 发行资产 | 适用系统 | 文件大小 | SHA-256 校验和 |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.2.7_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.2.7/Claude-Local_0.2.7_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | 见 Release 资产 | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.2.7/SHA256SUMS.txt) |
+| **[Claude-Local_0.3.0_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.0/Claude-Local_0.3.0_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | 见 Release 资产 | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.0/SHA256SUMS.txt) |
 
-下载后在 PowerShell 中计算 SHA-256，并与 [v0.2.7 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.2.7) 公布的校验值比对：
+下载后在 PowerShell 中计算 SHA-256，并与 [v0.3.0 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.0) 公布的校验值比对：
 
 ```powershell
-Get-FileHash .\Claude-Local_0.2.7_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Claude-Local_0.3.0_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. 安装与无损升级说明
 
 1. **安装位置与标识**：采用当前用户模式 NSIS 安装程序，默认安装至 `%LOCALAPPDATA%\Programs\Claude-Local`；主程序为 `claude-local.exe`，应用包标识为 `ai.local.claude-local`，伴侣浏览器注册名为 `Claude-Local-Browser`。
 2. **用户数据目录**：所有加密身份库、主密钥、额度/用量账本、外观壁纸配置与隔离浏览器个人资料均独立保存在 `%APPDATA%\ai.local.claude-local`。
-3. **平滑升级**：从 `0.1.x` 或 `0.2.x` 升级至 `0.2.7` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
+3. **平滑升级**：从 `0.1.x` 或 `0.2.x` 升级至 `0.3.0` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
 
 ### 3. 发行版本演进记录
 
 | 版本 | 发布日期 | 核心演进内容 | 详细文档 |
 | :--- | :--- | :--- | :--- |
-| **`v0.2.7`** *(Latest)* | 2026-11-03 | CLI 遥测（`datadoghq.com`）与 Codex 协同域名同源家宽路由、同端口双协议（`socks5://` 浏览器 vs `http://` CLI）智能对齐、一键复制 CLI 防漏 `settings.json` 片段及 `GRPC_PROXY` 身份归档支持 | [发布说明](docs/RELEASE_NOTES_0.2.7.md) |
+| **`v0.3.0`** *(Latest)* | 2026-11-07 | **Claude Code v2.1.309~2.1.318 净室隔离与三锁协议（7 凭据键 + 25 账号缓存键 + `1p_failed_events`/`statsig` 净室隔离 + 8 锁清理）**、**OAuth 授权 URL 零泄露直投伴生浏览器**、**CLI 遥测护盾与 MCP 供应链安全审计**、**智能接力 2.0（动态防乒乓、冷却监狱、单向不回跳、WeekLow 晋升、真实小数百分比）**、**悬浮窗 2.0（接力备选胶囊、时间消耗步调）** 及 **三段式净室切换管线与 5h 续杯锚点核验** | [发布说明](docs/RELEASE_NOTES_0.3.0.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.0.md) |
+| **`v0.2.7`** | 2026-11-03 | CLI 遥测（`datadoghq.com`）与 Codex 协同域名同源家宽路由、同端口双协议（`socks5://` 浏览器 vs `http://` CLI）智能对齐、一键复制 CLI 防漏 `settings.json` 片段及 `GRPC_PROXY` 身份归档支持 | [发布说明](docs/RELEASE_NOTES_0.2.7.md) |
 | **`v0.2.6`** | 2026-11-02 | 紧凑卡片拖拽/键盘调序、5 秒静默本地同步、转正幽灵卡修复、HUD 穿透与防遮挡、接力池容量与定向额度查询、单次用量指标及 Markdown/TSV 导出 | [发布说明](docs/RELEASE_NOTES_0.2.6.md) |
 | **`v0.2.5`** | 2026-11-01 | **全链路抗风控与防关联环境加固（`--accept-lang` 子标签防泄露、禁 DNS 预取、双栈 `ipv6: false` 防旁路、Claude/Persona/Stripe/Sentry/WorkOS 全域名同源分流）**、**伴生浏览器实测结果跨页/关窗自动保留与 Canvas 2D FNV-1a 真实像素哈希**、**桌面额度小窗真实 5h 缓存命中率校准与用量分析仪表盘重构** | [发布说明](docs/RELEASE_NOTES_0.2.5.md) |
 | **`v0.2.4`** | 2026-10-31 | Magpie 风格多账号智能接力与轮换（默认关闭，五大路由策略 + 首选号恢复回切）、伴生浏览器 WebRTC Network Limiter 三重防漏强锁 + 桌面端 Clash/Mihomo 一键防漏覆写 YAML、官方 API 美元等效花费（`$`）与缓存节省分析回归、小火箭双栏扫码桥接与养号一键返回 CLI 浏览器 | [发布说明](docs/RELEASE_NOTES_0.2.4_SMART_RELAY.md) |
