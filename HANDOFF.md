@@ -1,72 +1,59 @@
 <!--
-[INPUT]: Final owner decisions, released v0.3.0 source/tag c784588e206be85d7bcccda4eadec5cebab3e8dc, documentation commit 968c2e0, passing release-source CI (run 42357163813), audited NSIS installer (SHA256 8d2a56c93ebe7a2cf56a886bb00fcf78c4df2e7b46dbc934f7ee5a8b64f3e8d6), verified local payload deployment (host SHA256 cbe79fbde3cffa2544497d3cfc6a7cbfcc436c823094b787ce02edfce5dbb889, missingClaudeCount = 0), and 2026-11-07 root-cause resolution of Gemini 4 Argon subagent slowness (Magpie pace + 68% accountCaps + firstToken failover + native PowerShell 7 pwsh.exe pipeline).
+[INPUT]: Final owner decisions, released v0.3.1 source/tag fa1fedde2982bc123986ed70b8ca95fdeb56e18a, passing release-source CI (run 42585468806), audited NSIS installer (SHA256 1551e85799f16bb7f6bfa8678d4e13f10e1efce2d85f3a41a10a7f786a7fc281), verified local payload deployment (host SHA256 0579a61aa4886e34d7b22740a807719dc0a061c6abf843a55bafb00621285b66, missingClaudeCount = 0), and 2026-11-09 Smart Relay / Auto-Wakeup frame-rate optimization & 2x Usage poster export.
 [OUTPUT]: Context-free session handoff: what task we are doing, what is completed, where we are stuck (none), next steps, and verified pitfalls never to repeat.
 [POS]: Root maintenance handoff. Real identities, emails, IP/proxy credentials, process IDs, browser seeds, private probe values, workstation paths and screenshots stay out of tracked files.
-[PROTOCOL]: Back up and verify SHA256 before rewriting (backed up to .local/tasks/20261107-release-0.3.0/HANDOFF-pre-session-close-20261107-0431.md.bak, SHA256 98F6A104C6CF92F0591AC4BDA068D8371463E897E98E84D23CF1537C6F01E9FF). This handoff update is documentation-only: no build/deploy, account action, proxy reload, upload or release-tag movement.
+[PROTOCOL]: Back up and verify SHA256 before rewriting (backed up to .local/tasks/20261109-release-0.3.1/HANDOFF-pre-v0.3.1-closeout.md.bak, SHA256 BC1D2F49BC23EE40E029A375B589AF3722C0F6705C68DA5527EA933CE83A2CE0). This handoff update is documentation-only: no build/deploy, account action, proxy reload, upload or release-tag movement.
 -->
 # Claude-Local 会话交接（HANDOFF.md）
 
-更新时间：2026-11-07，America/New_York（EST）。
+更新时间：2026-11-09，America/New_York（EST）。
 
 ## 接手先读：当前结论（30 秒速览）
 
-1. **`Claude-Local v0.3.0` 产品交付已 100% 完结**：源码补漏、6 大开源项目精髓融合、全量自动化测试、中性环境 NSIS 打包、29 项外置隐私探针审计、本机无感热更新（零中断运行中的 `claude.exe`）与 GitHub Release（Latest）发布均已完成。
-2. **本机 `Gemini 4 Argon` 子代理慢速根因排查、Magpie 路由优化与全链路 PowerShell 7 (`pwsh.exe`) 默认化已 100% 完成并实测通过**：
-   - 查明此前 `gemini-4-argon` 子代理耗时长达 61 分钟的两大真凶：① Magpie 原路由为空字符串 `""`（`Smart` 策略按最早重置时间钉死单号），导致单个 Google AI Ultra 账号从 `46.3%` 一路跑到 `94.9%`，跨过 Google CloudCode `~70%` 软限流阈值后单轮 TTFT 从 `6.5s~20s` 暴涨至 `163s~417.9s`，而其余满血 Ultra 账号全程闲置；② 子代理在内部连续发起 55 轮零散命令调用，且多次因命令行内联 `python -c "... \"...\" ..."` 引号转义报错重试。
-   - 已将 Magpie 路由升级为 **`"routing": "pace"` + `"accountCaps": 68` + `"capCareful": true` + `"sink": true` + `firstToken` 超时熔断（`75s`/`60s`/`30s`）**，并将 Claude Code 子代理、`agy-safe.cmd` / `agy-safe.ps1` 与 Antigravity 权限配置全面切换至 **PowerShell 7 (`pwsh.exe` v7.6.8)** 原生执行。端到端实测含工具调用总耗时降至 **`21.7s`**（Turn 1 TTFT `13.4s`，Turn 2 TTFT `6.3s`）。
+1. **`Claude-Local v0.3.1` 产品优化、本机热更新与正式发布已 100% 完结**：
+   - 针对用户反馈的「进入智能接力、自动续杯等弹窗页面很卡」问题，完成全链路排查与根因治理（GPU 合成层减负 + React 渲染缓存与按需挂载 + Rust IPC 单次读取 + Python 运行时探针缓存），并连同 `v0.3.1` 用量分析 2× 高清长图海报导出、净室切号 `s13` 设备指纹连续性与统一引导体验一起完成构建、审计、本机无感热更新（`missingClaudeCount = 0`）与 [GitHub Release v0.3.1 (Latest)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.1) 正式发布。
+2. **本机 `Gemini 4 Argon` 子代理慢速根因排查、Magpie 路由优化与全链路 PowerShell 7 (`pwsh.exe`) 默认化保持完好**：
+   - Magpie 保持 `"routing": "pace"` + `"accountCaps": 68` + `"capCareful": true` + `"sink": true` + `firstToken` 超时熔断（`75s`/`60s`/`30s`）；Claude Code 子代理与 Antigravity 权限配置全面默认使用 **PowerShell 7 (`pwsh.exe` v7.6.8)**。
 3. **接手阅读顺序**：
    - 先读本文、根目录 `AGENTS.md` 与 [`CLAUDE.md`](CLAUDE.md)；
-   - 再读 [`docs/RELEASE_VERIFICATION_0.3.0.md`](docs/RELEASE_VERIFICATION_0.3.0.md)、[`docs/RELEASE_NOTES_0.3.0.md`](docs/RELEASE_NOTES_0.3.0.md) 与 `docs/plans/2026-11-05-v0.3.0-security-and-ux-leap/`；
+   - 再读 [`docs/RELEASE_VERIFICATION_0.3.1.md`](docs/RELEASE_VERIFICATION_0.3.1.md) 与 [`docs/RELEASE_NOTES_0.3.1.md`](docs/RELEASE_NOTES_0.3.1.md)；
    - 修改任何模块前，先读对应目录的 `CLAUDE.md` 和目标源文件头部的 `[INPUT]/[OUTPUT]/[POS]` 注释。
 
 ---
 
 ## 1. 我们在做什么任务
 
-### 1.1 项目定位与 `Claude-Local v0.3.0` 研发发布（已圆满收官）
-`Claude-Local` 是独立拥有并维护的 Windows 10/11 x64 桌面工作台（主程序 `claude-local.exe`，Bundle ID `ai.local.claude-local`，伴生指纹浏览器注册名 `Claude-Local-Browser`），技术栈为 **Tauri 2 (Rust) + React 19 (TypeScript) + Python 单写者额度账本采集器**。前期已完成 `v0.3.0` 全量功能升级、6 大开源项目源码级机制融合、打包审计、本机无感热更新与 GitHub Release 正式发布。
-
-### 1.2 本次会话核心任务：排查解决 `gemini-4-argon` 子代理慢速问题、完善 Magpie 设置并默认启用 PowerShell 7
-1. **只读诊断 `gemini-4-argon` 子代理为什么慢/被什么卡住**：对标 Magpie 路由日志（`routing/2026-11-07.jsonl`）、子代理运行日志与 Antigravity CLI 会话轨迹（`transcript.jsonl`），定位耗时瓶颈。
-2. **完善 Magpie 配置**：消除单号钉死与 `>70%` Google 软限流排队，确保多台 Google AI Ultra 账号均衡轮转、Google AI Pro 账号保底兜底，并维持 Claude Code / Codex 账号 100% 零触碰隔离。
-3. **默认启用 PowerShell 7 (`pwsh.exe`) 并补齐子代理管线**：让 Claude Code CLI 子代理默认使用原生 `PowerShell` 工具（`pwsh.exe` v7.6.8），消除 Git Bash 引号/反斜杠吞噬、PowerShell 5.1 语法限制及权限拦截，并通过提示词护栏减少子代理无效工具往返。
+### 1.1 本次会话核心任务：排查修复智能接力/自动续杯页面卡顿，完成本机热更新并正式发布 `v0.3.1`
+1. **深度调研与定位卡顿根因**：查明并非电脑内存不足，而是 WebView2 下「全屏 SVG `feTurbulence` 实时分形噪声滤镜 + 三层毛玻璃 `backdrop-filter: blur()` 嵌套合成」叠加上「React 1s/15s 全树重算 + 弹窗关闭时仍挂载数百个隐藏 DOM 节点 + Rust 端 `N + 2` 次重复读取解析 `quota_ledger.json`/`quota_web_metadata.json` + 自动续杯每次点击重复冷启动 `python.exe` 探针」共同导致的 UI 帧率骤降与交互卡顿。
+2. **完成前后端全链路优化与验证**：修复 CSS/GPU 合成、React 渲染与快照去重、Rust 单次文件解析与 Python 探针缓存，通过全套前端、Rust、Python 与 Playwright 合成测试。
+3. **完成 `v0.3.1` 打包审计、本机零中断热更新与 GitHub Release 发布**：在独立中性目录构建 `Claude-Local_0.3.1_x64-setup.exe`，通过 109 文件白名单与 29 项外置隐私探针审计（`findings = []`），无感更新本机 `%LOCALAPPDATA%\Programs\Claude-Local`（零中断运行中的 `claude.exe`），并在 GitHub Actions CI 全绿后发布 `v0.3.1` (Latest)。
 
 ---
 
 ## 2. 已经完成了什么
 
-### 2.1 `Gemini 4 Argon` 子代理慢速根因定位与 Magpie + PowerShell 7 全链路升级（2026-11-07 完成）
+### 2.1 `Claude-Local v0.3.1` 核心优化与正式交付回执（2026-11-09 完成）
 
-1. **查明慢速的两大根本原因（有完整日志证据支撑）**：
-   - **根因 A（占耗时 ~70%）：Magpie 默认 `Smart` 路由钉死单号 + Google CloudCode `>70%` 软限流**：
-     - Magpie 的 `providers.json` 中 `antigravity`、`argon-high`、`argon-medium` 原 `"routing"` 为空字符串 `""`（即 `Smart` 策略）。`Smart` 策略将所有已用额度 `<90%` 的账号视为同一优先级，严格按**最早重置时间（earliest reset deadline）**排序，导致长达 61 分钟、55 轮工具调用的任务 100% 钉死在同一个 Ultra 账号（从 `46.3%` 耗尽至 `94.9%`），而另外两个满血 Ultra 账号（`3.4%`、`12.0%`）全程 0 请求闲置。
-     - 当该账号消耗跨过 **`~70%`** 后，Google CloudCode 上游对 `gemini-4-argon:high` 触发软限流（服务端排队）：前 18 轮（`<70%`）TTFT 仅 `6.5s ~ 20s`，一旦跨过 `70%`，单轮 TTFT 暴涨至 `163s ~ 417.9s`（单轮干等近 7 分钟），甚至触发 `context deadline exceeded` 502 超时。
-   - **根因 B（占耗时 ~30%）：55 轮细碎工具往返 + 内联引号转义失败重试**：
-     - 子代理未将检查逻辑合并为单次脚本，而是串行发起 55 轮 `run_command` / `read_file`；且多次在命令行内直接拼接 `python -c "... \"...\" ..."`，被外层 Shell 吞掉引号导致 `SyntaxError` 报错重试。
-
-2. **Magpie (`127.0.0.1:3425`) 路由与防软限流配置完善（已备份并热重载验证）**：
-   - **`"routing": "pace"`（速率路由）**：在 `antigravity` provider 及 `group/argon-high`、`group/argon-medium`、`group/gemini-3.1-flash-lite-preview` 上统一启用 `"pace"`。Magpie 按「每小时可支配剩余百分比（Remaining % / Hour）」动态排序：3 个 Google AI Ultra 账号（5h 窗口，速率 `~20%/hr ~ 22.2%/hr`）永远排在最前并自动均衡轮转，而 Google AI Pro 账号（7d 窗口，速率 `~0.6%/hr`）自动排在第 4 顺位作为保底（解决了纯 `"usage"` 路由会把 `0.16%` 的 7d Pro 号排在 `3.4%` 的 5h Ultra 号前面的缺陷）。
-   - **`"accountCaps": 68` + `"capCareful": true` + `"sink": true`（68% 硬水位切号与无损接力）**：单号消耗达到 **`68%`**（赶在 Google `70%` 软限流前）立即置为 `capped=['antigravity:capped=68%']` 换下休息；即使在多轮长会话中途达到 `68%`，下一轮也会以 `why: "gone"` 自动切到空闲 Ultra 号，配合 `"sink": true` 自动剥离异号 `thoughtSignature` 杜绝 400 签名错误。
-   - **`firstToken` 首字超时熔断（`failSlow`）**：为 `argon-high` 设置 `"firstToken": 75`（75 秒未出首字自动切号重试）、`argon-medium` 设置 `"firstToken": 60`、`gemini-3.1-flash-lite-preview` 设置 `"firstToken": 30`，并为 `argon-high` / `argon-medium` 显式声明 `"context": 1048576`。
-   - **100% 零触碰隔离**：`providers.json` 顶层开启 `"noAutoGroups": true`；`claude`、`codex`、`zcode` 锁定 `"off": true, "noModels": true, "keepLogin": true`；`logins.json` 仅保留 4 个 `antigravity` 账号 `on: true`。
-
-3. **Claude Code CLI 与 Antigravity 全链路默认启用 PowerShell 7 (`pwsh.exe` v7.6.8)**：
-   - **解锁 Claude Code 原生 `PowerShell` 工具**：经逆向核实 `claude.exe` 特性开关，在 `~/.claude/settings.json` 与 `<local-env>/.claude/settings.json` 的 `"env"` 中启用 `"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"`、`"CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY": "1"`、`"CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT": "1"`、`"CLAUDE_CODE_PWSH_PARSE_TIMEOUT_MS": "15000"`、`"PYTHONIOENCODING": "utf-8"`、`"PYTHONUTF8": "1"`，并在 `permissions.allow` 中放行 `PowerShell`、`Bash`、`Read`、`Edit`、`Write`、`Glob`、`Grep`、`WebFetch`、`WebSearch`、`NotebookEdit`、`mcp__*`（`defaultMode: "bypassPermissions"`）。
-   - **升级 `~/.claude/agents/*.md` 全部 5 个 Argon 子代理定义**（`gemini-4-argon`、`gemini-4-argon-medium`、`gemini-4-argon-high`、`argon-scout`、`argon-reviewer`）：`tools` 声明升级为 `PowerShell, Bash, Read, Grep, Glob`，默认优先使用 `PowerShell` 工具（`pwsh.exe`）配合单引号 Here-String（`@' ... '@`）调用 `agy-safe.cmd`（同时兼容旧会话 `Bash` 回退）。
-   - **补齐 Antigravity CLI (`~/.gemini/config/config.json` 与 `<local-env>/.gemini/config/config.json`) 免审白名单**：保持 `CASCADE_COMMANDS_AUTO_EXECUTION_EAGER` + `AGENT_PERMISSION_PRESET_TURBO` + `enableTerminalSandbox: false`，并在 `globalPermissionGrants.allow` 中登记 `command(pwsh)`、`command(python)`、`command(Get-ChildItem)`、`command(Get-Content)`、`command(Select-String)` 等 45 项授权。
-
-4. **`agy-safe.cmd` / `agy-safe.ps1` 包装层升级**：
-   - `agy-safe.cmd` 直接以 `pwsh.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass` 启动；
-   - `agy-safe.ps1` 新增 `-PromptFile <path>` 文件传参支持，将 PowerShell 7 置于 `$env:PATH` 首位并注入 `$env:SHELL` / `$env:PYTHONUTF8 = "1"`；修复 `agy.exe v1.5.2` 的 `Created conversation <UUID>` 脑目录提取正则（稳定输出 `<!-- AGY-RUN-BRAIN: BRAIN=<UUID> | CLILOG=... -->`）；在 `$QualityGuardrail` 中新增 Rule #6（强制使用 `@' ... '@ | python -` 单引号 Here-String 管道执行脚本，并将探测逻辑合并为 1~3 次综合运行）。
-
-### 2.2 `Claude-Local v0.3.0` 核心功能与正式发布回执（前期已完成）
-1. **净室切号与跨号防染色（[`src-tauri/src/cleaner_config.rs`](src-tauri/src/cleaner_config.rs)、[`src-tauri/src/cleaner_identity.rs`](src-tauri/src/cleaner_identity.rs)、[`src-tauri/src/browser/oauth_route.rs`](src-tauri/src/browser/oauth_route.rs)）**：支持 `claude.com/cai/oauth/authorize` 与 `claude.ai/oauth/authorize` 并排除 `platform.claude.com`；`CREDENTIAL_KEYS` 扩至 7 项、`ACCOUNT_KEYS` 扩至 25 项（严格保留 `userID`、`cachedGrowthBookFeatures`、`metricsStatusCacheByPrincipal` 等设备键）；分锁类型僵尸锁回收（60s / 15s）与共享会话 JSONL 跨号染色剥离/孤儿 `tool_use` 自愈。
-2. **CLI 遥测护盾、全栈防漏域名锁与 MCP 供应链安全审计（[`src/risk-model.ts`](src/risk-model.ts)、[`src-tauri/src/risk_check.rs`](src-tauri/src/risk_check.rs)、[`src/vps.tsx`](src/vps.tsx)）**：锁定 `datadoghq`、`claude.com`、`growthbook.io`、`claudemcpcontent.com`、`storage.googleapis.com` 等域名；实现 CLI 遥测护盾与 MCP 供应链只读体检。
-3. **智能接力 2.0（[`src/smart-relay-model.ts`](src/smart-relay-model.ts)）与实时额度悬浮小窗 2.0（[`src/floating-monitor.tsx`](src/floating-monitor.tsx)）**：融合 `magpie` `WeekLow` 临期周配额抢救与 `claude-swap` 7d 重置前 24h 步速静默窗口；新增动态换号裕度、5h 饥饿态紧急放行、双口径极值防虚标（`4%`~`96%`）、小窗接力胶囊与跨页审计时间线。
-4. **测试、打包审计、本机无感热更新与 GitHub Release `v0.3.0`**：
-   - `bun test`（183 pass）、`cargo test --manifest-path src-tauri/Cargo.toml --bin claude-local`（315 pass）、Python 合成测试与 GitHub Actions CI（run `#42357163813`）全绿；
-   - 安装包 `Claude-Local_0.3.0_x64-setup.exe`（SHA-256 `8d2a56c93ebe7a2cf56a886bb00fcf78c4df2e7b46dbc934f7ee5a8b64f3e8d6`）通过 109 文件白名单与 29 项外置隐私探针审计（0 发现）；
-   - 本机 `%LOCALAPPDATA%\Programs\Claude-Local` 已无感热更新至 `0.3.0`（宿主 SHA-256 `cbe79fbde3cffa2544497d3cfc6a7cbfcc436c823094b787ce02edfce5dbb889`，`missingClaudeCount = 0`），[GitHub Release v0.3.0 (Latest)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.0) 已正式发布。
+1. **智能接力与自动续杯弹窗全链路防卡顿优化**：
+   - **GPU 合成层减负（[`src/style.css`](src/style.css)、[`src/identity-productivity.css`](src/identity-productivity.css)）**：
+     - 将 `--glass-noise-image` 全屏实时计算的 `<feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/>` SVG 滤镜置为 `none`，消除 `.app-sidebar` 与 `.workspace` 在弹窗动画和列表滚动时的全屏逐像素 CPU/GPU 滤镜重光栅化；
+     - 移除模态遮罩 `.app-dialog-overlay` 的第二层 `backdrop-filter: blur(2px)`，为毛玻璃/自定义壁纸下的弹窗赋予 96% 高不透明隔离表面与 `contain: paint`，为 `.identity-wakeup-account-list` 和 `.identity-relay-account-list` 启用 `contain: content`（并为接力池列表增加 `max-height: 240px; overflow-y: auto`），弹窗开启期间自动暂停底层活跃卡片的 `clActiveCardAura` 无限阴影动画。
+   - **React 渲染缓存、快照去重与按需挂载（[`src/identities.tsx`](src/identities.tsx)、[`src/identity-online-quota.ts`](src/identity-online-quota.ts)、[`src/floating-monitor.tsx`](src/floating-monitor.tsx)）**：
+     - 在 `publishNativeWakeup` 中增加 JSON 序列化相等性去重（`nativeWakeupSerialized`），配合 Rust 侧 `wakeup.rs` 仅在 `changed == true` 时发射 `wakeup-scheduler-state` 事件，彻底消除后台 15 秒无变化轮询触发的全树重绘；
+     - 将桌面态 `IdentityPanel` 的 `nowSec` 定时器从 `1s` 放宽至 `10s`（Playwright 合成测试态保持 `1s`），将 `floating-monitor.tsx` 时钟从 `1s` 放宽至 `15s`；
+     - 对 `batchTargetInfo`、`currentTargetSetKey`、`staleQuotaTargets`、`currentQuota`、`bestSaved`、`relayAccounts`、`relayEval`、`relayPoolSummary`、`wakeupAccountRows` 与 `wakeableCount` 全面启用 `useMemo` 缓存，仅在 `onlinePanelOpen` / `relayPanelOpen` 为 `true` 时挂载弹窗内部重型列表 JSX，并通过 `adoptedTerminalBatchIdRef` 消除重开自动续杯弹窗时的重复快照接管，通过 `pendingAutoWakePatchRef` 支持快速点击配置时的防丢片合并保存。
+   - **Rust 后端单次文件解析与 Python 探针缓存（[`src-tauri/src/identities/profile.rs`](src-tauri/src/identities/profile.rs)、[`src-tauri/src/identities/online.rs`](src-tauri/src/identities/online.rs)、[`src-tauri/src/identities/mod.rs`](src-tauri/src/identities/mod.rs)、[`src-tauri/src/identities/wakeup.rs`](src-tauri/src/identities/wakeup.rs)）**：
+     - 新增 `read_ledger_root` / `apply_parsed_ledger_to_summary` 与 `read_metadata_root` / `apply_parsed_metadata`，将 `state_for` 与 `read_with_ledger` 中对 `quota_ledger.json` 和 `quota_web_metadata.json` 的磁盘读取与 JSON 解析从 `N + 2` 次收敛为每次调用仅 1 次；
+     - 在 `wakeup_runtime_capability` 中增加按 `(脚本路径, 文件长度, 修改时间纳秒)` 键控的内存缓存 `verified_wakeup_runtime_cache()`，并在 `identities_wakeup_configure` 已处于启用且可用状态时跳过重复探针，彻底消除每次点击自动续杯开关或时间预设时约 500ms 的 `python.exe` 冷启动阻塞。
+2. **用量分析 2× 高清长图海报导出、模型等高排版与净室 `s13` 设备指纹连续性**：
+   - 新增 [`src/usage-screenshot.ts`](src/usage-screenshot.ts) 纯前端 Canvas 2D 2× Retina 海报渲染引擎（「📸 截图数据」/「📈 截图趋势」一键复制或下载 PNG），三模型分布固定按 `Opus` → `Sonnet` → `Haiku` 排序并与趋势图等高对齐，悬停展示 `Effort 档位分布` 浮层；
+   - 净室切号保留 `userID`、`cachedGrowthBookFeatures` 与 `metricsStatusCacheByPrincipal`（`s13` 设备指纹连续性），操作进度收拢为单行胶囊，新身份与养号引导统一为结构化步骤卡片。
+3. **测试、打包审计、本机零中断热更新与 GitHub Release `v0.3.1` 正式发布**：
+   - `bun test`（185 pass / 0 fail，26 文件，14,193 次断言）、`cargo test --manifest-path src-tauri/Cargo.toml --bin claude-local`（315 pass / 0 fail）、80 项核心合成 Python 测试与 Playwright 合成 UI 测试（含 `--wakeup-only` 13 项、`--quota-reset-only` 8 项）全部通过；
+   - 冻结源码提交 [`fa1fedde2982bc123986ed70b8ca95fdeb56e18a`](https://github.com/yq04/Claude-Local/commit/fa1fedde2982bc123986ed70b8ca95fdeb56e18a) 在 GitHub Actions [`Windows source checks` (run `#42585468806`)](https://github.com/yq04/Claude-Local/actions/runs/42585468806) 全部步骤通过；
+   - 中性环境构建安装包 `Claude-Local_0.3.1_x64-setup.exe`（`140,896,139` 字节，SHA-256 `1551e85799f16bb7f6bfa8678d4e13f10e1efce2d85f3a41a10a7f786a7fc281`）通过 109 文件白名单与 29 项外置隐私探针审计（`findings = []`，未打包宿主 SHA-256 `9ca91cf3f9ff08fb42573f5efe27e46282c6a1fa187c63d8265c31819117b5c9`，NSIS 内宿主 SHA-256 `0579a61aa4886e34d7b22740a807719dc0a061c6abf843a55bafb00621285b66`，偏移 `13554682` 处 3 字节 `UNK` → `NSS`）；
+   - 本机 `%LOCALAPPDATA%\Programs\Claude-Local` 已无感热更新至 `0.3.1`（102 文件逐一校验、8 个变更文件备份替换，安装宿主 SHA-256 `0579a61aa4886e34d7b22740a807719dc0a061c6abf843a55bafb00621285b66`，交互式窗口已启动，`missingClaudeCount = 0`）；
+   - [GitHub Release v0.3.1 (Latest)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.1) 已于 `2026-11-09T08:35:54Z` 正式发布，双资产服务端 digest 与本地 SHA-256 完全一致。
 
 ---
 
@@ -74,9 +61,8 @@
 
 **当前没有任何技术阻塞、遗留缺陷或未完成任务。**
 
-- `Claude-Local v0.3.0` 代码库、本机桌面端与远端 GitHub Release 完全对齐；
-- 本机 Magpie (`127.0.0.1:3425`)、`agy-safe.cmd` / `agy-safe.ps1`、PowerShell 7 (`pwsh.exe` v7.6.8) 子代理链路均已实测验证通过（`AGY_PWSH7_MAGPIE_OK (7.6.8, PYTHONUTF8=1)`，21.7s 完成）；
-- 工作区仅保留用户规则要求的 `AGENTS.md`、`HANDOFF.md` 及 Git 忽略的 `.local/` 私有目录。
+- `Claude-Local v0.3.1` 代码库、本机桌面端与远端 GitHub Release 完全对齐；
+- 工作区仅保留用户规则要求的 `AGENTS.md`（未暂存）与 Git 忽略的 `.local/` 私有目录。
 
 ---
 
@@ -84,53 +70,36 @@
 
 新会话接手时无需执行任何收尾动作，直接响应用户的新需求即可：
 
-1. **若用户在重启后的 Claude Code CLI 会话中调用 `gemini-4-argon` / `gemini-4-argon-high` / `gemini-4-argon-medium` 子代理**：
-   - 新启动的 Claude Code CLI 会话将自动加载 `"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"`，子代理可直接调用原生 `PowerShell` 工具运行 `agy-safe.cmd`；
-   - 若是在尚未重启的旧 Claude Code CLI 会话中，子代理会自动平滑回退使用 `Bash` 工具调用 `agy-safe.cmd`（而 `agy-safe.cmd` 内部依然强制走 `pwsh.exe` 7.6.8）。
-2. **若用户提出 `Claude-Local v0.3.1` / 新功能开发或日常维护**：
+1. **若用户提出后续版本新功能开发或日常维护**：
    - 先阅读目标模块目录下的 `CLAUDE.md` 与源文件头注释；
    - 遵循增量测试与“绝不中断运行中的 `claude.exe`”原则；
-   - 打包与无感热更新可复用 `scripts/build-windows-share.ps1` 与 `.local/tasks/20261107-release-0.3.0/deploy-audited.ps1`。
+   - 打包与无感热更新可复用 `scripts/build-windows-share.ps1` 与 `.local/tasks/20261109-release-0.3.1/deploy-audited.ps1`。
 
 ---
 
 ## 5. 有哪些踩过的坑，绝对不要再踩
 
-### 5.1 本机 `Gemini 4 Argon` 子代理、Magpie 路由与 PowerShell 7 协同铁律（必读）
-1. **Magpie 路由切勿改回空字符串 `""` (`Smart`) 或纯 `"usage"` (`LeastUsed`)**：
-   - `""` (`Smart`) 会按最早重置时间把所有请求钉死在同一个 Ultra 账号直至 90%，一旦跨过 `~70%` 就会触发 Google CloudCode 严重软限流（单轮 TTFT 暴涨至 160s~417s+）；
-   - 纯 `"usage"` (`LeastUsed`) 不区分窗口时长，会把已用 `0.16%` 的 7 天窗口 Pro 账号排在已用 `3.4%` 的 5 小时窗口 Ultra 账号前面；
-   - **必须保持 `"routing": "pace"` + `"accountCaps": 68` + `"capCareful": true` + `"sink": true` + `firstToken` 超时熔断（`75`/`60`/`30`）**。
-2. **Magpie `logins.json` 顶层结构是 JSON 数组 `[...]` 而非字典 `{"accounts": [...]}`**：
-   - 用脚本读取或巡检 `logins.json` 时直接遍历顶层数组，且绝不要把 `claude`、`codex`、`plugin:zcode` 账号设为 `on: true`（保持 `antigravity` 专用隔离）。
-3. **子代理内部执行 Python 脚本严禁在命令行拼接多层转义双引号**：
-   - 在 `agy-highcap.exe` 的 `run_command`（`pwsh`）中，切勿编写单行包含复杂双引号的 `python -c "... \"...\" ..."`；**必须使用 PowerShell 单引号 Here-String 管道（`@' ... '@ | python -`）**，并将零散检查合并为 1~3 次综合脚本运行，避免产生几十轮工具往返。
-4. **子代理轮询 `.output` 时不要传 `"timeout": 180000`**：
-   - 统一使用不带自定义 `timeout` 参数的 `agy-safe.cmd -WaitOutput "<.output路径>"`（内部单次轮询限时 90s < 默认 120s 工具超时），且跨进程读取热文件必须使用 `FileShare.ReadWrite | FileShare.Delete` 共享流锁。
-5. **保持 `~/.claude/settings.json` 的 `"env"` 代理、遥测锁定与 `CLAUDE_CODE_USE_POWERSHELL_TOOL=1` 非空**：
-   - 确保 `claude.exe` 派生的所有子进程共享 `http://127.0.0.1:7899` 静态家宽出口，并原生开启 `PowerShell` (`pwsh.exe`) 工具。
+### 5.1 `Claude-Local` 性能、测试与打包部署铁律（必读）
+1. **严禁在全屏容器上使用实时 SVG `<feTurbulence>` 滤镜或多层嵌套 `backdrop-filter: blur()`**：在 WebView2 高分屏与自定义壁纸下，全屏 `feTurbulence` 叠加遮罩层与弹窗多层 `backdrop-filter` 会导致打开模态窗或滚动列表时严重的 GPU 合成掉帧。毛玻璃模式下弹窗应使用高不透明表面（96%）与 `contain: paint` / `contain: content`。
+2. **严禁中断任何正在运行的 `claude.exe`（Claude Code CLI）进程**：开发、测试与本机桌面端热更新期间，绝不能停止任何 `claude.exe`。
+3. **严守 `s13` 设备指纹连续性红线（[`src-tauri/src/cleaner_config.rs`](src-tauri/src/cleaner_config.rs)）**：切勿将 `userID`、`cachedGrowthBookFeatures`、`metricsStatusCacheByPrincipal`、`anonymousId`、`groveConfigCache` 加入 `ACCOUNT_KEYS` 的无条件删除列表。
+4. **Rust 单元测试目标为 `--bin claude-local` 而非 `--lib`**：必须使用 `cargo test --manifest-path src-tauri/Cargo.toml --bin claude-local`（共 315 项测试）。
+5. **在线唤醒结果契约（[`scripts/claude_quota_online.py`](scripts/claude_quota_online.py)）**：`run_wakeup` 的 `confirmed_5h` 必须要求 `expired_reset_at is not None and reset_5h > expired_reset_at`。
+6. **伴生浏览器与持久化格式红线**：绝不将 `Claude-Local-Browser` 设为系统默认浏览器；保持 `BAGAID01`、`.baga`、SQLite `user_version=3`、账号 HMAC 与 `CCBaga` 种子域字符串不变；单账号跨机导入/导出（`.clpack` / `.bagapack`）已永久取消。
+7. **Git 与隐私红线**：严禁暂存或提交 `AGENTS.md` 与 `.local/`；严禁在跟踪文件中写入真实账号、邮箱、代理凭据、进程 PID、29 项探针明文或本机个人绝对路径；严禁使用 `git add .`、`git add -A`、`git clean`、`git reset --hard`。
 
-### 5.2 `Claude-Local` 研发、测试与打包部署铁律（必读）
-1. **严禁中断任何正在运行的 `claude.exe`（Claude Code CLI）进程**：开发、测试与本机桌面端热更新期间，绝不能停止任何 `claude.exe`。
-2. **严守 `s13` 设备指纹连续性红线（[`src-tauri/src/cleaner_config.rs`](src-tauri/src/cleaner_config.rs)）**：切勿将 `userID`、`cachedGrowthBookFeatures`、`metricsStatusCacheByPrincipal`、`anonymousId`、`groveConfigCache` 加入 `ACCOUNT_KEYS` 的无条件删除列表。
-3. **Rust 单元测试目标为 `--bin claude-local` 而非 `--lib`**：必须使用 `cargo test --manifest-path src-tauri/Cargo.toml --bin claude-local`（共 315 项测试）。
-4. **在线唤醒结果契约（[`scripts/claude_quota_online.py`](scripts/claude_quota_online.py)）**：`run_wakeup` 的 `confirmed_5h` 必须要求 `expired_reset_at is not None and reset_5h > expired_reset_at`。
-5. **伴生浏览器与持久化格式红线**：绝不将 `Claude-Local-Browser` 设为系统默认浏览器；保持 `BAGAID01`、`.baga`、SQLite `user_version=3`、账号 HMAC 与 `CCBaga` 种子域字符串不变；单账号跨机导入/导出（`.clpack` / `.bagapack`）已永久取消。
-6. **Git 与隐私红线**：严禁暂存或提交 `AGENTS.md` 与 `.local/`；严禁在跟踪文件中写入真实账号、邮箱、代理凭据、进程 PID、29 项探针明文或本机个人绝对路径；严禁使用 `git add .`、`git add -A`、`git clean`、`git reset --hard`。
+### 5.2 本机 `Gemini 4 Argon` 子代理、Magpie 路由与 PowerShell 7 协同铁律（必读）
+1. **Magpie 路由保持 `"routing": "pace"` + `"accountCaps": 68` + `"capCareful": true` + `"sink": true` + `firstToken` 超时熔断（`75`/`60`/`30`）**，切勿改回空字符串 `""` (`Smart`) 或纯 `"usage"` (`LeastUsed`)。
+2. **子代理内部执行 Python 脚本必须使用 PowerShell 单引号 Here-String 管道（`@' ... '@ | python -`）**，切勿在命令行拼接多层转义双引号。
 
 ---
 
 ## 6. 关键文件与本地证据索引
 
 ### 公开文档与核心代码入口
-- **发布与核验文档**：[`docs/RELEASE_NOTES_0.3.0.md`](docs/RELEASE_NOTES_0.3.0.md)、[`docs/RELEASE_VERIFICATION_0.3.0.md`](docs/RELEASE_VERIFICATION_0.3.0.md)、[`docs/RELEASE_POLICY.md`](docs/RELEASE_POLICY.md)、[`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md)。
-- **`v0.3.0` 完整方案与复审报告**：`docs/plans/2026-11-05-v0.3.0-security-and-ux-leap/`（[`00-README.md`](docs/plans/2026-11-05-v0.3.0-security-and-ux-leap/00-README.md)、[`01-FINDINGS.md`](docs/plans/2026-11-05-v0.3.0-security-and-ux-leap/01-FINDINGS.md)、[`02-IMPLEMENTATION-PLAN.md`](docs/plans/2026-11-05-v0.3.0-security-and-ux-leap/02-IMPLEMENTATION-PLAN.md)、[`03-REVIEW-AND-ROADMAP.md`](docs/plans/2026-11-05-v0.3.0-security-and-ux-leap/03-REVIEW-AND-ROADMAP.md)）。
-- **前后端核心模块**：[`src-tauri/src/browser/oauth_route.rs`](src-tauri/src/browser/oauth_route.rs)、[`src-tauri/src/cleaner_config.rs`](src-tauri/src/cleaner_config.rs)、[`src-tauri/src/cleaner_identity.rs`](src-tauri/src/cleaner_identity.rs)、[`src-tauri/src/risk_check.rs`](src-tauri/src/risk_check.rs)、[`src/smart-relay-model.ts`](src/smart-relay-model.ts)、[`src/floating-monitor-model.ts`](src/floating-monitor-model.ts)、[`src/floating-monitor.tsx`](src/floating-monitor.tsx)、[`src/identities.tsx`](src/identities.tsx)、[`src/risk-model.ts`](src/risk-model.ts)。
+- **发布与核验文档**：[`docs/RELEASE_NOTES_0.3.1.md`](docs/RELEASE_NOTES_0.3.1.md)、[`docs/RELEASE_VERIFICATION_0.3.1.md`](docs/RELEASE_VERIFICATION_0.3.1.md)、[`docs/RELEASE_NOTES_0.3.0.md`](docs/RELEASE_NOTES_0.3.0.md)、[`docs/RELEASE_VERIFICATION_0.3.0.md`](docs/RELEASE_VERIFICATION_0.3.0.md)、[`docs/RELEASE_POLICY.md`](docs/RELEASE_POLICY.md)、[`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md)。
+- **本次性能优化与 `v0.3.1` 核心模块**：[`src/style.css`](src/style.css)、[`src/identity-productivity.css`](src/identity-productivity.css)、[`src/identities.tsx`](src/identities.tsx)、[`src/identity-online-quota.ts`](src/identity-online-quota.ts)、[`src/floating-monitor.tsx`](src/floating-monitor.tsx)、[`src/usage-screenshot.ts`](src/usage-screenshot.ts)、[`src/usage-statistics.tsx`](src/usage-statistics.tsx)、[`src-tauri/src/identities/profile.rs`](src-tauri/src/identities/profile.rs)、[`src-tauri/src/identities/online.rs`](src-tauri/src/identities/online.rs)、[`src-tauri/src/identities/mod.rs`](src-tauri/src/identities/mod.rs)、[`src-tauri/src/identities/wakeup.rs`](src-tauri/src/identities/wakeup.rs)。
 
 ### 本机忽略目录与外部环境配置索引（严禁提交至 Git）
-- `.local/artifacts/20261107T085036Z-52584c0173a844248cbdd998aa03cd43/`：`v0.3.0` 安装包 `Claude-Local_0.3.0_x64-setup.exe`、`SHA256SUMS.txt`、`privacy-audit.json`。
-- `.local/tasks/20261107-release-0.3.0/`：构建/部署回执（`artifact.json`、`github-release-receipt.json`、`deployment-receipt.json`）及 `HANDOFF.md` 历次 SHA-256 备份（最新备份 `HANDOFF-pre-session-close-20261107-0431.md.bak`）。
-- 本机子代理与网关环境（均带有 `*.bak-20261107-0415` 备份）：
-  - Magpie 配置目录：`providers.json`（`pace` + `accountCaps: 68` + `firstToken` + `sink`）、`logins.json`、`routing/2026-11-07.jsonl`；
-  - 子代理包装器与高容量 CLI：`<local-env>/bin/agy-safe.cmd`、`<local-env>/bin/agy-safe.ps1`、`<local-env>/bin/agy-highcap.exe`（840k 上下文阈值）；
-  - Claude Code 与 Antigravity 配置：`~/.claude/settings.json`、`~/.claude/agents/*.md`、`~/.gemini/config/config.json`。
+- `.local/artifacts/20261109T082243Z-1b99811ba5cf44c194c3b05b66516dfa/`：`v0.3.1` 安装包 `Claude-Local_0.3.1_x64-setup.exe`、`SHA256SUMS.txt`、`privacy-audit.json`、`resource-manifest.json`。
+- `.local/tasks/20261109-release-0.3.1/`：构建/部署/发布回执（`artifact.json`、`source-commit.txt`、`deployment-plan.json`、`deployment-receipt.json`、`github-release-receipt.json`）及 `HANDOFF.md` 重写前 SHA-256 备份（`HANDOFF-pre-v0.3.1-closeout.md.bak`）。

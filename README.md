@@ -208,7 +208,7 @@ Get-FileHash .\Claude-Local_0.3.1_x64-setup.exe -Algorithm SHA256
 
 | 版本 | 发布日期 | 核心演进内容 | 详细文档 |
 | :--- | :--- | :--- | :--- |
-| **`v0.3.1`** *(Latest)* | 2026-11-09 | **智能接力与自动续杯弹窗全链路防卡顿优化（去除全屏 `feTurbulence` 实时滤镜与双重毛玻璃合成、React 40 卡计算缓存与子树按需挂载、`quota_ledger.json`/`quota_web_metadata.json` 单次解析、Python 运行时探针缓存）**、**用量分析 2× 高清长图海报一键复制/保存与模型等高排版**、**净室切号设备指纹连续性（`s13` 保留 `userID`/`cachedGrowthBookFeatures`/`metricsStatusCacheByPrincipal`）** | [发布说明](docs/RELEASE_NOTES_0.3.1.md) |
+| **`v0.3.1`** *(Latest)* | 2026-11-09 | **智能接力与自动续杯弹窗全链路防卡顿优化（去除全屏 `feTurbulence` 实时滤镜与双重毛玻璃合成、React 40 卡计算缓存与子树按需挂载、`quota_ledger.json`/`quota_web_metadata.json` 单次解析、Python 运行时探针缓存）**、**用量分析 2× 高清长图海报一键复制/保存与模型等高排版**、**净室切号设备指纹连续性（`s13` 保留 `userID`/`cachedGrowthBookFeatures`/`metricsStatusCacheByPrincipal`）** | [发布说明](docs/RELEASE_NOTES_0.3.1.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.1.md) |
 | **`v0.3.0`** | 2026-11-07 | **Claude Code v2.1.309~2.1.318 净室隔离与三锁协议（7 凭据键 + 25 账号缓存键 + `1p_failed_events`/`statsig` 净室隔离 + 8 锁清理）**、**OAuth 授权 URL 零泄露直投伴生浏览器**、**CLI 遥测护盾与 MCP 供应链安全审计**、**智能接力 2.0（动态防乒乓、冷却监狱、单向不回跳、WeekLow 晋升、真实小数百分比）**、**悬浮窗 2.0（接力备选胶囊、时间消耗步调）** 及 **三段式净室切换管线与 5h 续杯锚点核验** | [发布说明](docs/RELEASE_NOTES_0.3.0.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.0.md) |
 | **`v0.2.7`** | 2026-11-03 | CLI 遥测（`datadoghq.com`）与 Codex 协同域名同源家宽路由、同端口双协议（`socks5://` 浏览器 vs `http://` CLI）智能对齐、一键复制 CLI 防漏 `settings.json` 片段及 `GRPC_PROXY` 身份归档支持 | [发布说明](docs/RELEASE_NOTES_0.2.7.md) |
 | **`v0.2.6`** | 2026-11-02 | 紧凑卡片拖拽/键盘调序、5 秒静默本地同步、转正幽灵卡修复、HUD 穿透与防遮挡、接力池容量与定向额度查询、单次用量指标及 Markdown/TSV 导出 | [发布说明](docs/RELEASE_NOTES_0.2.6.md) |
