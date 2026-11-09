@@ -4,7 +4,7 @@
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode} from 'react';
+import {useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode} from 'react';
 import {Button, Checkbox, Disclosure, Input, Switch, useReducedMotionConfig, useSpring} from 'cromma-ui';
 import {DropdownMenu} from 'radix-ui';
 import {listen} from '@tauri-apps/api/event';
@@ -236,6 +236,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const autoWakeConfig = nativeWakeup.config;
   const autoWakeState = nativeWakeup;
   const [autoWakeSaving, setAutoWakeSaving] = useState(false);
+  const autoWakeSavingRef = useRef(false);
+  const pendingAutoWakePatchRef = useRef<Partial<AutoWakeupConfig> | null>(null);
+  const adoptedTerminalBatchIdRef = useRef<string | null>(null);
   const [wakingAccountId, setWakingAccountId] = useState<string | null>(null);
   const [wakeupAnchorMap, setWakeupAnchorMap] = useState<Record<string, WakeupAnchorVerificationResult>>(() => persistedWakeupAnchorMap);
   const wakingRef = useRef(false);
@@ -299,9 +302,13 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   tRef.current = t;
   const stateRef = useRef(state);
   stateRef.current = state;
-  const quotaTargets = buildBatchTargets(state).targets;
-  const currentTargetSetKey = quotaTargets.map(target => `${target.account_id}:${target.expected_identity.toLowerCase()}`).sort().join(',');
-  const unverifiedQuotaTargets = buildBatchTargets(state).unverifiedCount;
+  const batchTargetInfo = useMemo(() => buildBatchTargets(state), [state]);
+  const quotaTargets = batchTargetInfo.targets;
+  const currentTargetSetKey = useMemo(
+    () => quotaTargets.map(target => `${target.account_id}:${target.expected_identity.toLowerCase()}`).sort().join(','),
+    [quotaTargets],
+  );
+  const unverifiedQuotaTargets = batchTargetInfo.unverifiedCount;
   useEffect(() => {
     if (prevTargetSetKeyRef.current !== null && prevTargetSetKeyRef.current !== currentTargetSetKey) {
       setForegroundAutoRefresh(false);
@@ -357,8 +364,8 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [monitorClickThrough, setMonitorClickThrough] = useState(false);
-  const staleQuotaTargets = buildStaleOrUnknownBatchTargets(state, nowSec);
-  const currentQuota = evaluateQuota(current, nowSec);
+  const staleQuotaTargets = useMemo(() => buildStaleOrUnknownBatchTargets(state, nowSec), [state, nowSec]);
+  const currentQuota = useMemo(() => evaluateQuota(current, nowSec), [current, nowSec]);
   const detailsAreCurrent = quotaDetails?.id === 'current' || (!!quotaDetails && quotaDetails.id === state?.active);
   const detailsSummary = detailsAreCurrent ? current : quotaDetails ? state?.summaries[quotaDetails.id] : undefined;
   const detailsQuota = evaluateQuota(detailsSummary, nowSec);
@@ -369,50 +376,57 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const proxyChanged =
     (typeof review === 'object' && review && (current?.proxy || null) !== (targetSummary?.proxy || null)) ||
     (review === 'empty' && Boolean(current?.proxy));
-  const bestSaved = saved.reduce<{row: Identity; effectiveRem: number; inferred: boolean} | null>((best, row) => {
-    const sum = state?.summaries?.[row.id];
-    if (sum?.auth_status === 'expired') return best;
-    const q = evaluateQuota(sum, nowSec);
-    if (!q || !q.known5h || !q.known7d || q.inferred7d || q.effectiveRem <= 0) return best;
-    const inferred = !q.recommendable;
-    if (!best || q.effectiveRem > best.effectiveRem || (q.effectiveRem === best.effectiveRem && best.inferred && !inferred)) {
-      return {row, effectiveRem: q.effectiveRem, inferred};
-    }
-    return best;
-  }, null);
-  const relayAccounts: RelayAccountInput[] = [
-    ...(current?.present
-      ? [
-          {
-            id: state?.active || 'current',
-            name: currentName,
-            email: current?.email,
-            plan: current?.plan,
-            auth_status: current?.auth_status,
-            subscription_expires_at: current?.subscription_expires_at,
-            isCurrent: true,
-            listIndex: 0,
-            summary: current,
-          },
-        ]
-      : []),
-    ...saved.map((row, idx) => {
-      const sum = state?.summaries?.[row.id];
-      return {
-        id: row.id,
-        name: row.name,
-        email: sum?.email,
-        plan: sum?.plan,
-        auth_status: sum?.auth_status,
-        subscription_expires_at: sum?.subscription_expires_at,
-        isCurrent: false,
-        listIndex: idx + 1,
-        summary: sum,
-      };
-    }),
-  ];
-  const relayEval = evaluateSmartRelay(relayAccounts, smartRelay, nowSec);
-  const relayPoolSummary = summarizeRelayPool(relayEval.candidates, nowSec);
+  const bestSaved = useMemo(
+    () =>
+      saved.reduce<{row: Identity; effectiveRem: number; inferred: boolean} | null>((best, row) => {
+        const sum = state?.summaries?.[row.id];
+        if (sum?.auth_status === 'expired') return best;
+        const q = evaluateQuota(sum, nowSec);
+        if (!q || !q.known5h || !q.known7d || q.inferred7d || q.effectiveRem <= 0) return best;
+        const inferred = !q.recommendable;
+        if (!best || q.effectiveRem > best.effectiveRem || (q.effectiveRem === best.effectiveRem && best.inferred && !inferred)) {
+          return {row, effectiveRem: q.effectiveRem, inferred};
+        }
+        return best;
+      }, null),
+    [saved, state?.summaries, nowSec],
+  );
+  const relayAccounts = useMemo<RelayAccountInput[]>(
+    () => [
+      ...(current?.present
+        ? [
+            {
+              id: state?.active || 'current',
+              name: currentName,
+              email: current?.email,
+              plan: current?.plan,
+              auth_status: current?.auth_status,
+              subscription_expires_at: current?.subscription_expires_at,
+              isCurrent: true,
+              listIndex: 0,
+              summary: current,
+            },
+          ]
+        : []),
+      ...saved.map((row, idx) => {
+        const sum = state?.summaries?.[row.id];
+        return {
+          id: row.id,
+          name: row.name,
+          email: sum?.email,
+          plan: sum?.plan,
+          auth_status: sum?.auth_status,
+          subscription_expires_at: sum?.subscription_expires_at,
+          isCurrent: false,
+          listIndex: idx + 1,
+          summary: sum,
+        };
+      }),
+    ],
+    [current, currentName, saved, state?.active, state?.summaries],
+  );
+  const relayEval = useMemo(() => evaluateSmartRelay(relayAccounts, smartRelay, nowSec), [relayAccounts, smartRelay, nowSec]);
+  const relayPoolSummary = useMemo(() => summarizeRelayPool(relayEval.candidates, nowSec), [relayEval.candidates, nowSec]);
   const relayTargetCand = relayEval.recommended ?? relayEval.standbyCandidate ?? null;
   const relayRecommendedSaved =
     smartRelay.enabled && relayTargetCand && !relayTargetCand.isCurrent
@@ -579,13 +593,16 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
   useEffect(() => {
     if (!readReady) return;
+    if (onlinePanelOpen && adoptedTerminalBatchIdRef.current !== null && !batchBusyRef.current) return;
     let live = true;
     void invoke<BatchQuotaResult | null>('identities_quota_batch_state', {requestId: null})
       .then(batch => {
         if (!live || !batch) return;
         if (!isTerminalBatchState(batch.state)) {
+          adoptedTerminalBatchIdRef.current = null;
           adoptBatchSnapshot(batch, true);
-        } else if (onlinePanelOpen) {
+        } else if (onlinePanelOpen && adoptedTerminalBatchIdRef.current !== batch.request_id) {
+          adoptedTerminalBatchIdRef.current = batch.request_id;
           adoptBatchSnapshot(batch, true);
         }
       })
@@ -672,11 +689,30 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   }, [foregroundAutoRefresh]);
 
   async function updateAutoWakeConfig(patch: Partial<AutoWakeupConfig>) {
-    if (autoWakeSaving) return;
+    if (autoWakeSavingRef.current) {
+      pendingAutoWakePatchRef.current = {...pendingAutoWakePatchRef.current, ...patch};
+      return;
+    }
+    autoWakeSavingRef.current = true;
     setAutoWakeSaving(true);
-    try { await configureNativeWakeup({...readNativeWakeupSnapshot().config, ...patch}); }
-    catch (error) { setQuotaFeedback(tRef.current(String(error) === 'wakeup.runtimeUnavailable' ? 'wakeup.runtimeUnavailable' : 'wakeup.configSaveFailed')); }
-    finally { if (mountedRef.current) setAutoWakeSaving(false); }
+    let nextPatch: Partial<AutoWakeupConfig> | null = patch;
+    try {
+      while (nextPatch) {
+        const currentPatch = nextPatch;
+        nextPatch = null;
+        await configureNativeWakeup({...readNativeWakeupSnapshot().config, ...currentPatch});
+        if (pendingAutoWakePatchRef.current) {
+          nextPatch = pendingAutoWakePatchRef.current;
+          pendingAutoWakePatchRef.current = null;
+        }
+      }
+    } catch (error) {
+      pendingAutoWakePatchRef.current = null;
+      setQuotaFeedback(tRef.current(String(error) === 'wakeup.runtimeUnavailable' ? 'wakeup.runtimeUnavailable' : 'wakeup.configSaveFailed'));
+    } finally {
+      autoWakeSavingRef.current = false;
+      if (mountedRef.current) setAutoWakeSaving(false);
+    }
   }
 
   async function resumeWakeup(identity: string) {
@@ -780,8 +816,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     return () => {live=false;};
   }, []);
   useEffect(() => {
+    const isFixture = typeof window !== 'undefined' && 'identityFixture' in window;
     const tick = () => {if (!document.hidden) setNowSec(Math.floor(Date.now() / 1000));};
-    const timer = window.setInterval(tick, 1000);
+    const timer = window.setInterval(tick, isFixture ? 1000 : 10000);
     document.addEventListener('visibilitychange', tick);
     return () => {window.clearInterval(timer);document.removeEventListener('visibilitychange', tick);};
   }, []);
@@ -1584,29 +1621,54 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   );
 
   const nowMs = nowSec * 1000;
-  const wakeupAccountRows = quotaTargets.map(target => {
-    const row = state?.records.find(record => record.id === target.account_id);
-    const summary = target.account_id === 'current' ? current : state?.summaries?.[target.account_id];
-    const label = target.account_id === 'current' ? currentName : row?.name ?? t('quotaOnline.unknownAccount');
-    const q = evaluateQuota(summary, nowSec);
-    const runtime = autoWakeState.accounts[target.expected_identity];
-    const view = presentWakeupAccount({
-      runtime,
-      authStatus: summary?.auth_status,
-      expired: Boolean(q?.inferred5h || q?.expired5h),
-      activeWindow: Boolean(q?.r5 && q.r5 > nowSec),
-      runningCli: target.account_id === 'current' && Boolean(state?.running),
-      excluded: autoWakeConfig.excludedIdentities.includes(target.expected_identity),
-      weeklyBlocked: Boolean(q?.known7d && q.rem7d <= 5),
-      snapshotReady: nativeWakeup.migrated && nativeWakeup.status !== 'loading',
-      storageError: nativeWakeup.status === 'storage_error',
-      nextGlobalAtMs: nativeWakeup.nextGlobalAtMs,
-      nowMs,
+  const wakeupAccountRows = useMemo(() => {
+    if (!onlinePanelOpen) return [];
+    return quotaTargets.map(target => {
+      const row = state?.records.find(record => record.id === target.account_id);
+      const summary = target.account_id === 'current' ? current : state?.summaries?.[target.account_id];
+      const label = target.account_id === 'current' ? currentName : row?.name ?? t('quotaOnline.unknownAccount');
+      const q = evaluateQuota(summary, nowSec);
+      const runtime = autoWakeState.accounts[target.expected_identity];
+      const view = presentWakeupAccount({
+        runtime,
+        authStatus: summary?.auth_status,
+        expired: Boolean(q?.inferred5h || q?.expired5h),
+        activeWindow: Boolean(q?.r5 && q.r5 > nowSec),
+        runningCli: target.account_id === 'current' && Boolean(state?.running),
+        excluded: autoWakeConfig.excludedIdentities.includes(target.expected_identity),
+        weeklyBlocked: Boolean(q?.known7d && q.rem7d <= 5),
+        snapshotReady: nativeWakeup.migrated && nativeWakeup.status !== 'loading',
+        storageError: nativeWakeup.status === 'storage_error',
+        nextGlobalAtMs: nativeWakeup.nextGlobalAtMs,
+        nowMs,
+      });
+      return {
+        target,
+        label: maskDisplayName(label, summary?.email, prefs.privacyMask),
+        runtime,
+        view,
+        canWakeManual: Boolean(q?.inferred5h || q?.expired5h),
+      };
     });
-    return {target, label: maskDisplayName(label, summary?.email, prefs.privacyMask), runtime, view,
-      canWakeManual: Boolean(q?.inferred5h || q?.expired5h)};
-  });
-  const wakeableCount = wakeupAccountRows.filter(item => item.view.canWake).length;
+  }, [
+    onlinePanelOpen,
+    quotaTargets,
+    state?.records,
+    state?.summaries,
+    state?.running,
+    current,
+    currentName,
+    t,
+    nowSec,
+    nowMs,
+    autoWakeState.accounts,
+    autoWakeConfig.excludedIdentities,
+    nativeWakeup.migrated,
+    nativeWakeup.status,
+    nativeWakeup.nextGlobalAtMs,
+    prefs.privacyMask,
+  ]);
+  const wakeableCount = useMemo(() => wakeupAccountRows.filter(item => item.view.canWake).length, [wakeupAccountRows]);
 
   return (
     <section className="identity-page">
@@ -1747,7 +1809,9 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         width={680}
         className="identity-online-query-dialog"
       >
-        <div className="identity-online-query-controls">
+        {onlinePanelOpen ? (
+          <>
+            <div className="identity-online-query-controls">
           <Button
             variant="secondary"
             size="small"
@@ -1939,6 +2003,8 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         onRetry={targets => void refreshAllQuotas(true, targets)}
       />
       {!quotaDetails && (quotaFeedback || batchSummary.completed > 0) && <p className="identity-online-feedback" role="status">{quotaFeedback ? t(quotaFeedback) : formatBatchProgress(batchSummary, t)}{unverifiedQuotaTargets > 0 && <> · {t('quotaOnline.unverifiedTargets', {count:unverifiedQuotaTargets})}</>}</p>}
+          </>
+        ) : null}
       </AppDialog>
 
       <AppDialog
@@ -1980,6 +2046,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           </div>
         }
       >
+        {relayPanelOpen ? (
         <div className="identity-relay-panel">
           <div className="identity-relay-master-row">
             <div>
@@ -2197,6 +2264,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             </div>
           </div>
         </div>
+        ) : null}
       </AppDialog>
 
       {!onlinePanelOpen && !quotaDetails && quotaFeedback && <p className="identity-online-feedback identity-page-feedback" role="status"><span>{t(quotaFeedback)}</span><Button variant="ghost" size="small" type="button" data-quota-feedback-dismiss="" onClick={() => setQuotaFeedback('')}>{t('关闭记录')}</Button></p>}
@@ -2314,11 +2382,12 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         <div className="identity-onboarding-bar">
           <div className="identity-onboarding-steps">
             <span className="identity-onboarding-badge">{t('添加新号 3 步法')}</span>
-            <span className="identity-onboarding-chip">{t('点「新身份」归档旧号')}</span>
-            <i aria-hidden="true">→</i>
-            <span className="identity-onboarding-chip">{t('内置浏览器验证并登录充值号')}</span>
-            <i aria-hidden="true">→</i>
-            <span className="identity-onboarding-chip">{t('identitySafety.cliStep')}</span>
+            {(['点「新身份」归档旧号', '内置浏览器验证并登录充值号', 'identitySafety.cliStep'] as const).map((step, index) => (
+              <span className="warming-step" key={step}>
+                {index > 0 && <i aria-hidden="true">→</i>}
+                <span className="identity-onboarding-chip">{t(step)}</span>
+              </span>
+            ))}
           </div>
         </div>
         <div

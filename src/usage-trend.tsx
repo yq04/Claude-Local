@@ -8,7 +8,7 @@ import {useEffect, useId, useRef, useState} from 'react';
 import {useI18n} from './i18n';
 import {formatUsageNumber, type UsageDay} from './usage-model';
 
-export function UsageTrend({days, hourly = false, timezone}: {days: UsageDay[]; hourly?: boolean; timezone?: string}) {
+export function UsageTrend({days, hourly = false, timezone, modelCount = 0}: {days: UsageDay[]; hourly?: boolean; timezone?: string; modelCount?: number}) {
   const {t, locale} = useI18n();
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(680);
@@ -22,7 +22,7 @@ export function UsageTrend({days, hourly = false, timezone}: {days: UsageDay[]; 
     return () => observer.disconnect();
   }, []);
   useEffect(() => setActive(null), [days]);
-  const height = 224, left = 58, right = width - 16, top = 18, bottom = 185;
+  const height = 214 + Math.max(0, Math.min(modelCount, 6) - 3) * 96, left = 58, right = width - 16, top = 18, bottom = height - 35;
   const largest = days.reduce((maximum, day) => day.future ? maximum : Math.max(maximum, day.totals.total_tokens), 4);
   const magnitude = 10 ** Math.floor(Math.log10(largest / 4));
   const step = ([1, 2, 2.5, 5, 10].find(value => value >= largest / 4 / magnitude) ?? 10) * magnitude;

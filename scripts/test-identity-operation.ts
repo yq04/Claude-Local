@@ -69,7 +69,16 @@ export async function testIdentityOperation(browser:Browser,base:string) {
   assert.equal(await bar.getAttribute('aria-valuenow'),'25');
   assert.equal(await operation.count(),1);
   await release(page,'identities_switch');
-  await page.waitForFunction(()=>(window as any).identityFixture.state.current.present);checks++;
+  await page.waitForFunction(()=>(window as any).identityFixture.state.Current?.present||(window as any).identityFixture.state.current.present);
+  assert.equal(await page.locator('.activity-audit-history').count(),0,'Audit timeline must be removed when operation log is open');
+  const stepsBox=await operation.locator('.identity-operation-steps').evaluate(node=>({scrollWidth:node.scrollWidth,clientWidth:node.clientWidth}));
+  assert(stepsBox.scrollWidth<=stepsBox.clientWidth+1,`Operation steps must wrap cleanly without horizontal scrollbar: ${JSON.stringify(stepsBox)}`);
+  await page.locator('.identity-library').first().screenshot({path:'.local/preview/identities-switch-log-open.png'});
+  await operation.getByRole('button',{name:'关闭记录',exact:true}).click();
+  assert.equal(await operation.count(),0,'Dismissing log must remove operation panel');
+  assert.equal(await page.locator('.activity-audit-history').count(),0,'Audit timeline must not remain after dismissing log');
+  await page.locator('.identity-library').first().screenshot({path:'.local/preview/identities-switch-log-dismissed.png'});
+  checks++;
 
   // ----- 清理和复查共用同一进度块；清理返回不等于整项操作已完成 -----
   const residue=page.locator('.claude-residue');

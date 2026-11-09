@@ -880,6 +880,7 @@ let nativeWakeupSnapshot: NativeWakeupSnapshot = {
   schema: 1, migrated: false, config: {...DEFAULT_AUTO_WAKEUP_CONFIG}, targets: [],
   lastGlobalWakeupAtMs: 0, nextGlobalAtMs: 0, accounts: {}, status: 'loading', runtime: 'unknown',
 };
+let nativeWakeupSerialized = JSON.stringify(nativeWakeupSnapshot);
 const wakeupSubscribers = new Set<() => void>();
 export function readNativeWakeupSnapshot(): NativeWakeupSnapshot { return nativeWakeupSnapshot; }
 export function subscribeNativeWakeup(callback: () => void): () => void {
@@ -888,6 +889,9 @@ export function subscribeNativeWakeup(callback: () => void): () => void {
 }
 function publishNativeWakeup(snapshot: NativeWakeupSnapshot): void {
   if (!snapshot || snapshot.schema !== 1 || !snapshot.config || !snapshot.accounts) return;
+  const serialized = JSON.stringify(snapshot);
+  if (serialized === nativeWakeupSerialized) return;
+  nativeWakeupSerialized = serialized;
   nativeWakeupSnapshot = snapshot;
   for (const callback of wakeupSubscribers) callback();
 }

@@ -80,6 +80,23 @@ function dailyRows(value,period){
   });
 }
 function modelRows(value){
+  if(window.usageFixture.threeClaudeModels){
+    const scale=(v,num,den)=>({
+      input_tokens:Math.round(v.input_tokens*num/den),
+      output_tokens:Math.round(v.output_tokens*num/den),
+      cache_creation_tokens:Math.round(v.cache_creation_tokens*num/den),
+      cache_read_tokens:Math.round(v.cache_read_tokens*num/den),
+      total_tokens:Math.round(v.total_tokens*num/den),
+      reasoning_tokens:null,
+      requests:Math.max(1,Math.round(v.requests*num/den))
+    });
+    const opus=scale(value,90,100),sonnet=scale(value,9,100),haiku=scale(value,1,100);
+    return [
+      {model:'claude-haiku-5-5',totals:haiku,efforts:[{effort:'medium',totals:haiku}]},
+      {model:'claude-sonnet-5-5',totals:sonnet,efforts:[{effort:'medium',totals:scale(sonnet,53,100)},{effort:'high',totals:scale(sonnet,45,100)},{effort:'max',totals:scale(sonnet,2,100)}]},
+      {model:'claude-opus-5-5',totals:opus,efforts:[{effort:'medium',totals:scale(opus,1,100)},{effort:'high',totals:scale(opus,10,100)},{effort:'xhigh',totals:scale(opus,22,100)},{effort:'max',totals:scale(opus,67,100)}]},
+    ];
+  }
   const names=['claude-test-model','claude-research-sonnet','claude-studio-haiku','claude-opus-4-6','claude-fable-preview','claude-sonnet-4-6','third-party-model-zeta','unknown'];
   let cumulative=0;
   return (window.usageFixture.manyModels?[30,20,15,10,8,7,6,4]:[60,30,10]).map((weight,index)=>{

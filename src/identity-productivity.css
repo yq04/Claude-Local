@@ -686,6 +686,7 @@
   padding-top: 8px;
   border-top: 1px solid var(--border);
   min-width: 0;
+  contain: content;
 }
 
 /* 账号卡片容器：明确使用 grid 单列块布局，min-width: 0 保证自适应收缩 */
@@ -952,6 +953,10 @@
 .identity-relay-account-list {
   display: grid;
   gap: 5px;
+  max-height: 240px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  contain: content;
 }
 .identity-relay-account-row {
   display: grid;
@@ -1118,19 +1123,21 @@
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  margin-bottom: 6px;
+  padding: 10px 16px 2px;
+  margin: 0;
 }
 
 .cleanroom-macro-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 999px;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 6px;
   font-size: 11px;
-  font-weight: 550;
-  border: 1px solid var(--border);
-  background: var(--muted);
+  font-weight: 600;
+  border: 1px solid var(--landing-line);
+  background: var(--panel);
   color: var(--muted-foreground);
   transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
 }
@@ -1142,20 +1149,21 @@
 }
 
 .cleanroom-macro-pill.macro-ok {
-  border-color: rgba(16, 185, 129, 0.34);
-  background: rgba(16, 185, 129, 0.12);
-  color: #059669;
+  border-color: rgba(34, 119, 71, 0.28);
+  background: rgba(34, 119, 71, 0.09);
+  color: #227747;
 }
 
 :root.dark .cleanroom-macro-pill.macro-ok {
+  border-color: rgba(52, 211, 153, 0.34);
   color: #6ee7b7;
-  background: rgba(52, 211, 153, 0.16);
+  background: rgba(16, 185, 129, 0.16);
 }
 
 .cleanroom-macro-pill.macro-error {
-  border-color: rgba(239, 68, 68, 0.38);
-  background: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
+  border-color: #e0b0a9;
+  background: #fbece9;
+  color: #ac3025;
 }
 
 .identity-relay-cooling-pill,
@@ -1213,6 +1221,8 @@
 
 html[data-window-hidden="true"] *,
 html[data-window-hidden="true"] *::before,
-html[data-window-hidden="true"] *::after {
+html[data-window-hidden="true"] *::after,
+body:has(.app-dialog-overlay) .identity-card.current,
+body:has(.app-dialog-overlay) .identity-card.current-identity {
   animation-play-state: paused !important;
 }

@@ -1,11 +1,12 @@
 /**
  * [INPUT]: Native numeric usage aggregates, shared locale and display/privacy preferences.
- * [OUTPUT]: Token-first overview with four-part composition, per-request token/cost telemetry, equivalent API USD cost & cache savings cards, peak period badge, full model distribution with per-model/effort cost, sortable account breakdown, responsive trend/data views and scoped TSV + Markdown summary actions.
+ * [OUTPUT]: Token-first overview with four-part composition and per-bucket USD cost, per-request token/cost telemetry, equivalent API USD cost & cache savings cards, one-click Retina Token consumption screenshots (overview & trend) plus export menu, full model distribution with per-model/effort cost, sortable account breakdown and responsive trend/data views.
  * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh, no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import {invoke} from '@tauri-apps/api/core';
+import {DropdownMenu} from 'radix-ui';
 import {Button, Disclosure, Select, Tabs} from 'cromma-ui';
 import {Refresh} from 'cromma-ui/pika';
 import {useI18n} from './i18n';
@@ -19,8 +20,11 @@ import {
   estimateTotalsCostUsd,
   formatUsageNumber,
   formatUsdCost,
+  sortUsageEfforts,
+  sortUsageModels,
   summarizeUsageTrend,
   tokenComposition,
+  type UsageCostEstimate,
   type UsagePeriod,
   type UsageSnapshot,
   type UsageTotals,
@@ -28,6 +32,7 @@ import {
 import {UsageTrend} from './usage-trend';
 import {UsageTrendTable} from './usage-table';
 import {buildUsageTsv, formatUsageMarkdownSummary} from './usage-export';
+import {captureUsageScreenshot, type UsageScreenshotAction, type UsageScreenshotMode} from './usage-screenshot';
 import {formatTimezoneContext, getDstDayType, maskAccountLabel} from './usage-attribution';
 
 const periods: readonly [UsagePeriod, string][] = [['today', 'usage.today'], ['yesterday', 'usage.yesterday'], ['week', 'usage.week'], ['month', 'usage.month'], ['all', 'usage.allTime']];
@@ -56,20 +61,43 @@ function MetricGlyph({kind}: {kind: 'total' | 'cost' | 'savings' | 'cache' | 'pa
   </svg></span>;
 }
 
-function TokenComposition({totals, details = false}: {totals: UsageTotals; details?: boolean}) {
+function TokenComposition({
+  totals,
+  details = false,
+  costSummary,
+}: {
+  totals: UsageTotals;
+  details?: boolean;
+  costSummary?: UsageCostEstimate;
+}) {
   const {t, locale} = useI18n();
   const parts = tokenComposition(totals);
   const number = (value: number, compact = false) => formatUsageNumber(value, locale, compact);
-  const share = (value: number) => new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {style: 'percent', maximumFractionDigits: 1}).format(value);
-  const description = parts.map(part => `${t(`usage.${part.kind}`)}: ${number(part.tokens)} (${share(part.share)})`).join(' · ');
+  const share = (tokens: number, value: number) => {
+    if (tokens > 0 && value > 0 && value < 0.001) return '<0.1%';
+    if (value > 0.999 && value < 1) return '99.9%';
+    return new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {style: 'percent', maximumFractionDigits: 1}).format(value);
+  };
+  const bucketCostUsd: Record<string, number | undefined> = costSummary
+    ? {
+        input: costSummary.inputCostUsd,
+        output: costSummary.outputCostUsd,
+        cacheWrite: costSummary.cacheWriteCostUsd,
+        cacheRead: costSummary.cacheReadCostUsd,
+      }
+    : {};
+  const description = parts.map(part => `${t(`usage.${part.kind}`)}: ${number(part.tokens)} (${share(part.tokens, part.share)})`).join(' · ');
   return <div className={`usage-composition${details ? ' has-details' : ''}`}>
     <div className="usage-composition-track" role="img" aria-label={`${t('usage.composition')}: ${description}`} title={description}>
       {parts.map(part => <span key={part.kind} data-token-kind={part.kind} style={{width: `${Math.min(100, part.share * 100)}%`}} />)}
     </div>
-    {details && <dl className="usage-composition-details">{parts.map(part => <div key={part.kind} data-token-kind={part.kind}>
-      <dt><i aria-hidden="true" />{t(`usage.${part.kind}`)}</dt>
-      <dd title={number(part.tokens)}>{number(part.tokens, true)}<small>{share(part.share)}</small></dd>
-    </div>)}</dl>}
+    {details && <dl className="usage-composition-details">{parts.map(part => {
+      const partCost = bucketCostUsd[part.kind];
+      return <div key={part.kind} data-token-kind={part.kind}>
+        <dt><span className="usage-comp-label"><i aria-hidden="true" />{t(`usage.${part.kind}`)}</span><em className="usage-comp-share">{share(part.tokens, part.share)}</em></dt>
+        <dd title={number(part.tokens)}><strong>{number(part.tokens, true)}</strong>{partCost != null && <small className="usage-comp-cost" title={formatUsdCost(partCost)}>≈ {formatUsdCost(partCost, true)}</small>}</dd>
+      </div>;
+    })}</dl>}
   </div>;
 }
 
@@ -77,12 +105,6 @@ type AccountSortField = 'total_tokens' | 'cost' | 'savings' | 'cache_hit' | 'req
 
 export function UsageStatisticsPanel() {
   const {t, locale} = useI18n();
-  const tx = (key: string, zhFallback: string, enFallback: string, values?: Record<string, string | number>) => {
-    const raw = t(key, values);
-    if (raw !== key) return raw;
-    const tpl = locale === 'en' ? enFallback : zhFallback;
-    return values ? tpl.replace(/\{(\w+)\}/g, (slot, name) => values[name] === undefined ? slot : String(values[name])) : tpl;
-  };
   const prefs = usePreferences();
   const [period, setPeriod] = useState<UsagePeriod>('all');
   const [account, setAccount] = useState('all');
@@ -93,9 +115,9 @@ export function UsageStatisticsPanel() {
   const [result, setResult] = useState<{key: string; value: UsageSnapshot} | null>(null);
   const [status, setStatus] = useState<{key: string; busy: boolean; error: string}>({key: '', busy: true, error: ''});
   const [exportStatus, setExportStatus] = useState('');
-  const [copiedMd, setCopiedMd] = useState(false);
-  const copiedMdTimerRef = useRef<number | null>(null);
-  useEffect(() => () => { if (copiedMdTimerRef.current) window.clearTimeout(copiedMdTimerRef.current); }, []);
+  const [snapDone, setSnapDone] = useState<UsageScreenshotMode | null>(null);
+  const snapTimerRef = useRef<number | null>(null);
+  useEffect(() => () => { if (snapTimerRef.current) window.clearTimeout(snapTimerRef.current); }, []);
   const timezone = (() => { try { const value = Intl.DateTimeFormat().resolvedOptions().timeZone; new Intl.DateTimeFormat('en', {timeZone: value}); return value; } catch { return ''; } })();
   const queryKey = `${period}:${account}:${timezone || `offset:${-new Date().getTimezoneOffset()}`}`;
   const snapshot = result?.key === queryKey ? result.value : null;
@@ -104,6 +126,13 @@ export function UsageStatisticsPanel() {
   usePageRefresh(() => { if (!busy) setRevision(value => value + 1); });
   const num = (value: number | null | undefined, compact = false) => formatUsageNumber(value, locale, compact);
   const percent = (value: number | null) => value == null ? '—' : new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {style: 'percent', maximumFractionDigits: 1}).format(value);
+  const sharePercent = (tokens: number, totalTokens?: number | null) => {
+    if (!totalTokens || totalTokens <= 0 || tokens <= 0) return percent(0);
+    const ratio = tokens / totalTokens;
+    if (ratio > 0 && ratio < 0.001) return '<0.1%';
+    if (ratio > 0.999 && ratio < 1) return '99.9%';
+    return percent(ratio);
+  };
 
   useEffect(() => {
     let live = true;
@@ -138,7 +167,8 @@ export function UsageStatisticsPanel() {
   const totals = snapshot?.totals;
   const accounts = result?.value.accounts ?? [];
   const days = dailySeries(snapshot?.daily ?? [], period, snapshot ? new Date(snapshot.generated_at * 1000) : new Date(), snapshot?.generated_at);
-  const models = [...(snapshot?.models ?? [])].sort((a, b) => b.totals.total_tokens - a.totals.total_tokens);
+  const models = sortUsageModels(snapshot?.models ?? []);
+  const dominantModel = [...(snapshot?.models ?? [])].sort((a, b) => b.totals.total_tokens - a.totals.total_tokens)[0]?.model;
   const stamp = snapshot ? new Date(snapshot.generated_at * 1000).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US', {hour: '2-digit', minute: '2-digit', second: '2-digit'}) : '';
   const rate = (value: UsageTotals) => percent(cacheHitRate(value));
   const trend = summarizeUsageTrend(snapshot ? days : []);
@@ -165,7 +195,7 @@ export function UsageStatisticsPanel() {
     }
   })();
   const dstType = isHourly ? getDstDayType(days) : null;
-  const primaryModel = models[0]?.model;
+  const primaryModel = dominantModel ?? models[0]?.model;
   const costSummary = estimateSnapshotCostUsd(totals, models);
   const avgTokensPerRequest = totals && totals.requests > 0 ? Math.round(totals.total_tokens / totals.requests) : null;
   const avgCostPerReq = totals && totals.requests > 0 ? costSummary.costUsd / totals.requests : null;
@@ -264,10 +294,36 @@ export function UsageStatisticsPanel() {
     });
     try { await invoke('copy_result', {text: contents}); }
     catch { if (!navigator.clipboard?.writeText) {setExportStatus(t('usage.exportFailed')); return;} try {await navigator.clipboard.writeText(contents);} catch {setExportStatus(t('usage.exportFailed')); return;} }
-    setCopiedMd(true);
-    if (copiedMdTimerRef.current) window.clearTimeout(copiedMdTimerRef.current);
-    copiedMdTimerRef.current = window.setTimeout(() => setCopiedMd(false), 2000);
     setExportStatus(t('usage.markdownCopied'));
+  };
+  const takeUsageScreenshot = async (mode: UsageScreenshotMode, action: UsageScreenshotAction = 'copy') => {
+    if (!snapshot || busy) return;
+    setExportStatus('');
+    try {
+      const res = await captureUsageScreenshot({
+        mode,
+        action,
+        snapshot,
+        series: days,
+        costBreakdown: costSummary,
+        period,
+        periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'),
+        rangeLabel: range !== '—' ? range : null,
+        accountLabel: selectedAccount,
+        locale: locale === 'en' ? 'en' : 'zh',
+        t,
+      });
+      setSnapDone(mode);
+      if (snapTimerRef.current) window.clearTimeout(snapTimerRef.current);
+      snapTimerRef.current = window.setTimeout(() => setSnapDone(null), 2200);
+      setExportStatus(
+        res.copied
+          ? t(mode === 'overview' ? 'usage.snapOverviewCopied' : 'usage.snapTrendCopied')
+          : t(mode === 'overview' ? 'usage.snapOverviewDownloaded' : 'usage.snapTrendDownloaded'),
+      );
+    } catch {
+      setExportStatus(t('usage.exportFailed'));
+    }
   };
 
   return (
@@ -280,9 +336,72 @@ export function UsageStatisticsPanel() {
             {busy ? t('usage.loading') : stamp ? t('usage.updated', {time: stamp}) : t('usage.localOnly')}
           </span>
           <div className="usage-action-group">
-            <Button variant="secondary" size="small" data-usage-copy-markdown disabled={busy || !snapshot} onClick={() => void copyMarkdownSummary()}>{copiedMd ? `✓ ${t('usage.copiedMarkdown')}` : t('usage.copyMarkdown')}</Button>
-            <Button variant="secondary" size="small" disabled={busy || !snapshot} onClick={() => void exportTsv(false)}>{t('usage.copyTsv')}</Button>
-            <Button variant="secondary" size="small" disabled={busy || !snapshot} onClick={() => void exportTsv(true)}>{t('usage.downloadTsv')}</Button>
+            <Button
+              variant="secondary"
+              size="small"
+              data-usage-snap="overview"
+              disabled={busy || !snapshot}
+              title={t('usage.snapOverviewHint')}
+              leftIcon={
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
+                  <circle cx="12" cy="13" r="3" />
+                </svg>
+              }
+              onClick={() => void takeUsageScreenshot('overview', 'copy')}
+            >
+              {snapDone === 'overview' ? `✓ ${t('usage.snappedShort')}` : t('usage.snapOverview')}
+            </Button>
+            <Button
+              variant="secondary"
+              size="small"
+              data-usage-snap="trend"
+              disabled={busy || !snapshot}
+              title={t('usage.snapTrendHint')}
+              leftIcon={
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="18" height="18" rx="3" />
+                  <path d="m7 15 4-4 3 3 4-5" />
+                </svg>
+              }
+              onClick={() => void takeUsageScreenshot('trend', 'copy')}
+            >
+              {snapDone === 'trend' ? `✓ ${t('usage.snappedShort')}` : t('usage.snapTrend')}
+            </Button>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <Button
+                  variant="secondary"
+                  size="small"
+                  data-usage-export-menu
+                  disabled={busy || !snapshot}
+                  aria-label={t('usage.exportMore')}
+                  title={t('usage.exportMore')}
+                >
+                  {t('usage.exportMore')} ▾
+                </Button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content className="identity-menu-content usage-export-menu" align="end" sideOffset={5}>
+                  <DropdownMenu.Item className="identity-menu-item" data-usage-download-overview-png onSelect={() => void takeUsageScreenshot('overview', 'download')}>
+                    {t('usage.downloadOverviewPng')}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item className="identity-menu-item" data-usage-download-trend-png onSelect={() => void takeUsageScreenshot('trend', 'download')}>
+                    {t('usage.downloadTrendPng')}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator className="identity-menu-separator" />
+                  <DropdownMenu.Item className="identity-menu-item" data-usage-copy-markdown onSelect={() => void copyMarkdownSummary()}>
+                    {t('usage.copyMarkdown')}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item className="identity-menu-item" data-usage-copy-tsv onSelect={() => void exportTsv(false)}>
+                    {t('usage.copyTsv')}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item className="identity-menu-item" data-usage-download-tsv onSelect={() => void exportTsv(true)}>
+                    {t('usage.downloadTsv')}
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
             <Button variant="secondary" size="small" disabled={busy} leftIcon={<Refresh size={15} aria-hidden="true" className={busy ? 'spin' : ''} />} onClick={() => setRevision(value => value + 1)}>{t('usage.refresh')}</Button>
           </div>
         </div>
@@ -311,15 +430,32 @@ export function UsageStatisticsPanel() {
 
         <div className="usage-overview" aria-busy={busy}>
           <section data-usage-metric="total" className="settings-card usage-total-card">
-            <div className="usage-metric-heading"><MetricGlyph kind="total" /><span>{t('usage.total')}</span>{totals && <small className="usage-total-badge" title={avgTokensPerRequest != null ? `${num(avgTokensPerRequest)} tok/req` : undefined}>{num(totals.requests, true)} {t('usage.requests')}{avgTokensPerRequest != null ? ` · ${tx('usage.avgTokensPerRequest', '平均 {avg} tok/次', 'Avg {avg} tok/req', {avg: num(avgTokensPerRequest, true)})}` : ''}</small>}</div>
-            <strong className="usage-total-value" title={num(totals?.total_tokens)}>{num(totals?.total_tokens, true)}<small>Token</small></strong>
-            {totals ? <TokenComposition totals={totals} details /> : <div className="usage-composition-placeholder">{t('usage.totalHint')}</div>}
+            <div className="usage-metric-heading">
+              <MetricGlyph kind="total" />
+              <span>{t('usage.total')}</span>
+              {totals && (
+                <small className="usage-total-badge" title={avgTokensPerRequest != null ? `${num(avgTokensPerRequest)} tok/req` : undefined}>
+                  {num(totals.requests, true)} {t('usage.requests')}
+                  {avgTokensPerRequest != null ? ` · ${t('usage.avgTokensPerRequest', {avg: num(avgTokensPerRequest, true)})}` : ''}
+                </small>
+              )}
+            </div>
+            <div className="usage-total-hero-row">
+              <strong className="usage-total-value" title={num(totals?.total_tokens)}>{num(totals?.total_tokens, true)}<small>Token</small></strong>
+              {snapshot?.activity && (snapshot.activity.active_days > 0 || snapshot.activity.sessions > 0) && (
+                <div className="usage-total-activity-pills" title={t('usage.activityMethod')}>
+                  {snapshot.activity.active_days > 0 && <span className="usage-activity-pill">{snapshot.activity.active_days} {t('usage.activeDays')}</span>}
+                  {snapshot.activity.sessions > 0 && <span className="usage-activity-pill">{num(snapshot.activity.sessions, true)} {t('usage.sessions')}</span>}
+                </div>
+              )}
+            </div>
+            {totals ? <TokenComposition totals={totals} details costSummary={costSummary} /> : <div className="usage-composition-placeholder">{t('usage.totalHint')}</div>}
           </section>
           <div className="usage-summary">
             <div data-usage-metric="cost" className="settings-card usage-metric" title={totals ? t('usage.costTooltipBreakdown', {input: formatUsdCost(costSummary.inputCostUsd), output: formatUsdCost(costSummary.outputCostUsd), write: formatUsdCost(costSummary.cacheWriteCostUsd), read: formatUsdCost(costSummary.cacheReadCostUsd)}) : t('usage.estimatedCostHint')}>
               <div className="usage-metric-heading"><MetricGlyph kind="cost" /><span>{t('usage.estimatedCost')}</span></div>
               <strong>{totals ? formatUsdCost(costSummary.costUsd) : '—'}</strong>
-              <small>{totals && costSummary.costUsd > 0 ? `${t('usage.costBreakdownSub', {output: formatUsdCost(costSummary.outputCostUsd, true), cache: formatUsdCost(costSummary.cacheWriteCostUsd + costSummary.cacheReadCostUsd, true)})}${avgCostPerReq != null ? ` · ${tx('usage.avgCostPerRequest', '均值 {cost}/次', 'Avg {cost}/req', {cost: formatUsdCost(avgCostPerReq)})}` : ''}` : t('usage.estimatedCostHint')}</small>
+              <small>{totals && costSummary.costUsd > 0 ? `${t('usage.costBreakdownSub', {output: formatUsdCost(costSummary.outputCostUsd, true), cache: formatUsdCost(costSummary.cacheWriteCostUsd + costSummary.cacheReadCostUsd, true)})}${avgCostPerReq != null ? ` · ${t('usage.avgCostPerRequest', {cost: formatUsdCost(avgCostPerReq)})}` : ''}` : t('usage.estimatedCostHint')}</small>
             </div>
             <div data-usage-metric="savings" className="settings-card usage-metric" title={t('usage.cacheSavingsHint')}>
               <div className="usage-metric-heading"><MetricGlyph kind="savings" /><span>{t('usage.cacheSavings')}</span></div>
@@ -329,7 +465,7 @@ export function UsageStatisticsPanel() {
             <div data-usage-metric="cache" className="settings-card usage-metric">
               <div className="usage-metric-heading"><MetricGlyph kind="cache" /><span>{t('usage.cacheHit')}</span></div>
               <strong>{totals ? rate(totals) : '—'}</strong>
-              <small>{totals && costSummary.cacheReuseRatio != null ? t('usage.cacheReuseSub', {ratio: costSummary.cacheReuseRatio.toFixed(1)}) : t('usage.cacheHitHint')}</small>
+              <small>{totals && costSummary.cacheReuseRatio != null ? t('usage.cacheReuseSub', {ratio: costSummary.cacheReuseRatio.toFixed(1), read: num(totals.cache_read_tokens, true)}) : t('usage.cacheHitHint')}</small>
             </div>
             <div data-usage-metric="pace" className="settings-card usage-metric" title={t('usage.paceHint')}>
               <div className="usage-metric-heading"><MetricGlyph kind="pace" /><span>{t(isHourly ? 'usage.hourlyCostPace' : 'usage.dailyCostPace')}</span></div>
@@ -344,41 +480,48 @@ export function UsageStatisticsPanel() {
         {snapshot && <>
           <div className="usage-analysis-grid" data-trend-view={trendView}>
           <section className="settings-card usage-chart-card">
-            <div className="usage-panel-header"><div><GroupTitle aside={trend.peak && peakLabel ? tx('usage.peakPeriodBadge', '峰值: {label} ({tokens})', 'Peak: {label} ({tokens})', {label: peakLabel, tokens: num(trend.peak.totals.total_tokens, true)}) : undefined}>{t('usage.daily')}</GroupTitle></div><Tabs aria-label={t('usage.trendView')} size="small" value={trendView} onValueChange={value => setTrendView(value as 'chart' | 'data')} tabs={[{value: 'chart', label: t('usage.chartView')}, {value: 'data', label: t('usage.dataView')}]} /></div>
+            <div className="usage-panel-header"><div><GroupTitle aside={trend.peak && peakLabel ? t('usage.peakPeriodBadge', {label: peakLabel, tokens: num(trend.peak.totals.total_tokens, true)}) : undefined}>{t('usage.daily')}</GroupTitle></div><Tabs aria-label={t('usage.trendView')} size="small" value={trendView} onValueChange={value => setTrendView(value as 'chart' | 'data')} tabs={[{value: 'chart', label: t('usage.chartView')}, {value: 'data', label: t('usage.dataView')}]} /></div>
             <div className="usage-chart-summary" title={t('usage.averageHint')}>
               <div><span>{t(isHourly ? 'usage.averageHour' : 'usage.averageDay')}</span><strong title={num(trend.average)}>{num(trend.average, true)}<small>Token</small></strong></div>
               <div><span>{t(isHourly ? 'usage.peakHour' : 'usage.peakDay')}</span><strong title={num(trend.peak?.totals.total_tokens)}>{num(trend.peak?.totals.total_tokens, true)}<small>{peakLabel}</small></strong></div>
               <div><span>{t('usage.outputThroughput')}</span><strong title={num(totals?.output_tokens)}>{num(totals?.output_tokens, true)}<small>{avgOutputTokens != null ? t(isHourly ? 'usage.outputHourlyAvg' : 'usage.outputDailyAvg', {avg: num(Math.round(avgOutputTokens), true)}) : 'Token'}</small></strong></div>
             </div>
-            {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={isHourly} timezone={snapshot.timezone} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={isHourly} timezone={snapshot.timezone} primaryModel={primaryModel} />}
+            {trendView === 'chart' ? <div className="usage-chart-body"><UsageTrend days={days} hourly={isHourly} timezone={snapshot.timezone} modelCount={models.length} /></div> : <UsageTrendTable key={queryKey} days={days} hourly={isHourly} timezone={snapshot.timezone} primaryModel={primaryModel} />}
           </section>
           <section className="settings-card usage-model-card">
             <div className="usage-panel-header"><div><GroupTitle aside={String(models.length)}>{t('usage.models')}</GroupTitle></div></div>
             <div className="usage-models">
               {models.length ? models.map(row => {
                 const family = detectModelFamily(row.model);
-                const efforts = row.efforts ?? [];
+                const efforts = sortUsageEfforts(row.efforts ?? []);
                 const modelCost = estimateTotalsCostUsd(row.totals, row.model);
+                const modelLabel = row.model === 'unknown' ? t('usage.unknownModel') : row.model;
                 return (
-                  <div className="usage-model-row" key={row.model} data-model-family={family.key}>
+                  <div
+                    className="usage-model-row"
+                    key={row.model}
+                    data-model-family={family.key}
+                    data-has-efforts={efforts.length > 0 ? 'true' : undefined}
+                    tabIndex={efforts.length > 0 ? 0 : undefined}
+                  >
                     <div>
                       <span className="usage-model-title">
                         {family.label && <em className="usage-model-family" data-family={family.key}>{family.label}</em>}
-                        <strong title={row.model === 'unknown' ? t('usage.unknownModel') : row.model}>{row.model === 'unknown' ? t('usage.unknownModel') : row.model}</strong>
+                        <strong title={modelLabel}>{modelLabel}</strong>
                       </span>
-                      <span title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}<small>{percent(totals?.total_tokens ? row.totals.total_tokens / totals.total_tokens : 0)}</small></span>
+                      <span title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}<small>{sharePercent(row.totals.total_tokens, totals?.total_tokens)}</small></span>
                     </div>
-                    <div className="usage-model-track"><span style={{width: `${totals?.total_tokens ? Math.min(100, row.totals.total_tokens / totals.total_tokens * 100) : 0}%`}} /></div>
+                    <div className="usage-model-track"><span style={{width: `${totals?.total_tokens ? Math.min(100, Math.max(row.totals.total_tokens > 0 ? 1.5 : 0, row.totals.total_tokens / totals.total_tokens * 100)) : 0}%`}} /></div>
                     <div className="usage-model-caption">
                       <small>{t('usage.modelCostCaption', {cost: formatUsdCost(modelCost.costUsd), output: num(row.totals.output_tokens, true)})}</small>
                       <small>{t('usage.modelCacheCaption', {rate: rate(row.totals), savings: formatUsdCost(modelCost.cacheSavingsUsd, true)})}</small>
                     </div>
                     <TokenComposition totals={row.totals} />
                     {efforts.length > 0 && (
-                      <div className="usage-model-efforts" aria-label={t('usage.effortBreakdown')}>
+                      <div className="usage-model-efforts" role="tooltip" aria-label={t('usage.effortBreakdown')}>
                         <div className="usage-effort-header">
                           <span>{t('usage.effortBreakdown')}</span>
-                          <span>{efforts.map(ef => ef.effort).join(' · ')}</span>
+                          <span>{modelLabel}</span>
                         </div>
                         <div className="usage-effort-list">
                           {efforts.map(ef => {
@@ -389,7 +532,7 @@ export function UsageStatisticsPanel() {
                                 <div className="usage-effort-top">
                                   <span className="usage-effort-badge" data-effort={ef.effort}>{ef.effort}</span>
                                   <small>{t('usage.effortCost', {cost: formatUsdCost(efCost.costUsd)})}</small>
-                                  <strong title={num(ef.totals.total_tokens)}>{num(ef.totals.total_tokens, true)} <small>({percent(efShare)})</small></strong>
+                                  <strong title={num(ef.totals.total_tokens)}>{num(ef.totals.total_tokens, true)} <small>({sharePercent(ef.totals.total_tokens, row.totals.total_tokens)})</small></strong>
                                 </div>
                                 <div className="usage-effort-track"><span data-effort={ef.effort} style={{width: `${Math.min(100, Math.max(2, efShare * 100))}%`}} /></div>
                               </div>

@@ -379,7 +379,7 @@ fn validate_request_binding(
     account_id: &str,
     expected_identity: &str,
 ) -> Result<(), String> {
-    let state = super::state(app)?;
+    let state = super::state_for(app, false)?;
     if state.recovery.is_some() {
         return Err("quotaOnline.accountMismatch".into());
     }
@@ -685,13 +685,45 @@ fn select_runtime(
     Err(last_reason)
 }
 
+fn verified_wakeup_runtime_cache() -> &'static Mutex<Option<(PathBuf, u64, u128)>> {
+    static CACHE: OnceLock<Mutex<Option<(PathBuf, u64, u128)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
 pub(super) fn wakeup_runtime_capability(app: &tauri::AppHandle) -> Result<(), String> {
     let script = script_path(app).ok_or_else(|| "missing_resource".to_string())?;
     let probe_script = script.with_file_name("quota_runtime.py");
+    let script_sig = fs::symlink_metadata(&probe_script)
+        .ok()
+        .filter(|meta| meta.is_file() && !crate::cleaner::linked(meta))
+        .map(|meta| {
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            (probe_script.clone(), meta.len(), modified)
+        });
+    if let Some(ref sig) = script_sig {
+        if verified_wakeup_runtime_cache()
+            .lock()
+            .ok()
+            .is_some_and(|guard| guard.as_ref() == Some(sig))
+        {
+            return Ok(());
+        }
+    }
     let deadline = Instant::now() + PREPARATION_BUDGET;
-    select_runtime(|candidate| runtime_probe(candidate, &probe_script, None, deadline))
+    let res = select_runtime(|candidate| runtime_probe(candidate, &probe_script, None, deadline))
         .map(|_| ())
-        .map_err(str::to_string)
+        .map_err(str::to_string);
+    if res.is_ok() {
+        if let (Some(sig), Ok(mut guard)) = (script_sig, verified_wakeup_runtime_cache().lock()) {
+            *guard = Some(sig);
+        }
+    }
+    res
 }
 
 fn terminal_result(status: OnlineStatus) -> OnlineQuotaResult {
@@ -1303,7 +1335,7 @@ pub async fn identities_refresh_all_quotas(
         let cleaner = app.state::<crate::cleaner::Cleaner>();
         cleaner.enter_quota().map_err(|_| "quotaOnline.busy")?;
         let _guard = CleanerGuard(app.clone());
-        let state = super::state(&app).map_err(|_| "quotaOnline.unavailable")?;
+        let state = super::state_for(&app, false).map_err(|_| "quotaOnline.unavailable")?;
         if state.recovery.is_some() {
             return Err("quotaOnline.busy".into());
         }
@@ -1425,7 +1457,7 @@ pub(crate) fn import_browser_snapshot(
 }
 
 pub(crate) fn current_browser_binding(app: &tauri::AppHandle) -> Result<(String, String), String> {
-    let state = super::state(app)?;
+    let state = super::state_for(app, false)?;
     if state.recovery.is_some() || !state.current.present {
         return Err("quotaOnline.unavailable".into());
     }
@@ -1483,39 +1515,51 @@ fn metadata_entry(root: &Value, identity: &str, now_ms: u64) -> Option<WebMetada
     Some(data)
 }
 
-pub(crate) fn apply_metadata(vault: &Path, identity: Option<&str>, output: &mut WebMetadata) {
-    // Cached summary fields are not proof of their identity. Always reconstruct
-    // this view from the exact fingerprint-qualified metadata entry.
-    *output = WebMetadata::default();
-    let Some(identity) = identity else { return };
+pub(crate) fn read_metadata_root(vault: &Path) -> Option<Value> {
     let path = vault.join("quota_web_metadata.json");
-    let Ok(metadata) = fs::symlink_metadata(&path) else {
-        return;
-    };
+    let metadata = fs::symlink_metadata(&path).ok()?;
     if !metadata.is_file()
         || crate::cleaner::linked(&metadata)
         || metadata.len() > 1024 * 1024
         || super::private::safe(&path).is_err()
     {
-        return;
+        return None;
     }
-    let Ok(file) = fs::File::open(path) else {
-        return;
-    };
+    let file = fs::File::open(path).ok()?;
     let mut bytes = Vec::new();
     if file.take(1024 * 1024 + 1).read_to_end(&mut bytes).is_err() || bytes.len() > 1024 * 1024 {
-        return;
+        return None;
     }
-    let Ok(root) = serde_json::from_slice::<Value>(&bytes) else {
+    serde_json::from_slice::<Value>(&bytes).ok()
+}
+
+pub(crate) fn apply_parsed_metadata(
+    root: Option<&Value>,
+    identity: Option<&str>,
+    output: &mut WebMetadata,
+) {
+    // Cached summary fields are not proof of their identity. Always reconstruct
+    // this view from the exact fingerprint-qualified metadata entry.
+    *output = WebMetadata::default();
+    let (Some(root), Some(identity)) = (root, identity) else {
         return;
     };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|t| t.as_millis() as u64)
         .unwrap_or(0);
-    if let Some(data) = metadata_entry(&root, identity, now) {
+    if let Some(data) = metadata_entry(root, identity, now) {
         *output = data;
     }
+}
+
+pub(crate) fn apply_metadata(vault: &Path, identity: Option<&str>, output: &mut WebMetadata) {
+    let root = if identity.is_some() {
+        read_metadata_root(vault)
+    } else {
+        None
+    };
+    apply_parsed_metadata(root.as_ref(), identity, output);
 }
 
 #[cfg(test)]

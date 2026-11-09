@@ -157,10 +157,14 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
     let active =
         catalog::current_id(&vault_path, &root_path, &db)?.unwrap_or_else(|| "current".into());
     let manual_subs = subscription::read_store(&vault_path);
+    let ledger_root = profile::read_ledger_root(&vault_path);
+    let web_metadata_root = online::read_metadata_root(&vault_path);
     let mut current = profile::read_live(&root_path, &vault_path);
-    usage::observe_current(&vault_path, &root_path);
-    online::apply_metadata(
-        &vault_path,
+    if include_sessions {
+        usage::observe_current(&vault_path, &root_path);
+    }
+    online::apply_parsed_metadata(
+        web_metadata_root.as_ref(),
         current.quota_identity.as_deref(),
         &mut current.web,
     );
@@ -184,10 +188,10 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
         records.iter().map(|r| (r.id.clone(), r.saved_at)).collect();
     for (id, summary) in summaries.iter_mut() {
         let saved_at = saved_map.get(id).copied().unwrap_or(0);
-        profile::apply_ledger_to_summary(&vault_path, summary, saved_at, now_sec);
+        profile::apply_parsed_ledger_to_summary(ledger_root.as_ref(), summary, saved_at, now_sec);
         summary.refresh_for_now(now_sec);
-        online::apply_metadata(
-            &vault_path,
+        online::apply_parsed_metadata(
+            web_metadata_root.as_ref(),
             summary.quota_identity.as_deref(),
             &mut summary.web,
         );

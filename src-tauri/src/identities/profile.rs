@@ -1374,12 +1374,32 @@ fn merge_summary_window(
     changed
 }
 
+pub(super) fn read_ledger_root(vault_dir: &Path) -> Option<Value> {
+    let parent = vault_dir.parent()?;
+    let ledger_path = parent.join("quota_ledger.json");
+    let raw = fs::read_to_string(&ledger_path).ok()?;
+    serde_json::from_str::<Value>(&raw).ok()
+}
+
 pub(super) fn apply_ledger_to_summary(
     vault_dir: &Path,
+    summary: &mut Summary,
+    saved_at_ms: u64,
+    now_sec: u64,
+) {
+    let root = read_ledger_root(vault_dir);
+    apply_parsed_ledger_to_summary(root.as_ref(), summary, saved_at_ms, now_sec);
+}
+
+pub(super) fn apply_parsed_ledger_to_summary(
+    root: Option<&Value>,
     summary: &mut Summary,
     _saved_at_ms: u64,
     now_sec: u64,
 ) {
+    let Some(root) = root else {
+        return;
+    };
     let Some(email) = summary
         .email
         .as_deref()
@@ -1388,18 +1408,8 @@ pub(super) fn apply_ledger_to_summary(
     else {
         return;
     };
-    let Some(parent) = vault_dir.parent() else {
-        return;
-    };
-    let ledger_path = parent.join("quota_ledger.json");
-    let Ok(raw) = fs::read_to_string(&ledger_path) else {
-        return;
-    };
-    let Ok(root) = serde_json::from_str::<Value>(&raw) else {
-        return;
-    };
     let key = email.to_ascii_lowercase();
-    let Some(entry) = ledger_account(&root, &key, summary.quota_identity.as_deref()) else {
+    let Some(entry) = ledger_account(root, &key, summary.quota_identity.as_deref()) else {
         return;
     };
     let legacy_org_match = entry.get("quota_identity").is_none()
@@ -1708,13 +1718,11 @@ fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
             current.plan = Some(resolved_plan);
         }
         let mut active_since = 0u64;
+        let ledger_root = app_dir
+            .and_then(|dir| read_bounded_json(&dir.join("quota_ledger.json"), 8 * 1024 * 1024));
         if let Some(app_dir) = app_dir {
-            if let Some(cj) = claude_val.as_mut() {
-                if let Some(ledger) =
-                    read_bounded_json(&app_dir.join("quota_ledger.json"), 8 * 1024 * 1024)
-                {
-                    merge_server_anchor(cj, &ledger);
-                }
+            if let (Some(cj), Some(ref ledger)) = (claude_val.as_mut(), &ledger_root) {
+                merge_server_anchor(cj, ledger);
             }
             let db_path = app_dir.join("identity-vault/identities.sqlite");
             if db_path.is_file() {
@@ -1748,10 +1756,10 @@ fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
             current.quota_7d_reset_at = extracted.reset_7d;
             current.quota_identity = quota_identity(cj);
             set_quota_evidence(cj, &extracted, now_epoch_sec(), &mut current);
-            if let Some(app_dir) = app_dir {
+            if app_dir.is_some() {
                 let mut effective = Summary::from_current(&current);
-                apply_ledger_to_summary(
-                    &app_dir.join("identity-vault"),
+                apply_parsed_ledger_to_summary(
+                    ledger_root.as_ref(),
                     &mut effective,
                     0,
                     now_epoch_sec(),

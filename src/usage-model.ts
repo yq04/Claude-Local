@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Redacted native usage aggregates and the current local calendar/locale.
- * [OUTPUT]: Typed accounting/activity contract, four-part token composition, official API USD cost/cache-savings estimation, cache-rate/K-M-B formatting, calendar series and elapsed-period averages/peaks.
+ * [OUTPUT]: Typed accounting/activity contract, four-part token composition, family-first model & thinking-depth effort sorting, official API USD cost/cache-savings estimation, cache-rate/K-M-B formatting, calendar series and elapsed-period averages/peaks.
  * [POS]: Pure usage presentation helpers; no identity files, credentials or network access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -73,6 +73,45 @@ export function detectModelFamily(model: string): {key: 'opus' | 'sonnet' | 'fab
   if (lower.includes('sonnet')) return {key: 'sonnet', label: 'Sonnet'};
   if (lower.includes('haiku')) return {key: 'haiku', label: 'Haiku'};
   return {key: 'other', label: null};
+}
+
+const MODEL_FAMILY_ORDER: Record<ReturnType<typeof detectModelFamily>['key'], number> = {
+  fable: 0,
+  opus: 1,
+  sonnet: 2,
+  haiku: 3,
+  other: 4,
+};
+
+export function sortUsageModels(models: readonly UsageModel[]): UsageModel[] {
+  return [...models].sort((a, b) => {
+    const familyDiff =
+      MODEL_FAMILY_ORDER[detectModelFamily(a.model).key] -
+      MODEL_FAMILY_ORDER[detectModelFamily(b.model).key];
+    if (familyDiff !== 0) return familyDiff;
+    const tokenDiff = b.totals.total_tokens - a.totals.total_tokens;
+    if (tokenDiff !== 0) return tokenDiff;
+    return a.model.localeCompare(b.model);
+  });
+}
+
+const EFFORT_DEPTH_ORDER: Record<string, number> = {
+  max: 0,
+  xhigh: 1,
+  high: 2,
+  medium: 3,
+  low: 4,
+};
+
+export function sortUsageEfforts(efforts: readonly UsageEffort[]): UsageEffort[] {
+  return [...efforts].sort((a, b) => {
+    const rankA = EFFORT_DEPTH_ORDER[a.effort.toLowerCase()] ?? 5;
+    const rankB = EFFORT_DEPTH_ORDER[b.effort.toLowerCase()] ?? 5;
+    if (rankA !== rankB) return rankA - rankB;
+    const tokenDiff = b.totals.total_tokens - a.totals.total_tokens;
+    if (tokenDiff !== 0) return tokenDiff;
+    return a.effort.localeCompare(b.effort);
+  });
 }
 
 /**
@@ -210,13 +249,13 @@ export function formatUsdCost(usd: number | null | undefined, compact = false): 
   if (usd == null || !Number.isFinite(usd)) return '—';
   if (usd <= 0) return '$0.00';
   if (usd < 0.01) return '<$0.01';
-  if (compact && usd >= 10_000) {
+  if (compact && usd >= 1_000) {
     return '$' + formatUsageNumber(usd, 'en', true);
   }
   if (usd >= 1_000) {
     return '$' + new Intl.NumberFormat('en-US', {
-      minimumFractionDigits: compact ? 1 : 2,
-      maximumFractionDigits: compact ? 1 : 2,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
     }).format(usd);
   }
   return '$' + usd.toFixed(2);

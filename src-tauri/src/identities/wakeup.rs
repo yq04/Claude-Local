@@ -650,15 +650,17 @@ impl WakeupOwner {
                             local_minute(now),
                             random(),
                         );
-                        if before != serde_json::to_vec(&guard.snapshot).ok()
-                            && owner.save_locked(&mut guard).is_err()
+                        let changed = before != serde_json::to_vec(&guard.snapshot).ok();
+                        if changed && owner.save_locked(&mut guard).is_err()
                         {
                             drop(guard);
                             owner.emit(&app);
                             continue;
                         }
                         drop(guard);
-                        owner.emit(&app);
+                        if changed {
+                            owner.emit(&app);
+                        }
                         if let Some(item) = chosen {
                             let _ = owner.attempt(
                                 &app,
@@ -937,8 +939,17 @@ pub async fn identities_wakeup_configure(
     }
     tauri::async_runtime::spawn_blocking(move || {
         let (items, active) = candidates(&app)?;
+        let already_verified_runtime = app
+            .state::<WakeupOwner>()
+            .inner
+            .0
+            .lock()
+            .ok()
+            .is_some_and(|guard| {
+                guard.snapshot.config.enabled && guard.snapshot.runtime == "available"
+            });
         // The probe imports Python/cryptography only and never selects an account.
-        let runtime = if config.enabled {
+        let runtime = if config.enabled && !already_verified_runtime {
             super::online::wakeup_runtime_capability(&app)
         } else {
             Ok(())

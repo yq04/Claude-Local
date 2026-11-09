@@ -13,6 +13,8 @@ import {
   formatUsageNumber,
   formatUsdCost,
   resolveModelPricing,
+  sortUsageEfforts,
+  sortUsageModels,
   summarizeUsageTrend,
   tokenComposition,
 } from './usage-model';
@@ -171,4 +173,38 @@ test('estimates USD API cost and prompt cache savings across Opus 5.5/4.6, Sonne
   expect(formatUsdCost(0.002)).toBe('<$0.01');
   expect(formatUsdCost(26.5)).toBe('$26.50');
   expect(formatUsdCost(22340, true)).toBe('$22.3K');
+});
+
+test('sortUsageModels orders by family (fable -> opus -> sonnet -> haiku -> other) then tokens descending', () => {
+  const models = [
+    {model: 'claude-haiku-5-5', totals: {...emptyUsage(), total_tokens: 900_000}},
+    {model: 'claude-sonnet-5-5', totals: {...emptyUsage(), total_tokens: 50_000_000}},
+    {model: 'claude-opus-5-5', totals: {...emptyUsage(), total_tokens: 9_800_000_000}},
+    {model: 'claude-fable-1', totals: {...emptyUsage(), total_tokens: 100_000}},
+    {model: 'custom-other', totals: {...emptyUsage(), total_tokens: 99_000_000_000}},
+  ];
+  expect(sortUsageModels(models).map(m => m.model)).toEqual([
+    'claude-fable-1',
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+    'custom-other',
+  ]);
+});
+
+test('sortUsageEfforts orders thinking depth from max -> xhigh -> high -> medium -> low', () => {
+  const efforts = [
+    {effort: 'medium', totals: {...emptyUsage(), total_tokens: 25_900_000}},
+    {effort: 'low', totals: {...emptyUsage(), total_tokens: 50_000_000}},
+    {effort: 'high', totals: {...emptyUsage(), total_tokens: 23_100_000}},
+    {effort: 'max', totals: {...emptyUsage(), total_tokens: 88_300}},
+    {effort: 'xhigh', totals: {...emptyUsage(), total_tokens: 500_000}},
+  ];
+  expect(sortUsageEfforts(efforts).map(e => e.effort)).toEqual([
+    'max',
+    'xhigh',
+    'high',
+    'medium',
+    'low',
+  ]);
 });

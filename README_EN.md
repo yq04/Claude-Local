@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.2.6 compact/reorderable cards, silent local sync, promotion fix, HUD/relay/usage improvements, and retained 0.2.5 browser/network hardening.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.3.1 Smart Relay/Auto-Wakeup GPU/React/IPC optimizations, Usage Analytics 2.1 with 2x Retina Auto-Screenshot Engine, Cleanroom s13 device fingerprint continuity, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
 [OUTPUT]: Full English flagship project presentation foregrounding anti-ban & multi-identity isolation engineering, architectural lineage, feature matrix, visual tour, installation workflow and runtime boundaries.
 [POS]: English repository introduction linked bidirectionally with README.md.
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -15,7 +15,7 @@
 
 Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://github.com/liseami)) and independently maintained, retaining the original contributors' copyright and [MIT license](LICENSE) · 100% Local-First · Zero Cloud Credential Hosting · Never Force-Kills Running `claude.exe` Sessions
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.3.0-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.0)
+[![Latest Release](https://img.shields.io/badge/Release-v0.3.1-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.1)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@ Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://git
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.0/Claude-Local_0.3.0_x64-setup.exe"><strong>⬇️ Download v0.3.0 Installer (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.1/Claude-Local_0.3.1_x64-setup.exe"><strong>⬇️ Download v0.3.1 Installer (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.0"><strong>✨ v0.3.0 Release Notes</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.1"><strong>✨ v0.3.1 Release Notes</strong></a>
   ·
   <a href="#-why-claude-local-solving-the-4-multi-account-anti-ban-pain-points"><strong>🔥 Anti-Ban Core Architecture</strong></a>
   ·
@@ -102,7 +102,7 @@ Full-vault `.clbackup` backup and Copy Handoff Spec remain available. Single-ide
 
 ## 🖼️ Visual Tour & Core Capabilities
 
-> **Screenshot Notice & Privacy Protection**: All screenshots were captured in an isolated environment using **synthetic demonstration data**. Account names, organizations, token counts, and CLI versions are fictional; emails use the reserved `@example.invalid` domain with privacy masking enabled. See the [v0.2.6 Release Notes](docs/RELEASE_NOTES_0.2.6.md) for the latest enhancements; screenshots below illustrate earlier versions.
+> **Screenshot Notice & Privacy Protection**: All screenshots were captured in an isolated environment using **synthetic demonstration data**. Account names, organizations, token counts, and CLI versions are fictional; emails use the reserved `@example.invalid` domain with privacy masking enabled. See the [v0.3.1 Release Notes](docs/RELEASE_NOTES_0.3.1.md) for the latest enhancements; Identity Management and Usage Analytics previews below use the `v0.3.1` interface.
 
 ### 1. Per-Identity Fingerprint Chromium, Kill-Switch & 20-Item Anti-Correlation Verification
 
@@ -131,7 +131,7 @@ Full-vault `.clbackup` backup and Copy Handoff Spec remain available. Single-ide
 
 ### 3. Encrypted Identity Vault, 4D Sanitization, Free Warming Cards & Smart Relay
 
-![Claude-Local Identity Management (English)](docs/screenshots/0.2.0/identity-management-en.png)
+![Claude-Local Identity Management (English)](docs/screenshots/0.3.1/identity-management-en.png)
 
 - **Unified `30px` Segmented Header Toolbar (`v0.2.5` Refined)**: Combines `[• Auto-wake | 08:00–23:00]`, `[• Smart Relay | Strategy]` (opt-in, default OFF), **`[• Quota HUD]`** (unified label with green/gray status dot), `[↻ Sync local quota]`, and `[⋯]` overflow actions.
 - **Encrypted `.baga` Switching & 4D Cross-Account Sanitization**: Checks for running `claude.exe` processes before switching, verifies `.baga` archive integrity, sanitizes 4 dimensions of local CLI residue, and optionally auto-launches the target identity's linked browser.
@@ -157,7 +157,7 @@ Full-vault `.clbackup` backup and Copy Handoff Spec remain available. Single-ide
 
 ### 5. Auxiliary Capabilities: Quota HUD, Usage USD Analytics & 5h Auto-Wake
 
-![Claude-Local Usage Analytics (English)](docs/screenshots/0.2.2/usage-analytics-en.png)
+![Claude-Local Usage Analytics (English)](docs/screenshots/0.3.1/usage-analytics-en.png)
 
 - **Redesigned Quota HUD (`额度小窗`, `v0.2.5`)**:
   - Compact single-row identity header (`Identity Name + Verified Check + Plan Badge + Subscribed Model Pill`) eliminating wasted horizontal whitespace;
@@ -187,29 +187,30 @@ While preserving 100% compatibility with existing `.baga` vaults and browser see
 
 ## 📦 Download, Installation & Release History
 
-### 1. Latest Windows x64 Installer (`v0.3.0`)
+### 1. Latest Windows x64 Installer (`v0.3.1`)
 
 | Asset | Platform | File Size | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.3.0_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.0/Claude-Local_0.3.0_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | See Release assets | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.0/SHA256SUMS.txt) |
+| **[Claude-Local_0.3.1_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.1/Claude-Local_0.3.1_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | See Release assets | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.1/SHA256SUMS.txt) |
 
-Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.3.0 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.0):
+Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.3.1 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.1):
 
 ```powershell
-Get-FileHash .\Claude-Local_0.3.0_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Claude-Local_0.3.1_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. Installation & Non-Disruptive Upgrade Notes
 
 1. **Install Location & Identifiers**: Per-user NSIS installer defaulting to `%LOCALAPPDATA%\Programs\Claude-Local`; main executable `claude-local.exe`, bundle identifier `ai.local.claude-local`, companion browser registration `Claude-Local-Browser`.
 2. **User Data Root**: All encrypted vaults, master keys, quota/usage ledgers, appearance settings, and browser profiles live under `%APPDATA%\ai.local.claude-local`.
-3. **Seamless Upgrades**: Upgrading from `0.1.x` or `0.2.x` to `0.3.0` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
+3. **Seamless Upgrades**: Upgrading from `0.1.x`, `0.2.x`, or `0.3.0` to `0.3.1` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
 
-### 3. Public Release Series (`0.1.0` – `0.3.0`)
+### 3. Public Release Series (`0.1.0` – `0.3.1`)
 
 | Version | Date | Highlights | Documentation |
 | :--- | :--- | :--- | :--- |
-| **`v0.3.0`** *(Latest)* | 2026-11-07 | **Claude Code v2.1.309~2.1.318 cleanroom isolation & 3-lock protocol (7 credential keys + 25 account cache keys + `1p_failed_events`/`statsig` cleanroom + 8-lock cleanup)**, **zero-leak OAuth URL clipboard direct launch**, **CLI telemetry shield & MCP supply-chain security audit**, **Smart Relay 2.0 (dynamic anti-ping-pong margin, 429 cooldown jail, one-way no-return lock, Magpie `WeekLow` promotion, truthful decimal percentages)**, **Floating HUD 2.0 (next-relay standby pill, burn-pace badge, 24h weekly lead-in silence)**, and **3-stage cleanroom pipeline & 5h wakeup anchor verification** | [Release Notes](docs/RELEASE_NOTES_0.3.0.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.0.md) |
+| **`v0.3.1`** *(Latest)* | 2026-11-09 | **Smart Relay & Auto-Wakeup dialog GPU/React/IPC frame-rate optimizations (removal of full-screen `feTurbulence` SVG noise filter & double backdrop blur, 40-card `useMemo` & on-demand dialog subtree mounting, single-pass `quota_ledger.json`/`quota_web_metadata.json` reads, and cached Python runtime probe)**, **2× Retina Usage Overview poster export & equal-height model layout**, and **cleanroom `s13` device fingerprint continuity** | [Release Notes](docs/RELEASE_NOTES_0.3.1.md) |
+| **`v0.3.0`** | 2026-11-07 | **Claude Code v2.1.309~2.1.318 cleanroom isolation & 3-lock protocol (7 credential keys + 25 account cache keys + `1p_failed_events`/`statsig` cleanroom + 8-lock cleanup)**, **zero-leak OAuth URL clipboard direct launch**, **CLI telemetry shield & MCP supply-chain security audit**, **Smart Relay 2.0 (dynamic anti-ping-pong margin, 429 cooldown jail, one-way no-return lock, Magpie `WeekLow` promotion, truthful decimal percentages)**, **Floating HUD 2.0 (next-relay standby pill, burn-pace badge, 24h weekly lead-in silence)**, and **3-stage cleanroom pipeline & 5h wakeup anchor verification** | [Release Notes](docs/RELEASE_NOTES_0.3.0.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.0.md) |
 | **`v0.2.7`** | 2026-11-03 | CLI telemetry (`datadoghq.com`) & OpenAI Codex co-routing rules, same-port dual-protocol (`socks5://` Browser vs. `http://` CLI) alignment, one-click CLI anti-leak `settings.json` snippet, and native `GRPC_PROXY` vault archiving | [Release Notes](docs/RELEASE_NOTES_0.2.7.md) |
 | **`v0.2.6`** | 2026-11-02 | Compact drag/keyboard-reorderable cards, silent 5-second local sync, blank-card promotion fixes, HUD click-through and unobstructed metrics, relay pool capacity, targeted quota queries, per-request analytics and Markdown/TSV exports | [Release Notes](docs/RELEASE_NOTES_0.2.6.md) |
 | **`v0.2.5`** | 2026-11-01 | **End-to-end anti-ban & KYC/WebRTC/IPv6/DNS hardening (`ipv6: false` + Persona/Stripe/Sentry/WorkOS residential routing + `--accept-lang` & `dns_prefetching` lockdown)**, **persistent 20-item browser verification across close/tab switches + real 32-bit FNV-1a Canvas pixel hash**, **warming card IANA timezone drift clarity**, and **redesigned Quota HUD (real 5h cache hit rate + exhaustion ETA) & Usage Analytics** | [Release Notes](docs/RELEASE_NOTES_0.2.5.md) |

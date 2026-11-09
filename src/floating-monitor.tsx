@@ -134,7 +134,7 @@ export function FloatingMonitorApp() {
     setNowSec(Math.floor(Date.now() / 1000));
     const clockId = window.setInterval(() => {
       setNowSec(Math.floor(Date.now() / 1000));
-    }, 1_000);
+    }, 15_000);
     return () => window.clearInterval(clockId);
   }, [windowOpen]);
 

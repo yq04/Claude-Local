@@ -23,7 +23,8 @@ export async function runUsageReliabilityChecks({page, output, base, errors}) {
   };
   const copyTsv = async () => {
     const before = await page.evaluate(() => window.usageFixture.copied.length);
-    await page.locator('.usage-action-group button').first().click();
+    await page.locator('[data-usage-export-menu]').click();
+    await page.locator('[data-usage-copy-tsv]').click();
     await page.waitForFunction(n => window.usageFixture.copied.length > n, before);
     return page.evaluate(() => window.usageFixture.copied.at(-1));
   };
@@ -70,8 +71,19 @@ export async function runUsageReliabilityChecks({page, output, base, errors}) {
   const alignment = await page.locator('.usage-page').evaluate(node => ({title:node.querySelector('h1').getBoundingClientRect().left, overview:node.querySelector('.usage-overview').getBoundingClientRect().left}));
   assert.ok(Math.abs(alignment.title - alignment.overview) <= 1);
   const allTsv = summaryRow(await copyTsv());
-  assert.deepEqual(allTsv.values.slice(0, 10), ['全部','3100','740','410','300','1650','134','6',String(totals.activity.active_days)]);
+  assert.deepEqual(allTsv.values.slice(0, 9), ['全部','3100','740','410','300','1650','134','6',String(totals.activity.active_days)]);
   assert.equal(allTsv.header.length, allTsv.values.length, 'TSV summary column headings must align with values');
+  await page.locator('[data-usage-snap="overview"]').click();
+  await page.waitForFunction(() => Boolean(window.__lastUsageScreenshot && window.__lastUsageScreenshot.mode === 'overview'));
+  const snapOverview = await page.evaluate(() => window.__lastUsageScreenshot);
+  assert.ok(snapOverview.width >= 1600 && snapOverview.height >= 700, 'Overview screenshot must be high-DPI');
+  await writeFile(join(output, 'snap-overview-card.png'), Buffer.from(snapOverview.dataUrl.split(',')[1], 'base64'));
+  await page.locator('[data-usage-snap="trend"]').click();
+  await page.waitForFunction(() => Boolean(window.__lastUsageScreenshot && window.__lastUsageScreenshot.mode === 'trend'));
+  const snapTrend = await page.evaluate(() => window.__lastUsageScreenshot);
+  assert.ok(snapTrend.width >= 1600 && snapTrend.height > snapOverview.height, 'Trend screenshot must include trend & models below overview');
+  await writeFile(join(output, 'snap-trend-card.png'), Buffer.from(snapTrend.dataUrl.split(',')[1], 'base64'));
+  await page.locator('.usage-page').screenshot({path: join(output, 'usage-header-and-overview.png')});
 
   const alpha = totals.accounts[0];
   await chooseAccount(alpha.name);
@@ -122,12 +134,38 @@ export async function runUsageReliabilityChecks({page, output, base, errors}) {
   await page.evaluate(() => {window.usageFixture.legacyActivity = true;});
   await refresh();
   const legacyTsv = summaryRow(await copyTsv());
-  assert.deepEqual(legacyTsv.values.slice(-2), ['', ''], 'Missing legacy activity must remain blank in TSV');
+  assert.deepEqual(legacyTsv.values.slice(7, 9), ['', ''], 'Missing legacy activity must remain blank in TSV');
   await page.locator('.usage-overview').screenshot({path:join(output,'usage-legacy-activity-unknown-en-dark.png')});
   await page.evaluate(() => {window.usageFixture.legacyActivity = false;});
   await refresh();
   await page.setViewportSize({width:1280,height:900});
   await page.locator('.usage-model-card').screenshot({path:join(output,'usage-all-models-en-dark.png')});
+  await page.evaluate(async () => {
+    (await import('/src/i18n.ts')).setLocale('zh');
+    (await import('/src/settings-model.ts')).updatePreferences({theme: 'light', sidebarLayout: 'classic', reduceMotion: true});
+    window.usageFixture.longNames = false;
+    window.usageFixture.threeClaudeModels = true;
+  });
+  await refresh();
+  const orderedModels = await page.locator('.usage-model-row .usage-model-title strong').allInnerTexts();
+  assert.deepEqual(orderedModels, ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], 'Models must sort by family priority (fable -> opus -> sonnet -> haiku)');
+  assert.equal(await page.locator('.usage-model-row').nth(1).locator('.usage-model-efforts').isVisible(), false, 'Effort breakdown must remain hidden until hover/focus');
+  await page.locator('.usage-analysis-grid').screenshot({path:join(output,'usage-3models-default-zh-light.png')});
+  await page.locator('.usage-model-row').nth(0).hover();
+  assert.deepEqual(await page.locator('.usage-model-row').nth(0).locator('.usage-effort-badge').allInnerTexts(), ['max', 'xhigh', 'high', 'medium']);
+  await page.locator('.usage-analysis-grid').screenshot({path:join(output,'usage-3models-hover-opus-zh-light.png')});
+  await page.locator('.usage-model-row').nth(1).hover();
+  assert.equal(await page.locator('.usage-model-row').nth(1).locator('.usage-model-efforts').isVisible(), true, 'Effort breakdown popover must appear on model hover');
+  const sonnetEfforts = await page.locator('.usage-model-row').nth(1).locator('.usage-effort-badge').allInnerTexts();
+  assert.deepEqual(sonnetEfforts, ['max', 'high', 'medium'], 'Efforts must sort from highest thinking depth (max) to lowest (low)');
+  await page.locator('.usage-analysis-grid').screenshot({path:join(output,'usage-3models-hover-sonnet-zh-light.png')});
+  await page. evaluate(async () => {
+    (await import('/src/i18n.ts')).setLocale('en');
+    (await import('/src/settings-model.ts')).updatePreferences({theme: 'dark', sidebarLayout: 'classic', reduceMotion: true});
+    window.usageFixture.longNames = true;
+    window.usageFixture.threeClaudeModels = false;
+  });
+  await refresh();
   await page.locator('.usage-account-filter').getByRole('combobox').click();
   await page.screenshot({path:join(output,'usage-account-selector-en-dark.png')});
   await page.getByRole('option', {name:'All',exact:true}).click();

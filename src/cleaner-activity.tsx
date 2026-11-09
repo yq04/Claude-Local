@@ -1,10 +1,10 @@
 /**
  * [INPUT]: Tauri 单次调用的有序进度流和清理、CLI 安装、系统和浏览器页面的操作结果与共享 YAML 文案。
- * [OUTPUT]: 本次活动状态、三段式净室切换胶囊摘要、有界内存审计时间线、真实阶段/数量与身份卡片下的事件驱动动画、默认收起的日志与完整关闭能力；未知总量无百分比，原始消息在呈现时翻译。
+ * [OUTPUT]: 本次活动状态、三段式净室切换胶囊摘要、真实阶段/数量与身份卡片下的事件驱动动画、默认收起的日志与完整关闭能力；未知总量无百分比，原始消息在呈现时翻译。
  * [POS]: 本地操作的观察层；调用通道隔离不同操作，不制造进度或改变清理范围。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { Button, Disclosure, Panel, cn } from 'cromma-ui';
+import { Button, Panel, cn } from 'cromma-ui';
 import { Refresh as ArrowClockwiseIcon } from 'cromma-ui/pika';
 import { useEffect, useRef, useState } from 'react';
 import {useI18n} from "./i18n";
@@ -180,29 +180,8 @@ export function CleanupActivity({ activity,identity=false }: {
     }, [activity?.running]);
     useEffect(() => { if (follow.current && logBox.current)
         logBox.current.scrollTop = logBox.current.scrollHeight; }, [activity?.entries.length, open]);
-    if (!activity)
+    if (!activity || (!activity.running && dismissed))
         return null;
-    const historyItems = activity.history?.length ? activity.history : sharedAuditHistory;
-    if (!activity.running && dismissed) {
-        if (historyItems.length === 0) return null;
-        return (
-            <Disclosure
-                className="activity-audit-history"
-                summary={<span>{t('activity.auditTimelineTitle')} [{historyItems.length}]</span>}
-            >
-                <ol className="activity-audit-list" data-audit-history>
-                    {historyItems.map(item => (
-                        <li key={item.id} className={`activity-audit-item audit-${item.status}`} data-audit-status={item.status}>
-                            <span className="activity-audit-icon" aria-hidden="true">{item.status === 'ok' ? '✓' : '!'}</span>
-                            <strong>{t(item.title)}</strong>
-                            <span className="activity-audit-msg">{t(item.message)}</span>
-                            <time>{(item.elapsed_ms / 1000).toFixed(1)}s</time>
-                        </li>
-                    ))}
-                </ol>
-            </Disclosure>
-        );
-    }
     const last = activity.entries.at(-1);
     const elapsed = activity.running ? Math.max(0, now - activity.started) : last?.elapsed_ms || 0;
     const lastStage = last?.stage === 'done' ? [...activity.entries].reverse().find(e => e.stage !== 'done')?.stage : last?.stage;
@@ -211,33 +190,21 @@ export function CleanupActivity({ activity,identity=false }: {
     const fraction = determinate ? Math.min(100, 100 * (last?.current || 0) / (last?.total || 1)) : 0;
     const steps:Progress[]=[];
     for(const entry of activity.entries){if(entry.stage==='done')continue;if(steps.at(-1)?.stage===entry.stage)steps[steps.length-1]=entry;else steps.push(entry);}
+    const resolvedSteps = steps.map((step, index) =>
+        step.status === 'running' && (!activity.failed && (!activity.running || index < steps.length - 1))
+            ? { ...step, status: 'ok' as const }
+            : step
+    );
     const status=activity.running?'running':activity.failed?'error':activity.warning?'warning':'ok';
-    const showSteps = identity && (activity.running || status !== 'ok' || steps.length > 1);
+    const showSteps = identity && (activity.running || status !== 'ok' || resolvedSteps.length > 1);
     const macroStages = identity ? summarizeCleanroomPipelineStages(activity.entries, activity.running, activity.failed) : [];
     return <Panel flat ref={panel} data-status={status} className={cn('cleanup-activity',identity&&'identity-operation', activity.running && 'activity-running', activity.failed && 'activity-failed',activity.warning&&'activity-warning')} aria-label={t(identity?'当前操作进度':"操作活动日志")}>
     <div className="activity-header"><div>{activity.running ? <ArrowClockwiseIcon className="spin" size={17}/> : <span className="activity-result-symbol">{activity.failed||activity.warning ? '!' : '✓'}</span>}<strong>{activity.title?t(activity.title):activity.kind === 'clean' ? t("清理执行记录") : activity.kind === 'stop' ? t("进程操作记录") : activity.kind === 'system' ? t("电脑设置记录") : activity.kind === 'browser' ? t("浏览器操作记录") : activity.kind === 'identity' ? t("身份操作记录") : activity.kind === 'cli' ? t("CLI 安装记录") : t("扫描记录")}</strong><span className="activity-state">{activity.running ? t("运行中") : activity.failed ? t("已停止 · 请检查") : activity.warning?t('已完成 · 有提示'):t("已完成")}</span></div><div className="activity-header-actions"><time>{(elapsed / 1000).toFixed(1)} s</time><Button variant="ghost" size="small" type="button" className="activity-action-btn" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? t("收起日志") : t("展开日志")} [{activity.entries.length}]</Button>{!activity.running && <Button variant="ghost" size="small" type="button" className="activity-action-btn" data-activity-dismiss="" onClick={() => setDismissed(true)}>{t("关闭记录")}</Button>}</div></div>
     {identity && macroStages.length > 0 && <div className="cleanroom-macro-pipeline" aria-label={t('三段式净室切换管线')}>{macroStages.map(stage => <span key={stage.id} className={`cleanroom-macro-pill macro-${stage.status}`} data-macro-stage={stage.id} data-macro-status={stage.status}>{t(stage.labelKey)}</span>)}</div>}
-    {showSteps&&<ol className="identity-operation-steps" aria-label={t('实际执行阶段')}>{steps.map((step,index)=><li key={index} className={`identity-operation-step step-${step.status}${activity.running&&index===steps.length-1?' step-current':''}`} data-stage={step.stage} data-status={step.status} aria-current={activity.running&&index===steps.length-1?'step':undefined}><span className="identity-operation-dot" aria-hidden="true">{step.status==='ok'?'✓':step.status==='error'?'!':''}</span><span>{t(phaseLabels[step.stage]||step.stage)}</span>{step.total!==null&&<code>{step.current}/{step.total}</code>}</li>)}</ol>}
+    {showSteps&&<ol className="identity-operation-steps" aria-label={t('实际执行阶段')}>{resolvedSteps.map((step,index)=><li key={index} className={`identity-operation-step step-${step.status}${activity.running&&index===resolvedSteps.length-1?' step-current':''}`} data-stage={step.stage} data-status={step.status} aria-current={activity.running&&index===resolvedSteps.length-1?'step':undefined}><span className="identity-operation-dot" aria-hidden="true">{step.status==='ok'?'✓':step.status==='error'?'!':''}</span><span>{t(phaseLabels[step.stage]||step.stage)}</span>{step.total!==null&&<code>{step.current}/{step.total}</code>}</li>)}</ol>}
     <div className={`activity-progress ${activity.running && !determinate ? 'indeterminate' : ''}`} role="progressbar" aria-label={identity?t('当前阶段进度'):t(labels[lastStage || 'scan'] || "操作进度")} aria-valuetext={identity?(count||t(activity.running?'处理中，尚无总量':'操作已结束')):undefined} aria-valuemin={0} aria-valuemax={100} aria-valuenow={determinate ? Math.round(fraction) : !activity.running && !activity.failed ? 100 : undefined}><span style={determinate ? { width: `${fraction}%` } : !activity.running && !activity.failed ? { width: '100%' } : { width: 0 }}/></div>
     <div className="activity-current" role="status" aria-live="polite"><span>{t(last?.message || "准备中…")}{activity.running && <i className="activity-cursor">_</i>}</span>{count && <strong>{count}</strong>}</div>
     {open && <div className="activity-log" ref={logBox} role="log" aria-label={t("本次操作日志")} aria-live="off" onScroll={() => { const box = logBox.current; if (box)
         follow.current = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }}>{activity.entries.map((entry, i) => <div className={`log-line log-${entry.status}`} key={i}><time>+{(entry.elapsed_ms / 1000).toFixed(2)}s</time><span className="log-tag">{entry.status === 'running' ? 'RUN' : entry.status === 'ok' ? 'OK' : entry.status === 'warning' ? 'NOTE' : 'FAIL'}</span><span>{t(entry.message)}</span></div>)}</div>}
-    {(activity.history?.length ?? 0) > 0 && (
-      <Disclosure
-        className="activity-audit-history"
-        summary={<span>{t('activity.auditTimelineTitle')} [{activity.history!.length}]</span>}
-      >
-        <ol className="activity-audit-list" data-audit-history>
-          {activity.history!.map(item => (
-            <li key={item.id} className={`activity-audit-item audit-${item.status}`} data-audit-status={item.status}>
-              <span className="activity-audit-icon" aria-hidden="true">{item.status === 'ok' ? '✓' : '!'}</span>
-              <strong>{t(item.title)}</strong>
-              <span className="activity-audit-msg">{t(item.message)}</span>
-              <time>{(item.elapsed_ms / 1000).toFixed(1)}s</time>
-            </li>
-          ))}
-        </ol>
-      </Disclosure>
-    )}
   </Panel>;
 }

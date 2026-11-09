@@ -80,9 +80,9 @@ export async function testQuotaReset(browser:Browser,base:string) {
   const wakeBtn=savedDialog.getByRole('button',{name:'唤醒 5h 计时',exact:true});
   await wakeBtn.waitFor();
   await wakeBtn.click();
-  await savedDialog.getByText('已唤醒 5h 窗口并刷新下次重置时间。',{exact:true}).waitFor();
+  await savedDialog.getByText(/已唤醒 5h 窗口并刷新下次重置时间。/).waitFor();
   await savedDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();
-  await savedResetCard.locator('[data-quota-window="5h"]').getByText('99%',{exact:true}).waitFor();
+  await savedResetCard.locator('[data-quota-window="5h"]').getByText('99.0%',{exact:true}).waitFor();
   assert.equal(await savedResetCard.locator('[data-quota-window="5h"]').getAttribute('data-quota-inferred'),null);
   checks++;
 
@@ -96,7 +96,7 @@ export async function testQuotaReset(browser:Browser,base:string) {
   const onlineDialog=page.getByRole('dialog');
   await onlineDialog.getByText('5h 到期自动续杯',{exact:true}).waitFor();
   await onlineDialog.getByRole('button',{name:'09:00-19:00',exact:true}).click();
-  assert.equal(await configChip.innerText(),'09:00-19:00');
+  await configChip.getByText('09:00-19:00',{exact:true}).waitFor();
   await mkdir('.local/preview/identity-quota',{recursive:true});
   await page.screenshot({path:'.local/preview/identity-quota/wakeup-panel-zh.png'});
   await onlineDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();
