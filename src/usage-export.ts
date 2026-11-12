@@ -1,6 +1,6 @@
 /**
  * [INPUT]: The currently rendered aggregate snapshot, selected scope and privacy-safe display aliases.
- * [OUTPUT]: Formula-safe TSV (with summary and per-account USD cost & cache savings) and privacy-masked Markdown summary card containing scoped usage totals, per-request token/cost averages, cost/cache efficiency, top models, and elapsed time buckets.
+ * [OUTPUT]: Formula-safe TSV (with summary and per-account blended USD cost & cache savings) and privacy-masked Markdown summary card containing scoped usage totals, per-request token/cost averages, cost/cache efficiency, top models, and elapsed time buckets.
  * [POS]: Pure export formatter; never reads files, identities, paths or request content.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -199,7 +199,10 @@ export function buildUsageTsv(input: {snapshot: UsageSnapshot; period: UsagePeri
       row([accountsSection, labels.account, labels.total, labels.input, labels.output, labels.cacheWrite, labels.cacheRead, labels.requests, costHeader, savingsHeader]),
     );
     for (const acc of snapshot.accounts) {
-      const accCost = estimateTotalsCostUsd(acc.totals, primaryModel);
+      const accCost =
+        acc.models && acc.models.length > 0
+          ? estimateSnapshotCostUsd(acc.totals, acc.models)
+          : estimateTotalsCostUsd(acc.totals, primaryModel);
       const accName = input.privacy
         ? maskEmbeddedEmails(maskDisplayName(acc.name, acc.email, true) || labels.account)
         : acc.name;

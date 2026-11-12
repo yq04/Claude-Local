@@ -65,8 +65,8 @@ const server=await createServer({
    try{res.statusCode=200;res.setHeader('Content-Type','text/html; charset=utf-8');res.end(await instance.transformIndexHtml('/__local-preview.html',html));}
    catch(error){next(error);}
  });}}],
- server:{host:'127.0.0.1',port:0,strictPort:false,hmr:false,watch:{ignored:['**/src-tauri/**','**/browser-runtime/**','**/releases/**','**/dist/**']}},
- optimizeDeps:{include:['@tauri-apps/api/mocks']}
+ server:{host:'127.0.0.1',port:0,strictPort:false,hmr:false,watch:{ignored:['**/src-tauri/**','**/browser-runtime/**','**/releases/**','**/.local/**','**/dist/**']}},
+ optimizeDeps:{entries:['index.html','browser.html'],include:['@tauri-apps/api/mocks']}
 });
 let browser;
 try{

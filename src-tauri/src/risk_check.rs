@@ -54,6 +54,8 @@ pub struct MihomoAudit {
 pub struct CliSecurityAudit {
     pub settings_present: bool,
     pub telemetry_shield_active: bool,
+    #[serde(default)]
+    pub nonessential_traffic_blocked: bool,
     pub proxy_env_complete: bool,
     pub socks5_in_cli_env: bool,
     pub has_custom_hooks_or_helpers: bool,
@@ -1008,93 +1010,120 @@ fn scan_mcp_servers_map(
     }
 }
 
+fn is_valid_http_proxy_url(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    reqwest::Url::parse(trimmed).is_ok_and(|u| {
+        matches!(u.scheme(), "http" | "https") && u.host_str().is_some_and(|h| !h.is_empty())
+    })
+}
+
+fn inspect_settings_object(
+    settings: &serde_json::Map<String, serde_json::Value>,
+    merged_env: &mut serde_json::Map<String, serde_json::Value>,
+    audit: &mut CliSecurityAudit,
+) {
+    for key in ["hooks", "apiKeyHelper", "awsAuthRefresh", "otelHeadersHelper"] {
+        if match settings.get(key) {
+            Some(serde_json::Value::String(s)) => !s.trim().is_empty(),
+            Some(serde_json::Value::Object(m)) => !m.is_empty(),
+            Some(serde_json::Value::Array(a)) => !a.is_empty(),
+            _ => false,
+        } {
+            audit.has_custom_hooks_or_helpers = true;
+        }
+    }
+    if settings
+        .get("skipDangerousModePermissionPrompt")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || settings
+            .get("dangerouslySkipPermissions")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || settings
+            .get("permissions")
+            .and_then(|v| v.get("allow"))
+            .and_then(|v| v.as_array())
+            .is_some_and(|allow| {
+                allow.iter().any(|item| {
+                    item.as_str().is_some_and(|s| {
+                        let t = s.trim();
+                        t.eq_ignore_ascii_case("Bash(*)") || t.eq_ignore_ascii_case("Bash")
+                    })
+                })
+            })
+    {
+        audit.has_custom_hooks_or_helpers = true;
+    }
+    if let Some(env) = settings.get("env").and_then(|v| v.as_object()) {
+        for (k, v) in env {
+            merged_env.insert(k.clone(), v.clone());
+        }
+    }
+    if let Some(mcp) = settings.get("mcpServers").and_then(|v| v.as_object()) {
+        scan_mcp_servers_map(mcp, audit);
+    }
+}
+
 /// 纯只读审计 Claude CLI 遥测护盾、代理环境变量协议、自定义 Hook/Helper 与 MCP 供应链边界（零秘密提取）。
 pub fn audit_claude_cli_security_dir(root: &std::path::Path) -> CliSecurityAudit {
     let mut audit = CliSecurityAudit::default();
     let claude_dir = root.join(".claude");
-    let settings_path = claude_dir.join("settings.json");
+    let mut merged_env = serde_json::Map::new();
 
-    if let Some(raw) = config_source::read_bounded_utf8(&settings_path, 512 * 1024) {
-        if let Ok(serde_json::Value::Object(settings)) = serde_json::from_str(&raw) {
-            audit.settings_present = true;
-            for key in ["hooks", "apiKeyHelper", "awsAuthRefresh", "otelHeadersHelper"] {
-                if match settings.get(key) {
-                    Some(serde_json::Value::String(s)) => !s.trim().is_empty(),
-                    Some(serde_json::Value::Object(m)) => !m.is_empty(),
-                    Some(serde_json::Value::Array(a)) => !a.is_empty(),
-                    _ => false,
-                } {
-                    audit.has_custom_hooks_or_helpers = true;
-                }
-            }
-            if settings
-                .get("skipDangerousModePermissionPrompt")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-                || settings
-                    .get("dangerouslySkipPermissions")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                || settings
-                    .get("permissions")
-                    .and_then(|v| v.get("allow"))
-                    .and_then(|v| v.as_array())
-                    .is_some_and(|allow| {
-                        allow.iter().any(|item| {
-                            item.as_str().is_some_and(|s| {
-                                let t = s.trim();
-                                t.eq_ignore_ascii_case("Bash(*)") || t.eq_ignore_ascii_case("Bash")
-                            })
-                        })
-                    })
-            {
-                audit.has_custom_hooks_or_helpers = true;
-            }
-            if let Some(env) = settings.get("env").and_then(|v| v.as_object()) {
-                let truthy = |k: &str| {
-                    env.get(k)
-                        .and_then(|v| v.as_str())
-                        .is_some_and(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true"))
-                };
-                audit.telemetry_shield_active = truthy("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
-                    && truthy("DISABLE_TELEMETRY")
-                    && truthy("DISABLE_ERROR_REPORTING");
-                let proxy_keys = [
-                    "HTTP_PROXY",
-                    "http_proxy",
-                    "HTTPS_PROXY",
-                    "https_proxy",
-                    "ALL_PROXY",
-                    "all_proxy",
-                    "GRPC_PROXY",
-                    "grpc_proxy",
-                ];
-                let mut all_http = true;
-                for k in proxy_keys {
-                    let val = env
-                        .get(k)
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .trim()
-                        .to_ascii_lowercase();
-                    if val.starts_with("socks5://") || val.starts_with("socks5h://") {
-                        audit.socks5_in_cli_env = true;
-                    }
-                    if !val.starts_with("http://") && !val.starts_with("https://") {
-                        all_http = false;
-                    }
-                }
-                let no_proxy_ok = ["NO_PROXY", "no_proxy"].iter().all(|k| {
-                    env.get(*k)
-                        .and_then(|v| v.as_str())
-                        .is_some_and(|s| !s.trim().is_empty())
-                });
-                audit.proxy_env_complete = all_http && no_proxy_ok && !audit.socks5_in_cli_env;
-            }
-            if let Some(mcp) = settings.get("mcpServers").and_then(|v| v.as_object()) {
-                scan_mcp_servers_map(mcp, &mut audit);
+    for settings_name in ["settings.json", "settings.local.json"] {
+        let settings_path = claude_dir.join(settings_name);
+        if let Some(raw) = config_source::read_bounded_utf8(&settings_path, 512 * 1024) {
+            if let Ok(serde_json::Value::Object(settings)) = serde_json::from_str(&raw) {
+                audit.settings_present = true;
+                inspect_settings_object(&settings, &mut merged_env, &mut audit);
             }
         }
+    }
+
+    if audit.settings_present {
+        let truthy = |k: &str| match merged_env.get(k) {
+            Some(serde_json::Value::Bool(b)) => *b,
+            Some(serde_json::Value::Number(n)) => n.as_i64() == Some(1),
+            Some(serde_json::Value::String(s)) => {
+                matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true")
+            }
+            _ => false,
+        };
+        audit.nonessential_traffic_blocked = truthy("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC");
+        audit.telemetry_shield_active = truthy("DISABLE_TELEMETRY")
+            && truthy("DISABLE_ERROR_REPORTING")
+            && !audit.nonessential_traffic_blocked;
+
+        let str_val = |k: &str| {
+            merged_env
+                .get(k)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .unwrap_or("")
+        };
+        let canonical_pairs = [
+            ("HTTP_PROXY", "http_proxy"),
+            ("HTTPS_PROXY", "https_proxy"),
+            ("ALL_PROXY", "all_proxy"),
+            ("GRPC_PROXY", "grpc_proxy"),
+        ];
+        audit.socks5_in_cli_env = canonical_pairs.iter().any(|(upper, lower)| {
+            str_val(upper).to_ascii_lowercase().starts_with("socks")
+                || str_val(lower).to_ascii_lowercase().starts_with("socks")
+        });
+        let all_pairs_http = canonical_pairs.iter().all(|(upper, lower)| {
+            let u = str_val(upper);
+            let l = str_val(lower);
+            !u.to_ascii_lowercase().starts_with("socks")
+                && !l.to_ascii_lowercase().starts_with("socks")
+                && (is_valid_http_proxy_url(u) || is_valid_http_proxy_url(l))
+        });
+        let no_proxy_ok = !str_val("NO_PROXY").is_empty() || !str_val("no_proxy").is_empty();
+        audit.proxy_env_complete = all_pairs_http && no_proxy_ok && !audit.socks5_in_cli_env;
     }
 
     for mcp_path in [root.join(".claude.json"), claude_dir.join(".mcp.json")] {
@@ -1104,7 +1133,7 @@ pub fn audit_claude_cli_security_dir(root: &std::path::Path) -> CliSecurityAudit
                     scan_mcp_servers_map(mcp, &mut audit);
                 }
                 if let Some(projects) = doc.get("projects").and_then(|v| v.as_object()) {
-                    for (_, proj) in projects.iter().take(64) {
+                    for (_, proj) in projects.iter().take(256) {
                         if let Some(proj_mcp) = proj
                             .as_object()
                             .and_then(|o| o.get("mcpServers"))
@@ -1746,18 +1775,13 @@ Windows IP 配置
             r#"{
                 "env": {
                     "HTTP_PROXY": "http://127.0.0.1:7899",
-                    "http_proxy": "http://127.0.0.1:7899",
                     "HTTPS_PROXY": "http://127.0.0.1:7899",
-                    "https_proxy": "http://127.0.0.1:7899",
                     "ALL_PROXY": "http://127.0.0.1:7899",
-                    "all_proxy": "http://127.0.0.1:7899",
                     "GRPC_PROXY": "http://127.0.0.1:7899",
-                    "grpc_proxy": "http://127.0.0.1:7899",
                     "NO_PROXY": "localhost,127.0.0.1",
-                    "no_proxy": "localhost,127.0.0.1",
-                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                     "DISABLE_TELEMETRY": "1",
-                    "DISABLE_ERROR_REPORTING": "1"
+                    "DISABLE_ERROR_REPORTING": "1",
+                    "DO_NOT_TRACK": "1"
                 }
             }"#,
         )
@@ -1766,18 +1790,24 @@ Windows IP 配置
             dir.join(".claude.json"),
             r#"{
                 "mcpServers": {
-                    "pinned": {"command": "cmd.exe", "args": ["/c", "npx", "-y", "@scope/pkg@1.2.3"]},
-                    "unpinned": {"command": "npx", "args": ["-y", "@scope/pkg@latest"]},
-                    "remote": {"url": "https://mcp.example.invalid/sse"}
+                    "pinned": {"command": "cmd.exe", "args": ["/c", "npx", "-y", "@scope/pkg@1.2.3"]}
+                },
+                "projects": {
+                    "D:/workspace/demo": {
+                        "mcpServers": {
+                            "unpinned": {"command": "npx", "args": ["-y", "@scope/pkg@latest"]},
+                            "remote": {"url": "https://mcp.example.invalid/sse"}
+                        }
+                    }
                 }
             }"#,
         )
         .unwrap();
 
         let audit = audit_claude_cli_security_dir(&dir);
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(audit.settings_present);
         assert!(audit.telemetry_shield_active);
+        assert!(!audit.nonessential_traffic_blocked);
         assert!(audit.proxy_env_complete);
         assert!(!audit.socks5_in_cli_env);
         assert!(!audit.has_custom_hooks_or_helpers);
@@ -1785,6 +1815,24 @@ Windows IP 配置
         assert_eq!(audit.windows_bare_npx_count, 1);
         assert_eq!(audit.remote_http_mcp_count, 1);
         assert_eq!(audit.pending_failed_telemetry_files, 1);
+
+        // settings.local.json overrides settings.json env keys and flags CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+        std::fs::write(
+            claude_dir.join("settings.local.json"),
+            r#"{
+                "env": {
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                    "ALL_PROXY": "socks://127.0.0.1:7899"
+                }
+            }"#,
+        )
+        .unwrap();
+        let blocked = audit_claude_cli_security_dir(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(blocked.nonessential_traffic_blocked);
+        assert!(!blocked.telemetry_shield_active);
+        assert!(blocked.socks5_in_cli_env);
+        assert!(!blocked.proxy_env_complete);
 
         let mihomo = audit_mihomo_yaml_structure(
             "rules:\n  - DOMAIN-KEYWORD,datadoghq,ClaudeGroup\n",

@@ -1,6 +1,6 @@
 // [INPUT]: Win32 Toolhelp/进程句柄、当前用户 SID、精确 CLI 入口与独立浏览器资料路径。
-// [OUTPUT]: Claude 进程零侵入识别（优先 PROCESS_QUERY_LIMITED_INFORMATION + (pid, created) 缓存）、创建时间/所有权复核后的结束、按完整资料参数正常关闭浏览器及只读可见窗口采样。
-// [POS]: Windows 进程边界；原生二进制免 PROCESS_VM_READ/ReadProcessMemory；参数仅用于 node/bun/chrome 判定，不返回 UI。
+// [OUTPUT]: Claude 进程零侵入识别（优先 PROCESS_QUERY_LIMITED_INFORMATION + (pid, created) 缓存）、创建时间/所有权复核后的结束、浏览器在 PROCESS_QUERY_LIMITED_INFORMATION 下经 NtQueryInformationProcess(ProcessCommandLineInformation = 60) 零 VM_READ 读取完整参数（必要时优雅回退）并以文件句柄标识（GetFileInformationByHandle + 未建路径词法回退）匹配关闭及只读可见窗口采样。
+// [POS]: Windows 进程边界；原生二进制与受管浏览器免 PROCESS_VM_READ/ReadProcessMemory；参数仅用于 node/bun/chrome 判定，不返回 UI。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{current_sid, input, process_sid, response};
 use crate::cleaner::ClaudeProcess;
@@ -147,6 +147,100 @@ fn read<T: Default + Copy>(handle: HANDLE, address: usize) -> Option<T> {
     }
     Some(value)
 }
+// Windows 8.1+ ProcessCommandLineInformation (60) 在 PROCESS_QUERY_LIMITED_INFORMATION 下直接将命令行写入调用方缓冲，无需 PROCESS_VM_READ。
+const PROCESS_COMMAND_LINE_INFORMATION: u32 = 60;
+const MAX_COMMAND_LINE_BYTES: usize = 1024 * 1024;
+
+fn parsed_arguments(command: &[u16]) -> Option<Vec<String>> {
+    if command.is_empty() {
+        return None;
+    }
+    let mut nul_terminated = Vec::with_capacity(command.len() + 1);
+    nul_terminated.extend_from_slice(command);
+    nul_terminated.push(0);
+    unsafe {
+        // ----- 按 Windows 参数语法解析；完整参数判定，禁止子串命中 -----
+        let mut count = 0;
+        let args = CommandLineToArgvW(nul_terminated.as_ptr(), &mut count);
+        if args.is_null() {
+            return None;
+        }
+        let values = std::slice::from_raw_parts(args, count as usize)
+            .iter()
+            .map(|p| {
+                let mut size = 0;
+                while *p.add(size) != 0 {
+                    size += 1;
+                }
+                String::from_utf16_lossy(std::slice::from_raw_parts(*p, size))
+            })
+            .collect();
+        LocalFree(args.cast());
+        Some(values)
+    }
+}
+
+fn decode_command_line_buffer(buffer: &[usize]) -> Option<Vec<String>> {
+    let start = buffer.as_ptr() as usize;
+    let size = std::mem::size_of_val(buffer);
+    if size < std::mem::size_of::<Unicode>() {
+        return None;
+    }
+    let command = unsafe { *(buffer.as_ptr().cast::<Unicode>()) };
+    let end = start.checked_add(size)?;
+    if command.length == 0
+        || command.length % 2 != 0
+        || command.length > command.maximum
+        || command.buffer % std::mem::align_of::<u16>() != 0
+        || command.buffer < start.checked_add(std::mem::size_of::<Unicode>())?
+        || command.buffer.checked_add(command.length as usize)? > end
+    {
+        return None;
+    }
+    let text = unsafe {
+        std::slice::from_raw_parts(command.buffer as *const u16, command.length as usize / 2)
+    };
+    if text.contains(&0) || String::from_utf16(text).is_err() {
+        return None;
+    }
+    parsed_arguments(text)
+}
+
+fn query_command_line_limited(handle: HANDLE) -> Option<Vec<String>> {
+    if handle.is_null() {
+        return None;
+    }
+    let mut needed = 0u32;
+    unsafe {
+        NtQueryInformationProcess(
+            handle,
+            PROCESS_COMMAND_LINE_INFORMATION,
+            std::ptr::null_mut(),
+            0,
+            &mut needed,
+        );
+    }
+    let bytes = needed as usize;
+    if !(std::mem::size_of::<Unicode>()..=MAX_COMMAND_LINE_BYTES).contains(&bytes) {
+        return None;
+    }
+    let mut buffer = vec![0usize; bytes.div_ceil(std::mem::size_of::<usize>())];
+    if unsafe {
+        NtQueryInformationProcess(
+            handle,
+            PROCESS_COMMAND_LINE_INFORMATION,
+            buffer.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        )
+    } != 0
+        || needed as usize > std::mem::size_of_val(buffer.as_slice())
+    {
+        return None;
+    }
+    decode_command_line_buffer(&buffer)
+}
+
 fn arguments(handle: &Handle) -> Option<Vec<String>> {
     unsafe {
         let mut wow = 0;
@@ -174,7 +268,8 @@ fn arguments(handle: &Handle) -> Option<Vec<String>> {
         {
             return None;
         }
-        let mut buffer = vec![0u16; command.length as usize / 2 + 1];
+        let words = command.length as usize / 2;
+        let mut buffer = vec![0u16; words];
         let mut read_bytes = 0usize;
         if ReadProcessMemory(
             handle.0,
@@ -187,24 +282,7 @@ fn arguments(handle: &Handle) -> Option<Vec<String>> {
         {
             return None;
         }
-        // ----- 按 Windows 参数语法解析；完整参数判定，禁止子串命中 -----
-        let mut count = 0;
-        let args = CommandLineToArgvW(buffer.as_ptr(), &mut count);
-        if args.is_null() {
-            return None;
-        }
-        let values = std::slice::from_raw_parts(args, count as usize)
-            .iter()
-            .map(|p| {
-                let mut size = 0;
-                while *p.add(size) != 0 {
-                    size += 1;
-                }
-                String::from_utf16_lossy(std::slice::from_raw_parts(*p, size))
-            })
-            .collect();
-        LocalFree(args.cast());
-        Some(values)
+        parsed_arguments(&buffer)
     }
 }
 fn normalized(path: &str) -> String {
@@ -470,18 +548,130 @@ pub fn kill_process(target: &ClaudeProcess) -> Result<(), String> {
     }
     Ok(())
 }
-fn profile_matches(args: &[String], profile: &str) -> bool {
-    args.iter().enumerate().any(|(index, arg)| {
-        let value = arg.strip_prefix("--user-data-dir=").or_else(|| {
-            if arg == "--user-data-dir" {
-                args.get(index + 1).map(String::as_str)
-            } else {
-                None
-            }
-        });
-        value.is_some_and(|value| normalized(value) == normalized(profile))
-    })
+fn browser_arguments(pid: u32, limited: &Handle, expected_created: u64) -> Option<Vec<String>> {
+    if let Some(args) = query_command_line_limited(limited.0) {
+        if limited.created() == Some(expected_created) {
+            return Some(args);
+        }
+        return None;
+    }
+    let vm = Handle::open(pid, false)?;
+    if vm.created() != Some(expected_created) {
+        return None;
+    }
+    arguments(&vm)
 }
+
+fn has_child_process_type(args: &[String]) -> bool {
+    args.iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| arg.strip_prefix("--type=").is_some_and(|v| !v.is_empty()))
+}
+
+fn profile_argument(args: &[String]) -> Option<&str> {
+    let mut selected: Option<&str> = None;
+    let mut index = 0usize;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if arg == "--" {
+            break;
+        }
+        if arg == "--user-data-dir" {
+            let next = args.get(index + 1).map(String::as_str)?;
+            if next == "--" || next.is_empty() || !Path::new(next).is_absolute() || selected.is_some()
+            {
+                return None;
+            }
+            selected = Some(next);
+            index += 2;
+            continue;
+        }
+        if let Some(val) = arg.strip_prefix("--user-data-dir=") {
+            if val.is_empty() || !Path::new(val).is_absolute() || selected.is_some() {
+                return None;
+            }
+            selected = Some(val);
+        }
+        index += 1;
+    }
+    selected
+}
+
+fn file_identity(path: &Path, directory: bool) -> Option<(u32, u64)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let raw = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    if raw == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    let handle = Handle(raw);
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(handle.0, &mut info) } == 0
+        || ((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != directory
+    {
+        return None;
+    }
+    Some((
+        info.dwVolumeSerialNumber,
+        (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+    ))
+}
+
+fn lexical_normalized_path(path: &str) -> String {
+    let mut s = path.replace('/', "\\");
+    if let Some(unc) = s.strip_prefix("\\\\?\\UNC\\").or_else(|| s.strip_prefix("\\\\?\\unc\\")) {
+        s = format!("\\\\{unc}");
+    } else if let Some(rest) = s.strip_prefix("\\\\?\\") {
+        s = rest.to_string();
+    }
+    let mut out = Path::new(&s)
+        .components()
+        .filter(|c| !matches!(c, std::path::Component::CurDir))
+        .collect::<std::path::PathBuf>()
+        .to_string_lossy()
+        .replace('/', "\\");
+    while out.len() > 3 && out.ends_with('\\') {
+        out.pop();
+    }
+    out.to_lowercase()
+}
+
+fn profile_matches(args: &[String], profile: &str) -> bool {
+    let Some(selected) = profile_argument(args) else {
+        return false;
+    };
+    if !Path::new(profile).is_absolute() {
+        return false;
+    }
+    match (
+        file_identity(Path::new(selected), true),
+        file_identity(Path::new(profile), true),
+    ) {
+        (Some(id_sel), Some(id_prof)) => id_sel == id_prof,
+        (None, None) => lexical_normalized_path(selected) == lexical_normalized_path(profile),
+        (Some(_), None) | (None, Some(_)) => false,
+    }
+}
+
 unsafe extern "system" fn close_window(window: HWND, pid: LPARAM) -> i32 {
     let mut owner = 0;
     GetWindowThreadProcessId(window, &mut owner);
@@ -490,24 +680,50 @@ unsafe extern "system" fn close_window(window: HWND, pid: LPARAM) -> i32 {
     }
     1
 }
+
 fn browser(profile: &str, close: bool) -> Result<bool, String> {
     if !Path::new(profile).is_absolute() {
         return Err("资料路径无效。".into());
     }
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err("无法检查正在运行的浏览器进程。".into());
+    }
+    let snapshot = Handle(snapshot);
+    let mut entry = unsafe { std::mem::zeroed::<PROCESSENTRY32W>() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut has = unsafe { Process32FirstW(snapshot.0, &mut entry) };
+    if has == 0 {
+        return Err("无法读取正在运行的浏览器进程。".into());
+    }
     let mut found = false;
-    for (pid, handle) in processes(false)? {
-        if handle
-            .image()
-            .is_some_and(|image| normalized(&image).ends_with("\\chrome.exe"))
-            && arguments(&handle).is_some_and(|args| profile_matches(&args, profile))
-        {
-            found = true;
-            if close {
-                unsafe {
-                    EnumWindows(Some(close_window), pid as LPARAM);
+    while has != 0 {
+        let name = String::from_utf16_lossy(&entry.szExeFile)
+            .trim_end_matches('\0')
+            .to_lowercase();
+        let pid = entry.th32ProcessID;
+        if name == "chrome.exe" && pid > 1 {
+            if let Some(limited) = Handle::open_limited(pid) {
+                if limited
+                    .image()
+                    .is_some_and(|image| normalized(&image).ends_with("\\chrome.exe"))
+                {
+                    if let Some(created) = limited.created() {
+                        if let Some(args) = browser_arguments(pid, &limited, created) {
+                            if !has_child_process_type(&args) && profile_matches(&args, profile) {
+                                found = true;
+                                if close {
+                                    unsafe {
+                                        EnumWindows(Some(close_window), pid as LPARAM);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+        has = unsafe { Process32NextW(snapshot.0, &mut entry) };
     }
     Ok(found)
 }
@@ -603,15 +819,12 @@ pub(crate) fn browser_runtime(profile: &Path) -> Result<(bool, bool), String> {
                 let image = limited.image().ok_or(UNKNOWN)?;
                 if normalized(&image).ends_with("\\chrome.exe") {
                     let created = limited.created().ok_or(UNKNOWN)?;
-                    let handle = Handle::open(entry.th32ProcessID, false).ok_or(UNKNOWN)?;
-                    if handle.created() != Some(created) {
-                        return Err(UNKNOWN.into());
-                    }
-                    let args = arguments(&handle).ok_or(UNKNOWN)?;
-                    if profile_matches(&args, profile) {
+                    let args =
+                        browser_arguments(entry.th32ProcessID, &limited, created).ok_or(UNKNOWN)?;
+                    if !has_child_process_type(&args) && profile_matches(&args, profile) {
                         probe
                             .processes
-                            .push((entry.th32ProcessID, created, image, handle));
+                            .push((entry.th32ProcessID, created, image, limited));
                     }
                 }
             }
@@ -720,5 +933,99 @@ mod tests {
         assert!(limited.created().is_some());
         assert!(limited.image().is_some());
         assert!(Handle::open(std::process::id(), false).is_some());
+    }
+
+    #[test]
+    fn query_only_self_handle_reads_complete_arguments_and_rejects_invalid_buffers() {
+        let limited = Handle::open_limited(std::process::id()).unwrap();
+        assert_eq!(
+            query_command_line_limited(limited.0).unwrap(),
+            std::env::args().collect::<Vec<_>>()
+        );
+        assert!(query_command_line_limited(std::ptr::null_mut()).is_none());
+        assert!(decode_command_line_buffer(&[]).is_none());
+        let mut buffer = [0usize; 16];
+        let header = buffer.as_mut_ptr().cast::<Unicode>();
+        unsafe {
+            *header = Unicode {
+                length: 2,
+                maximum: 2,
+                buffer: 2,
+            };
+            assert!(decode_command_line_buffer(&buffer).is_none());
+            (*header).buffer = buffer.as_ptr() as usize + std::mem::size_of_val(&buffer);
+            assert!(decode_command_line_buffer(&buffer).is_none());
+            (*header).buffer = buffer.as_ptr() as usize + std::mem::size_of::<Unicode>();
+            (*header).length = 3;
+            assert!(decode_command_line_buffer(&buffer).is_none());
+            (*header).length = 2;
+            (*header).buffer += 1;
+            assert!(decode_command_line_buffer(&buffer).is_none());
+        }
+    }
+
+    #[test]
+    fn browser_profile_file_identity_aliases_and_lexical_fallback() {
+        let root = std::env::temp_dir().join(format!(
+            "claude-local-win-profile-{}",
+            crate::identities::new_id().unwrap()
+        ));
+        let profile = root.join("long profile name");
+        let other = root.join("other");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+
+        let verbatim = std::fs::canonicalize(&profile).unwrap();
+        let with_dot = profile.join(".");
+        assert_eq!(
+            file_identity(&verbatim, true),
+            file_identity(&profile, true)
+        );
+        assert_eq!(
+            file_identity(&with_dot, true),
+            file_identity(&profile, true)
+        );
+        assert!(profile_matches(
+            &[
+                "chrome.exe".into(),
+                format!("--user-data-dir={}", verbatim.display())
+            ],
+            profile.to_str().unwrap()
+        ));
+        assert!(profile_matches(
+            &[
+                "chrome.exe".into(),
+                "--user-data-dir".into(),
+                with_dot.to_string_lossy().into()
+            ],
+            profile.to_str().unwrap()
+        ));
+        assert!(!profile_matches(
+            &[
+                "chrome.exe".into(),
+                format!("--user-data-dir={}", other.display()),
+                "--".into(),
+                format!("--user-data-dir={}", profile.display())
+            ],
+            profile.to_str().unwrap()
+        ));
+        assert!(!profile_matches(
+            &[
+                "chrome.exe".into(),
+                format!("--user-data-dir={}", root.join("missing").display())
+            ],
+            profile.to_str().unwrap()
+        ));
+        // Lexical fallback when neither path exists yet:
+        let cold = root.join("not-created-yet");
+        let cold_verbatim = format!(r"\\?\{}\.", cold.display());
+        assert!(profile_matches(
+            &[
+                "chrome.exe".into(),
+                format!("--user-data-dir={cold_verbatim}")
+            ],
+            cold.to_str().unwrap()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

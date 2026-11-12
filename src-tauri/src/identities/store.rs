@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 目录、用户策略、白名单源、已验收归档代次、认证加密与平台凭据桥。
-// [OUTPUT]: 有界主密钥读取、先暂存后切换、独立养号转正草稿保护与提交后清理、幂等统计边界、持久恢复与真实阶段进度。
+// [OUTPUT]: 有界主密钥读取、先暂存后切换、切换置空与删除当前身份同步执行窄账号缓存与残留锁清场、独立养号转正草稿保护与提交后清理、幂等统计边界、持久恢复与真实阶段进度。
 // [POS]: 身份的文件事务；SQLite 与文件系统由恢复日志协调，不能假装是同一原子事务。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -450,6 +450,8 @@ impl Store {
                     Ok(())
                 })
                 .map_err(|_| "直接删除未完成；部分数据可能已删除，请刷新检查。".to_string())?;
+            identity::clear_stale_locks(&self.home);
+            let _ = identity::maintain_account_caches(&self.home);
             reporter.log("commit", "running", "正在保存空身份状态。", 0, Some(1));
             self.db.complete("empty")?;
             reporter.log("commit", "ok", "空身份状态已保存。", 1, Some(1));
@@ -639,8 +641,8 @@ impl Store {
             reporter.log("credentials", "ok", "当前本地登录凭据已清除。", 1, Some(1));
             if let Some(stage) = incoming.as_ref() {
                 self.restore(stage, &next, policy, reporter, "restore")?;
-                let _ = identity::maintain_account_caches(&self.home);
             }
+            let _ = identity::maintain_account_caches(&self.home);
             reporter.log(
                 "commit",
                 "running",

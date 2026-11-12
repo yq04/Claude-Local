@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 在线额度状态/原因白名单、持久批次结果契约、前台轮询设置与订阅重置元数据（含浏览器自动同步与手动充值/到期日历）。
- * [OUTPUT]: 批次/额度纯模型（含未知/过期目标过滤 buildStaleOrUnknownBatchTargets）、订阅到期短标签（MM/DD）与 +1 自然月推算、独立浏览器失败与原生调度门禁倒计时、严格新5h确认、单例快照订阅、受限迁移和显式设置IPC。
+ * [OUTPUT]: 批次/额度纯模型（含未知/过期目标过滤 buildStaleOrUnknownBatchTargets 与零计数子句过滤）、重置卡到期紧急度分级（<=1h/<=24h，仅按真实到期）与重置次数新鲜/待同步/已到期三态、订阅到期短标签（MM/DD）与 +1 自然月推算、独立浏览器失败与原生调度门禁倒计时、严格新5h确认、单例快照订阅、受限迁移和显式设置IPC。
  * [POS]: 仅原生owner调度唤醒；前端桥不设唤醒timer、不读取凭据或发HTTP，不写额度账本。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -154,8 +154,16 @@ export interface SubscriptionResetDisplay {
     label: string;
     observedAtMs?: number | null;
     validUntil?: number | null;
+    /** Best known real expiry (seconds): synced grant end, or a sub-24h valid_until. */
+    realExpiresAt?: number | null;
     stale: boolean;
     usable: boolean;
+    /** The resets are known to have ended (real expiry passed); nothing left to show. */
+    ended: boolean;
+    /** Older than the 24h freshness window but not known to have ended: re-sync to confirm. */
+    needsResync: boolean;
+    expiresInSec?: number | null;
+    urgency: 'critical' | 'soon' | 'normal';
   };
 }
 
@@ -211,13 +219,41 @@ export function formatSubscriptionAndResets(
     const validUntil = meta.manual_resets_valid_until ?? null;
     const stale = !observedAtMs || nowMs - observedAtMs > 24 * 60 * 60 * 1000 ||
       !validUntil || validUntil * 1000 <= nowMs;
+    // valid_until is capped at observation + 24h as a freshness bound. A value clearly
+    // below that cap is a real grant end; newer syncs also carry the uncapped grant end.
+    const grantEndsAt = typeof meta.manual_resets_grant_ends_at === 'number' && Number.isFinite(meta.manual_resets_grant_ends_at) && meta.manual_resets_grant_ends_at > 0
+      ? meta.manual_resets_grant_ends_at
+      : null;
+    const cappedBound = observedAtMs ? Math.floor(observedAtMs / 1000) + 24 * 60 * 60 - 60 : null;
+    const realExpiresAt = grantEndsAt ?? (validUntil !== null && cappedBound !== null && validUntil < cappedBound ? validUntil : null);
+    // Only a positive balance can "end"; a stale zero simply needs re-verification.
+    const ended = meta.manual_resets_remaining! > 0 && realExpiresAt !== null && realExpiresAt * 1000 <= nowMs;
+    const usable = !stale && !ended && (meta.manual_resets_remaining === 0 || validUntil !== null);
+    const needsResync = stale && !ended;
+    const expiresInSec =
+      usable && meta.manual_resets_remaining! > 0 && realExpiresAt !== null && realExpiresAt * 1000 > nowMs
+        ? Math.max(1, Math.floor((realExpiresAt * 1000 - nowMs) / 1000))
+        : null;
+    const urgency: 'critical' | 'soon' | 'normal' =
+      expiresInSec === null
+        ? 'normal'
+        : expiresInSec <= 3600
+          ? 'critical'
+          : expiresInSec <= 86400
+            ? 'soon'
+            : 'normal';
     manualResets = {
       remaining: meta.manual_resets_remaining!,
       label: t('identityCard.manualResetsRemaining'),
       observedAtMs,
       validUntil,
+      realExpiresAt,
       stale,
-      usable: !stale && (meta.manual_resets_remaining === 0 || validUntil !== null),
+      usable,
+      ended,
+      needsResync,
+      expiresInSec,
+      urgency,
     };
   }
 
@@ -810,15 +846,34 @@ export function formatBatchProgress(
   if (summary.state === 'deadline_exceeded') {
     return t('quotaOnline.batchDeadlineExceeded', {completed: summary.completed, total: summary.total, remaining: summary.notRunCount ?? Math.max(0, summary.total - summary.completed)});
   }
+  const success = summary.successCount;
+  const cached = summary.cachedCount ?? 0;
+  const cooldown = summary.cooldownCount ?? 0;
+  const auth = summary.authRequiredCount;
+  const failed = summary.errorCount;
+  const remaining = summary.notRunCount ?? Math.max(0, summary.total - summary.completed);
+  const clauseParts: string[] = [];
+  if (success > 0) clauseParts.push(t('quotaOnline.batchClause.success', {count: success}));
+  if (cached > 0) clauseParts.push(t('quotaOnline.batchClause.cached', {count: cached}));
+  if (cooldown > 0) clauseParts.push(t('quotaOnline.batchClause.cooldown', {count: cooldown}));
+  if (auth > 0) clauseParts.push(t('quotaOnline.batchClause.auth', {count: auth}));
+  if (failed > 0) clauseParts.push(t('quotaOnline.batchClause.failed', {count: failed}));
+  if (remaining > 0) clauseParts.push(t('quotaOnline.batchClause.remaining', {count: remaining}));
+  if (clauseParts.length === 0) {
+    clauseParts.push(t('quotaOnline.batchClause.success', {count: 0}));
+  }
+  const sepRaw = t('quotaOnline.batchClauseSep');
+  const sep = sepRaw === 'quotaOnline.batchClauseSep' ? '，' : sepRaw;
   const shared = {
     completed: summary.completed,
     total: summary.total,
-    success: summary.successCount,
-    cached: summary.cachedCount ?? 0,
-    cooldown: summary.cooldownCount ?? 0,
-    auth: summary.authRequiredCount,
-    failed: summary.errorCount,
-    remaining: summary.notRunCount ?? Math.max(0, summary.total - summary.completed),
+    success,
+    cached,
+    cooldown,
+    auth,
+    failed,
+    remaining,
+    clauses: clauseParts.join(sep),
   };
   if (summary.inProgress) {
     return t('quotaOnline.batchProgress', shared);

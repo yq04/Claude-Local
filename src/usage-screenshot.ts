@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 当前已筛选的本地用量快照、序列桶、成本/节省折算、活动主题与双语翻译函数。
- * [OUTPUT]: 零外部依赖的高清 2x Retina Token 消耗截图（支持「数据概览」与「趋势全图」双模式，一键写入剪贴板或下载 PNG）。
+ * [OUTPUT]: 零外部依赖的高清 2x Retina Token 消耗截图（支持「数据概览」与「趋势全图」双模式，防标题重叠截断与时区安全峰值标签，一键写入剪贴板或下载 PNG）。
  * [POS]: 用量分析的纯前端视觉导出工具；仅消费现有内存快照，不发起 IPC 请求或访问剪贴板历史。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -10,6 +10,7 @@ import {
   estimateTotalsCostUsd,
   formatUsdCost,
   formatUsageNumber,
+  formatUsagePeakBucketLabel,
   sortUsageModels,
   summarizeUsageTrend,
   tokenComposition,
@@ -174,6 +175,7 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
   ctx.textBaseline = 'middle';
   const titleText = `Claude-Local · ${t('usage.title')}`;
   ctx.fillText(titleText, 48, 40);
+  const titleRight = 48 + ctx.measureText(titleText).width + 20;
 
   const scopeMeta = [
     `${t('usage.accountFilter')}: ${accountLabel}`,
@@ -185,8 +187,9 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
     .join(' · ');
   ctx.font = `500 11.5px ${fontSans}`;
   ctx.fillStyle = palette.muted;
-  const metaWidth = ctx.measureText(scopeMeta).width;
-  ctx.fillText(scopeMeta, Math.max(240, width - 36 - metaWidth), 40);
+  const maxMetaWidth = Math.max(120, width - 36 - titleRight);
+  const truncatedMeta = truncateText(ctx, scopeMeta, maxMetaWidth);
+  ctx.fillText(truncatedMeta, width - 36 - ctx.measureText(truncatedMeta).width, 40);
 
   // Overview Section (y = 74, h = 262)
   const overviewY = 74;
@@ -331,14 +334,32 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
   // Right 2x2 KPI Cards
   const isHourly = period === 'today' || period === 'yesterday';
   const elapsedBuckets = series.filter(d => !d.future);
-  const avgBucketCost = elapsedBuckets.length > 0 ? costBreakdown.costUsd / elapsedBuckets.length : 0;
+  const hasHourlyIntervals =
+    isHourly &&
+    elapsedBuckets.length > 0 &&
+    elapsedBuckets.every(
+      d =>
+        d.start_at != null &&
+        d.end_at != null &&
+        Number.isFinite(d.start_at) &&
+        Number.isFinite(d.end_at) &&
+        d.end_at > d.start_at,
+    );
+  const elapsedUnits = hasHourlyIntervals
+    ? elapsedBuckets.reduce((sum, d) => sum + (d.end_at! - d.start_at!) / 3600, 0)
+    : elapsedBuckets.length;
+  const avgBucketCost = elapsedUnits > 0 ? costBreakdown.costUsd / elapsedUnits : 0;
   const trendSummary = summarizeUsageTrend(series);
-  const peakTokens = trendSummary.peak?.totals?.total_tokens ?? 0;
-  const peakBucketCost =
-    peakTokens > 0 && snapshot.totals.total_tokens > 0
-      ? costBreakdown.costUsd * (peakTokens / snapshot.totals.total_tokens)
-      : 0;
-  const peakLabel = trendSummary.peak?.day ? trendSummary.peak.day.slice(-5) : '';
+  const dominantModel = [...(snapshot.models ?? [])].sort(
+    (a, b) => b.totals.total_tokens - a.totals.total_tokens,
+  )[0]?.model;
+  const primaryModel = dominantModel ?? sortUsageModels(snapshot.models ?? [])[0]?.model;
+  const peakBucketCost = trendSummary.peak
+    ? estimateTotalsCostUsd(trendSummary.peak.totals, primaryModel).costUsd
+    : 0;
+  const peakLabel = trendSummary.peak?.day
+    ? formatUsagePeakBucketLabel(trendSummary.peak.day, isHourly)
+    : '';
   const hit = cacheHitRate(snapshot.totals);
   const hitStr =
     hit === null
@@ -440,7 +461,7 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
       {
         label: t(isHourly ? 'usage.peakHour' : 'usage.peakDay'),
         val: trendSummary.peak
-          ? `${formatUsageNumber(trendSummary.peak.totals.total_tokens, locale, true)} (${trendSummary.peak.day.slice(-5)})`
+          ? `${formatUsageNumber(trendSummary.peak.totals.total_tokens, locale, true)} (${formatUsagePeakBucketLabel(trendSummary.peak.day, isHourly)})`
           : '—',
       },
       {

@@ -136,11 +136,39 @@ function projectSnapshot(snapshot, selected) {
     }));
     safe.usage = { cedar_ember: projected };
   }
-  for (const name of ["five_hour", "seven_day"]) {
+  if (snapshot.usage && snapshot.usage.five_hour === null) {
+    safe.usage ??= {};
+    safe.usage.five_hour = null;
+  }
+  for (const name of ["five_hour", "seven_day", "seven_day_fable", "seven_day_opus", "seven_day_sonnet"]) {
     const window = snapshot.usage?.[name];
     if (window && typeof window === "object" && !Array.isArray(window)) {
       safe.usage ??= {};
       safe.usage[name] = { utilization: window.utilization, resets_at: window.resets_at };
+    }
+  }
+  if (Array.isArray(snapshot.usage?.limits)) {
+    const projectedLimits = snapshot.usage.limits
+      .filter((item) => item && typeof item === "object" && !Array.isArray(item) && item.kind === "weekly_scoped")
+      .slice(0, 32)
+      .map((item) => {
+        const model = item.scope?.model;
+        const safeModel = model && typeof model === "object" && !Array.isArray(model)
+          ? {
+              ...(typeof model.id === "string" ? { id: model.id.slice(0, 128) } : {}),
+              ...(typeof model.display_name === "string" ? { display_name: model.display_name.slice(0, 128) } : {})
+            }
+          : undefined;
+        return {
+          kind: "weekly_scoped",
+          utilization: item.utilization,
+          resets_at: item.resets_at,
+          ...(safeModel && Object.keys(safeModel).length > 0 ? { scope: { model: safeModel } } : {})
+        };
+      });
+    if (projectedLimits.length > 0) {
+      safe.usage ??= {};
+      safe.usage.limits = projectedLimits;
     }
   }
   return safe;

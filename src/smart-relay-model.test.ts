@@ -286,7 +286,7 @@ test('summarizeRelayPool accurately aggregates ready, low, spent, unavailable, a
   expect(summary.spentCount).toBe(1);
   expect(summary.unavailableCount).toBe(1);
   expect(summary.cooldownCount).toBe(0);
-  expect(summary.totalRem5hPct).toBe(80 + 60 + 8 + 1);
+  expect(summary.avg5hRemainingPct).toBe(Math.round((80 + 60 + 8 + 1) / 4));
   expect(summary.avgRem7dPct).toBe(Math.round((70 + 50 + 60 + 40) / 4));
   expect(summary.soonestResetSec).toBe(NOW + 1 * HOUR);
 });
@@ -498,4 +498,52 @@ test('noteRelayAccountRateLimited places account into cooldown and demotes sunkO
   const cfgDefaultRl = noteRelayAccountRateLimited('acc-rl-default', undefined, NOW);
   expect(cfgDefaultRl.cooldownUntilSec['acc-rl-default']).toBe(NOW + 15 * 60);
   resetSmartRelayConfig();
+});
+
+test('SoonReset (<=24h) harvest bonus prioritizes accounts with >=15% 7d and >10% 5h resetting within 24h', () => {
+  // Smart mode: account A resets in 12h with only 11% 7d (<15% crumb), account B resets in 18h with 40% 7d (>=15% harvestable!)
+  const smartAccounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    {
+      ...makeAccount('crumb-12h', 1, 20, 89, 3, 1, false),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 20,
+        quota_5h_reset_at: NOW + 3 * HOUR,
+        quota_7d_used: 89, // rem7d = 11 (< 15, no SoonReset bonus)
+        quota_7d_reset_at: NOW + 12 * HOUR,
+      },
+    },
+    {
+      ...makeAccount('harvest-18h', 2, 20, 60, 3, 1, false),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 20, // rem5h = 80 (> 10)
+        quota_5h_reset_at: NOW + 3 * HOUR,
+        quota_7d_used: 60, // rem7d = 40 (>= 15)
+        quota_7d_reset_at: NOW + 18 * HOUR, // <= 86400s -> soonReset24h = true!
+      },
+    },
+  ];
+  const evalSmartHarvest = evaluateSmartRelay(
+    smartAccounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'smart'},
+    NOW,
+  );
+  expect(evalSmartHarvest.candidates.find(c => c.id === 'crumb-12h')?.soonReset24h).toBe(false);
+  expect(evalSmartHarvest.candidates.find(c => c.id === 'harvest-18h')?.soonReset24h).toBe(true);
+  expect(evalSmartHarvest.recommended?.id).toBe('harvest-18h');
+
+  // Least-used tie-breaker: equal effectiveRem (70%) breaks tie in favor of <=24h reset over 5-day reset
+  const tieAccounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    makeAccount('later-5d', 1, 30, 30, 3, 5, false), // effectiveRem = 70, resets in 5d
+    makeAccount('soon-24h', 2, 30, 30, 3, 1, false), // effectiveRem = 70, resets in 24h (<= 86400s)
+  ];
+  const evalTie = evaluateSmartRelay(
+    tieAccounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'least_used'},
+    NOW,
+  );
+  expect(evalTie.recommended?.id).toBe('soon-24h');
 });

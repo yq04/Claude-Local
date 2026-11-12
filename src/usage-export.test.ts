@@ -173,3 +173,85 @@ test('TSV export includes estimated_cost_usd and cache_savings_usd in summary an
   expect(tsv).toContain('# accounts\tali***@example.com\t13500000\t1000000\t500000\t2000000\t10000000\t100\t26.0000\t38.0000');
   expect(tsv).not.toContain('alice.smith@example.com');
 });
+
+test('TSV accounts section uses per-account models blended cost when available and falls back cleanly otherwise', () => {
+  const accModelsTotals = {
+    ...emptyUsage(),
+    input_tokens: 1_000_000,
+    output_tokens: 1_000_000,
+    total_tokens: 2_000_000,
+    requests: 20,
+  };
+  const fallbackTotals = {
+    ...emptyUsage(),
+    input_tokens: 1_000_000,
+    output_tokens: 0,
+    total_tokens: 1_000_000,
+    requests: 10,
+  };
+  const snapshot: UsageSnapshot = {
+    generated_at: 1_800_000_000,
+    tracking_since: 1_790_000_000,
+    totals: {...emptyUsage(), input_tokens: 2_000_000, output_tokens: 1_000_000, total_tokens: 3_000_000, requests: 30},
+    unattributed: emptyUsage(),
+    accounts: [
+      {
+        id: 'acc-blended',
+        name: 'Blended',
+        email: null,
+        current: true,
+        totals: accModelsTotals,
+        models: [
+          {model: 'claude-mythos-preview', totals: {...emptyUsage(), input_tokens: 1_000_000, total_tokens: 1_000_000, requests: 10}},
+          {model: 'claude-haiku-5-5', totals: {...emptyUsage(), output_tokens: 1_000_000, total_tokens: 1_000_000, requests: 10}},
+        ],
+      },
+      {
+        id: 'acc-legacy',
+        name: 'Legacy',
+        email: null,
+        current: false,
+        totals: fallbackTotals,
+      },
+    ],
+    daily: [],
+    models: [{model: 'claude-opus-5-5', totals: fallbackTotals}],
+    warnings: [],
+  };
+  const labels = {
+    metadata: 'metadata',
+    summary: '# summary',
+    daily: '# daily',
+    time: 'time',
+    total: 'total',
+    input: 'input',
+    output: 'output',
+    cacheWrite: 'cacheWrite',
+    cacheRead: 'cacheRead',
+    requests: 'requests',
+    account: 'account',
+    period: 'period',
+    timezone: 'timezone',
+    generated: 'generated',
+    coverage: 'coverage',
+  };
+  const tsv = buildUsageTsv({
+    snapshot,
+    period: 'week',
+    periodLabel: '7 days',
+    accountLabel: 'All',
+    accountIsAll: true,
+    timezone: 'UTC',
+    privacy: false,
+    days: [],
+    generatedLabel: 'now',
+    coverageLabel: 'scope',
+    productLabel: 'Claude-Local',
+    labels,
+  });
+
+  // Blended: 1M mythos-preview input ($25.00) + 1M haiku-5-5 output ($0.50) = $25.5000
+  expect(tsv).toContain('# accounts\tBlended\t2000000\t1000000\t1000000\t0\t0\t20\t25.5000\t0.0000');
+  // Legacy without models: falls back to primaryModel claude-opus-5-5 (1M input = $4.0000)
+  expect(tsv).toContain('# accounts\tLegacy\t1000000\t1000000\t0\t0\t0\t10\t4.0000\t0.0000');
+});

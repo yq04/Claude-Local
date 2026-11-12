@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Local identity records, passive/online quota snapshots, current timestamp and browser localStorage.
- * [OUTPUT]: Magpie-inspired 3-tier account classification (with rested inferred7d/inferred5h Tier 0 promotion), truthful percentage formatter (formatTruthfulPercent), 5h/7d window burn-pace delta (computeWindowPaceDelta), dynamic anti-ping-pong switch margin (computeDynamicSwitchMarginPct / meetsDynamicSwitchMargin), per-account cooldown jail & rate-limit helper (noteRelayAccountRateLimited), one-way noReturnAccountId lock, 5 routing strategies (Smart / Pace / Ordered / LeastUsed / Rotate), 3-state affinityMode (auto / session / manual), preferred-account hysteresis return, rate-limit queue demotion, pool capacity summary (summarizeRelayPool), and reactive Smart Relay configuration store.
+ * [OUTPUT]: Magpie-inspired 3-tier account classification (with rested inferred7d/inferred5h Tier 0 promotion & SoonReset <=24h harvest tie-break bonus), truthful percentage formatter (formatTruthfulPercent), 5h/7d window burn-pace delta (computeWindowPaceDelta), dynamic anti-ping-pong switch margin (computeDynamicSwitchMarginPct / meetsDynamicSwitchMargin), per-account cooldown jail & rate-limit helper (noteRelayAccountRateLimited), one-way noReturnAccountId lock, 5 routing strategies (Smart / Pace / Ordered / LeastUsed / Rotate), 3-state affinityMode (auto / session / manual), preferred-account hysteresis return, rate-limit queue demotion, pool capacity summary with truthful avg5hRemainingPct (summarizeRelayPool), and reactive Smart Relay configuration store.
  * [POS]: Pure frontend multi-account rotation & smart relay model; default OFF, never terminates running claude.exe or bypasses vault isolation.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -372,6 +372,8 @@ export type RelayCandidate = {
   listIndex: number;
   known5h: boolean;
   known7d: boolean;
+  no5hLimit?: boolean;
+  soonReset24h?: boolean;
   used5h: number;
   used7d: number;
   rem5h: number;
@@ -418,7 +420,7 @@ export interface RelayPoolSummary {
   spentCount: number;      // tier === 2
   unavailableCount: number;// tier === 3
   cooldownCount: number;   // included candidates where inCooldown === true
-  totalRem5hPct: number;   // sum of rem5h across included candidates with known quota (tier <= 2)
+  avg5hRemainingPct: number; // rounded average of rem5h across included candidates with known quota (tier <= 2), or 0
   avgRem7dPct: number;     // rounded average of rem7d across included candidates with known quota (tier <= 2), or 0
   soonestResetSec: number | null; // minimum positive (reset5h or reset7d > nowSec) among tier 1/2 candidates, or null
 }
@@ -468,7 +470,7 @@ export function summarizeRelayPool(
     spentCount,
     unavailableCount,
     cooldownCount,
-    totalRem5hPct: Math.round(sumRem5h),
+    avg5hRemainingPct: knownQuotaCount > 0 ? Math.round(sumRem5h / knownQuotaCount) : 0,
     avgRem7dPct: knownQuotaCount > 0 ? Math.round(sumRem7d / knownQuotaCount) : 0,
     soonestResetSec,
   };
@@ -497,7 +499,7 @@ export function evaluateSmartRelay(
   const lowThreshold = Math.min(LOW_SHARE_PCT, effectiveSpentThreshold);
 
   const rawCandidates: RelayCandidate[] = accounts.map(acc => {
-    const q = evaluateQuota(acc.summary, nowSec);
+    const q = evaluateQuota(acc.summary ? {...acc.summary, plan: acc.summary.plan ?? acc.plan} : null, nowSec);
     const isIncluded = !config.excludedAccountIds.includes(acc.id);
     const isPreferred = config.preferredAccountId === acc.id;
     const sinkSeq = config.rateLimitMode === 'sink_to_end' ? (config.sunkOrder[acc.id] ?? 0) : 0;
@@ -507,7 +509,7 @@ export function evaluateSmartRelay(
       ? Math.max(0, (config.cooldownUntilSec?.[acc.id] ?? 0) - nowSec)
       : 0;
     const pace5hDeltaPct =
-      q && q.known5h ? computeWindowPaceDelta(q.used5h, q.r5, nowSec, 5).deltaPct : 0;
+      q && q.known5h && !q.no5hLimit ? computeWindowPaceDelta(q.used5h, q.r5, nowSec, 5).deltaPct : 0;
     const subscriptionExpiresHour =
       typeof acc.subscription_expires_at === 'number' && acc.subscription_expires_at > nowSec
         ? Math.floor(acc.subscription_expires_at / 3600)
@@ -525,6 +527,8 @@ export function evaluateSmartRelay(
         listIndex: acc.listIndex,
         known5h: Boolean(q?.known5h),
         known7d: Boolean(q?.known7d),
+        no5hLimit: Boolean(q?.no5hLimit),
+        soonReset24h: false,
         used5h: q?.used5h ?? 0,
         used7d: q?.used7d ?? 0,
         rem5h: q?.rem5h ?? 0,
@@ -575,6 +579,12 @@ export function evaluateSmartRelay(
     const hoursLeft7d =
       q.r7 && q.r7 > nowSec ? Math.max(1, (q.r7 - nowSec) / 3600) : 168;
     const weeklyPacePctPerHour = q.rem7d > 0 ? q.rem7d / hoursLeft7d : FRESH_WEEKLY_PACE;
+    const soonReset24h =
+      q.rem7d >= 15 &&
+      q.rem5h > 10 &&
+      typeof q.r7 === 'number' &&
+      q.r7 - nowSec > 0 &&
+      q.r7 - nowSec <= 86400;
 
     return {
       id: acc.id,
@@ -587,6 +597,8 @@ export function evaluateSmartRelay(
       listIndex: acc.listIndex,
       known5h: q.known5h,
       known7d: q.known7d,
+      no5hLimit: q.no5hLimit,
+      soonReset24h,
       used5h: q.used5h,
       used7d: q.used7d,
       rem5h: q.rem5h,
@@ -685,23 +697,28 @@ export function evaluateSmartRelay(
       }
       case 'rotate': {
         if (a.rotationSeq !== b.rotationSeq) return a.rotationSeq - b.rotationSeq;
+        if (Boolean(a.soonReset24h) !== Boolean(b.soonReset24h)) return a.soonReset24h ? -1 : 1;
         if (b.effectiveRem !== a.effectiveRem) return b.effectiveRem - a.effectiveRem;
         return a.listIndex - b.listIndex;
       }
       case 'least_used': {
         if (b.effectiveRem !== a.effectiveRem) return b.effectiveRem - a.effectiveRem;
+        if (Boolean(a.soonReset24h) !== Boolean(b.soonReset24h)) return a.soonReset24h ? -1 : 1;
         if (a.inferred !== b.inferred) return a.inferred ? 1 : -1;
         if (a.rotationSeq !== b.rotationSeq) return a.rotationSeq - b.rotationSeq;
         return a.listIndex - b.listIndex;
       }
       case 'pace': {
         if (a.paceBandIndex !== b.paceBandIndex) return a.paceBandIndex - b.paceBandIndex;
+        if (Boolean(a.soonReset24h) !== Boolean(b.soonReset24h)) return a.soonReset24h ? -1 : 1;
         if (b.effectiveRem !== a.effectiveRem) return b.effectiveRem - a.effectiveRem;
         if (a.inferred !== b.inferred) return a.inferred ? 1 : -1;
         return a.listIndex - b.listIndex;
       }
       case 'smart':
       default: {
+        // SoonReset (<=24h) Harvest Bonus: harvest accounts with >=15% 7d & >10% 5h expiring within 24h before reset
+        if (Boolean(a.soonReset24h) !== Boolean(b.soonReset24h)) return a.soonReset24h ? -1 : 1;
         // Magpie Smart: compare 7d renewal hour bucket first, then 5h renewal hour bucket
         const aR7Hour = a.r7 && a.r7 > nowSec ? Math.floor(a.r7 / 3600) : null;
         const bR7Hour = b.r7 && b.r7 > nowSec ? Math.floor(b.r7 / 3600) : null;

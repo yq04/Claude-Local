@@ -255,8 +255,8 @@ describe('floating-monitor-model', () => {
     expect(formatWindowPaceBadge(aheadPace, 'en')).toBe('+20% vs time')
 
     const safePace = computeWindowTimePace(now + win5h * 0.4, win5h, 30, now)
-    expect(formatWindowPaceBadge(safePace, 'zh')).toBe('余量 -30%')
-    expect(formatWindowPaceBadge(safePace, 'en')).toBe('-30% vs time')
+    expect(formatWindowPaceBadge(safePace, 'zh')).toBe('余量 30%')
+    expect(formatWindowPaceBadge(safePace, 'en')).toBe('30% buffer')
 
     const onPace = computeWindowTimePace(now + win5h * 0.5, win5h, 50, now)
     expect(formatWindowPaceBadge(onPace, 'zh')).toBe('匀速')

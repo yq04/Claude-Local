@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Redacted native usage aggregates and the current local calendar/locale.
- * [OUTPUT]: Typed accounting/activity contract, four-part token composition, family-first model & thinking-depth effort sorting, official API USD cost/cache-savings estimation, cache-rate/K-M-B formatting, calendar series and elapsed-period averages/peaks.
+ * [OUTPUT]: Typed accounting/activity contract (including optional per-account models), four-part token composition, family-first model & thinking-depth effort sorting, official API USD cost/cache-savings estimation (including Mythos preview/5.2/5.1), peak bucket label formatting, cache-rate/K-M-B formatting, calendar series and elapsed-period averages/peaks.
  * [POS]: Pure usage presentation helpers; no identity files, credentials or network access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -16,7 +16,7 @@ export type UsageTotals = {
   /** Distinct recorded session IDs; absent in older snapshots. */
   sessions?: number;
 };
-export type UsageAccount = {id: string; name: string; email: string | null; current: boolean; totals: UsageTotals};
+export type UsageAccount = {id: string; name: string; email: string | null; current: boolean; totals: UsageTotals; models?: UsageModel[]};
 export type UsageDay = {day: string; totals: UsageTotals; future?: boolean; start_at?: number; end_at?: number};
 export type UsageAttributionConfig = {
   fallback_account_id: string | null;
@@ -69,7 +69,9 @@ export type UsageCostEstimate = {
 export function detectModelFamily(model: string): {key: 'opus' | 'sonnet' | 'fable' | 'haiku' | 'other'; label: string | null} {
   const lower = model.toLowerCase();
   if (lower.includes('opus')) return {key: 'opus', label: 'Opus'};
-  if (lower.includes('fable')) return {key: 'fable', label: 'Fable'};
+  if (lower.includes('fable') || lower.includes('mythos')) {
+    return {key: 'fable', label: lower.includes('mythos') ? 'Mythos' : 'Fable'};
+  }
   if (lower.includes('sonnet')) return {key: 'sonnet', label: 'Sonnet'};
   if (lower.includes('haiku')) return {key: 'haiku', label: 'Haiku'};
   return {key: 'other', label: null};
@@ -143,7 +145,22 @@ export function resolveModelPricing(model?: string | null): ModelApiPricing {
     }
     return {inputPerM: 15.00, outputPerM: 75.00, cacheWritePerM: 18.75, cacheReadPerM: 1.50};
   }
-  if (lower.includes('fable')) {
+  if (lower.includes('fable') || lower.includes('mythos')) {
+    if (lower.includes('mythos-preview')) {
+      return {inputPerM: 25.00, outputPerM: 125.00, cacheWritePerM: 31.25, cacheReadPerM: 2.50};
+    }
+    if (
+      lower.includes('fable-5-2') || lower.includes('fable-5.2') ||
+      lower.includes('mythos-5-2') || lower.includes('mythos-5.2')
+    ) {
+      return {inputPerM: 8.00, outputPerM: 40.00, cacheWritePerM: 10.00, cacheReadPerM: 0.20};
+    }
+    if (
+      lower.includes('fable-5-1') || lower.includes('fable-5.1') ||
+      lower.includes('mythos-5-1') || lower.includes('mythos-5.1')
+    ) {
+      return {inputPerM: 10.00, outputPerM: 50.00, cacheWritePerM: 12.50, cacheReadPerM: 0.25};
+    }
     return {inputPerM: 10.00, outputPerM: 50.00, cacheWritePerM: 12.50, cacheReadPerM: 1.00};
   }
   if (lower.includes('sonnet-5-5') || lower.includes('sonnet-5.5')) {
@@ -289,6 +306,13 @@ export function formatUsageNumber(value: number | null | undefined, locale: stri
 }
 export function localDayKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+export function formatUsagePeakBucketLabel(day: string, isHourly: boolean): string {
+  if (!day) return '';
+  if (isHourly) {
+    return day.includes('T') ? day.slice(11, 16) : day.slice(-5);
+  }
+  return day.includes('T') ? day.slice(5, 10) : day.slice(-5);
 }
 /** Include zero-use elapsed buckets in the average; future hours are never samples. */
 export function summarizeUsageTrend(days: UsageDay[]): {average: number | null; peak: UsageDay | null} {

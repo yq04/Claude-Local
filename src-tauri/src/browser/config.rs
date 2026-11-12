@@ -115,7 +115,8 @@ pub fn proxy(value: &str) -> Result<Option<reqwest::Url>, String> {
     let url = reqwest::Url::parse(value).map_err(|_| "代理地址格式无效。")?;
     if !["http", "https", "socks5", "socks5h"].contains(&url.scheme())
         || url.host_str().is_none()
-        || url.port().is_none()
+        || url.port_or_known_default().unwrap_or(0) == 0
+        || !url_has_explicit_port(value)
         || !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
@@ -125,6 +126,32 @@ pub fn proxy(value: &str) -> Result<Option<reqwest::Url>, String> {
         return Err("填写 http、https 或 socks5 代理主机与端口；带密码代理请交给本机 Clash，不在本软件保存凭据。".into());
     }
     Ok(Some(url))
+}
+// URL 会将 http:80 / https:443 归一化为 port() == None；原始 authority 仍须显式携带数字端口。
+fn url_has_explicit_port(value: &str) -> bool {
+    let Some((_, rest)) = value.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let hostport = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority);
+    let after_host = if let Some(rest) = hostport.strip_prefix('[') {
+        match rest.split_once(']') {
+            Some((_, after)) => after,
+            None => return false,
+        }
+    } else {
+        match hostport.rfind(':') {
+            Some(index) => &hostport[index..],
+            None => return false,
+        }
+    };
+    let Some(port) = after_host.strip_prefix(':') else {
+        return false;
+    };
+    !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
 }
 pub fn load(root: &Path) -> Result<Config, String> {
     match std::fs::read(root.join("config.json")) {

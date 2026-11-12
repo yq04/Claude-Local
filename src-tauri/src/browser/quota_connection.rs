@@ -1,6 +1,6 @@
 // [INPUT]: Explicit user remedy click, frozen account ID, expected 64-hex identity and managed browser profile storage.
-// [OUTPUT]: Safe isolated fixed-usage-page launch; current CLI uses bounded live account proof, without changing global slot/session or reading credentials.
-// [POS]: Isolated browser connection launcher for centralized remedy queue; opens only to pinned usage URL, never executes arbitrary URLs or loops.
+// [OUTPUT]: Safe isolated fixed-URL launch (usage or claude.ai) with on-demand slot materialization for explicit user opens; current CLI uses bounded live account proof, without changing global slot/session or reading credentials.
+// [POS]: Isolated browser connection launcher for multi-account simultaneous profiles and remedy queue; opens only pinned URLs, never executes arbitrary URLs or loops.
 // [PROTOCOL]: Update header on change and check CLAUDE.md.
 use super::*;
 use std::path::{Path, PathBuf};
@@ -139,13 +139,61 @@ fn revalidate_target(
     Ok(())
 }
 
-pub fn launch_bound_profile_url_locked(
+pub(crate) fn materialize_identity_profile_locked(
     app: &tauri::AppHandle,
     account_id: &str,
     expected_identity: &str,
-    target_url: &str,
 ) -> Result<(), String> {
-    let target = resolve_bound_profile_target(app, account_id, expected_identity)?;
+    validate_fingerprint(expected_identity)?;
+    let root = super::root(app)?;
+    super::workspaces::ready(&root)?;
+    if account_id == "current" {
+        let proof = super::lifecycle::prove_cli(app)?;
+        if !proof.fingerprint.eq_ignore_ascii_case(expected_identity) {
+            return Err("quotaOnline.accountMismatch".into());
+        }
+        super::workspaces::ensure_identity_slot(&root, &proof.id)?;
+        return Ok(());
+    }
+    if !crate::identities::valid_id(account_id) {
+        return Err("quotaOnline.accountMismatch".into());
+    }
+    let db = super::workspaces::database(&root)?;
+    if db.get("recovery")?.is_some() {
+        return Err("quotaOnline.busy".into());
+    }
+    if !db.browser_link()?.enabled {
+        return Err("quotaOnline.unavailable".into());
+    }
+    let records = db.records()?;
+    let summaries = db.summaries()?;
+    let matched = records.iter().any(|r| {
+        r.id == account_id
+            && !r.empty
+            && summaries
+                .get(&r.id)
+                .and_then(|s| s.quota_identity.as_deref())
+                .is_some_and(|fp| fp.eq_ignore_ascii_case(expected_identity))
+    });
+    if !matched {
+        return Err("quotaOnline.accountMismatch".into());
+    }
+    super::workspaces::ensure_identity_slot(&root, account_id)?;
+    Ok(())
+}
+
+pub(crate) fn launch_scope_url_locked(
+    app: &tauri::AppHandle,
+    scope: &Path,
+    target_url: &str,
+    revalidate: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let root = super::root(app)?;
+    let profile = scope.join("profile");
+    super::profile::check_path(&root, &profile)?;
+    if !profile.is_dir() || !scope.join("config.json").is_file() {
+        return Err("quotaOnline.unavailable".into());
+    }
 
     let engine = super::engine(app)?;
     let binary = super::binary(&engine);
@@ -153,14 +201,14 @@ pub fn launch_bound_profile_url_locked(
         return Err("quotaOnline.unavailable".into());
     }
 
-    let config = super::config::load(&target.scope)?;
+    let config = super::config::load(scope)?;
     let machine = super::config::machine()?;
     config.validate(&machine)?;
-    if !super::profile::running(&target.profile)? {
-        super::profile::preferences(&target.profile, &config, &machine)?;
+    if !super::profile::running(&profile)? {
+        super::profile::preferences(&profile, &config, &machine)?;
     }
 
-    let log_path = target.scope.join("engine.log");
+    let log_path = scope.join("engine.log");
     let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -170,16 +218,15 @@ pub fn launch_bound_profile_url_locked(
     let mut cmd_args = super::config::arguments(
         &config,
         &machine,
-        &target.profile,
+        &profile,
         "",
         &super::version(&engine),
     );
     cmd_args.pop(); // Remove empty default page
     cmd_args.push(target_url.to_string());
 
-    let fresh = resolve_bound_profile_target(app, account_id, expected_identity)?;
-    revalidate_target(&target, &fresh)?;
-    let fresh_config = super::config::load(&fresh.scope)?;
+    revalidate()?;
+    let fresh_config = super::config::load(scope)?;
     if serde_json::to_value(&fresh_config).ok() != serde_json::to_value(&config).ok() {
         return Err("quotaOnline.accountMismatch".into());
     }
@@ -206,6 +253,20 @@ pub fn launch_bound_profile_url_locked(
     });
 
     Ok(())
+}
+
+pub fn launch_bound_profile_url_locked(
+    app: &tauri::AppHandle,
+    account_id: &str,
+    expected_identity: &str,
+    target_url: &str,
+) -> Result<(), String> {
+    let target = resolve_bound_profile_target(app, account_id, expected_identity)?;
+    let scope = target.scope.clone();
+    launch_scope_url_locked(app, &scope, target_url, || {
+        let fresh = resolve_bound_profile_target(app, account_id, expected_identity)?;
+        revalidate_target(&target, &fresh)
+    })
 }
 
 pub fn launch_identity_profile_locked(
@@ -236,6 +297,9 @@ pub async fn browser_open_identity_profile(
         // Step 2: acquire Browser gate in the exact same order as identity mutators
         let browser = app.state::<Browser>();
         let _browser_guard = browser.gate.lock().unwrap();
+
+        // Materialize isolated slot directory/seed on explicit user open if not yet initialized
+        materialize_identity_profile_locked(&app, &account_id, &expected_identity)?;
 
         // Launch under the door; release both guards on completion
         launch_bound_profile_url_locked(&app, &account_id, &expected_identity, target_url)
@@ -411,5 +475,84 @@ mod tests {
         .unwrap();
         assert_eq!(current_target.slot, a_slot);
         assert_eq!(db.browser_slot().unwrap(), current_slot);
+    }
+
+    #[test]
+    fn ensure_identity_slot_materializes_distinct_profiles_for_multiple_saved_accounts() {
+        let f = Fixture::new();
+        let root = f.0.join("browser");
+        std::fs::create_dir_all(&root).unwrap();
+        let a = crate::identities::new_id().unwrap();
+        let b = crate::identities::new_id().unwrap();
+        let c = crate::identities::new_id().unwrap();
+        let fp_a = "1111111111111111111111111111111111111111111111111111111111111111";
+        let fp_b = "2222222222222222222222222222222222222222222222222222222222222222";
+        let fp_c = "3333333333333333333333333333333333333333333333333333333333333333";
+
+        {
+            let mut db = f.db();
+            db.remember(&record(&a)).unwrap();
+            db.remember(&record(&b)).unwrap();
+            db.remember(&record(&c)).unwrap();
+            // Only `a` is bound initially when browser linking is enabled; `b` and `c` are saved cards.
+            db.configure_browser(true, false, Some(&a)).unwrap();
+        }
+
+        let scope_a = super::super::workspaces::ensure_identity_slot(&root, &a).unwrap();
+        let scope_b = super::super::workspaces::ensure_identity_slot(&root, &b).unwrap();
+        let scope_c = super::super::workspaces::ensure_identity_slot(&root, &c).unwrap();
+        assert_ne!(scope_a, scope_b);
+        assert_ne!(scope_b, scope_c);
+        assert_ne!(scope_a, scope_c);
+
+        let db = f.db();
+        let active_slot = db.browser_slot().unwrap();
+        assert_eq!(Some(active_slot.as_str()), db.browser_for(&a).unwrap().as_deref());
+
+        let saved_records = [
+            (a.as_str(), Some(fp_a)),
+            (b.as_str(), Some(fp_b)),
+            (c.as_str(), Some(fp_c)),
+        ];
+        let t_a = resolve_bound_profile_target_pure(
+            &root,
+            &db,
+            false,
+            "current",
+            fp_a,
+            Some((&a, fp_a)),
+            &saved_records,
+        )
+        .unwrap();
+        let t_b = resolve_bound_profile_target_pure(
+            &root,
+            &db,
+            false,
+            &b,
+            fp_b,
+            None,
+            &saved_records,
+        )
+        .unwrap();
+        let t_c = resolve_bound_profile_target_pure(
+            &root,
+            &db,
+            false,
+            &c,
+            fp_c,
+            None,
+            &saved_records,
+        )
+        .unwrap();
+
+        assert_ne!(t_a.profile, t_b.profile);
+        assert_ne!(t_b.profile, t_c.profile);
+        assert_ne!(t_a.profile, t_c.profile);
+        let cfg_a = super::super::config::load(&t_a.scope).unwrap();
+        let cfg_b = super::super::config::load(&t_b.scope).unwrap();
+        let cfg_c = super::super::config::load(&t_c.scope).unwrap();
+        assert!(cfg_a.seed > 0 && cfg_b.seed > 0 && cfg_c.seed > 0);
+        assert_ne!(cfg_a.seed, cfg_b.seed);
+        assert_ne!(cfg_b.seed, cfg_c.seed);
     }
 }

@@ -1,5 +1,5 @@
 # [INPUT]: BAGAID01 archive, existing vault key and version-1 source manifest.
-# [OUTPUT]: In-memory account/OAuth/settings projection; no extracted files or project parsing.
+# [OUTPUT]: In-memory account/OAuth/settings projection (including HTTP/HTTPS/ALL/GRPC/NO_PROXY env keys); no extracted files or project parsing.
 # [POS]: Bounded authenticated reader; strict framing and Windows null-owner warning compatibility.
 # [PROTOCOL]: Update scripts/CLAUDE.md and runtime-resources.json when changing this boundary.
 """Read only online account evidence. Decrypted bytes never enter a temporary file."""
@@ -29,7 +29,7 @@ MAX_MEMBERS = 100_000
 MAX_SOURCES = 1024
 TIME_LIMIT = 30
 PROXY_KEYS = ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy",
-              "NO_PROXY", "no_proxy")
+              "GRPC_PROXY", "grpc_proxy", "NO_PROXY", "no_proxy")
 
 
 def _check(deadline):

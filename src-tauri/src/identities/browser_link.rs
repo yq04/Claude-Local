@@ -1,5 +1,5 @@
 // [INPUT]: 身份 SQLite 事务、本软件随机身份 ID、浏览器资料槽位及只读有界本地账号显示字段。
-// [OUTPUT]: CLI/养号独占绑定与稳定种子、CLI事务保留真实养号选择、受控转正草稿及回滚和无凭据身份摘要。
+// [OUTPUT]: CLI/养号独占绑定与稳定种子、按需补齐已保存身份独立槽位、CLI事务保留真实养号选择、受控转正草稿及回滚和无凭据身份摘要。
 // [POS]: 浏览器联动的持久元数据；不读取 Cookie，不保存网站凭据，不把账号 UUID 暴露给引擎。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -283,6 +283,41 @@ impl Database {
             .map_err(error)?;
         if occupied {
             return Err("身份编号已用于 CLI 身份。".into());
+        }
+        let slot = bind(&tx, id, None)?;
+        let seed = tx
+            .query_row(
+                "SELECT seed FROM browser_bindings WHERE identity=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(error)?;
+        tx.commit().map_err(error)?;
+        Ok((slot, seed))
+    }
+    pub(crate) fn ensure_identity_binding(&mut self, id: &str) -> Result<(String, u32), String> {
+        if !valid_id(id) {
+            return Err("quotaOnline.accountMismatch".into());
+        }
+        if self.get("recovery")?.is_some() || self.get("browser.promotion")?.is_some() {
+            return Err("quotaOnline.busy".into());
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(error)?;
+        if get(&tx, "browser.enabled")?.as_deref() != Some("1") {
+            return Err("quotaOnline.unavailable".into());
+        }
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM identities WHERE id=?1 AND empty=0)",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(error)?;
+        if !exists {
+            return Err("quotaOnline.accountMismatch".into());
         }
         let slot = bind(&tx, id, None)?;
         let seed = tx

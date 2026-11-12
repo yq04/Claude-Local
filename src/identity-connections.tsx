@@ -1,8 +1,8 @@
 /**
  * [INPUT]: Frozen account/fingerprint quota outcomes and explicit user actions.
- * [OUTPUT]: An account-bound web-query repair queue with precise browser failures and subset retry, separate from CLI wakeup authorization.
+ * [OUTPUT]: An account-bound web-query repair queue with deduplicated route-protection guidance, precise browser failures and subset retry, separate from CLI wakeup authorization.
  * [POS]: Identity recovery UI and in-memory history; never reads credentials or selects global CLI/browser state.
- * [PROTOCOL]: Keep bilingual additions in p5-i18n.json and tests synthetic-only.
+ * [PROTOCOL]: Keep bilingual additions in zh.yaml/en.yaml and tests synthetic-only.
  */
 import {Button} from 'cromma-ui';
 import {formatOnlineQuotaStatus, type OnlineQuotaResult, type QuotaBatchTarget} from './identity-online-quota';
@@ -146,7 +146,6 @@ export function IdentityConnections({
                   {t('quotaOnline.openAccountBrowser')}
                 </Button>
               )}
-              {issue === 'route' && <span>{t('quotaOnline.connection.routeHelp')}</span>}
             </li>
           );
         })}

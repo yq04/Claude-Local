@@ -1,6 +1,6 @@
 // [INPUT]: rusqlite/内嵌 SQLite、私有保险库目录和脱敏身份元数据与本机加盐的账号索引。
-// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、SQLite v3 浏览器绑定与持久切换/恢复状态和身份移除事务；文件创建到初始化提交的进程内串行化。
-// [POS]: 保险库的索引事务；短期 Mutex 保护打开边界，IMMEDIATE 事务保护跨连接版本迁移与默认状态，凭据和会话正文仅进入加密归档。
+// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、SQLite v3 浏览器绑定与持久切换/恢复状态和身份移除事务；已初始化 v3 库的无写锁快速打开与首开/迁移的进程内串行化。
+// [POS]: 保险库的索引事务；短期 Mutex 保护打开边界，v3 已就绪时跳过写事务与重复 DDL，未初始化或旧版本时以 IMMEDIATE 事务保护跨连接版本迁移与默认状态，凭据和会话正文仅进入加密归档。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -63,6 +63,25 @@ impl Database {
         connection
             .busy_timeout(Duration::from_secs(5))
             .map_err(error)?;
+        connection
+            .execute_batch("PRAGMA foreign_keys=ON;")
+            .map_err(error)?;
+        let initial_version: i64 = connection
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .map_err(error)?;
+        if initial_version == 3 {
+            let has_draft: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM state WHERE key='browser.draft')",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(false);
+            if has_draft {
+                let _ = connection.execute_batch("PRAGMA synchronous=FULL;");
+                return Ok(Self { connection });
+            }
+        }
         connection
             .execute_batch(
                 "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",

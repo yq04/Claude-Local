@@ -352,47 +352,19 @@ fn handle(
             return;
         };
         let result = (|| -> Result<(), String> {
-            let (current_id, current_quota_identity) =
-                crate::identities::online::current_browser_binding(app)?;
-            if current_id != ticket.account_id || current_quota_identity != ticket.quota_identity {
-                return Err("quotaOnline.accountMismatch".into());
-            }
             let observed_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| "quotaOnline.unavailable")?
                 .as_millis() as u64;
             let snapshot = super::quota_bridge::snapshot(incoming, observed_ms)?;
-            if snapshot.billing_date.is_none()
-                && snapshot.manual_resets_remaining.is_none()
-                && snapshot.usage.is_none()
-            {
-                return Err("quotaOnline.bridgeUnavailable".into());
-            }
-            let value = crate::identities::online::import_browser_snapshot(
+            super::quota_bridge::commit_browser_snapshot(
                 app,
+                ticket.requested_account_id.as_deref(),
+                &ticket.slot_owner_id,
                 &ticket.account_id,
                 &ticket.quota_identity,
-                serde_json::to_value(snapshot).map_err(|_| "quotaOnline.unavailable")?,
-            )?;
-            let status = value
-                .get("status")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            if !matches!(status, "updated" | "cached") {
-                return Err(match status {
-                    "account_mismatch" => "quotaOnline.accountMismatch".into(),
-                    "auth_required" => "quotaOnline.authRequired".into(),
-                    _ => "quotaOnline.unavailable".into(),
-                });
-            }
-            if value
-                .get("metadata_updated")
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
-            {
-                let _ = app.emit("quota-metadata-updated", ());
-            }
-            Ok(())
+                snapshot,
+            )
         })();
         let ok = result.is_ok();
         let _ = ticket.reply.send(result);
@@ -614,7 +586,6 @@ mod tests {
         client.join().unwrap();
         let session = Some(super::super::Session {
             token: "new".into(),
-            port: 0,
             slot: "default".into(),
             config: super::super::Config::default(),
             received_at: None,

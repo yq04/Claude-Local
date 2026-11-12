@@ -1,13 +1,20 @@
 /**
- * [INPUT]: Bounded local quota values, independent window evidence/reset timestamps and an explicit clock.
- * [OUTPUT]: Independent quota-window presentation, truthful percentage badge/detail formatting, explicit trusted-reset inference, elapsed reset duration, 7d linear burn pace and conservative recommendations.
+ * [INPUT]: Bounded local quota values (including Claude Ultra no-5h-limit metadata), independent window evidence/reset timestamps and an explicit clock.
+ * [OUTPUT]: Independent quota-window presentation, Ultra Unlimited 5h semantics, truthful percentage badge/detail formatting, explicit trusted-reset inference, elapsed reset duration, 7d linear burn pace and conservative recommendations.
  * [POS]: Pure frontend quota model; no network, ledger writes or account operations.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
 import type {QuotaEvidence} from './identity-model';
 import {formatTruthfulPercent} from './smart-relay-model';
 
-export type QuotaInput = QuotaEvidence & {quota_5h_used?: number | null; quota_5h_reset_at?: number | null; quota_7d_used?: number | null; quota_7d_reset_at?: number | null};
+export type QuotaInput = QuotaEvidence & {
+  plan?: string | null;
+  quota_5h_used?: number | null;
+  quota_5h_reset_at?: number | null;
+  quota_no_5h_limit?: boolean | null;
+  quota_7d_used?: number | null;
+  quota_7d_reset_at?: number | null;
+};
 export type WeeklyPace = {expectedUsedPct: number; expectedRemPct: number; deltaUsedPct: number; suppressed: boolean; ahead: boolean};
 
 const SEVEN_DAYS_SEC = 7 * 86400;
@@ -69,27 +76,33 @@ export function evaluateQuota(item: QuotaInput | null | undefined, nowSec: numbe
     typeof used === 'number' && Number.isFinite(used) && used >= 0 && used <= 100 &&
     typeof reset === 'number' && Number.isFinite(reset) && reset > 0 && reset <= nowSec &&
     typeof observed === 'number' && Number.isFinite(observed) && observed > 0 && observed < reset * 1000;
-  const inferred5h = inferred(source5h, item.quota_5h_used, item.quota_5h_reset_at, item.quota_5h_source != null ? item.quota_5h_observed_at_ms : item.quota_observed_at_ms);
   const inferred7d = inferred(source7d, item.quota_7d_used, item.quota_7d_reset_at, item.quota_7d_source != null ? item.quota_7d_observed_at_ms : item.quota_observed_at_ms);
+  const known7d = inferred7d || (source7d !== 'unknown' && source7d !== 'reset_inferred' && typeof item.quota_7d_used === 'number' && Number.isFinite(item.quota_7d_used) && !expired7d);
+  const isUltraNo5h = typeof item.plan === 'string' && item.plan.trim().toLowerCase() === 'ultra' && item.quota_5h_used == null && known7d;
+  const no5hLimit = Boolean(item.quota_no_5h_limit || isUltraNo5h);
+  const rawInferred5h = !no5hLimit && inferred(source5h, item.quota_5h_used, item.quota_5h_reset_at, item.quota_5h_source != null ? item.quota_5h_observed_at_ms : item.quota_observed_at_ms);
+  const inferred5h = rawInferred5h;
   const inferredReset5h = inferred5h ? (item.quota_5h_reset_at ?? null) : null;
   const inferredReset7d = inferred7d ? (item.quota_7d_reset_at ?? null) : null;
-  const known5h = inferred5h || (source5h !== 'unknown' && source5h !== 'reset_inferred' && typeof item.quota_5h_used === 'number' && Number.isFinite(item.quota_5h_used) && !expired5h);
-  const known7d = inferred7d || (source7d !== 'unknown' && source7d !== 'reset_inferred' && typeof item.quota_7d_used === 'number' && Number.isFinite(item.quota_7d_used) && !expired7d);
-  const used5h = known5h && !inferred5h ? Math.max(0, Math.min(100, item.quota_5h_used!)) : 0;
+  const known5h = no5hLimit || inferred5h || (source5h !== 'unknown' && source5h !== 'reset_inferred' && typeof item.quota_5h_used === 'number' && Number.isFinite(item.quota_5h_used) && !expired5h);
+  const used5h = !no5hLimit && known5h && !inferred5h ? Math.max(0, Math.min(100, item.quota_5h_used!)) : 0;
   const used7d = known7d && !inferred7d ? Math.max(0, Math.min(100, item.quota_7d_used!)) : 0;
-  const rem5h = known5h ? 100 - used5h : 0;
+  const rem5h = no5hLimit ? 100 : known5h ? 100 - used5h : 0;
   const rem7d = known7d ? 100 - used7d : 0;
-  const effectiveRem = Math.min(rem5h, rem7d);
+  const effectiveRem = no5hLimit ? rem7d : Math.min(rem5h, rem7d);
+  const effR5 = no5hLimit ? null : r5;
   const level: 'ok' | 'warn' | 'empty' = effectiveRem === 0 ? 'empty' : effectiveRem <= 20 ? 'warn' : 'ok';
   const level5h: 'ok' | 'warn' | 'empty' = rem5h === 0 ? 'empty' : rem5h <= 20 ? 'warn' : 'ok';
   const level7d: 'ok' | 'warn' | 'empty' = rem7d === 0 ? 'empty' : rem7d <= 20 ? 'warn' : 'ok';
-  const eta5h = formatCompactEta(r5, nowSec);
+  const eta5h = formatCompactEta(effR5, nowSec);
   const eta7d = formatCompactEta(r7, nowSec);
-  const clock5h = formatResetClock(r5, false);
+  const clock5h = formatResetClock(effR5, false);
   const clock7d = formatResetClock(r7, true);
   const primaryEta = rem7d === 0 ? eta7d : eta5h && eta7d ? `${eta5h}/${eta7d}` : eta5h || eta7d;
-  const badge = `5h ${known5h ? formatTruthfulPercent(rem5h) : '?'} · 7d ${known7d ? formatTruthfulPercent(rem7d) : '?'}${primaryEta ? ` (${primaryEta})` : ''}`;
-  const detail = `5h: ${known5h ? formatTruthfulPercent(rem5h) : '?'}${eta5h ? ` (${eta5h} · ${clock5h})` : ''} | 7d: ${known7d ? formatTruthfulPercent(rem7d) : '?'}${eta7d ? ` (${eta7d} · ${clock7d})` : ''}`;
+  const label5h = no5hLimit ? 'Unlimited' : known5h ? formatTruthfulPercent(rem5h) : '?';
+  const badge = `5h ${label5h} · 7d ${known7d ? formatTruthfulPercent(rem7d) : '?'}${primaryEta ? ` (${primaryEta})` : ''}`;
+  const detail = `5h: ${label5h}${eta5h ? ` (${eta5h} · ${clock5h})` : ''} | 7d: ${known7d ? formatTruthfulPercent(rem7d) : '?'}${eta7d ? ` (${eta7d} · ${clock7d})` : ''}`;
   const pace7d = known7d && !inferred7d ? evaluateWeeklyPace(used7d, r7, nowSec) : null;
-  return {rem5h, rem7d, effectiveRem, level, level5h, level7d, primaryEta, badge, detail, used5h, used7d, r5, r7, inferredReset5h, inferredReset7d, expired5h, expired7d, known5h, known7d, inferred5h, inferred7d, pace7d, source5h: inferred5h ? 'reset_inferred' as const : source5h, source7d: inferred7d ? 'reset_inferred' as const : source7d, recommendable: known5h && known7d && !inferred5h && !inferred7d};
+  const recommendable = no5hLimit ? (known7d && !inferred7d) : (known5h && known7d && !inferred5h && !inferred7d);
+  return {rem5h, rem7d, effectiveRem, level, level5h, level7d, primaryEta, badge, detail, used5h, used7d, r5: effR5, r7, inferredReset5h, inferredReset7d, expired5h: no5hLimit ? false : expired5h, expired7d, known5h, known7d, inferred5h, inferred7d, no5hLimit, pace7d, source5h: inferred5h ? 'reset_inferred' as const : source5h, source7d: inferred7d ? 'reset_inferred' as const : source7d, recommendable};
 }

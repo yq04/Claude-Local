@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生 monitor_live_telemetry 零轮询本地遥测、monitor-window-state 原生事件、当前外观/壁纸/玻璃/字体/隐私偏好与 BroadcastChannel 跨窗同步消息。
- * [OUTPUT]: 无边框置顶多态「实时额度悬浮监控窗」（FloatingMonitorApp），支持隐藏态零轮询休眠、置顶固定、位置锁定、鼠标穿透幽灵模式、边缘磁吸、贴边自动隐藏胶囊、透明度调节及 5h/7d 额度与时间步调刻度线；共享账本展示当前已确认账号的Token构成、10分钟均值速率、去重响应及最近实际模型。
+ * [OUTPUT]: 无边框置顶多态「实时额度悬浮监控窗」（FloatingMonitorApp），支持隐藏态零轮询休眠、无 IPC 本地偏好/接力提示同步、置顶固定、位置锁定、鼠标穿透幽灵模式、边缘磁吸、键盘无障碍贴边胶囊及 Ultra/5h/7d 额度与时间步调刻度线；共享账本展示当前已确认账号的Token构成、10分钟均值速率、去重响应及最近实际模型。
  * [POS]: 独立桌面悬浮 HUD 视图（?window=monitor）；100% 本地只读遥测，零后台 OAuth 请求，零跨进程内存读取。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -156,7 +156,6 @@ export function FloatingMonitorApp() {
       reloadCustomWallpaperFromStorage();
       setOpacityPct(readMonitorOpacityPct());
       setRelayHint(readMonitorRelayStandbyHint());
-      void fetchTelemetry();
     };
     window.addEventListener('storage', onStorage);
     let channel: BroadcastChannel | null = null;
@@ -168,18 +167,28 @@ export function FloatingMonitorApp() {
           if (!msg || typeof msg !== 'object') return;
           if (msg.type === 'language-updated') {
             setLocale(msg.language);
+            return;
           }
           if (msg.type === 'appearance-updated' || msg.type === 'privacy-updated') {
             reloadPreferencesFromStorage();
             reloadCustomWallpaperFromStorage();
+            return;
           }
           if (msg.type === 'window-state') {
             applyWindowState(msg.state);
+            return;
           }
           if (msg.type === 'relay-standby-updated') {
             setRelayHint(msg.hint);
+            return;
           }
-          void fetchTelemetry();
+          if (
+            msg.type === 'quota-ledger-updated' ||
+            msg.type === 'identity-switched' ||
+            msg.type === 'telemetry-updated'
+          ) {
+            void fetchTelemetry();
+          }
         };
       } catch {
         channel = null;
@@ -414,14 +423,16 @@ export function FloatingMonitorApp() {
 
   const evaluated = evaluateQuota(current, nowSec);
   const bar5h = computeMonitorWindowBar(
-    evaluated?.known5h ? evaluated.used5h : current?.quota_5h_used,
+    evaluated?.known5h ? evaluated.used5h : null,
   );
   const bar7d = computeMonitorWindowBar(
-    evaluated?.known7d ? evaluated.used7d : current?.quota_7d_used,
+    evaluated?.known7d ? evaluated.used7d : null,
   );
 
-  const pctValue5h =
-    bar5h.used === null
+  const no5hLimit = Boolean(evaluated?.no5hLimit);
+  const pctValue5h = no5hLimit
+    ? t('identityCard.unlimited')
+    : bar5h.used === null
       ? '—'
       : displayMode === 'used'
         ? bar5h.usedLabel
@@ -434,8 +445,9 @@ export function FloatingMonitorApp() {
         ? bar7d.usedLabel
         : bar7d.remainingLabel;
 
-  const pctLabel5h =
-    bar5h.used === null
+  const pctLabel5h = no5hLimit
+    ? t('identityCard.unlimited')
+    : bar5h.used === null
       ? '—'
       : displayMode === 'used'
         ? `${t('identityCard.used')} ${bar5h.usedLabel}`
@@ -525,6 +537,12 @@ export function FloatingMonitorApp() {
         style={shellStyle}
         onMouseEnter={handleShellMouseEnter}
         onClick={() => void handleSetCollapsed(false)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            void handleSetCollapsed(false);
+          }
+        }}
         onDoubleClick={handleBlockDoubleClick}
         role="button"
         tabIndex={0}
@@ -910,7 +928,7 @@ export function FloatingMonitorApp() {
           data-monitor-relay-standby
         >
           <span className="monitor-relay-standby-label">
-            {locale === 'en' ? 'Next relay' : '接力备选'}
+            {t('monitor.nextRelay')}
           </span>
           <strong className="monitor-relay-standby-name">
             {maskDisplayName(relayHint.candidateName, relayHint.candidateEmail, hideAccount)}

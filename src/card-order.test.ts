@@ -5,7 +5,14 @@
  * [PROTOCOL]: Update this header and src/CLAUDE.md when changing card reordering tests.
  */
 import {describe, expect, test} from 'bun:test';
-import {CURRENT_IDENTITY_ORDER_TOKEN, moveOrderId, orderItemsByIds} from './card-order';
+import {
+  clearStoredCardOrder,
+  CURRENT_IDENTITY_ORDER_TOKEN,
+  moveOrderId,
+  orderItemsByIds,
+  readStoredCardOrder,
+  writeStoredCardOrder,
+} from './card-order';
 
 describe('card-order helpers', () => {
   test('preserves default order when storedOrder is empty', () => {
@@ -40,5 +47,30 @@ describe('card-order helpers', () => {
     expect(moveOrderId(initial, 'a', 'c')).toEqual(['b', 'c', 'a', 'd']);
     expect(moveOrderId(initial, 'd', 'a')).toEqual(['d', 'a', 'b', 'c']);
     expect(initial).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  test('clearStoredCardOrder removes persisted custom order cleanly', () => {
+    const store = new Map<string, string>();
+    const prevWindow = (globalThis as {window?: unknown}).window;
+    (globalThis as {window?: unknown}).window = {
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => {
+          store.set(k, v);
+        },
+        removeItem: (k: string) => {
+          store.delete(k);
+        },
+      },
+    };
+    try {
+      const key = 'test.card.order';
+      writeStoredCardOrder(key, ['c', 'a', 'b']);
+      expect(readStoredCardOrder(key)).toEqual(['c', 'a', 'b']);
+      clearStoredCardOrder(key);
+      expect(readStoredCardOrder(key)).toEqual([]);
+    } finally {
+      (globalThis as {window?: unknown}).window = prevWindow;
+    }
   });
 });

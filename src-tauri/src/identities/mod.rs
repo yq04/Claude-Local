@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务门与显式身份写入代次、Tauri 进度通道。
-// [OUTPUT]: 有界归档加载、身份/网页摘要、浏览器独立养号卡及受控转正、手动订阅到期管理命令、轻量usage身份观察登记与唯一进程级唤醒owner。
+// [OUTPUT]: 有界归档加载、单次解析共享额度账本的身份/网页摘要（含 Ultra/Team/Enterprise 套餐消歧）、浏览器独立养号卡及受控转正、手动订阅到期管理命令、轻量usage身份观察登记与唯一进程级唤醒owner。
 // [POS]: GUI 身份管理的原生入口；在线子模块仅允许固定额度端点和白名单回执，不提供凭据读取或任意文件/网络接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 mod archive;
@@ -124,6 +124,10 @@ fn vault(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 fn state(app: &tauri::AppHandle) -> Result<State, String> {
     state_for(app, true)
 }
+/// Archives whose opportunistic index/summary repair already ran in this process. A
+/// permanently unrepairable archive (corrupt, no config source) would otherwise be
+/// decrypted again on every identities_read; any change to the set retries once.
+static REPAIR_ATTEMPTED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, String> {
     let vault_path = vault(app)?;
     let root_path = crate::cleaner::identity::root()?;
@@ -131,16 +135,29 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
     let _ = db.prune_orphan_summaries();
     let mut records: Vec<_> = db.records()?.into_iter().filter(|r| !r.empty).collect();
     let mut summaries = db.summaries()?;
-    if records.iter().any(|r| {
-        r.account_key.is_none()
-            || !summaries
-                .get(&r.id)
-                .is_some_and(profile::Summary::has_quota_check)
-    }) {
+    let repair_signature = records
+        .iter()
+        .filter(|r| {
+            r.account_key.is_none()
+                || !summaries
+                    .get(&r.id)
+                    .is_some_and(profile::Summary::has_quota_check)
+        })
+        .map(|r| format!("{}:{}", r.id, r.archive))
+        .collect::<Vec<_>>()
+        .join(",");
+    let already_attempted = REPAIR_ATTEMPTED
+        .lock()
+        .map(|last| last.as_deref() == Some(repair_signature.as_str()))
+        .unwrap_or(false);
+    if !repair_signature.is_empty() && !already_attempted {
         let cleaner = app.state::<crate::cleaner::Cleaner>();
         if cleaner.enter().is_ok() {
             let _ = store::Store::open(&vault_path, &root_path);
             cleaner.leave();
+            if let Ok(mut last) = REPAIR_ATTEMPTED.lock() {
+                *last = Some(repair_signature);
+            }
             let _ = db.prune_orphan_summaries();
             if let Ok(updated) = db.records() {
                 records = updated.into_iter().filter(|r| !r.empty).collect();
@@ -159,7 +176,7 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
     let manual_subs = subscription::read_store(&vault_path);
     let ledger_root = profile::read_ledger_root(&vault_path);
     let web_metadata_root = online::read_metadata_root(&vault_path);
-    let mut current = profile::read_live(&root_path, &vault_path);
+    let mut current = profile::read_live_with_ledger(&root_path, &vault_path, ledger_root.as_ref());
     if include_sessions {
         usage::observe_current(&vault_path, &root_path);
     }
@@ -168,6 +185,7 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
         current.quota_identity.as_deref(),
         &mut current.web,
     );
+    profile::apply_web_plan_tier(&mut current.plan, &current.web);
     if current.present {
         if active != "current" && records.iter().any(|r| r.id == active) {
             let live_sum = profile::Summary::from_current(&current);
@@ -195,6 +213,7 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
             summary.quota_identity.as_deref(),
             &mut summary.web,
         );
+        profile::apply_web_plan_tier(&mut summary.plan, &summary.web);
         summary.subscription_expires_at = None;
         subscription::apply_manual(
             &manual_subs,

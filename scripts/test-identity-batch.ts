@@ -21,7 +21,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   await page.clock.install({time:new Date('2026-10-23T18:00:00Z')});
   await page.clock.pauseAt(new Date('2026-10-23T18:00:01Z'));
-  await page.goto(base+'/tests/identities.html',{waitUntil:'domcontentloaded'});
+  await page.goto(base+'/tests/identities.html',{waitUntil:'domcontentloaded',timeout:30000});
   await page.waitForFunction(()=>Boolean((window as any).identityFixture?.identityReads));
   await page.evaluate(async()=>{
    const prefs=await import('/src/settings-model.ts');prefs.updatePreferences({reduceMotion:true});
@@ -244,7 +244,7 @@ export async function testIdentityBatch(browser:Browser,base:string){
     const meta=card.querySelector('.identity-sub-resets-block')?.getBoundingClientRect();
     return {width:box.width,height:box.height,overflow:card.scrollWidth>card.clientWidth,footerBottom:footer.bottom,cardBottom:box.bottom,metaBottom:meta?.bottom??null,footerTop:footer.top};
    }));
-   for(const box of geometry){assert.equal(box.width,180);assert.equal(box.height,286);assert.equal(box.overflow,false);if(box.metaBottom!==null)assert.ok(box.metaBottom<=box.footerTop+1);assert.ok(box.footerBottom<=box.cardBottom-2);}
+   for(const box of geometry){assert.equal(box.width,166);assert.equal(box.height,286);assert.equal(box.overflow,false);if(box.metaBottom!==null)assert.ok(box.metaBottom<=box.footerTop+1);assert.ok(box.footerBottom<=box.cardBottom-2);}
    for(const button of await page.locator('.identity-card-footer button').all())assert.ok(await button.evaluate(node=>node.scrollWidth<=node.clientWidth+1));
    if(locale==='en')assert.equal(await page.getByText('fixture@example.invalid',{exact:true}).count(),0);
   }

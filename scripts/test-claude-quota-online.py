@@ -621,6 +621,45 @@ class OnlineQuotaTests(unittest.TestCase):
             self.assertEqual(entry["billing_observed_at_ms"], observed)
             self.assertNotIn("manual_resets_remaining", entry)
 
+    def test_uncapped_reset_grant_end_is_stored_validated_and_replaced(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            observed = int(time.time() * 1000)
+            base = {
+                "account_uuid": account["accountUuid"], "organization_uuid": account["organizationUuid"],
+                "billing_date_kind": "unknown", "billing_date": None,
+                "manual_resets_remaining": 2, "manual_resets_valid_until": observed // 1000 + 86400,
+                "metadata_observed_at_ms": observed,
+            }
+            meta_path = app / "identity-vault" / "quota_web_metadata.json"
+            identity = online.quota.quota_identity(account)
+            grant_end = observed // 1000 + 20 * 86400
+            result = online.import_browser_snapshot(
+                app, home, "current", {**base, "manual_resets_grant_ends_at": grant_end}, self.expected(account))
+            self.assertEqual(result["status"], "updated")
+            stored = json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity]
+            self.assertEqual(stored["manual_resets_grant_ends_at"], grant_end)
+            self.assertEqual(stored["manual_resets_valid_until"], base["manual_resets_valid_until"])
+            # Implausible grant ends are rejected without touching stored metadata.
+            for bad in (observed // 1000 - 1, base["manual_resets_valid_until"] - 1, 253402300800, "x"):
+                rejected = online.import_browser_snapshot(
+                    app, home, "current",
+                    {**base, "metadata_observed_at_ms": observed + 500, "manual_resets_grant_ends_at": bad},
+                    self.expected(account))
+                self.assertEqual(rejected["status"], "invalid_response")
+            zero = online.import_browser_snapshot(
+                app, home, "current",
+                {**base, "manual_resets_remaining": 0, "manual_resets_grant_ends_at": grant_end},
+                self.expected(account))
+            self.assertEqual(zero["status"], "invalid_response")
+            self.assertEqual(json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity], stored)
+            # A newer observation without a grant end must not keep the older one.
+            newer = {**base, "manual_resets_remaining": 1, "metadata_observed_at_ms": observed + 1000}
+            online.import_browser_snapshot(app, home, "current", newer, self.expected(account))
+            latest = json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity]
+            self.assertEqual(latest["manual_resets_remaining"], 1)
+            self.assertNotIn("manual_resets_grant_ends_at", latest)
+
     def test_browser_usage_only_updates_quota_with_host_observation_time(self):
         with tempfile.TemporaryDirectory() as temp:
             app, home, account = self.fixture(Path(temp))
@@ -688,6 +727,56 @@ class OnlineQuotaTests(unittest.TestCase):
             rejected = online.import_browser_snapshot(app, home, "current", wrong, self.expected(account))
             self.assertEqual(rejected["status"], "account_mismatch")
             self.assertEqual(ledger_path.read_bytes(), before)
+
+    def test_fable_reset_clears_5h_and_lowers_same_7d_window(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            now_s = int(time.time())
+            base_ms = (now_s - 20) * 1000
+            reset_7d = now_s + 86400
+            seeded = {
+                "account_uuid": account["accountUuid"],
+                "organization_uuid": account["organizationUuid"],
+                "billing_date_kind": "next_renewal",
+                "billing_date": now_s + 864000,
+                "manual_resets_remaining": 1,
+                "manual_resets_valid_until": now_s + 36000,
+                "metadata_observed_at_ms": base_ms,
+                "usage": {
+                    "five_hour": {"utilization": 66.0, "resets_at": now_s + 7200},
+                    "seven_day": {"utilization": 92.0, "resets_at": reset_7d},
+                },
+            }
+            with patch.object(online.time, "time", return_value=now_s - 20):
+                first = online.import_browser_snapshot(app, home, "current", seeded, self.expected(account))
+            self.assertEqual(first["status"], "updated")
+            ledger_before = json.loads((app / "quota_ledger.json").read_text(encoding="utf-8"))["accounts"]["fixture@example.invalid"]
+            self.assertEqual(ledger_before["quota_5h_used"], 66)
+            self.assertEqual(ledger_before["quota_7d_used"], 92)
+
+            after_reset = {
+                "account_uuid": account["accountUuid"],
+                "organization_uuid": account["organizationUuid"],
+                "billing_date_kind": "next_renewal",
+                "billing_date": now_s + 864000,
+                "manual_resets_remaining": 0,
+                "manual_resets_valid_until": now_s + 36000,
+                "metadata_observed_at_ms": now_s * 1000,
+                "usage": {
+                    "five_hour": {"utilization": 0.0, "resets_at": None},
+                    "seven_day": {"utilization": 83.0, "resets_at": reset_7d},
+                },
+            }
+            second = online.import_browser_snapshot(app, home, "current", after_reset, self.expected(account))
+            self.assertEqual(second["status"], "updated")
+            self.assertEqual(second["updated_windows"], ["5h", "7d"])
+            ledger_after = json.loads((app / "quota_ledger.json").read_text(encoding="utf-8"))["accounts"]["fixture@example.invalid"]
+            self.assertEqual(ledger_after["quota_5h_used"], 0)
+            self.assertEqual(ledger_after["quota_5h_source"], "reset_inferred")
+            self.assertEqual(ledger_after["quota_7d_used"], 83)
+            self.assertEqual(ledger_after["quota_7d_source"], "server_anchor")
+            meta_after = json.loads((app / "identity-vault" / "quota_web_metadata.json").read_text(encoding="utf-8"))["accounts"][self.expected(account)]
+            self.assertEqual(meta_after["manual_resets_remaining"], 0)
 
     def test_cli_user_agent_and_headers_match_official_claude_code_fingerprint(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -811,7 +900,7 @@ class OnlineQuotaTests(unittest.TestCase):
 
             def fake_post(_token, model, _device_id, _account_uuid, route=None):
                 models_tried.append(model)
-                if model == online.WAKEUP_MODELS[0]:
+                if model in online.WAKEUP_MODELS[:-1]:
                     return 404, b"", {}
                 # Return 200 without ratelimit headers so fallback to GET /api/oauth/usage triggers
                 return 200, b"{}", {}
@@ -825,6 +914,11 @@ class OnlineQuotaTests(unittest.TestCase):
                 result = online.run_wakeup(app, home, "current", self.expected(account))
 
             self.assertEqual(result["status"], "updated")
+            self.assertEqual(online.DEFAULT_CLI_VERSION, "2.1.322")
+            self.assertEqual(
+                online.WAKEUP_MODELS,
+                ("claude-haiku-5-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-6"),
+            )
             self.assertEqual(models_tried, list(online.WAKEUP_MODELS))
             self.assertEqual(fetch_mock.call_count, 2)
 
@@ -863,6 +957,167 @@ class OnlineQuotaTests(unittest.TestCase):
             self.assertEqual(result["status"], "network_error")
             self.assertEqual(result["stage"], "messages")
             self.assertEqual(result["wakeup_effect"], "outcome_unknown")
+
+    def test_ultra_null_five_hour_and_plan_tier_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            now_s = int(time.time())
+            reset_7d = now_s + 250000
+            ultra_profile = {
+                "account": {"uuid": account["accountUuid"], "email": account["emailAddress"]},
+                "organization": {
+                    "uuid": account["organizationUuid"],
+                    "organization_type": "claude_max",
+                    "plan_display_name": "Ultra",
+                },
+            }
+            ultra_usage = {
+                "five_hour": None,
+                "seven_day": {"utilization": 18.4, "resets_at": reset_7d},
+            }
+            with patch.object(
+                online,
+                "_fetch",
+                side_effect=[
+                    (200, json.dumps(ultra_profile).encode(), {}),
+                    (200, json.dumps(ultra_usage).encode(), {}),
+                ],
+            ):
+                result = online.run(app, home, "current", self.expected(account))
+            self.assertEqual(result["status"], "updated")
+            self.assertEqual(result["updated_windows"], ["7d"])
+            entry = json.loads((app / "quota_ledger.json").read_text(encoding="utf-8"))["accounts"]["fixture@example.invalid"]
+            self.assertIsNone(entry["quota_5h_used"])
+            self.assertEqual(entry["quota_7d_used"], 18)
+            self.assertTrue(entry["quota_no_5h_limit"])
+            self.assertIs(entry["server_anchor"].get("no_five_hour"), True)
+            web_meta = json.loads((app / "identity-vault" / "quota_web_metadata.json").read_text(encoding="utf-8"))["accounts"][self.expected(account)]
+            self.assertEqual(web_meta.get("plan_tier"), "Ultra")
+            self.assertEqual(
+                online.extract_profile_plan_tier({"organization": {"organization_type": "claude_team"}}),
+                "Team",
+            )
+            self.assertEqual(
+                online.extract_profile_plan_tier({"organization": {"organization_type": "claude_enterprise"}}),
+                "Enterprise",
+            )
+
+            # Browser snapshot with five_hour=None and valid seven_day succeeds; both None fails closed.
+            browser_ultra = {
+                "account_uuid": account["accountUuid"],
+                "organization_uuid": account["organizationUuid"],
+                "billing_date_kind": "next_renewal",
+                "billing_date": now_s + 864000,
+                "manual_resets_remaining": None,
+                "manual_resets_valid_until": None,
+                "metadata_observed_at_ms": (now_s + 5) * 1000,
+                "usage": {
+                    "five_hour": None,
+                    "seven_day": {"utilization": 22.0, "resets_at": reset_7d},
+                },
+            }
+            snap_ok = online.import_browser_snapshot(app, home, "current", browser_ultra, self.expected(account))
+            self.assertEqual(snap_ok["status"], "updated")
+            entry_after = json.loads((app / "quota_ledger.json").read_text(encoding="utf-8"))["accounts"]["fixture@example.invalid"]
+            self.assertEqual(entry_after["quota_7d_used"], 22)
+            self.assertTrue(entry_after["quota_no_5h_limit"])
+
+            browser_empty = {
+                **browser_ultra,
+                "usage": {"five_hour": None, "seven_day": None},
+            }
+            snap_bad = online.import_browser_snapshot(app, home, "current", browser_empty, self.expected(account))
+            self.assertEqual(snap_bad["status"], "invalid_response")
+
+    def test_seven_day_manual_reset_card_lowers_stale_anchor_to_zero(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            now_s = int(time.time())
+            base_ms = (now_s - 20) * 1000
+            seeded = {
+                "account_uuid": account["accountUuid"],
+                "organization_uuid": account["organizationUuid"],
+                "billing_date_kind": "next_renewal",
+                "billing_date": now_s + 864000,
+                "manual_resets_remaining": 1,
+                "manual_resets_valid_until": now_s + 36000,
+                "metadata_observed_at_ms": base_ms,
+                "usage": {
+                    "five_hour": None,
+                    "seven_day": {"utilization": 99.0, "resets_at": now_s + 172800},
+                },
+            }
+            with patch.object(online.time, "time", return_value=now_s - 20):
+                first = online.import_browser_snapshot(app, home, "current", seeded, self.expected(account))
+            self.assertEqual(first["status"], "updated")
+            before = json.loads((app / "quota_ledger.json").read_text(encoding="utf-8"))["accounts"]["fixture@example.invalid"]
+            self.assertEqual(before["quota_7d_used"], 99)
+
+            reset_7d_snap = {
+                **seeded,
+                "manual_resets_remaining": 0,
+                "metadata_observed_at_ms": now_s * 1000,
+                "usage": {
+                    "five_hour": None,
+                    "seven_day": {"utilization": 0.0, "resets_at": None},
+                },
+            }
+            second = online.import_browser_snapshot(app, home, "current", reset_7d_snap, self.expected(account))
+            self.assertEqual(second["status"], "updated")
+            after = json.loads((app / "quota_ledger.json").read_text(encoding="utf-8"))["accounts"]["fixture@example.invalid"]
+            self.assertEqual(after["quota_7d_used"], 0)
+            self.assertEqual(after["quota_7d_source"], "reset_inferred")
+
+    def test_scoped_weekly_fable_limits_and_7d_oi_headers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            now_s = int(time.time())
+            reset_7d = now_s + 400000
+            reset_fable = now_s + 350000
+
+            # 1. Scoped limits[] fallback when top-level seven_day is missing/None + scoped_fable_7d capture
+            scoped_payload = {
+                "five_hour": None,
+                "seven_day": None,
+                "limits": [
+                    {
+                        "kind": "weekly_scoped",
+                        "utilization": 31.0,
+                        "resets_at": reset_7d,
+                        "scope": {"model": {"id": "claude-opus-5-5", "display_name": "Opus 5.5"}},
+                    },
+                    {
+                        "kind": "weekly_scoped",
+                        "utilization": 64.2,
+                        "resets_at": reset_fable,
+                        "scope": {"model": {"id": "claude-fable-5-2", "display_name": "Fable 5.2"}},
+                    },
+                ],
+            }
+            with patch.object(online, "_fetch", side_effect=self.mocked_success(account, scoped_payload)):
+                res = online.run(app, home, "current", self.expected(account))
+            self.assertEqual(res["status"], "updated")
+            entry = json.loads((app / "quota_ledger.json").read_text(encoding="utf-8"))["accounts"]["fixture@example.invalid"]
+            self.assertEqual(entry["quota_7d_used"], 64)
+            self.assertAlmostEqual(entry["quota_7d_fable_used"], 64.2, places=2)
+            self.assertEqual(entry["quota_7d_fable_reset_at"], reset_fable)
+            self.assertEqual(entry["server_anchor"]["scoped_fable_7d"]["resetsAt"], reset_fable)
+
+            # 2. /v1/messages 7d_oi headers populate scoped_fable_7d and fall back seven_day when 7d is absent
+            anchor, updated = online.parse_ratelimit_headers(
+                {
+                    "anthropic-ratelimit-unified-5h-utilization": "0.12",
+                    "anthropic-ratelimit-unified-5h-reset": str(now_s + 18000),
+                    "anthropic-ratelimit-unified-7d_oi-utilization": "0.475",
+                    "anthropic-ratelimit-unified-7d_oi-reset": str(reset_fable + 60),
+                },
+                account["accountUuid"],
+                (now_s + 10) * 1000,
+            )
+            self.assertEqual(updated, ["5h", "7d"])
+            self.assertAlmostEqual(anchor["utilization"]["seven_day"]["utilization"], 47.5, places=2)
+            self.assertAlmostEqual(anchor["scoped_fable_7d"]["pct"], 47.5, places=2)
+            self.assertEqual(anchor["scoped_fable_7d"]["resetsAt"], reset_fable + 60)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 /**
  * [INPUT]: Native numeric usage aggregates, shared locale and display/privacy preferences.
- * [OUTPUT]: Token-first overview with four-part composition and per-bucket USD cost, per-request token/cost telemetry, equivalent API USD cost & cache savings cards, one-click Retina Token consumption screenshots (overview & trend) plus export menu, full model distribution with per-model/effort cost, sortable account breakdown and responsive trend/data views.
- * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh, no credential or conversation-body access.
+ * [OUTPUT]: Token-first overview with four-part composition and per-bucket USD cost, per-request token/cost telemetry, equivalent API USD cost & cache savings cards, one-click Retina Token consumption screenshots (overview & trend) plus export menu, full model distribution with per-model/effort cost, per-account blended cost breakdown and responsive trend/data views.
+ * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh with a per-query session snapshot cache (instant revisit, background revalidation), no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
 import {useEffect, useRef, useState, type ReactNode} from 'react';
@@ -19,6 +19,7 @@ import {
   estimateSnapshotCostUsd,
   estimateTotalsCostUsd,
   formatUsageNumber,
+  formatUsagePeakBucketLabel,
   formatUsdCost,
   sortUsageEfforts,
   sortUsageModels,
@@ -40,6 +41,22 @@ const warningKeys: Record<string, string> = {
   partial_scan: 'usage.warning.partial', invalid_records: 'usage.warning.invalid',
   weak_ids: 'usage.warning.weak',
 };
+
+/**
+ * Session-lifetime snapshot cache keyed by query (period/account/timezone). Revisiting the
+ * page or switching periods paints the last native aggregate instantly while the same query
+ * revalidates in the background; it never substitutes one query's data for another.
+ */
+const snapshotCache = new Map<string, UsageSnapshot>();
+const SNAPSHOT_CACHE_LIMIT = 24;
+function rememberSnapshot(key: string, value: UsageSnapshot) {
+  if (!snapshotCache.has(key) && snapshotCache.size >= SNAPSHOT_CACHE_LIMIT) {
+    const oldest = snapshotCache.keys().next().value;
+    if (oldest !== undefined) snapshotCache.delete(oldest);
+  }
+  snapshotCache.delete(key);
+  snapshotCache.set(key, value);
+}
 
 function GroupTitle({children, aside}: {children: ReactNode; aside?: ReactNode}) {
   return <div className="settings-group-heading usage-group-heading"><span className="settings-group-bar" aria-hidden="true" /><h2>{children}</h2>{aside && <span className="usage-section-caption">{aside}</span>}</div>;
@@ -120,7 +137,7 @@ export function UsageStatisticsPanel() {
   useEffect(() => () => { if (snapTimerRef.current) window.clearTimeout(snapTimerRef.current); }, []);
   const timezone = (() => { try { const value = Intl.DateTimeFormat().resolvedOptions().timeZone; new Intl.DateTimeFormat('en', {timeZone: value}); return value; } catch { return ''; } })();
   const queryKey = `${period}:${account}:${timezone || `offset:${-new Date().getTimezoneOffset()}`}`;
-  const snapshot = result?.key === queryKey ? result.value : null;
+  const snapshot = result?.key === queryKey ? result.value : snapshotCache.get(queryKey) ?? null;
   const busy = status.key !== queryKey || status.busy;
   const error = status.key === queryKey ? status.error : '';
   usePageRefresh(() => { if (!busy) setRevision(value => value + 1); });
@@ -147,6 +164,7 @@ export function UsageStatisticsPanel() {
       try {
         const args = {period, accountId: account === 'all' ? null : account, offsetMinutes: -new Date().getTimezoneOffset(), ...(timezone ? {timezone} : {})};
         const value = await invoke<UsageSnapshot>('usage_statistics_read', args);
+        if (value) rememberSnapshot(queryKey, value);
         if (live) {setResult({key: queryKey, value}); setStatus({key: queryKey, busy: false, error: ''});}
       } catch (reason) {
         if (live) setStatus({key: queryKey, busy: false, error: String(reason)});
@@ -175,7 +193,7 @@ export function UsageStatisticsPanel() {
   const dateLabel = (day: string) => new Date(`${day.slice(0, 10)}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {year: 'numeric', month: 'short', day: 'numeric'});
   const range = snapshot ? days.length > 1 && days[0].day.slice(0, 10) !== days.at(-1)!.day.slice(0, 10) ? `${dateLabel(days[0].day)} – ${dateLabel(days.at(-1)!.day)}` : dateLabel(days[0].day) : '—';
   const isHourly = period === 'today' || period === 'yesterday';
-  const peakLabel = trend.peak ? isHourly ? trend.peak.day.slice(11) : new Date(`${trend.peak.day}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric'}) : '';
+  const peakLabel = trend.peak ? isHourly ? formatUsagePeakBucketLabel(trend.peak.day, true) : new Date(`${trend.peak.day}T12:00:00`).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric'}) : '';
   const selectedAccount = account === 'all' ? t('usage.allAccounts') : prefs.privacyMask ? t('usage.account') : snapshot?.accounts.find(item => item.id === account)?.name ?? t('usage.account');
   const offsetMinutes = -new Date().getTimezoneOffset();
   const offsetZone = `UTC${offsetMinutes >= 0 ? '+' : '-'}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0')}:${String(Math.abs(offsetMinutes) % 60).padStart(2, '0')}`;
@@ -200,7 +218,10 @@ export function UsageStatisticsPanel() {
   const avgTokensPerRequest = totals && totals.requests > 0 ? Math.round(totals.total_tokens / totals.requests) : null;
   const avgCostPerReq = totals && totals.requests > 0 ? costSummary.costUsd / totals.requests : null;
   const accountRows = (snapshot?.accounts ?? []).map(row => {
-    const est = estimateTotalsCostUsd(row.totals, primaryModel);
+    const est =
+      row.models && row.models.length > 0
+        ? estimateSnapshotCostUsd(row.totals, row.models)
+        : estimateTotalsCostUsd(row.totals, primaryModel);
     return {
       ...row,
       cost: est.costUsd,
@@ -478,7 +499,7 @@ export function UsageStatisticsPanel() {
         {!snapshot && busy && <p className="usage-empty" role="status">{t('usage.firstScan')}</p>}
         {snapshot && !totals?.requests && <div className="usage-empty"><strong>{t('usage.empty')}</strong><span>{t('usage.emptyHint')}</span></div>}
         {snapshot && <>
-          <div className="usage-analysis-grid" data-trend-view={trendView}>
+          <div className="usage-analysis-grid" data-trend-view={trendView} data-usage-view={trendView}>
           <section className="settings-card usage-chart-card">
             <div className="usage-panel-header"><div><GroupTitle aside={trend.peak && peakLabel ? t('usage.peakPeriodBadge', {label: peakLabel, tokens: num(trend.peak.totals.total_tokens, true)}) : undefined}>{t('usage.daily')}</GroupTitle></div><Tabs aria-label={t('usage.trendView')} size="small" value={trendView} onValueChange={value => setTrendView(value as 'chart' | 'data')} tabs={[{value: 'chart', label: t('usage.chartView')}, {value: 'data', label: t('usage.dataView')}]} /></div>
             <div className="usage-chart-summary" title={t('usage.averageHint')}>

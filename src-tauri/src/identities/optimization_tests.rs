@@ -755,12 +755,15 @@ fn store_open_is_read_only_for_workspace_and_explicit_cache_maintenance_is_narro
         .exists());
     assert!(!f.home.join(".claude/statsig").exists());
     assert!(!f.home.join(".claude/.storage-write.lock").exists());
+    assert!(cfg["oauthAccount"]["profileFetchedAt"]
+        .as_i64()
+        .is_some_and(|ts| ts > 0));
     assert!(cfg["metricsStatusCacheByPrincipal"]
         .get(active_acct)
         .is_some());
     assert!(cfg["metricsStatusCacheByPrincipal"]
         .get(foreign_acct)
-        .is_some());
+        .is_none());
     assert_eq!(
         cfg["projects"]["D:/fixture"]["lastSessionId"],
         "sess-fixture"
@@ -783,16 +786,7 @@ fn store_open_is_read_only_for_workspace_and_explicit_cache_maintenance_is_narro
         .home
         .join(".claude/plugins/synced/foreign-org_foreign-account")
         .exists());
-    assert!(f
-        .home
-        .join(format!(
-            ".claude/cache/model-catalog/{active_org}-123-cc.json"
-        ))
-        .exists());
-    assert!(!f
-        .home
-        .join(".claude/cache/model-catalog/foreign-org-123-cc.json")
-        .exists());
+    assert!(!f.home.join(".claude/cache/model-catalog").exists());
     #[cfg(target_os = "windows")]
     {
         let msix_cfg: serde_json::Value = serde_json::from_slice(
@@ -1307,4 +1301,163 @@ fn cross_account_switch_preserves_session_replay_and_tool_blocks() {
     // 4. Missing project & githubRepoPaths from Account A were merged into Account B
     assert!(cfg_b["projects"].get("D:/demo-OnlyInA").is_some());
     assert!(cfg_b["githubRepoPaths"].get("owner/repo-a").is_some());
+}
+
+#[test]
+fn switch_to_empty_and_delete_current_purge_cleanroom_caches_while_preserving_user_id() {
+    let f = Fixture::new();
+    let r = Reporter::channel(None);
+    let p = Policy::default();
+    let mut s = store::Store::open(&f.vault, &f.home).unwrap();
+
+    let seed_live_state = |f: &Fixture, acct: &str, org: &str| {
+        f.write(
+            ".claude.json",
+            serde_json::to_string(&serde_json::json!({
+                "userID": "device-user-stable-001",
+                "oauthAccount": {
+                    "accountUuid": acct,
+                    "organizationUuid": org,
+                    "emailAddress": format!("{acct}@example.invalid")
+                },
+                "metricsStatusCacheByPrincipal": {
+                    acct: {"enabled": true}
+                },
+                "groveConfigCache": {
+                    org: {"grove_enabled": true}
+                },
+                "fable52OrgPickMoveDone": true,
+                "fable52OrgPickMoveWaitingSince": 1700000000000u64,
+                "mythos52OrgPickMoveDone": true,
+                "hasAvailableSubscription": true,
+                "subscriptionNoticeCount": 2,
+                "opusProMigrationComplete": true,
+                "sonnet1m45MigrationComplete": true
+            }))
+            .unwrap()
+            .as_bytes(),
+        );
+        f.write(
+            ".claude/.credentials.json",
+            br#"{"claudeAiOauth":{"accessToken":"tok-active"}}"#,
+        );
+        f.write(
+            ".claude/statsig/statsig.cached.evaluations.active",
+            b"{\"gates\":{}}",
+        );
+        f.write(
+            &format!(".claude/cache/model-catalog/{org}-fable-cc.json"),
+            b"{\"models\":[\"claude-fable-5-2\"]}",
+        );
+        f.write(
+            ".claude/telemetry/1p_failed_events.batch.1.json",
+            format!(r#"[{{"account_uuid":"{acct}","organization_uuid":"{org}"}}]"#).as_bytes(),
+        );
+    };
+
+    // 1. Store::switch("empty") must execute the acct == None cleanroom branch.
+    seed_live_state(&f, "acct-switch-empty", "org-switch-empty");
+    s.switch("empty", "Switch Empty Slot", &p, &r).unwrap();
+
+    let empty_cfg: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(empty_cfg["userID"], "device-user-stable-001");
+    assert!(empty_cfg.get("oauthAccount").is_none());
+    assert!(empty_cfg.get("metricsStatusCacheByPrincipal").is_none());
+    assert!(empty_cfg.get("groveConfigCache").is_none());
+    assert!(empty_cfg.get("fable52OrgPickMoveDone").is_none());
+    assert!(empty_cfg.get("fable52OrgPickMoveWaitingSince").is_none());
+    assert!(empty_cfg.get("mythos52OrgPickMoveDone").is_none());
+    assert!(empty_cfg.get("hasAvailableSubscription").is_none());
+    assert!(empty_cfg.get("subscriptionNoticeCount").is_none());
+    assert!(empty_cfg.get("opusProMigrationComplete").is_none());
+    assert!(empty_cfg.get("sonnet1m45MigrationComplete").is_none());
+    assert!(!f.home.join(".claude/statsig").exists());
+    assert!(!f.home.join(".claude/cache/model-catalog").exists());
+    assert!(!f
+        .home
+        .join(".claude/telemetry/1p_failed_events.batch.1.json")
+        .exists());
+
+    // 2. Store::delete("current") must also clear stale locks and execute cleanroom cache maintenance.
+    seed_live_state(&f, "acct-delete-current", "org-delete-current");
+    f.write(".claude/.storage-write.lock", b"stale");
+    s.delete("current", &p, &r).unwrap();
+
+    let deleted_cfg: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(deleted_cfg["userID"], "device-user-stable-001");
+    assert!(deleted_cfg.get("oauthAccount").is_none());
+    assert!(deleted_cfg.get("metricsStatusCacheByPrincipal").is_none());
+    assert!(deleted_cfg.get("groveConfigCache").is_none());
+    assert!(!f.home.join(".claude/.storage-write.lock").exists());
+    assert!(!f.home.join(".claude/statsig").exists());
+    assert!(!f.home.join(".claude/cache/model-catalog").exists());
+    assert!(!f
+        .home
+        .join(".claude/telemetry/1p_failed_events.batch.1.json")
+        .exists());
+}
+
+#[test]
+fn workspace_walk_skips_transient_claude_debug_latest_link_while_generic_walk_rejects_links() {
+    let f = Fixture::new();
+    f.write(".claude/debug/session.log", b"debug-entry");
+    let target_dir = f.root.join("outside-debug-target");
+    fs::create_dir_all(&target_dir).unwrap();
+    fs::write(target_dir.join("secret.txt"), b"outside").unwrap();
+    let latest_link = f.home.join(".claude/debug/latest");
+    let other_link = f.home.join(".claude/debug/other-link");
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(f.home.join(".claude/debug/session.log"), &latest_link).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(latest_link.to_string_lossy().replace('/', "\\"))
+            .arg(target_dir.to_string_lossy().replace('/', "\\"))
+            .output()
+            .unwrap()
+            .status;
+        assert!(status.success());
+    }
+
+    let debug_dir = f.home.join(".claude/debug");
+    let parent = debug_dir.parent().unwrap();
+    let mut visited = Vec::new();
+    archive::walk_workspace(
+        &debug_dir,
+        parent,
+        &latest_link,
+        &mut |_path, rel, is_dir| {
+            visited.push((rel.to_string_lossy().replace('\\', "/"), is_dir));
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(visited.iter().any(|(rel, _)| rel == "debug/session.log"));
+    assert!(!visited.iter().any(|(rel, _)| rel.contains("latest")));
+    assert!(!visited.iter().any(|(rel, _)| rel.contains("secret.txt")));
+
+    // Generic archive/restore walk must still reject `.claude/debug/latest` links strictly.
+    assert!(archive::walk(&debug_dir, parent, &mut |_, _, _| Ok(())).is_err());
+
+    // Non-whitelisted links inside `.claude/debug` must still be rejected by workspace walk.
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target_dir, &other_link).unwrap();
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(other_link.to_string_lossy().replace('/', "\\"))
+            .arg(target_dir.to_string_lossy().replace('/', "\\"))
+            .output()
+            .unwrap()
+            .status;
+        assert!(status.success());
+    }
+    assert!(archive::walk_workspace(&debug_dir, parent, &latest_link, &mut |_, _, _| Ok(())).is_err());
 }

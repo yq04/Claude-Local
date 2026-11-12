@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # [INPUT]: Minimal authenticated account/settings projection, explicit selector, profile/usage or bound browser snapshots with independent clocks.
-# [OUTPUT]: Sanitized status plus explicit wakeup-effect/5h-reset evidence; opt-in two-phase commit; Python-owned atomic quota ledger and bounded manual-reset validity.
+# [OUTPUT]: Sanitized status plus explicit wakeup-effect/5h-reset/7d-reset, Ultra five_hour=null, model-scoped weekly pools and plan_tier evidence; opt-in two-phase commit; Python-owned atomic quota ledger and bounded manual-reset validity plus optional uncapped grant end.
 # [POS]: Network outside native identity door; grant before writer lock; never refreshes credentials or edits Claude configuration.
 # [PROTOCOL]: Update scripts/CLAUDE.md when changing identity binding or persistence boundaries.
 """Fetch OAuth usage without refreshing or modifying local credentials."""
@@ -46,7 +46,7 @@ MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages?beta=true"
 TRACE_ENDPOINT = "https://www.cloudflare.com/cdn-cgi/trace"
 BETA = "oauth-2025-04-20"
 WAKEUP_BETA = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14"
-WAKEUP_MODELS = ("claude-haiku-4-5-20251001", "claude-sonnet-4-6")
+WAKEUP_MODELS = ("claude-haiku-5-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-6")
 WAKEUP_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude."
 _WAKEUP_PROMPTS = (
     ("quota", 1),
@@ -57,7 +57,7 @@ _WAKEUP_PROMPTS = (
     ("reply 1", 16),
 )
 ANTHROPIC_VERSION = "2023-06-01"
-DEFAULT_CLI_VERSION = "2.1.318"
+DEFAULT_CLI_VERSION = "2.1.322"
 DEFAULT_ALLOWED_EXIT_COUNTRIES = ("US",)
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\.exe)?$", re.IGNORECASE)
 
@@ -290,7 +290,7 @@ def _saved_account(app_data: Path, account_id: str):
     db_path, key_path = vault / "identities.sqlite", vault / "key.bin"
     if not _safe_regular_file(db_path) or not _safe_regular_file(key_path):
         raise LookupError("saved account unavailable")
-    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=2.5)
     try:
         row = conn.execute("SELECT archive FROM identities WHERE id=? AND empty=0", (account_id,)).fetchone()
         summary_row = conn.execute("SELECT summary FROM identity_summaries WHERE id=?", (account_id,)).fetchone()
@@ -504,46 +504,65 @@ def _post_wakeup(token: str, model: str, device_id: str, account_uuid: str, rout
 
 
 def parse_ratelimit_headers(headers, account_uuid: str, observed_ms: int):
-    """Extract 5h/7d window utilization and reset timestamps directly from /v1/messages response headers."""
+    """Extract 5h/7d/7d_oi window utilization and reset timestamps directly from /v1/messages response headers."""
     if not headers:
         raise ValueError("missing ratelimit headers")
     lower_map = {str(k).lower(): v for k, v in (headers.items() if hasattr(headers, "items") else ())}
-    utilization = {}
-    updated = []
-    for window, suffix in WINDOWS.items():
+
+    def _parse_header_pair(suffix: str):
         raw_util = lower_map.get(f"anthropic-ratelimit-unified-{suffix}-utilization")
         raw_reset = lower_map.get(f"anthropic-ratelimit-unified-{suffix}-reset")
         if raw_util is None or raw_reset is None:
-            continue
+            return None
         try:
             val = float(raw_util)
         except (TypeError, ValueError, OverflowError):
-            continue
+            return None
         if not math.isfinite(val) or val < 0:
-            continue
+            return None
         # Unified ratelimit headers report ratio in [0.0, 1.0]; convert to percentage [0.0, 100.0].
         pct = round(val * 100.0, 4) if val <= 1.0 else val
         if pct > 100.0:
-            continue
+            return None
         reset = _reset_seconds(raw_reset)
         if reset is None and isinstance(raw_reset, str) and raw_reset.strip().isdigit():
             reset = _reset_seconds(int(raw_reset.strip()))
         if reset is None or reset <= observed_ms // 1000:
-            continue
-        utilization[window] = {
+            return None
+        return float(pct), int(reset), {
             "utilization": float(pct),
             "resets_at": dt.datetime.fromtimestamp(reset, dt.timezone.utc).isoformat().replace("+00:00", "Z"),
             "fetchedAtMs": observed_ms,
         }
+
+    utilization = {}
+    updated = []
+    for window, suffix in WINDOWS.items():
+        parsed = _parse_header_pair(suffix)
+        if parsed is None:
+            continue
+        _, _, win_dict = parsed
+        utilization[window] = win_dict
         updated.append(suffix)
+    scoped_fable_7d = None
+    parsed_oi = _parse_header_pair("7d_oi")
+    if parsed_oi is not None:
+        pct_oi, reset_oi, win_oi = parsed_oi
+        scoped_fable_7d = {"pct": pct_oi, "resetsAt": reset_oi, "fetchedAtMs": observed_ms}
+        if "seven_day" not in utilization:
+            utilization["seven_day"] = win_oi
+            updated.append("7d")
     if not updated:
         raise ValueError("no valid ratelimit headers")
-    return {
+    anchor = {
         "accountUuid": account_uuid,
         "fetchedAtMs": observed_ms,
         "utilization": utilization,
         "server_anchor_observed_windows": list(utilization),
-    }, updated
+    }
+    if scoped_fable_7d is not None:
+        anchor["scoped_fable_7d"] = scoped_fable_7d
+    return anchor, updated
 
 
 def _fetch(token: str, endpoint: str = ENDPOINT, route=None):
@@ -618,6 +637,74 @@ def validate_profile(payload: dict, local_account: dict) -> None:
         raise LookupError("profile identity mismatch")
 
 
+def extract_profile_plan_tier(payload: dict) -> str | None:
+    """Extract sanitized non-secret plan tier from verified /api/oauth/profile response."""
+    if not isinstance(payload, dict):
+        return None
+    organization = payload.get("organization")
+    if isinstance(organization, dict):
+        plan_disp = organization.get("plan_display_name")
+        if isinstance(plan_disp, str) and plan_disp.strip().casefold() == "ultra":
+            return "Ultra"
+        org_type = organization.get("organization_type") or payload.get("organization_type")
+    else:
+        org_type = payload.get("organization_type")
+    if isinstance(org_type, str):
+        lowered = org_type.strip().lower()
+        if lowered == "claude_team":
+            return "Team"
+        if lowered == "claude_enterprise":
+            return "Enterprise"
+    return None
+
+
+SCOPED_WEEKLY_WINDOWS = ("seven_day_fable", "seven_day_opus", "seven_day_sonnet")
+
+
+def _parse_usage_window_dict(raw, window: str, observed_ms: int):
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("utilization")
+    reset = _reset_seconds(raw.get("resets_at"))
+    if (window in ("five_hour", "seven_day")
+            and not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+            and float(value) == 0.0
+            and (raw.get("resets_at") is None and "resets_at" in raw
+                 or (reset is not None and 1 < reset <= observed_ms // 1000))):
+        synthesized_sec = observed_ms // 1000 + (5 * 3600 if window == "five_hour" else 7 * 86400)
+        reset_sec = reset if (reset is not None and 1 < reset <= observed_ms // 1000) else max(2, observed_ms // 1000)
+        fetched_ms = min(observed_ms, reset_sec * 1000 - 1)
+        return ({
+            "utilization": 0.0,
+            "resets_at": dt.datetime.fromtimestamp(reset_sec, dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+            "fetchedAtMs": fetched_ms,
+        }, 0.0, int(synthesized_sec), False)
+    if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+            or not 0 <= value <= 100 or reset is None or reset <= observed_ms // 1000):
+        return None
+    return ({
+        "utilization": float(value),
+        "resets_at": dt.datetime.fromtimestamp(reset, dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "fetchedAtMs": observed_ms,
+    }, float(value), int(reset), True)
+
+
+def _limit_is_fable(item: dict) -> bool:
+    scope = item.get("scope")
+    if not isinstance(scope, dict):
+        return False
+    model = scope.get("model")
+    if not isinstance(model, dict):
+        return False
+    for k in ("id", "display_name"):
+        v = model.get(k)
+        if isinstance(v, str) and "fable" in v.lower():
+            return True
+    return False
+
+
 def validate_usage(payload: dict, account_uuid: str, observed_ms: int):
     if not isinstance(payload, dict):
         raise ValueError("invalid payload")
@@ -631,20 +718,57 @@ def validate_usage(payload: dict, account_uuid: str, observed_ms: int):
         raw = payload.get(window)
         if raw is None:
             continue
-        if not isinstance(raw, dict):
+        parsed = _parse_usage_window_dict(raw, window, observed_ms)
+        if parsed is None:
             continue
-        value = raw.get("utilization")
-        reset = _reset_seconds(raw.get("resets_at"))
-        if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
-                or not 0 <= value <= 100 or reset is None or reset <= observed_ms // 1000):
-            continue
-        utilization[window] = {"utilization": float(value), "resets_at": dt.datetime.fromtimestamp(reset, dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-                               "fetchedAtMs": observed_ms}
+        win_dict, _, _, _ = parsed
+        utilization[window] = win_dict
         updated.append(suffix)
+
+    best_scoped_7d = None
+    scoped_fable_7d = None
+
+    def _consider_scoped_weekly(raw_item, is_fable: bool):
+        nonlocal best_scoped_7d, scoped_fable_7d
+        parsed = _parse_usage_window_dict(raw_item, "seven_day", observed_ms)
+        if parsed is None:
+            return
+        win_dict, pct, reset_sec, is_future = parsed
+        rank = (1 if is_future else 0, pct, reset_sec)
+        if best_scoped_7d is None or rank > best_scoped_7d[0]:
+            best_scoped_7d = (rank, win_dict)
+        if is_fable and reset_sec > observed_ms // 1000:
+            cand = {"pct": pct, "resetsAt": reset_sec, "fetchedAtMs": observed_ms}
+            if scoped_fable_7d is None or pct >= scoped_fable_7d["pct"]:
+                scoped_fable_7d = cand
+
+    for key in SCOPED_WEEKLY_WINDOWS:
+        raw_scoped = payload.get(key)
+        if isinstance(raw_scoped, dict):
+            _consider_scoped_weekly(raw_scoped, key == "seven_day_fable")
+    limits = payload.get("limits")
+    if isinstance(limits, list):
+        for item in limits[:32]:
+            if isinstance(item, dict) and item.get("kind") == "weekly_scoped":
+                _consider_scoped_weekly(item, _limit_is_fable(item))
+
+    if "seven_day" not in utilization and payload.get("seven_day") is None and best_scoped_7d is not None:
+        utilization["seven_day"] = best_scoped_7d[1]
+        updated.append("7d")
+
     if not updated:
         raise ValueError("no valid quota windows")
-    return {"accountUuid": account_uuid, "fetchedAtMs": observed_ms,
-            "utilization": utilization, "server_anchor_observed_windows": list(utilization)}, updated
+    anchor = {
+        "accountUuid": account_uuid,
+        "fetchedAtMs": observed_ms,
+        "utilization": utilization,
+        "server_anchor_observed_windows": list(utilization),
+    }
+    if "five_hour" in payload and payload.get("five_hour") is None and "7d" in updated:
+        anchor["no_five_hour"] = True
+    if scoped_fable_7d is not None:
+        anchor["scoped_fable_7d"] = scoped_fable_7d
+    return anchor, updated
 
 
 def _retry_after_ms(headers, now_ms):
@@ -731,21 +855,49 @@ def _finish_state(app_data: Path, identity: str, lease: str, now_ms: int, status
         return retry, entry.get("last_observed_at_ms")
 
 
-def _ledger_item(cj, cred, anchor):
+def _ledger_item(cj, cred, anchor, plan_tier: str | None = None):
     now = dt.datetime.now(dt.timezone.utc)
     cj = dict(cj)
     cj["cachedUsageUtilization"] = anchor
     info = quota.format_account(cj, cred, [], None, now)
+    if plan_tier == "Ultra":
+        info["plan"] = "Ultra"
+    elif plan_tier in ("Team", "Enterprise") and info.get("plan") in (None, "", "Pro", "Pro / Max"):
+        info["plan"] = plan_tier
+    if plan_tier in ("Ultra", "Team", "Enterprise"):
+        info["plan_tier"] = plan_tier
     info.update({"role": "current", "name": info.get("display"), "server_anchor": anchor,
                  "server_anchor_observed_windows": list(anchor["utilization"]),
                  "server_anchor_base_fetched_at_ms": 0})
     return info, now
 
 
+def _persist_plan_tier_metadata(app_data: Path, identity: str, plan_tier: str | None) -> None:
+    if plan_tier not in ("Ultra", "Team", "Enterprise"):
+        return
+    meta_path = app_data / "identity-vault" / "quota_web_metadata.json"
+    try:
+        if meta_path.exists() and not _safe_regular_file(meta_path):
+            raise OSError("unsafe web metadata file")
+        doc = json.loads(_bounded_read(meta_path).decode("utf-8"))
+        if not isinstance(doc, dict) or doc.get("version") != 1 or not isinstance(doc.get("accounts"), dict):
+            doc = {"version": 1, "accounts": {}}
+    except (OSError, ValueError):
+        doc = {"version": 1, "accounts": {}}
+    prev = doc["accounts"].get(identity)
+    entry = dict(prev) if isinstance(prev, dict) else {}
+    if entry.get("plan_tier") == plan_tier:
+        return
+    entry["plan_tier"] = plan_tier
+    doc["accounts"][identity] = entry
+    _atomic_json(meta_path, doc)
+
+
 def _commit_success(app_data: Path, claude_home: Path, account_id: str,
                     expected_identity: str | None, initial_token: str,
                     identity: str, lease: str, now_ms: int,
-                    cj: dict, cred: dict, anchor: dict, initial_route=None) -> tuple[str, int | None]:
+                    cj: dict, cred: dict, anchor: dict, initial_route=None,
+                    plan_tier: str | None = None) -> tuple[str, int | None]:
     """Verify lease, write ledger and finish cooldown under one Python writer lock."""
     path = _state_path(app_data)
     with quota.ledger_writer_lock(str(app_data)):
@@ -787,7 +939,9 @@ def _commit_success(app_data: Path, claude_home: Path, account_id: str,
             return "account_mismatch", retry
         if int(entry.get("lease_until_ms") or 0) <= int(time.time() * 1000):
             return "cooldown", None
-        info, now_utc = _ledger_item(cj, cred, anchor)
+        if plan_tier in ("Ultra", "Team", "Enterprise"):
+            _persist_plan_tier_metadata(app_data, identity, plan_tier)
+        info, now_utc = _ledger_item(cj, cred, anchor, plan_tier=plan_tier)
         quota._save_ledger_and_sync_sqlite(str(app_data), str(app_data / "identity-vault"), [info], now_utc)
         retry = _complete_entry(entry, lease, now_ms, "updated")
         if retry is None:
@@ -804,9 +958,11 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
         return _result("unavailable", metadata_updated=False)
     base_fields = {"account_uuid", "organization_uuid", "billing_date_kind", "billing_date",
                    "manual_resets_remaining", "manual_resets_valid_until", "metadata_observed_at_ms"}
+    # Optional: uncapped earliest active grant end (valid_until stays a 24h freshness bound).
+    optional_fields = {"usage", "manual_resets_grant_ends_at"}
     try:
         if (not isinstance(snapshot, dict) or not base_fields.issubset(snapshot)
-                or set(snapshot) - base_fields - {"usage"}):
+                or set(snapshot) - base_fields - optional_fields):
             return _result("invalid_response", metadata_updated=False)
         _, _, account, _, identity = _resolve_expected(app_data, claude_home, account_id, expected_identity)
     except IdentityMismatch:
@@ -837,6 +993,15 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
         observed_s = snapshot.get("metadata_observed_at_ms")
         resets_valid = (type(observed_s) is int and resets_valid_until > observed_s // 1000
                         and resets_valid_until <= observed_s // 1000 + 24 * 60 * 60)
+    grant_ends_at = snapshot.get("manual_resets_grant_ends_at")
+    if grant_ends_at is not None:
+        observed_s = snapshot.get("metadata_observed_at_ms")
+        if (type(grant_ends_at) is not int or type(resets) is not int or resets <= 0
+                or type(resets_valid_until) is not int
+                or type(observed_s) is not int
+                or not observed_s // 1000 < grant_ends_at <= 253402300799
+                or grant_ends_at < resets_valid_until):
+            return _result("invalid_response", metadata_updated=False)
     observed = snapshot.get("metadata_observed_at_ms")
     now_ms = int(time.time() * 1000)
     if type(observed) is not int or not 0 < observed <= now_ms + 300_000:
@@ -846,16 +1011,56 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
     usage_windows = []
     usage = snapshot.get("usage")
     if usage is not None:
-        if (not isinstance(usage, dict) or not usage or len(usage) > len(WINDOWS)
-                or set(usage) - set(WINDOWS)):
+        allowed_window_keys = set(WINDOWS) | set(SCOPED_WEEKLY_WINDOWS)
+        allowed_usage_keys = allowed_window_keys | {"limits"}
+        if not isinstance(usage, dict) or not usage or set(usage) - allowed_usage_keys:
             return _result("invalid_response", metadata_updated=False)
         # Keep the browser bridge schema explicit and small. Invalid individual
         # windows are skipped by validate_usage; a valid sibling remains usable.
-        for raw_window in usage.values():
+        has_non_null_window = False
+        for key in allowed_window_keys:
+            if key not in usage:
+                continue
+            raw_window = usage[key]
+            if raw_window is None:
+                if key not in ("five_hour", "seven_day"):
+                    return _result("invalid_response", metadata_updated=False)
+                continue
             if (not isinstance(raw_window, dict)
                     or set(raw_window) != {"utilization", "resets_at"}
                     or isinstance(raw_window.get("resets_at"), str)
                     and len(raw_window["resets_at"]) > 64):
+                return _result("invalid_response", metadata_updated=False)
+            has_non_null_window = True
+        if "limits" in usage:
+            limits_raw = usage["limits"]
+            if not isinstance(limits_raw, list) or len(limits_raw) > 32:
+                return _result("invalid_response", metadata_updated=False)
+            for item in limits_raw:
+                if (not isinstance(item, dict)
+                        or item.get("kind") != "weekly_scoped"
+                        or "utilization" not in item
+                        or "resets_at" not in item
+                        or set(item) - {"kind", "utilization", "resets_at", "scope"}
+                        or isinstance(item.get("resets_at"), str)
+                        and len(item["resets_at"]) > 64):
+                    return _result("invalid_response", metadata_updated=False)
+            if limits_raw:
+                has_non_null_window = True
+        if not has_non_null_window:
+            return _result("invalid_response", metadata_updated=False)
+        if "five_hour" in usage and usage.get("five_hour") is None:
+            # Ultra `five_hour: null` requires a valid weekly window dict.
+            weekly_candidates = [
+                usage.get(k) for k in ("seven_day", *SCOPED_WEEKLY_WINDOWS)
+                if isinstance(usage.get(k), dict)
+            ]
+            if isinstance(usage.get("limits"), list):
+                weekly_candidates.extend(
+                    item for item in usage["limits"]
+                    if isinstance(item, dict) and item.get("kind") == "weekly_scoped"
+                )
+            if not weekly_candidates:
                 return _result("invalid_response", metadata_updated=False)
         try:
             # Bind observation time to host receipt, never to a caller/cache clock.
@@ -944,6 +1149,11 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
                 entry.update({"manual_resets_remaining": resets,
                               "manual_resets_valid_until": resets_valid_until,
                               "manual_resets_observed_at_ms": observed})
+                # The grant end belongs to this exact observation; never keep an older one.
+                if grant_ends_at is not None:
+                    entry["manual_resets_grant_ends_at"] = grant_ends_at
+                else:
+                    entry.pop("manual_resets_grant_ends_at", None)
                 updated = True
             # Preserve the legacy aggregate timestamp as the maximum field clock.
             field_times = [int(entry.get("billing_observed_at_ms") or 0),
@@ -1034,10 +1244,12 @@ def run(app_data: Path, claude_home: Path, account_id: str,
     profile_code, profile_raw, profile_headers = _fetch(token, PROFILE_ENDPOINT, route)
     profile_now = int(time.time() * 1000)
     status, retry = _classify_http_result(profile_code, profile_headers, profile_now)
+    plan_tier = None
     if status is None:
         try:
             profile = json.loads(profile_raw.decode("utf-8"))
             validate_profile(profile, acc)
+            plan_tier = extract_profile_plan_tier(profile)
         except LookupError:
             status, retry = "account_mismatch", None
         except (UnicodeError, ValueError, TypeError, OverflowError):
@@ -1062,7 +1274,7 @@ def run(app_data: Path, claude_home: Path, account_id: str,
                         return _result("cancelled")
                     status, retry_at = _commit_success(
                         app_data, claude_home, account_id, expected_identity, token,
-                        identity, lease, observed_ms, cj, cred, anchor, route)
+                        identity, lease, observed_ms, cj, cred, anchor, route, plan_tier=plan_tier)
                     if status == "updated":
                         return _result("updated", observed_at_ms=observed_ms, retry_at_ms=retry_at,
                                        last_observed_at_ms=observed_ms, updated_windows=updated,
@@ -1136,10 +1348,12 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
     profile_code, profile_raw, profile_headers = _fetch(token, PROFILE_ENDPOINT, route)
     profile_now = int(time.time() * 1000)
     status, retry = _classify_http_result(profile_code, profile_headers, profile_now)
+    plan_tier = None
     if status is None:
         try:
             profile = json.loads(profile_raw.decode("utf-8"))
             validate_profile(profile, acc)
+            plan_tier = extract_profile_plan_tier(profile)
         except LookupError:
             status, retry = "account_mismatch", None
         except (UnicodeError, ValueError, TypeError, OverflowError):
@@ -1192,7 +1406,7 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
                         return _result("cancelled")
                     status, retry_at = _commit_success(
                         app_data, claude_home, account_id, expected_identity, token,
-                        identity, lease, observed_ms, cj, cred, anchor, route)
+                        identity, lease, observed_ms, cj, cred, anchor, route, plan_tier=plan_tier)
                     if status == "updated":
                         effect = "new_5h_confirmed" if confirmed_5h else "quota_observed"
                         return _result("updated", observed_at_ms=observed_ms, retry_at_ms=retry_at,

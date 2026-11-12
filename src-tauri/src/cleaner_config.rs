@@ -24,7 +24,12 @@ pub(super) const CREDENTIAL_KEYS: &[&str] = &[
 fn sensitive_key(key: &str) -> bool {
     matches!(
         key.to_ascii_uppercase().as_str(),
-        "HTTP_PROXY" | "HTTPS_PROXY" | "ALL_PROXY" | "NO_PROXY" | "CLAUDE_CODE_OAUTH_TOKEN"
+        "HTTP_PROXY"
+            | "HTTPS_PROXY"
+            | "ALL_PROXY"
+            | "GRPC_PROXY"
+            | "NO_PROXY"
+            | "CLAUDE_CODE_OAUTH_TOKEN"
     ) || key.starts_with("ANTHROPIC_")
 }
 pub(super) const ACCOUNT_KEYS: &[&str] = &[
@@ -46,6 +51,16 @@ pub(super) const ACCOUNT_KEYS: &[&str] = &[
     "autoCompactWindowsCache",
     "metricsStatusCache",
     "unusedLimitResetStatusCache",
+    "managedSettingsNoticeSeenOrg",
+    "claudeCodeFirstTokenDate",
+    "fable51OrgPickMoveDone",
+    "fable51OrgPickMoveWaitingSince",
+    "fable52OrgPickMoveDone",
+    "fable52OrgPickMoveWaitingSince",
+    "hasAvailableSubscription",
+    "subscriptionNoticeCount",
+    "opusProMigrationComplete",
+    "sonnet1m45MigrationComplete",
     "startupPrefetchedAt",
     "cachedExtraUsageDisabledReason",
     "clientDataCache",

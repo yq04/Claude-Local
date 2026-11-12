@@ -1,12 +1,12 @@
 /**
  * [INPUT]: Native browser-only warming views, IP region probe check results, independent runtime samples, dedicated warming activity state, privacy preferences and guarded parent actions.
- * [OUTPUT]: Shared card-count styling, four short steps, 166×286 cards with top-pill drag-to-reorder handle and region-drift hints, cross-machine anti-association handoff spec copy, inline warming activity log with dismiss support, pre-open IP region mismatch dialog, and editor SOP guidance.
+ * [OUTPUT]: Shared card-count styling, four short steps, 166×286 cards with top-pill drag-to-reorder handle, horizontal spring wheel scrolling, region-drift hints, cross-machine anti-association handoff spec copy, inline warming activity log with dismiss support, pre-open IP region mismatch dialog, and editor SOP guidance.
  * [POS]: Free warming identity rail; subscriptions and CLI promotion reuse the identity panel's existing dialogs.
  * [PROTOCOL]: Update this header, src/CLAUDE.md and both locale catalogs when changing UI.
  */
 import {useEffect, useState, type ReactNode} from 'react';
 import {invoke} from '@tauri-apps/api/core';
-import {Button, Checkbox, Disclosure, Input} from 'cromma-ui';
+import {Button, Checkbox, Disclosure, Input, useReducedMotionConfig} from 'cromma-ui';
 import {DropdownMenu} from 'radix-ui';
 import {IdentityOperationProgress, type Activity} from './cleaner-activity';
 import {AppDialog} from './dialog';
@@ -27,7 +27,7 @@ import {
   type WarmingProbeCheckResult,
 } from './warming-model';
 import {browserRuntimeStatus, type BrowserRuntime} from './browser-runtime';
-import {useCardRailReorder, WARMING_CARD_ORDER_STORAGE_KEY} from './card-order';
+import {useCardRailReorder, useHorizontalRailWheelScroll, WARMING_CARD_ORDER_STORAGE_KEY} from './card-order';
 
 type MismatchPrompt = {
   card: WarmingCard;
@@ -58,12 +58,14 @@ export function WarmingLibrary({cards, runtime, activity, blocked, promotionBloc
   const [handoffNotice, setHandoffNotice] = useState('');
   const today = localTodayYmd(new Date(nowSec * 1000));
   const modalOpen = !!editor || !!deletion || !!mismatchPrompt;
+  const reduceMotion = useReducedMotionConfig() ?? false;
   const warmingReorder = useCardRailReorder({
     storageKey: WARMING_CARD_ORDER_STORAGE_KEY,
     items: cards,
     getId: card => card.id,
     disabled: blocked || busy || modalOpen,
   });
+  useHorizontalRailWheelScroll(warmingReorder.railRef, reduceMotion);
   useEffect(() => { onModalChange(modalOpen); return () => onModalChange(false); }, [modalOpen, onModalChange]);
   async function copyWarmingHandoffSpec(card: WarmingCard) {
     const shownLabel = maskDisplayName(card.name, card.email, privacyMask);

@@ -174,9 +174,18 @@ pub(crate) fn merge_window(
         (None, None) if candidate.reset_at != current.reset_at => return current,
         _ => {}
     }
-    if candidate.reset_at == current.reset_at && current.used > candidate.used {
+    let newer_authoritative_server_lowering = candidate.source == QuotaSource::ServerAnchor
+        && matches!(
+            (current.observed_at_ms, candidate.observed_at_ms),
+            (Some(current_ms), Some(candidate_ms)) if candidate_ms > current_ms
+        );
+    if candidate.reset_at == current.reset_at
+        && current.used > candidate.used
+        && !newer_authoritative_server_lowering
+    {
         // The retained larger value still comes from its original source.
-        // In particular, a lower server value cannot certify a local estimate.
+        // In particular, a same-timestamp server value cannot certify a local
+        // estimate or lower an already-observed window.
         WindowState {
             observed_at_ms: max_observation(current.observed_at_ms, candidate.observed_at_ms),
             ..current
@@ -323,11 +332,20 @@ mod tests {
         assert_eq!(
             merge_window(
                 current,
-                Some(state(5, 200, QuotaSource::ServerAnchor, Some(3000))),
+                Some(state(5, 200, QuotaSource::ServerAnchor, Some(2000))),
                 100
             )
             .used,
             Some(100)
+        );
+        assert_eq!(
+            merge_window(
+                current,
+                Some(state(5, 200, QuotaSource::ServerAnchor, Some(3000))),
+                100
+            )
+            .used,
+            Some(5)
         );
     }
 
@@ -336,12 +354,21 @@ mod tests {
         let local = state(90, 200, QuotaSource::LocalEstimate, Some(1000));
         let merged = merge_window(
             local,
-            Some(state(80, 200, QuotaSource::ServerAnchor, Some(2000))),
+            Some(state(80, 200, QuotaSource::ServerAnchor, Some(1000))),
             100,
         );
         assert_eq!(merged.used, Some(90));
         assert_eq!(merged.source, QuotaSource::LocalEstimate);
-        assert_eq!(merged.observed_at_ms, Some(2000));
+        assert_eq!(merged.observed_at_ms, Some(1000));
+
+        let calibrated = merge_window(
+            local,
+            Some(state(80, 200, QuotaSource::ServerAnchor, Some(2000))),
+            100,
+        );
+        assert_eq!(calibrated.used, Some(80));
+        assert_eq!(calibrated.source, QuotaSource::ServerAnchor);
+        assert_eq!(calibrated.observed_at_ms, Some(2000));
     }
 
     #[test]

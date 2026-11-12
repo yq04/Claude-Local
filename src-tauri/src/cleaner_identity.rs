@@ -1,5 +1,5 @@
 // [INPUT]: Cleaner 白名单、共享 Code 登录键常量、完整目录快照、用户保留策略与 JSON 配置。
-// [OUTPUT]: 账号凭据/归属与必要缓存的受限身份目标；写回前主动清理残留互斥三锁（.oauth_refresh.lock / .storage-write.lock / .claude.json.lock）、投影保护设备和 UI/实验状态；显式切换或置空后的窄账号缓存维护（含 .claude/statsig 与跨号 1p_failed_events 遥测死信箱清理）不改诊断或历史正文。
+// [OUTPUT]: 账号凭据/归属与必要缓存的受限身份目标；写回前主动清理残留互斥锁并在删除过期锁前复核 mtime、投影保护设备和 UI/实验状态；显式切换或置空后的窄账号缓存维护（活跃切换刷新 oauthAccount.profileFetchedAt、双向清理 .claude/cache/model-catalog 与 .claude/statsig、动态裁剪 fable*/mythos*OrgPickMove 键与跨号 1p_failed_events 遥测死信箱）不改诊断或历史正文。
 // [POS]: 身份保险库复用原有路径边界；不扫描项目源码、Shell 或系统代理配置。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -472,18 +472,49 @@ fn root_has_running_claude(root: &Path) -> bool {
     running().unwrap_or(true)
 }
 
-fn is_lock_stale(path: &Path, stale_secs: u64) -> bool {
+fn removable_lock_mtime(
+    path: &Path,
+    is_running: bool,
+    stale_secs: u64,
+) -> Option<Option<std::time::SystemTime>> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    let seen_mtime = meta.modified().ok();
+    if !is_running {
+        return Some(seen_mtime);
+    }
+    let mtime = seen_mtime?;
+    let age = mtime.elapsed().ok()?;
+    (age.as_secs() >= stale_secs).then_some(Some(mtime))
+}
+
+fn remove_safe_lock_if_mtime_unchanged(path: &Path, seen_mtime: Option<std::time::SystemTime>) {
     let Ok(meta) = fs::symlink_metadata(path) else {
-        return false;
+        return;
     };
-    meta.modified()
-        .ok()
-        .and_then(|m| m.elapsed().ok())
-        .is_some_and(|age| age.as_secs() >= stale_secs)
+    if linked(&meta) || canonicalize(path).ok().as_deref() != Some(path) {
+        return;
+    }
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if crate::identities::private::parents(parent).is_err()
+        || crate::identities::private::safe(path).is_err()
+    {
+        return;
+    }
+    // 删除前再次核验 mtime 未发生变化，防止与刚重新获取锁的新进程发生竞态。
+    if fs::symlink_metadata(path).and_then(|m| m.modified()).ok() != seen_mtime {
+        return;
+    }
+    if meta.is_dir() {
+        let _ = fs::remove_dir_all(path);
+    } else if meta.is_file() {
+        let _ = fs::remove_file(path);
+    }
 }
 
 /// 清理 Claude Code 在异常退出、进程强杀或切换账号后遗留的 OAuth / 配置互斥锁文件及已退出进程的孤儿会话描述文件，防止下次启动阻塞或报锁冲突。
-/// 借鉴 `realiti4/claude-swap` (`claude_locks.py`) 与 `cc-switch` 锁协议：当无 Claude 进程运行时立即清理全部残留锁；若仍有进程运行，则严格遵循 Claude Code 锁过期阈值（凭据锁 60s、存储写锁 15s、配置锁 10s）。
+/// 借鉴 `realiti4/claude-swap` (`claude_locks.py`) 与 `cc-switch` 锁协议：当无 Claude 进程运行时立即清理全部残留锁；若仍有进程运行，则严格遵循 Claude Code 锁过期阈值（凭据锁 60s、存储写锁 15s、配置锁 10s），并在删除前复核 `seen_mtime`。
 pub(crate) fn clear_stale_locks(root: &Path) {
     let is_running = root_has_running_claude(root);
     for (rel, stale_secs) in [
@@ -497,8 +528,8 @@ pub(crate) fn clear_stale_locks(root: &Path) {
         (".claude/settings.local.json.lock", 10u64),
     ] {
         let p = root.join(rel);
-        if !is_running || is_lock_stale(&p, stale_secs) {
-            remove_safe_entry(&p);
+        if let Some(seen_mtime) = removable_lock_mtime(&p, is_running, stale_secs) {
+            remove_safe_lock_if_mtime_unchanged(&p, seen_mtime);
         }
     }
     let live_pids: std::collections::BTreeSet<i32> =
@@ -1100,6 +1131,22 @@ pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
             if let Some(obj) = value.as_object_mut() {
                 if let Some(ref active_acct) = acct {
                     let active_org = org.as_deref();
+                    if let Some(oauth_obj) =
+                        obj.get_mut("oauthAccount").and_then(|v| v.as_object_mut())
+                    {
+                        if let Ok(dur) =
+                            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                        {
+                            let now_ms = dur.as_millis() as i64;
+                            if oauth_obj.get("profileFetchedAt").and_then(|v| v.as_i64())
+                                != Some(now_ms)
+                            {
+                                oauth_obj
+                                    .insert("profileFetchedAt".into(), serde_json::json!(now_ms));
+                                modified = true;
+                            }
+                        }
+                    }
                     for key in [
                         "s1mAccessCache",
                         "passesEligibilityCache",
@@ -1112,17 +1159,70 @@ pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
                         "lastSeenOrgDefaultUpdatedAt",
                         "autoCompactWindowsCache",
                         "metricsStatusCache",
+                        "metricsStatusCacheByPrincipal",
                         "unusedLimitResetStatusCache",
+                        "groveConfigCache",
                     ] {
                         if let Some(entries) = obj.get_mut(key).and_then(|v| v.as_object_mut()) {
                             let before = entries.len();
                             entries.retain(|k, _| {
                                 k == active_acct
-                                    || active_org.is_some_and(|org_id| k == org_id)
+                                    || k.strip_prefix("acct:") == Some(active_acct.as_str())
+                                    || k.strip_prefix(&format!("acct:{active_acct}/")).is_some()
+                                    || active_org.is_some_and(|org_id| {
+                                        k == org_id || k.ends_with(&format!("/{org_id}"))
+                                    })
                             });
                             modified |= entries.len() != before;
                         }
                     }
+                    if active_org.is_some_and(|org_id| {
+                        obj.get("managedSettingsNoticeSeenOrg")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|u| !u.is_empty() && u != org_id)
+                    }) {
+                        obj.remove("managedSettingsNoticeSeenOrg");
+                        modified = true;
+                    }
+                    let before_org_pick = obj.len();
+                    obj.retain(|k, v| {
+                        if !((k.starts_with("fable") || k.starts_with("mythos"))
+                            && k.contains("OrgPickMove"))
+                        {
+                            return true;
+                        }
+                        let foreign_acct = v
+                            .get("accountUuid")
+                            .and_then(|x| x.as_str())
+                            .is_some_and(|u| !u.is_empty() && u != active_acct);
+                        let foreign_org = active_org.is_some_and(|org_id| {
+                            v.get("organizationUuid")
+                                .and_then(|x| x.as_str())
+                                .is_some_and(|u| !u.is_empty() && u != org_id)
+                                || (!k.ends_with("WaitingSince")
+                                    && v.as_str()
+                                        .is_some_and(|s| !s.is_empty() && s != org_id))
+                        });
+                        if foreign_acct || foreign_org {
+                            return false;
+                        }
+                        if !config::ACCOUNT_KEYS.contains(&k.as_str()) {
+                            let matches_acct = v
+                                .get("accountUuid")
+                                .and_then(|x| x.as_str())
+                                .is_some_and(|u| u == active_acct);
+                            let matches_org = active_org.is_some_and(|org_id| {
+                                v.get("organizationUuid")
+                                    .and_then(|x| x.as_str())
+                                    .is_some_and(|u| u == org_id)
+                                    || (!k.ends_with("WaitingSince")
+                                        && v.as_str().is_some_and(|s| s == org_id))
+                            });
+                            return matches_acct || matches_org;
+                        }
+                        true
+                    });
+                    modified |= obj.len() != before_org_pick;
                     for key in [
                         "cachedUsageUtilization",
                         "cachedArtifactRoster",
@@ -1160,7 +1260,19 @@ pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
                         "lastSeenOrgDefaultUpdatedAt",
                         "autoCompactWindowsCache",
                         "metricsStatusCache",
+                        "metricsStatusCacheByPrincipal",
                         "unusedLimitResetStatusCache",
+                        "groveConfigCache",
+                        "managedSettingsNoticeSeenOrg",
+                        "claudeCodeFirstTokenDate",
+                        "fable51OrgPickMoveDone",
+                        "fable51OrgPickMoveWaitingSince",
+                        "fable52OrgPickMoveDone",
+                        "fable52OrgPickMoveWaitingSince",
+                        "hasAvailableSubscription",
+                        "subscriptionNoticeCount",
+                        "opusProMigrationComplete",
+                        "sonnet1m45MigrationComplete",
                         "startupPrefetchedAt",
                         "cachedExtraUsageDisabledReason",
                         "cachedUsageUtilization",
@@ -1176,6 +1288,12 @@ pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
                             modified = true;
                         }
                     }
+                    let before_org_pick = obj.len();
+                    obj.retain(|k, _| {
+                        !((k.starts_with("fable") || k.starts_with("mythos"))
+                            && k.contains("OrgPickMove"))
+                    });
+                    modified |= obj.len() != before_org_pick;
                 }
             }
             if modified {
@@ -1187,30 +1305,19 @@ pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
         }
     }
 
-    for relative in [".claude/plugins/synced", ".claude/cache/model-catalog"] {
-        if let Ok(entries) = fs::read_dir(root.join(relative)) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                let is_plugins = relative.ends_with("synced");
-                let candidate = if is_plugins {
-                    name.contains('-')
-                } else {
-                    name.ends_with("-cc.json")
-                };
-                let matches_active = if is_plugins {
-                    acct.as_deref().is_some_and(|a| name.contains(a))
-                        || org.as_deref().is_some_and(|o| name.contains(o))
-                } else {
-                    acct.as_deref().is_some_and(|a| name.starts_with(a))
-                        || org.as_deref().is_some_and(|o| name.starts_with(o))
-                };
-                if candidate && !matches_active {
-                    remove_safe_entry(&entry.path());
-                }
+    if let Ok(entries) = fs::read_dir(root.join(".claude/plugins/synced")) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let candidate = name.contains('-');
+            let matches_active = acct.as_deref().is_some_and(|a| name.contains(a))
+                || org.as_deref().is_some_and(|o| name.contains(o));
+            if candidate && !matches_active {
+                remove_safe_entry(&entry.path());
             }
         }
     }
 
+    remove_safe_entry(&root.join(".claude/cache/model-catalog"));
     remove_safe_entry(&root.join(".claude/statsig"));
 
     // 清理 `.claude/telemetry/1p_failed_events.*.json` 中属于旧账号的未发送遥测批次，

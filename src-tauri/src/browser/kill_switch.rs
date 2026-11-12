@@ -1,5 +1,5 @@
-// [INPUT]: 受管伴侣浏览器资料目录状态、本机 TUN/DNS 快照、当前槽位有效代理/预期国家及用户解警/开关动作。
-// [OUTPUT]: 按需激活的伴侣浏览器断线保护（Kill-Switch）、全槽位浏览器关闭、红色告警托盘图标与零后续阻断恢复。
+// [INPUT]: 受管伴侣浏览器全部运行中资料目录（legacy/profile 与 contexts/*/profile）、各槽位独立 config.json 有效代理/预期国家、本机 TUN/DNS 快照及用户解警/开关动作。
+// [OUTPUT]: 按需激活的多槽位伴侣浏览器断线保护（任一运行槽位为空代理即启用 TUN 监控，逐槽位核验出口国家漂移）、全槽位浏览器关闭、红色告警托盘图标与零后续阻断恢复。
 // [POS]: 伴侣浏览器运行期非阻断守护；无受管浏览器运行时零 ipconfig/HTTP 探测，绝不触碰 claude.exe，重开浏览器自动解警。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -160,11 +160,18 @@ pub(crate) fn quit_all_managed_profiles(app: &tauri::AppHandle) -> Vec<String> {
         let _ = super::profile::quit(&profile_dir);
         closed.push(slot);
     }
-    *state.quota_sync.lock().unwrap() = None;
+    state.quota_sync.lock().unwrap().clear();
     state.last_observations.lock().unwrap().clear();
     *state.host.lock().unwrap() = None;
     super::renew_session(app);
     closed
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunningSlotRoute {
+    pub slot: String,
+    pub effective_proxy: String,
+    pub expected_country: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -172,6 +179,7 @@ pub struct MonitorTracker {
     pub tun_baseline_active: bool,
     pub tun_drop_streak: u32,
     pub country_drift_streak: u32,
+    pub slot_drift_streaks: std::collections::BTreeMap<String, u32>,
     pub tick_count: u64,
     pub last_local_net: Option<(bool, bool, String)>,
 }
@@ -199,6 +207,7 @@ impl MonitorTracker {
         self.tun_baseline_active = false;
         self.tun_drop_streak = 0;
         self.country_drift_streak = 0;
+        self.slot_drift_streaks.clear();
         self.tick_count = 0;
         self.last_local_net = None;
     }
@@ -281,20 +290,49 @@ impl MonitorTracker {
         }
     }
 
+    #[cfg(test)]
     pub fn on_exit_probe(
         &mut self,
         expected_country: Option<&str>,
         probe_result: Result<&str, &str>,
         is_recheck: bool,
     ) -> ExitProbeAction {
+        let action = Self::evaluate_exit_probe(
+            &mut self.country_drift_streak,
+            expected_country,
+            probe_result,
+            is_recheck,
+        );
+        action
+    }
+
+    pub fn on_slot_exit_probe(
+        &mut self,
+        slot: &str,
+        expected_country: Option<&str>,
+        probe_result: Result<&str, &str>,
+        is_recheck: bool,
+    ) -> ExitProbeAction {
+        let streak = self.slot_drift_streaks.entry(slot.to_string()).or_insert(0);
+        let action = Self::evaluate_exit_probe(streak, expected_country, probe_result, is_recheck);
+        self.country_drift_streak = self.slot_drift_streaks.values().copied().max().unwrap_or(0);
+        action
+    }
+
+    fn evaluate_exit_probe(
+        streak: &mut u32,
+        expected_country: Option<&str>,
+        probe_result: Result<&str, &str>,
+        is_recheck: bool,
+    ) -> ExitProbeAction {
         let Some(expected) = expected_country.map(str::trim).filter(|s| !s.is_empty()) else {
-            self.country_drift_streak = 0;
+            *streak = 0;
             return ExitProbeAction::Healthy;
         };
         match probe_result {
             Err(_) => {
                 if is_recheck {
-                    self.country_drift_streak = 0;
+                    *streak = 0;
                 }
                 ExitProbeAction::IgnoredTransientError
             }
@@ -302,8 +340,8 @@ impl MonitorTracker {
                 let obs = observed.trim().to_ascii_uppercase();
                 let exp = expected.to_ascii_uppercase();
                 if !obs.is_empty() && obs != exp {
-                    self.country_drift_streak = self.country_drift_streak.saturating_add(1);
-                    if self.country_drift_streak >= 2 {
+                    *streak = streak.saturating_add(1);
+                    if *streak >= 2 {
                         ExitProbeAction::TriggerCountryDrift {
                             expected_country: exp,
                             observed_country: obs,
@@ -314,7 +352,7 @@ impl MonitorTracker {
                         }
                     }
                 } else {
-                    self.country_drift_streak = 0;
+                    *streak = 0;
                     ExitProbeAction::Healthy
                 }
             }
@@ -322,39 +360,82 @@ impl MonitorTracker {
     }
 }
 
-fn resolve_expected_country(
-    app: &tauri::AppHandle,
-    fallback: Option<String>,
-) -> Option<String> {
-    let registered = (|| -> Option<String> {
-        let root = super::root(app).ok()?;
-        let slot = super::workspaces::selected_slot_readonly(&root).ok()?;
-        let vault = root.parent()?.join("identity-vault");
-        let cards = crate::identities::warming::read_cards(&vault).ok()?;
-        let db_path = vault.join("identities.sqlite");
-        crate::identities::private::safe(&db_path).ok()?;
-        let conn = rusqlite::Connection::open_with_flags(
-            &db_path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .ok()?;
-        let _ = conn.busy_timeout(Duration::from_millis(100));
-        for card in cards {
-            let card_slot: Option<String> = conn
-                .query_row(
-                    "SELECT slot FROM browser_bindings WHERE identity=?1",
-                    [&card.id],
-                    |row| row.get(0),
-                )
-                .ok();
-            if card_slot.as_deref() == Some(slot.as_str()) && card.registered_country.is_some() {
-                return card.registered_country;
-            }
+fn resolve_slot_registered_country(root: &Path, slot: &str) -> Option<String> {
+    let vault = root.parent()?.join("identity-vault");
+    let cards = crate::identities::warming::read_cards(&vault).ok()?;
+    let db_path = vault.join("identities.sqlite");
+    crate::identities::private::safe(&db_path).ok()?;
+    let conn = rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    let _ = conn.busy_timeout(Duration::from_millis(100));
+    for card in cards {
+        let card_slot: Option<String> = conn
+            .query_row(
+                "SELECT slot FROM browser_bindings WHERE identity=?1",
+                [&card.id],
+                |row| row.get(0),
+            )
+            .ok();
+        if card_slot.as_deref() == Some(slot) && card.registered_country.is_some() {
+            return card.registered_country;
         }
-        None
-    })();
-    registered.or(fallback)
+    }
+    None
+}
+
+pub(crate) fn inspect_slot_routes_for_profiles(
+    root: &Path,
+    profiles: &[(String, PathBuf)],
+    machine: Option<&super::config::Machine>,
+) -> Vec<RunningSlotRoute> {
+    let system_proxy = machine
+        .map(|m| m.system_proxy.trim().to_string())
+        .unwrap_or_default();
+    let mut routes = Vec::with_capacity(profiles.len());
+    for (slot, profile_dir) in profiles {
+        let scope = profile_dir.parent().unwrap_or(root);
+        let (effective_proxy, fallback_country) = match super::config::load(scope) {
+            Ok(cfg) => {
+                let configured = cfg.proxy.trim();
+                let effective = if !configured.is_empty() {
+                    configured.to_string()
+                } else {
+                    system_proxy.clone()
+                };
+                let fallback = machine
+                    .and_then(|m| cfg.region(m))
+                    .map(|r| r.country.to_string());
+                (effective, fallback)
+            }
+            Err(_) => (system_proxy.clone(), None),
+        };
+        let expected_country = resolve_slot_registered_country(root, slot).or(fallback_country);
+        routes.push(RunningSlotRoute {
+            slot: slot.clone(),
+            effective_proxy,
+            expected_country,
+        });
+    }
+    routes
+}
+
+pub fn aggregate_tun_proxy(routes: &[RunningSlotRoute]) -> &str {
+    if routes.is_empty() || routes.iter().any(|r| r.effective_proxy.trim().is_empty()) {
+        ""
+    } else {
+        routes[0].effective_proxy.trim()
+    }
+}
+
+pub fn tun_alert_expected_country(routes: &[RunningSlotRoute]) -> Option<String> {
+    routes
+        .iter()
+        .filter(|r| r.effective_proxy.trim().is_empty())
+        .find_map(|r| r.expected_country.clone())
+        .or_else(|| routes.iter().find_map(|r| r.expected_country.clone()))
 }
 
 fn trigger_kill_switch(
@@ -397,29 +478,22 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                 continue;
             }
 
-            let check_app = app.clone();
-            let has_running = tauri::async_runtime::spawn_blocking(move || {
-                super::root(&check_app)
-                    .map(|r| !running_managed_profiles(&r).is_empty())
-                    .unwrap_or(false)
-            })
-            .await
-            .unwrap_or(false);
-
-            if !has_running {
-                tracker.reset();
-                continue;
-            }
-
             let snap_app = app.clone();
-            let Some((tun_active, secondary_dns, ctx, expected_country)) =
+            let Some((tun_active, secondary_dns, routes)) =
                 tauri::async_runtime::spawn_blocking(move || {
+                    let Ok(root) = super::root(&snap_app) else {
+                        return (false, false, Vec::new());
+                    };
+                    let profiles = running_managed_profiles(&root);
+                    if profiles.is_empty() {
+                        return (false, false, Vec::new());
+                    }
                     let (tun_active, secondary_dns) =
                         crate::risk_check::system_tun_and_dns_status();
-                    let ctx = super::current_risk_browser_context(&snap_app);
-                    let expected =
-                        resolve_expected_country(&snap_app, ctx.target_country.clone());
-                    (tun_active, secondary_dns, ctx, expected)
+                    let machine = super::config::machine().ok();
+                    let routes =
+                        inspect_slot_routes_for_profiles(&root, &profiles, machine.as_ref());
+                    (tun_active, secondary_dns, routes)
                 })
                 .await
                 .ok()
@@ -427,10 +501,24 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                 continue;
             };
 
+            if routes.is_empty() {
+                tracker.reset();
+                continue;
+            }
+
+            let active_slots: std::collections::BTreeSet<&str> =
+                routes.iter().map(|r| r.slot.as_str()).collect();
+            tracker
+                .slot_drift_streaks
+                .retain(|slot, _| active_slots.contains(slot.as_str()));
+
+            let tun_proxy = aggregate_tun_proxy(&routes).to_string();
+            let tun_expected = tun_alert_expected_country(&routes);
+
             let local_action = tracker.on_local_tick(
                 enabled,
                 true,
-                &ctx.effective_proxy,
+                &tun_proxy,
                 tun_active,
                 secondary_dns,
             );
@@ -438,7 +526,7 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
             match local_action {
                 LocalCheckAction::TriggerTunDropped => {
                     let trig_app = app.clone();
-                    let exp = expected_country.clone();
+                    let exp = tun_expected.clone();
                     let _ = tauri::async_runtime::spawn_blocking(move || {
                         trigger_kill_switch(&trig_app, "tun_dropped", exp, None);
                     })
@@ -449,36 +537,44 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                 LocalCheckAction::RecheckTunAfterDelay => {
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     let re_app = app.clone();
-                    let Some((still_enabled, still_running, tun2, ctx2)) =
+                    let Some((still_enabled, tun2, routes2)) =
                         tauri::async_runtime::spawn_blocking(move || {
                             let en = re_app
                                 .try_state::<super::Browser>()
                                 .map(|s| s.kill_switch.lock().unwrap().enabled)
                                 .unwrap_or(false);
-                            let run = super::root(&re_app)
-                                .map(|r| !running_managed_profiles(&r).is_empty())
-                                .unwrap_or(false);
-                            if !en || !run {
-                                return (en, run, false, super::RiskBrowserContext::default());
+                            if !en {
+                                return (false, false, Vec::new());
+                            }
+                            let Ok(root) = super::root(&re_app) else {
+                                return (en, false, Vec::new());
+                            };
+                            let profiles = running_managed_profiles(&root);
+                            if profiles.is_empty() {
+                                return (en, false, Vec::new());
                             }
                             let (tun2, _) = crate::risk_check::system_tun_and_dns_status();
-                            let ctx2 = super::current_risk_browser_context(&re_app);
-                            (en, run, tun2, ctx2)
+                            let machine = super::config::machine().ok();
+                            let routes2 = inspect_slot_routes_for_profiles(
+                                &root,
+                                &profiles,
+                                machine.as_ref(),
+                            );
+                            (en, tun2, routes2)
                         })
                         .await
                         .ok()
                     else {
                         continue;
                     };
-                    if tracker.on_tun_recheck(
-                        still_enabled,
-                        still_running,
-                        &ctx2.effective_proxy,
-                        tun2,
-                    ) == LocalCheckAction::TriggerTunDropped
+                    let still_running = !routes2.is_empty();
+                    let tun_proxy2 = aggregate_tun_proxy(&routes2);
+                    if tracker.on_tun_recheck(still_enabled, still_running, tun_proxy2, tun2)
+                        == LocalCheckAction::TriggerTunDropped
                     {
                         let trig_app = app.clone();
-                        let exp = expected_country.clone();
+                        let exp =
+                            tun_alert_expected_country(&routes2).or_else(|| tun_expected.clone());
                         let _ = tauri::async_runtime::spawn_blocking(move || {
                             trigger_kill_switch(&trig_app, "tun_dropped", exp, None);
                         })
@@ -488,70 +584,147 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                     }
                 }
                 LocalCheckAction::Healthy { should_probe_exit } => {
-                    if should_probe_exit && expected_country.is_some() {
-                        let first_probe =
-                            super::network::probe(&ctx.effective_proxy).await;
-                        let first_res = first_probe
-                            .as_ref()
-                            .map(|e| e.country.as_str())
-                            .map_err(|e| e.as_str());
-                        match tracker.on_exit_probe(
-                            expected_country.as_deref(),
-                            first_res,
-                            false,
-                        ) {
-                            ExitProbeAction::RecheckExitAfterDelay { .. } => {
-                                tokio::time::sleep(Duration::from_secs(3)).await;
-                                let re_app = app.clone();
-                                let still_active =
-                                    tauri::async_runtime::spawn_blocking(move || {
-                                        let en = re_app
-                                            .try_state::<super::Browser>()
-                                            .map(|s| s.kill_switch.lock().unwrap().enabled)
-                                            .unwrap_or(false);
-                                        let run = super::root(&re_app)
-                                            .map(|r| !running_managed_profiles(&r).is_empty())
-                                            .unwrap_or(false);
-                                        en && run
-                                    })
+                    if should_probe_exit
+                        && routes.iter().any(|r| r.expected_country.is_some())
+                    {
+                        let mut probe_cache: std::collections::BTreeMap<
+                            String,
+                            Result<String, String>,
+                        > = std::collections::BTreeMap::new();
+                        for route in &routes {
+                            if route.expected_country.is_none() {
+                                continue;
+                            }
+                            let key = route.effective_proxy.trim().to_string();
+                            if !probe_cache.contains_key(&key) {
+                                let res = super::network::probe(&key)
                                     .await
-                                    .unwrap_or(false);
-                                if !still_active {
-                                    tracker.reset();
-                                    continue;
+                                    .map(|e| e.country);
+                                probe_cache.insert(key, res);
+                            }
+                        }
+
+                        let mut immediate_drift: Option<(String, String)> = None;
+                        let mut recheck_slots: Vec<String> = Vec::new();
+                        for route in &routes {
+                            let Some(ref exp_country) = route.expected_country else {
+                                continue;
+                            };
+                            let key = route.effective_proxy.trim();
+                            let Some(res) = probe_cache.get(key) else {
+                                continue;
+                            };
+                            let res_ref = res.as_deref().map_err(|e| e.as_str());
+                            match tracker.on_slot_exit_probe(
+                                &route.slot,
+                                Some(exp_country.as_str()),
+                                res_ref,
+                                false,
+                            ) {
+                                ExitProbeAction::TriggerCountryDrift {
+                                    expected_country: exp,
+                                    observed_country: obs,
+                                } => {
+                                    immediate_drift = Some((exp, obs));
+                                    break;
                                 }
-                                let second_probe =
-                                    super::network::probe(&ctx.effective_proxy).await;
-                                let second_res = second_probe
-                                    .as_ref()
-                                    .map(|e| e.country.as_str())
+                                ExitProbeAction::RecheckExitAfterDelay { .. } => {
+                                    recheck_slots.push(route.slot.clone());
+                                }
+                                ExitProbeAction::Healthy
+                                | ExitProbeAction::IgnoredTransientError => {}
+                            }
+                        }
+
+                        if let Some((exp, obs)) = immediate_drift {
+                            let trig_app = app.clone();
+                            let _ = tauri::async_runtime::spawn_blocking(move || {
+                                trigger_kill_switch(
+                                    &trig_app,
+                                    "country_drift",
+                                    Some(exp),
+                                    Some(obs),
+                                );
+                            })
+                            .await;
+                            tracker.reset();
+                            continue;
+                        }
+
+                        if !recheck_slots.is_empty() {
+                            tokio::time::sleep(Duration::from_secs(3)).await;
+                            let re_app = app.clone();
+                            let Some((still_enabled, routes2)) =
+                                tauri::async_runtime::spawn_blocking(move || {
+                                    let en = re_app
+                                        .try_state::<super::Browser>()
+                                        .map(|s| s.kill_switch.lock().unwrap().enabled)
+                                        .unwrap_or(false);
+                                    if !en {
+                                        return (false, Vec::new());
+                                    }
+                                    let Ok(root) = super::root(&re_app) else {
+                                        return (en, Vec::new());
+                                    };
+                                    let profiles = running_managed_profiles(&root);
+                                    if profiles.is_empty() {
+                                        return (en, Vec::new());
+                                    }
+                                    let machine = super::config::machine().ok();
+                                    let routes2 = inspect_slot_routes_for_profiles(
+                                        &root,
+                                        &profiles,
+                                        machine.as_ref(),
+                                    );
+                                    (en, routes2)
+                                })
+                                .await
+                                .ok()
+                            else {
+                                continue;
+                            };
+                            if !still_enabled || routes2.is_empty() {
+                                tracker.reset();
+                                continue;
+                            }
+                            let mut reprobe_cache: std::collections::BTreeMap<
+                                String,
+                                Result<String, String>,
+                            > = std::collections::BTreeMap::new();
+                            let mut confirmed_drift: Option<(String, String)> = None;
+                            for slot_name in &recheck_slots {
+                                let Some(route2) =
+                                    routes2.iter().find(|r| &r.slot == slot_name)
+                                else {
+                                    continue;
+                                };
+                                let Some(ref exp_country) = route2.expected_country else {
+                                    continue;
+                                };
+                                let key = route2.effective_proxy.trim().to_string();
+                                if !reprobe_cache.contains_key(&key) {
+                                    let res = super::network::probe(&key)
+                                        .await
+                                        .map(|e| e.country);
+                                    reprobe_cache.insert(key.clone(), res);
+                                }
+                                let res_ref = reprobe_cache[&key]
+                                    .as_deref()
                                     .map_err(|e| e.as_str());
                                 if let ExitProbeAction::TriggerCountryDrift {
                                     expected_country: exp,
                                     observed_country: obs,
-                                } = tracker.on_exit_probe(
-                                    expected_country.as_deref(),
-                                    second_res,
+                                } = tracker.on_slot_exit_probe(
+                                    &route2.slot,
+                                    Some(exp_country.as_str()),
+                                    res_ref,
                                     true,
                                 ) {
-                                    let trig_app = app.clone();
-                                    let _ = tauri::async_runtime::spawn_blocking(move || {
-                                        trigger_kill_switch(
-                                            &trig_app,
-                                            "country_drift",
-                                            Some(exp),
-                                            Some(obs),
-                                        );
-                                    })
-                                    .await;
-                                    tracker.reset();
-                                    continue;
+                                    confirmed_drift = Some((exp, obs));
+                                    break;
                                 }
                             }
-                            ExitProbeAction::TriggerCountryDrift {
-                                expected_country: exp,
-                                observed_country: obs,
-                            } => {
+                            if let Some((exp, obs)) = confirmed_drift {
                                 let trig_app = app.clone();
                                 let _ = tauri::async_runtime::spawn_blocking(move || {
                                     trigger_kill_switch(
@@ -565,7 +738,6 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                                 tracker.reset();
                                 continue;
                             }
-                            ExitProbeAction::Healthy | ExitProbeAction::IgnoredTransientError => {}
                         }
                     }
                 }
@@ -773,5 +945,92 @@ mod tests {
         assert_eq!(&rgba[0..4], &[10, 20, 30, 0]);
         assert_eq!(&rgba[4..8], &[50, 60, 70, 32]);
         assert_eq!(&rgba[8..12], &[220, 38, 38, 255]);
+    }
+
+    #[test]
+    fn multi_slot_routes_enable_tun_guard_when_any_running_slot_lacks_proxy() {
+        let dir = std::env::temp_dir().join(format!(
+            "claude-local-ks-slots-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = dir.join("browser");
+        let slot_a = "10000000000000000000000000000001";
+        let slot_b = "10000000000000000000000000000002";
+        let scope_a = root.join("contexts").join(slot_a);
+        let scope_b = root.join("contexts").join(slot_b);
+        fs::create_dir_all(scope_a.join("profile")).unwrap();
+        fs::create_dir_all(scope_b.join("profile")).unwrap();
+        fs::create_dir_all(root.join("profile")).unwrap();
+
+        let mut cfg_a = super::super::config::Config::default();
+        cfg_a.proxy = "socks5://127.0.0.1:7899".into();
+        cfg_a.follow_machine = false;
+        cfg_a.language = "en-US".into();
+        cfg_a.timezone = "America/New_York".into();
+        super::super::config::save(&scope_a, &cfg_a).unwrap();
+
+        let mut cfg_b = super::super::config::Config::default();
+        cfg_b.proxy = String::new(); // TUN-dependent slot
+        cfg_b.follow_machine = false;
+        cfg_b.language = "ja".into();
+        cfg_b.timezone = "Asia/Tokyo".into();
+        super::super::config::save(&scope_b, &cfg_b).unwrap();
+
+        let mut cfg_legacy = super::super::config::Config::default();
+        cfg_legacy.proxy = "http://127.0.0.1:7897".into();
+        super::super::config::save(&root, &cfg_legacy).unwrap();
+
+        let machine = super::super::config::Machine {
+            platform: "windows".into(),
+            version: "10.0.22631".into(),
+            cores: 8,
+            timezone: "America/New_York".into(),
+            languages: vec!["en-US".into()],
+            locale: "en-US".into(),
+            locale_country: "US".into(),
+            location_enabled: Some(false),
+            timezones: vec!["America/New_York".into(), "Asia/Tokyo".into()],
+            system_proxy: String::new(),
+        };
+
+        let profiles = vec![
+            ("legacy".to_string(), root.join("profile")),
+            (slot_a.to_string(), scope_a.join("profile")),
+            (slot_b.to_string(), scope_b.join("profile")),
+        ];
+        let routes = inspect_slot_routes_for_profiles(&root, &profiles, Some(&machine));
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(routes.len(), 3);
+        assert_eq!(routes[0].effective_proxy, "http://127.0.0.1:7897");
+        assert_eq!(routes[1].effective_proxy, "socks5://127.0.0.1:7899");
+        assert_eq!(routes[1].expected_country.as_deref(), Some("US"));
+        assert_eq!(routes[2].effective_proxy, "");
+        assert_eq!(routes[2].expected_country.as_deref(), Some("JP"));
+
+        // Even though slot_a and legacy have explicit proxies, slot_b has an empty proxy so TUN monitoring stays active!
+        assert_eq!(aggregate_tun_proxy(&routes), "");
+        assert_eq!(tun_alert_expected_country(&routes).as_deref(), Some("JP"));
+
+        let mut tracker = MonitorTracker::default();
+        assert_eq!(
+            tracker.on_local_tick(true, true, aggregate_tun_proxy(&routes), true, false),
+            LocalCheckAction::Healthy {
+                should_probe_exit: false
+            }
+        );
+        assert!(tracker.tun_baseline_active);
+        assert_eq!(
+            tracker.on_local_tick(true, true, aggregate_tun_proxy(&routes), false, false),
+            LocalCheckAction::RecheckTunAfterDelay
+        );
+        assert_eq!(
+            tracker.on_tun_recheck(true, true, aggregate_tun_proxy(&routes), false),
+            LocalCheckAction::TriggerTunDropped
+        );
     }
 }

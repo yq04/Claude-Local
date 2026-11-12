@@ -46,6 +46,7 @@ export type MihomoAudit = {
 export type CliSecurityAudit = {
   settings_present?: boolean;
   telemetry_shield_active: boolean;
+  nonessential_traffic_blocked?: boolean;
   proxy_env_complete: boolean;
   socks5_in_cli_env: boolean;
   unpinned_npx_count: number;
@@ -1180,9 +1181,9 @@ export function buildClaudeCliAntiLeakSettingsJson(port = DEFAULT_DEDICATED_LIST
       grpc_proxy: proxyUrl,
       NO_PROXY: noProxy,
       no_proxy: noProxy,
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       DISABLE_TELEMETRY: '1',
       DISABLE_ERROR_REPORTING: '1',
+      DO_NOT_TRACK: '1',
     },
   };
   return {
@@ -1213,9 +1214,22 @@ function isLoopbackHostUrl(rawUrl: string): boolean {
   }
 }
 
+function isValidHttpProxyUrl(rawUrl: string): boolean {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function auditClaudeCliSecurityBoundary(input: {
   settingsJsonText?: string | null;
   settingsJson?: Record<string, unknown> | null;
+  settingsLocalJsonText?: string | null;
+  settingsLocalJson?: Record<string, unknown> | null;
   claudeJsonText?: string | null;
   claudeJson?: Record<string, unknown> | null;
   mcpJsonText?: string | null;
@@ -1225,6 +1239,7 @@ export function auditClaudeCliSecurityBoundary(input: {
 }): CliSecurityAudit {
   let settings_present = false;
   let telemetry_shield_active = false;
+  let nonessential_traffic_blocked = false;
   let proxy_env_complete = false;
   let socks5_in_cli_env = false;
   let has_custom_hooks_or_helpers = false;
@@ -1290,53 +1305,85 @@ export function auditClaudeCliSecurityBoundary(input: {
     }
   };
 
-  const parsedSettings = parseOrObj(input.settingsJsonText, input.settingsJson);
-  if (parsedSettings) {
-    settings_present = true;
-    const env =
-      parsedSettings.env && typeof parsedSettings.env === 'object' && !Array.isArray(parsedSettings.env)
-        ? (parsedSettings.env as Record<string, unknown>)
-        : {};
-    const truthy = (v: unknown) => v === '1' || v === 1 || v === true || v === 'true';
-    telemetry_shield_active =
-      truthy(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC) &&
-      truthy(env.DISABLE_TELEMETRY) &&
-      truthy(env.DISABLE_ERROR_REPORTING);
-
-    const proxyKeys = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'GRPC_PROXY'];
-    const proxyVals = proxyKeys.map(k => (typeof env[k] === 'string' ? env[k].trim().toLowerCase() : ''));
-    socks5_in_cli_env = [
-      ...proxyVals,
-      typeof env.http_proxy === 'string' ? env.http_proxy.trim().toLowerCase() : '',
-      typeof env.https_proxy === 'string' ? env.https_proxy.trim().toLowerCase() : '',
-      typeof env.all_proxy === 'string' ? env.all_proxy.trim().toLowerCase() : '',
-      typeof env.grpc_proxy === 'string' ? env.grpc_proxy.trim().toLowerCase() : '',
-    ].some(v => v.startsWith('socks5'));
-
-    proxy_env_complete =
-      !socks5_in_cli_env &&
-      proxyVals.every(v => v.startsWith('http://') || v.startsWith('https://'));
-
-    const hasApiKeyHelper = typeof parsedSettings.apiKeyHelper === 'string' && parsedSettings.apiKeyHelper.trim().length > 0;
-    const hasAwsRefresh = typeof parsedSettings.awsAuthRefresh === 'string' && parsedSettings.awsAuthRefresh.trim().length > 0;
-    const hasOtelHelper = typeof parsedSettings.otelHeadersHelper === 'string' && parsedSettings.otelHeadersHelper.trim().length > 0;
+  const inspectSettingsDoc = (doc: Record<string, unknown>) => {
+    const hasApiKeyHelper = typeof doc.apiKeyHelper === 'string' && doc.apiKeyHelper.trim().length > 0;
+    const hasAwsRefresh = typeof doc.awsAuthRefresh === 'string' && doc.awsAuthRefresh.trim().length > 0;
+    const hasOtelHelper = typeof doc.otelHeadersHelper === 'string' && doc.otelHeadersHelper.trim().length > 0;
     const hasHooks =
-      parsedSettings.hooks !== null &&
-      typeof parsedSettings.hooks === 'object' &&
-      !Array.isArray(parsedSettings.hooks) &&
-      Object.keys(parsedSettings.hooks as Record<string, unknown>).length > 0;
+      (typeof doc.hooks === 'string' && doc.hooks.trim().length > 0) ||
+      (Array.isArray(doc.hooks) && doc.hooks.length > 0) ||
+      (doc.hooks !== null &&
+        typeof doc.hooks === 'object' &&
+        !Array.isArray(doc.hooks) &&
+        Object.keys(doc.hooks as Record<string, unknown>).length > 0);
     const hasDangerousPerms =
-      parsedSettings.skipDangerousModePermissionPrompt === true ||
-      parsedSettings.dangerouslySkipPermissions === true ||
-      (parsedSettings.permissions !== null &&
-        typeof parsedSettings.permissions === 'object' &&
-        !Array.isArray(parsedSettings.permissions) &&
-        Array.isArray((parsedSettings.permissions as Record<string, unknown>).allow) &&
-        ((parsedSettings.permissions as Record<string, unknown>).allow as unknown[]).some(
+      doc.skipDangerousModePermissionPrompt === true ||
+      doc.dangerouslySkipPermissions === true ||
+      (doc.permissions !== null &&
+        typeof doc.permissions === 'object' &&
+        !Array.isArray(doc.permissions) &&
+        Array.isArray((doc.permissions as Record<string, unknown>).allow) &&
+        ((doc.permissions as Record<string, unknown>).allow as unknown[]).some(
           item => typeof item === 'string' && /^bash(\(\*\))?$/i.test(item.trim()),
         ));
-    has_custom_hooks_or_helpers = hasApiKeyHelper || hasAwsRefresh || hasOtelHelper || hasHooks || hasDangerousPerms;
-    inspectMcpServers(parsedSettings.mcpServers);
+    if (hasApiKeyHelper || hasAwsRefresh || hasOtelHelper || hasHooks || hasDangerousPerms) {
+      has_custom_hooks_or_helpers = true;
+    }
+    inspectMcpServers(doc.mcpServers);
+  };
+
+  const parsedSettings = parseOrObj(input.settingsJsonText, input.settingsJson);
+  const parsedSettingsLocal = parseOrObj(input.settingsLocalJsonText, input.settingsLocalJson);
+  const mergedEnv: Record<string, unknown> = {};
+
+  for (const doc of [parsedSettings, parsedSettingsLocal]) {
+    if (doc) {
+      settings_present = true;
+      inspectSettingsDoc(doc);
+      if (doc.env && typeof doc.env === 'object' && !Array.isArray(doc.env)) {
+        Object.assign(mergedEnv, doc.env as Record<string, unknown>);
+      }
+    }
+  }
+
+  if (settings_present) {
+    const truthy = (v: unknown) => {
+      if (v === true || v === 1) return true;
+      if (typeof v === 'string') {
+        const s = v.trim().toLowerCase();
+        return s === '1' || s === 'true';
+      }
+      return false;
+    };
+    nonessential_traffic_blocked = truthy(mergedEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC);
+    telemetry_shield_active =
+      truthy(mergedEnv.DISABLE_TELEMETRY) &&
+      truthy(mergedEnv.DISABLE_ERROR_REPORTING) &&
+      !nonessential_traffic_blocked;
+
+    const strVal = (key: string) => (typeof mergedEnv[key] === 'string' ? (mergedEnv[key] as string).trim() : '');
+    const canonicalProxyPairs: Array<[string, string]> = [
+      ['HTTP_PROXY', 'http_proxy'],
+      ['HTTPS_PROXY', 'https_proxy'],
+      ['ALL_PROXY', 'all_proxy'],
+      ['GRPC_PROXY', 'grpc_proxy'],
+    ];
+
+    socks5_in_cli_env = canonicalProxyPairs.some(([upper, lower]) =>
+      strVal(upper).toLowerCase().startsWith('socks') || strVal(lower).toLowerCase().startsWith('socks'),
+    );
+
+    const allProxyPairsOk = canonicalProxyPairs.every(([upper, lower]) => {
+      const u = strVal(upper);
+      const l = strVal(lower);
+      return (
+        !u.toLowerCase().startsWith('socks') &&
+        !l.toLowerCase().startsWith('socks') &&
+        (isValidHttpProxyUrl(u) || isValidHttpProxyUrl(l))
+      );
+    });
+    const noProxyOk = strVal('NO_PROXY').length > 0 || strVal('no_proxy').length > 0;
+    proxy_env_complete = !socks5_in_cli_env && allProxyPairsOk && noProxyOk;
   }
 
   for (const doc of [
@@ -1346,7 +1393,7 @@ export function auditClaudeCliSecurityBoundary(input: {
     if (doc) {
       inspectMcpServers(doc.mcpServers);
       if (doc.projects && typeof doc.projects === 'object' && !Array.isArray(doc.projects)) {
-        for (const proj of Object.values(doc.projects as Record<string, unknown>)) {
+        for (const proj of Object.values(doc.projects as Record<string, unknown>).slice(0, 256)) {
           if (proj && typeof proj === 'object' && !Array.isArray(proj)) {
             inspectMcpServers((proj as Record<string, unknown>).mcpServers);
           }
@@ -1358,6 +1405,7 @@ export function auditClaudeCliSecurityBoundary(input: {
   return {
     settings_present,
     telemetry_shield_active,
+    nonessential_traffic_blocked,
     proxy_env_complete,
     socks5_in_cli_env,
     unpinned_npx_count,

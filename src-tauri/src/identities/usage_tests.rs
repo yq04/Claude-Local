@@ -538,11 +538,26 @@ fn damaged_file_warning_survives_cached_reads_without_double_counting() {
     assert_eq!(first.unattributed.input_tokens, 4);
     assert_eq!(second.unattributed.input_tokens, 4);
     let conn = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
-    let cached: i64 = conn
-        .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
+    // A terminated invalid line is permanent in an append-only log: the cursor is cached
+    // with a damage flag (so the file is not re-parsed every scan) and the warning replays.
+    let (cached, damaged, offset): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*),COALESCE(MAX(damaged),0),COALESCE(MAX(offset),0) FROM files",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
         .unwrap();
-    assert_eq!(cached, 0);
+    assert_eq!(cached, 1);
+    assert_eq!(damaged, 1);
+    assert_eq!(offset as u64, fs::metadata(&path).unwrap().len());
     drop(conn);
+    // Appending a valid record resumes from the cached cursor and keeps the warning.
+    let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    writeln!(f,"{{\"type\":\"assistant\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"requestId\":\"twice\",\"message\":{{\"id\":\"two\",\"model\":\"sonnet\",\"usage\":{{\"input_tokens\":5}}}}}}").unwrap();
+    drop(f);
+    let third = usage::read_at(&vault, &home, "all", None, 0).unwrap();
+    assert!(third.warnings.contains(&"invalid_records".into()));
+    assert_eq!(third.unattributed.input_tokens, 9);
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -1956,6 +1971,203 @@ fn legacy_cursor_bounded_recovery_and_conservative_unknown_handling() {
     assert_eq!(far_cursor.0, "max");
     assert_eq!(far_cursor.1, usage::USAGE_PARSER_VERSION);
     drop(conn);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn object_shaped_effort_and_output_config_backfill_from_parser_v2() {
+    let dir = temp_dir("dict-effort-v3-backfill");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    let projects = home.join(".claude").join("projects").join("v322-proj");
+    super::private::directory(&vault).unwrap();
+    super::private::directory(&projects).unwrap();
+    let jsonl = projects.join("session.jsonl");
+
+    let mut f = super::private::create(&jsonl).unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-11-10T10:00:00Z",
+            "requestId": "req-obj-1",
+            "effort": {"level": "high"},
+            "message": {
+                "id": "msg-obj-1",
+                "model": "claude-fable-5-2",
+                "usage": {"input_tokens": 100, "output_tokens": 50}
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-11-10T10:02:00Z",
+            "requestId": "req-obj-2",
+            "perTurnEffort": {"effort": "xhigh"},
+            "message": {
+                "id": "msg-obj-2",
+                "model": "claude-fable-5-2",
+                "usage": {"input_tokens": 200, "output_tokens": 50}
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-11-10T10:04:00Z",
+            "requestId": "req-obj-3",
+            "message": {
+                "id": "msg-obj-3",
+                "model": "claude-fable-5-2",
+                "output_config": {"effort": {"effortLevel": "max"}},
+                "usage": {"input_tokens": 300, "output_tokens": 50}
+            }
+        })
+    )
+    .unwrap();
+    f.sync_all().unwrap();
+    drop(f);
+
+    let snap0 = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+    assert_eq!(snap0.totals.total_tokens, 750);
+    assert_eq!(snap0.totals.requests, 3);
+    assert_eq!(snap0.models[0].efforts.len(), 3);
+
+    // Simulate a v2 ledger before v2.1.322 dict-effort support where effort was stored as '' and account_key was attributed.
+    let ledger_path = vault.join("usage.sqlite");
+    let conn = usage::open_ledger(&ledger_path).unwrap();
+    conn.execute(
+        "UPDATE events SET effort='', account_key='hmac-preserved'",
+        [],
+    )
+    .unwrap();
+    conn.execute("UPDATE files SET parser_version=2, effort=''", [])
+        .unwrap();
+    drop(conn);
+
+    // Next read must automatically re-parse and backfill effort via ON CONFLICT(event_key) without altering totals or account_key!
+    let snap_backfilled = usage::read_at(&vault, &home, "all", None, 0).unwrap();
+    assert_eq!(snap_backfilled.totals.total_tokens, 750);
+    assert_eq!(snap_backfilled.totals.requests, 3);
+    let fable = snap_backfilled
+        .models
+        .iter()
+        .find(|m| m.model == "claude-fable-5-2")
+        .unwrap();
+    assert_eq!(fable.efforts.len(), 3);
+    assert!(fable.efforts.iter().any(|e| e.effort == "max" && e.totals.total_tokens == 350));
+    assert!(fable.efforts.iter().any(|e| e.effort == "xhigh" && e.totals.total_tokens == 250));
+    assert!(fable.efforts.iter().any(|e| e.effort == "high" && e.totals.total_tokens == 150));
+
+    let conn = usage::open_ledger(&ledger_path).unwrap();
+    let preserved_owner_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE account_key='hmac-preserved'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let ver: i64 = conn
+        .query_row("SELECT parser_version FROM files", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(preserved_owner_count, 3);
+    assert_eq!(ver, 3);
+    drop(conn);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn per_account_models_exposed_and_transient_identity_db_error_skips_false_gap() {
+    let dir = temp_dir("account-models-and-gap-guard");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    super::private::directory(&vault).unwrap();
+    super::private::directory(&home).unwrap();
+
+    let db_path = vault.join("identities.sqlite");
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    db.execute_batch(
+        "CREATE TABLE identities(id TEXT PRIMARY KEY,name TEXT NOT NULL,account_key TEXT,saved_at INTEGER NOT NULL,empty INTEGER NOT NULL DEFAULT 0);
+         CREATE TABLE state(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+         CREATE TABLE identity_summaries(id TEXT PRIMARY KEY,summary TEXT NOT NULL);",
+    )
+    .unwrap();
+    let acc_id = "0192e2b3cccc70008000000000000003";
+    db.execute(
+        "INSERT INTO identities(id,name,account_key,saved_at,empty) VALUES(?1,'Alpha','hmac-alpha',100,0)",
+        [acc_id],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO state(key,value) VALUES('active_identity',?1)",
+        [acc_id],
+    )
+    .unwrap();
+    drop(db);
+
+    let ledger = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
+    let mut initial_events = HashMap::new();
+    let mut ev1 = event(
+        "e-alpha-1",
+        200,
+        Counts {
+            input: 500,
+            output: 250,
+            ..Counts::default()
+        },
+    );
+    ev1.model = "claude-mythos-preview".into();
+    initial_events.insert("e-alpha-1".into(), ev1);
+    usage::persist_scan(
+        &ledger,
+        initial_events,
+        &[(100, Some("hmac-alpha".into()))],
+        &[],
+    )
+    .unwrap();
+    drop(ledger);
+
+    let snap = usage::read_at(&vault, &home, "all", None, 0).unwrap();
+    let alpha = snap.accounts.iter().find(|a| a.id == acc_id).unwrap();
+    assert_eq!(alpha.models.len(), 1);
+    assert_eq!(alpha.models[0].model, "claude-mythos-preview");
+    assert_eq!(alpha.models[0].totals.total_tokens, 750);
+
+    // Replace identities.sqlite with non-SQLite bytes to simulate transient unreadable/locked DB while file exists.
+    fs::write(&db_path, b"not-a-valid-sqlite-header").unwrap();
+    let ledger = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
+    ledger
+        .execute(
+            "INSERT OR REPLACE INTO meta(key,value) VALUES('last_observed_account','hmac-alpha')",
+            [],
+        )
+        .unwrap();
+    drop(ledger);
+
+    let _ = usage::read_at(&vault, &home, "all", Some("unattributed"), 0).unwrap();
+    let ledger = usage::open_ledger(&vault.join("usage.sqlite")).unwrap();
+    let null_gaps: i64 = ledger
+        .query_row(
+            "SELECT COUNT(*) FROM boundaries WHERE account_key IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        null_gaps, 0,
+        "Transient identity DB open/query failure must not insert a permanent NULL boundary gap"
+    );
+    drop(ledger);
 
     let _ = fs::remove_dir_all(dir);
 }

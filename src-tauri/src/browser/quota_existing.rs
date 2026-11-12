@@ -1,6 +1,6 @@
-// [INPUT]: An explicit batch query, frozen account fingerprint and an already running managed browser profile.
-// [OUTPUT]: One bounded, extension-origin, account-bound live usage snapshot or specific bridge failure with cooperative cancellation; cfg(test) exposes the receiver for synthetic native-chain tests; no cookies or browser data are read.
-// [POS]: Browser fallback for unified quota reads; 20-second receiver deadline plus caller deadline/cancel signal; never changes selected identity, seed, profile or credentials.
+// [INPUT]: An explicit batch query or subscription sync, frozen account fingerprint and an isolated managed browser profile.
+// [OUTPUT]: One bounded, extension-origin, account-bound live usage/subscription snapshot or specific bridge failure on an independent ephemeral loopback listener; spawn always carries validated slot config arguments (proxy/fingerprint/WebRTC lockdown) to eliminate cold-start TOCTOU; cfg(test) exposes the receiver for synthetic native-chain tests; no cookies or browser data are read.
+// [POS]: Independent per-request loopback bridge for unified quota reads and web subscription sync; never changes selected identity, global Browser.session, seed, profile or credentials.
 // [PROTOCOL]: Only manual batches may use this bridge; update browser/CLAUDE.md with changes.
 use serde_json::Value;
 use std::{
@@ -165,20 +165,22 @@ fn reply(stream: &mut TcpStream, code: &str, body: &[u8], html: bool, cors: bool
     let _ = stream.write_all(body);
 }
 
-fn receive(
+fn receive_with<T>(
     listener: TcpListener,
     token: &str,
     nonce: &str,
     deadline: Instant,
+    max_wait: Duration,
     cancelled: &dyn Fn() -> bool,
-) -> Result<Value, String> {
+    commit: impl FnOnce(super::quota_bridge::Snapshot) -> Result<T, String>,
+) -> Result<T, String> {
     let port = listener
         .local_addr()
         .map_err(|_| "quotaOnline.unavailable")?
         .port();
     let page = format!("/{token}/browser.html");
     let callback = format!("/{token}/quota-sync");
-    let deadline = deadline.min(Instant::now() + WAIT);
+    let deadline = deadline.min(Instant::now() + max_wait);
     let mut requests = 0;
     while Instant::now() < deadline && requests < 32 {
         if cancelled() {
@@ -237,16 +239,10 @@ fn receive(
             .map_err(|_| "quotaOnline.unavailable")?
             .as_millis() as u64;
         let snapshot = super::quota_bridge::snapshot(incoming, observed);
-        match snapshot {
-            Ok(snapshot) if snapshot.usage.is_some() => {
-                let value =
-                    serde_json::to_value(snapshot).map_err(|_| "quotaOnline.unavailable")?;
+        match snapshot.and_then(commit) {
+            Ok(value) => {
                 reply(&mut stream, "200 OK", b"{\"ok\":true}", false, true);
                 return Ok(value);
-            }
-            Ok(_) => {
-                reply(&mut stream, "409 Conflict", b"{\"ok\":false}", false, true);
-                return Err("quotaOnline.browserNoQuotaUpdate".into());
             }
             Err(error) => {
                 reply(&mut stream, "409 Conflict", b"{\"ok\":false}", false, true);
@@ -261,6 +257,40 @@ fn receive(
     } else {
         Err("quotaOnline.unavailable".into())
     }
+}
+
+fn receive(
+    listener: TcpListener,
+    token: &str,
+    nonce: &str,
+    deadline: Instant,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Value, String> {
+    receive_with(listener, token, nonce, deadline, WAIT, cancelled, |snapshot| {
+        if snapshot.usage.is_some() {
+            serde_json::to_value(snapshot).map_err(|_| "quotaOnline.unavailable".to_string())
+        } else {
+            Err("quotaOnline.browserNoQuotaUpdate".into())
+        }
+    })
+}
+
+pub(super) fn receive_subscription_sync(
+    listener: TcpListener,
+    token: &str,
+    nonce: &str,
+    max_wait: Duration,
+    commit: impl FnOnce(super::quota_bridge::Snapshot) -> Result<(), String>,
+) -> Result<(), String> {
+    receive_with(
+        listener,
+        token,
+        nonce,
+        Instant::now() + max_wait,
+        max_wait,
+        &|| false,
+        commit,
+    )
 }
 
 #[cfg(test)]
@@ -309,6 +339,11 @@ pub(crate) fn query_existing_profile(
     if !super::profile::running(&profile)? {
         return Err("quotaOnline.browserProfileNotRunning".into());
     }
+    let config = super::config::load(&scope).map_err(|_| "quotaOnline.unavailable")?;
+    let machine = super::config::machine().map_err(|_| "quotaOnline.unavailable")?;
+    config
+        .validate(&machine)
+        .map_err(|_| "quotaOnline.unavailable")?;
     let listener = super::server::bind()?;
     let port = listener
         .local_addr()
@@ -318,11 +353,11 @@ pub(crate) fn query_existing_profile(
     let nonce = super::server::nonce()?;
     let url = format!("http://127.0.0.1:{port}/{token}/browser.html#quota-sync={nonce}&quota_identity={expected_identity}");
     let engine = super::engine(app)?;
+    let launch_args =
+        super::config::arguments(&config, &machine, &profile, &url, &super::version(&engine));
     let mut command = Command::new(super::binary(&engine));
     command
-        .arg(format!("--user-data-dir={}", profile.display()))
-        .arg("--profile-directory=Default")
-        .arg(url)
+        .args(&launch_args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

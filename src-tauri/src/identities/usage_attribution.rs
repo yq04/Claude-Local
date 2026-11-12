@@ -1,6 +1,6 @@
 // [INPUT]: Existing live account HMAC, bounded allowlisted display metadata, explicit empty-switch receipts and hashed JSONL session evidence.
 // [OUTPUT]: Usage-only identity registry, conservative observed login windows and a frozen historical fallback cutoff.
-// [POS]: Private child of usage; no archive creation, process control, source writes or credential reads.
+// [POS]: Private child of usage; no archive creation, process control, source writes or credential reads. Registry UPSERTs are change-gated (display projection or hourly last_seen) so routine scans stay write-free.
 // [PROTOCOL]: Managed empty receipts are distinct from legacy/externally detected unknown gaps. Existing event ownership is immutable.
 use super::*;
 
@@ -19,6 +19,12 @@ pub(super) fn migrate(conn: &Connection) -> Result<(), String> {
     }
     conn.execute_batch("CREATE TABLE IF NOT EXISTS usage_identities(account_key TEXT PRIMARY KEY,id TEXT NOT NULL UNIQUE,name TEXT NOT NULL,email TEXT,first_seen INTEGER NOT NULL,last_seen INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS live_windows(seq INTEGER PRIMARY KEY,started_at INTEGER NOT NULL,account_key TEXT,controlled INTEGER NOT NULL DEFAULT 0); CREATE INDEX IF NOT EXISTS events_session ON events(session_key);")
         .map_err(|_| "usage ledger migration failed")?;
+    freeze_legacy_fallback(conn)
+}
+
+/// Data (not schema) step run on every ledger open: a legacy saved fallback account freezes
+/// the existing history cutoff exactly once.
+pub(super) fn freeze_legacy_fallback(conn: &Connection) -> Result<(), String> {
     let legacy: bool = conn
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM meta WHERE key='fallback_account_id')",
@@ -96,7 +102,9 @@ pub(super) fn observe(conn: &Connection, vault: &Path, home: &Path, clock: u64) 
         let name = name
             .or_else(|| email.clone())
             .unwrap_or_else(|| "Local account".into());
-        conn.execute("INSERT INTO usage_identities(account_key,id,name,email,first_seen,last_seen) VALUES(?1,?2,?3,?4,?5,?5) ON CONFLICT(account_key) DO UPDATE SET name=excluded.name,email=excluded.email,last_seen=excluded.last_seen", params![key,id,name,email,clock as i64]).ok()?;
+        // Rewrite only when the display projection changes or last_seen is an hour stale, so
+        // routine scans do not force a durable commit; an unchanged UPSERT dirties no pages.
+        conn.execute("INSERT INTO usage_identities(account_key,id,name,email,first_seen,last_seen) VALUES(?1,?2,?3,?4,?5,?5) ON CONFLICT(account_key) DO UPDATE SET name=excluded.name,email=excluded.email,last_seen=excluded.last_seen WHERE usage_identities.name IS NOT excluded.name OR usage_identities.email IS NOT excluded.email OR usage_identities.last_seen < excluded.last_seen - 3600", params![key,id,name,email,clock as i64]).ok()?;
     }
     let latest: Option<Option<String>> = conn
         .query_row(

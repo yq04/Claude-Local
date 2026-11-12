@@ -85,13 +85,12 @@ pub struct Browser {
     pub(crate) warning: Mutex<Option<String>>,
     session: Mutex<Option<Session>>,
     pub(crate) last_observations: Mutex<std::collections::HashMap<String, CachedObservation>>,
-    quota_sync: Mutex<Option<quota_bridge::Ticket>>,
+    quota_sync: Mutex<Vec<quota_bridge::Ticket>>,
     host: Mutex<Option<Exit>>,
     pub(crate) kill_switch: Mutex<kill_switch::KillSwitchState>,
 }
 struct Session {
     token: String,
-    port: u16,
     slot: String,
     config: Config,
     received_at: Option<u64>,
@@ -401,10 +400,9 @@ fn open_session(
     let web = web(app)?;
     let root = root(app)?;
     let slot = workspaces::database(&root)?.browser_slot()?;
-    *state.quota_sync.lock().unwrap() = None;
+    state.quota_sync.lock().unwrap().clear();
     *state.session.lock().unwrap() = Some(Session {
         token: token.clone(),
-        port,
         slot,
         config: config.clone(),
         report: None,
@@ -414,18 +412,6 @@ fn open_session(
     crate::identities::private::directory(&root)?;
     crate::identities::private::write(&root.join("start.url"), format!("{page}\n").as_bytes())?;
     Ok(page)
-}
-pub(crate) fn ensure_session_locked(app: &tauri::AppHandle) -> Result<(), String> {
-    if app.state::<Browser>().session.lock().unwrap().is_some() {
-        return Ok(());
-    }
-    let root = root(app)?;
-    let config = config::load(&workspaces::scope(&root)?)?;
-    let machine = config::machine()?;
-    config.validate(&machine)?;
-    let engine = engine(app)?;
-    open_session(app, &config, &machine, packaged_version(app, &engine))?;
-    Ok(())
 }
 
 /// 资料或配置变化使旧会话失效后，立即换新会话，保证 start.url 始终指向存活的起始页服务。
@@ -447,7 +433,7 @@ fn renew_session(app: &tauri::AppHandle) {
 }
 /// 宿主退出时删除 start.url，避免 CCBrowser 入口读到失效令牌。
 pub fn forget_start_url(app: &tauri::AppHandle) {
-    *app.state::<Browser>().quota_sync.lock().unwrap() = None;
+    app.state::<Browser>().quota_sync.lock().unwrap().clear();
     if let Ok(root) = root(app) {
         let _ = fs::remove_file(root.join("start.url"));
     }
@@ -1031,6 +1017,7 @@ pub async fn browser_open_usage(
         let _cleaner = lifecycle::IdentityGuard::acquire(&app)?;
         let state = app.state::<Browser>();
         let _guard = state.gate.lock().unwrap();
+        quota_connection::materialize_identity_profile_locked(&app, "current", &expected_identity)?;
         quota_connection::launch_identity_profile_locked(&app, "current", &expected_identity)?;
         Reporter::channel(on_progress).log(
             "browser",

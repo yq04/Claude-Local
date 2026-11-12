@@ -1,10 +1,11 @@
 /**
- * [INPUT]: Card rail item keys, localStorage persistence key, and pointer/keyboard drag events on `.identity-card-drag-handle`.
- * [OUTPUT]: Persisted custom card ordering (`orderItemsByIds`, `moveOrderId`) plus the `useCardRailReorder` hook with cursor-locked drag offset and FLIP sibling transitions.
- * [POS]: Shared card rail reordering controller for both CLI identity cards and browser warming cards.
+ * [INPUT]: Card rail item keys, localStorage persistence key, wheel scroll events, and pointer/keyboard drag events on `.identity-card-drag-handle`.
+ * [OUTPUT]: Persisted custom card ordering (`orderItemsByIds`, `moveOrderId`, `clearStoredCardOrder`), `useHorizontalRailWheelScroll` spring wheel hook, and `useCardRailReorder` with cursor-locked drag offset, FLIP sibling transitions, and `resetCardOrder`.
+ * [POS]: Shared card rail reordering and horizontal wheel-scroll controller for both CLI identity cards and browser warming cards.
  * [PROTOCOL]: Update this header and src/CLAUDE.md when changing card reordering behavior.
  */
-import {useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent} from 'react';
+import {useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject} from 'react';
+import {useSpring} from 'cromma-ui';
 
 export const IDENTITY_CARD_ORDER_STORAGE_KEY = 'claude-local.identity-card-order.v1';
 export const WARMING_CARD_ORDER_STORAGE_KEY = 'claude-local.warming-card-order.v1';
@@ -30,6 +31,69 @@ export function writeStoredCardOrder(storageKey: string, order: readonly string[
   } catch {
     // Ignore storage quota or private mode errors.
   }
+}
+
+export function clearStoredCardOrder(storageKey: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(storageKey);
+  } catch {
+    // Ignore storage quota or private mode errors.
+  }
+}
+
+/**
+ * Attaches spring-smoothed horizontal mouse-wheel scrolling to a `.identity-rail` container
+ * while keeping native scrollbar, touch, and keyboard navigation intact.
+ */
+export function useHorizontalRailWheelScroll(
+  railRef: RefObject<HTMLDivElement | null>,
+  reduceMotion: boolean,
+): void {
+  const scrollSpring = useSpring(0, {stiffness: 170, damping: 25, mass: 0.8});
+  const scrollTarget = useRef(0);
+
+  useEffect(() => {
+    const element = railRef.current;
+    if (!element) return;
+    const maximum = () => Math.max(0, element.scrollWidth - element.clientWidth);
+    if (reduceMotion) {
+      scrollTarget.current = element.scrollLeft;
+      scrollSpring.jump(element.scrollLeft);
+    }
+    const unsubscribe = scrollSpring.on('change', value => {
+      element.scrollLeft = Math.max(0, Math.min(maximum(), value));
+    });
+    function interrupt() {
+      scrollTarget.current = element!.scrollLeft;
+      scrollSpring.jump(element!.scrollLeft);
+    }
+    function scroll() {
+      if (Math.abs(element!.scrollLeft - Math.max(0, Math.min(maximum(), scrollSpring.get()))) > 2) {
+        interrupt();
+      }
+    }
+    function wheel(event: WheelEvent) {
+      if (event.ctrlKey || event.metaKey) return;
+      const amount = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      const delta = amount * (event.deltaMode === 1 ? 24 : event.deltaMode === 2 ? element!.clientWidth : 1);
+      const next = Math.max(0, Math.min(maximum(), scrollTarget.current + delta));
+      if (next === scrollTarget.current) return;
+      event.preventDefault();
+      scrollTarget.current = next;
+      if (reduceMotion) scrollSpring.jump(next);
+      else scrollSpring.set(next);
+    }
+    element.addEventListener('wheel', wheel, {passive: false});
+    element.addEventListener('scroll', scroll, {passive: true});
+    element.addEventListener('pointerdown', interrupt);
+    return () => {
+      unsubscribe();
+      element.removeEventListener('wheel', wheel);
+      element.removeEventListener('scroll', scroll);
+      element.removeEventListener('pointerdown', interrupt);
+    };
+  }, [railRef, scrollSpring, reduceMotion]);
 }
 
 /**
@@ -355,9 +419,19 @@ export function useCardRailReorder<T>({
     [commitOrder, disabled],
   );
 
+  const resetCardOrder = useCallback(() => {
+    if (storedOrder.length === 0) return;
+    prevPositionsRef.current = captureCardPositions();
+    pendingFlipRef.current = true;
+    setStoredOrder([]);
+    clearStoredCardOrder(storageKey);
+  }, [captureCardPositions, storageKey, storedOrder.length]);
+
   return {
     railRef,
     orderedItems,
+    hasCustomOrder: storedOrder.length > 0,
+    resetCardOrder,
     draggingId,
     dragOffsetX,
     dragTiltDeg,

@@ -102,8 +102,24 @@ fn proxy_and_real_hardware() {
         "http://user:pass@a:8080",
         "file:///tmp/a",
         "http://a:8080?q=x",
+        "http://127.0.0.1",
+        "https://proxy.example.com",
+        "socks5://127.0.0.1",
+        "http://127.0.0.1:0",
     ] {
-        assert!(config::proxy(bad).is_err());
+        assert!(config::proxy(bad).is_err(), "expected {bad} rejected");
+    }
+    for ok_default_port in [
+        "http://127.0.0.1:80",
+        "http://[::1]:80",
+        "https://proxy.example.com:443",
+        "socks5://127.0.0.1:7898",
+        "socks5h://127.0.0.1:7898",
+    ] {
+        assert!(
+            config::proxy(ok_default_port).is_ok(),
+            "expected {ok_default_port} accepted"
+        );
     }
     c.proxy = "socks5h://127.0.0.1:7898".into();
     let a = config::arguments(

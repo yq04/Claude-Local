@@ -1,6 +1,6 @@
 // [INPUT]: 用户触发时读取的 Claude settings.json 路径和可选、受信任的随包 collector 路径。
 // [OUTPUT]: 不含路径或命令正文的额度采集接入状态；不执行 statusLine 或 runtime。
-// [POS]: 额度详情的只读自检边界；Windows 随包 collector 源码不代表 Python/依赖可执行，也不写 Claude 设置。
+// [POS]: 额度详情的只读自检边界（异步工作线程执行，不阻塞 UI 线程）；Windows 随包 collector 源码不代表 Python/依赖可执行，也不写 Claude 设置。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::Serialize;
 use serde_json::Value;
@@ -200,7 +200,7 @@ pub(crate) fn inspect(
 }
 
 #[tauri::command]
-pub(crate) fn quota_setup_status(_app: tauri::AppHandle) -> Result<QuotaSetupStatus, String> {
+pub(crate) async fn quota_setup_status(_app: tauri::AppHandle) -> Result<QuotaSetupStatus, String> {
     #[cfg(windows)]
     let home = std::env::var_os("USERPROFILE");
     #[cfg(not(windows))]
@@ -214,7 +214,10 @@ pub(crate) fn quota_setup_status(_app: tauri::AppHandle) -> Result<QuotaSetupSta
         .resource_dir()
         .ok()
         .map(|root| root.join("scripts").join("claude_quota.py"));
-    Ok(inspect(&path, collector.as_deref()))
+    // File inspection runs off the UI thread; the result never contains the command text.
+    tauri::async_runtime::spawn_blocking(move || inspect(&path, collector.as_deref()))
+        .await
+        .map_err(|_| "quota setup inspection interrupted".to_string())
 }
 
 #[cfg(test)]

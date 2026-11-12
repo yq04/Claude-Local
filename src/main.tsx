@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Claude-Local 品牌与座舱页面、共享页面图标和 YAML 文案、Cromma UI、任务锁与本地刷新/身份确认事件。
- * [OUTPUT]: 可折叠侧栏、命令面板快捷键、手动刷新、九个页面（含风控验证）、窗口隐藏态动画暂停同步（data-window-hidden）及常驻原生唤醒迁移/快照桥（不调度请求）。
+ * [INPUT]: Claude-Local 品牌与座舱页面、共享页面图标和 YAML 文案、Cromma UI、任务锁与本地刷新/身份确认/任务交接事件。
+ * [OUTPUT]: 可折叠侧栏、命令面板快捷键、受控任务交接模板弹窗、手动刷新、九个页面（含风控验证）、窗口隐藏态动画暂停同步（data-window-hidden）及常驻原生唤醒迁移/快照桥（不调度请求）。
  * [POS]: 独立产品编排层；命令快捷键尊重输入、模态与任务锁，只读身份列表仅在面板打开时读取。根 MotionRoot 读取减少动画偏好。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -24,6 +24,8 @@ import {HelpPanel} from './help';
 import {SettingsPanel} from './settings';
 import {UsageStatisticsPanel} from './usage-statistics';
 import {CommandPalette} from './command-palette';
+import {AppDialog} from './dialog';
+import {TaskHandoff} from './task-handoff';
 import {APP_REFRESH_EVENT, type IdentityReviewRequest} from './app-events';
 import {commandPaletteShortcutAction} from './command-model';
 import {initializeAppearancePreferences, initializePrivacyPreference, stepUiScale, updatePreferences, usePreferences} from './settings-model';
@@ -67,6 +69,7 @@ function App() {
   };
   const [advancedBusy, setAdvancedBusy] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [handoffOpen, setHandoffOpen] = useState(false);
   const [identityReviewRequest, setIdentityReviewRequest] = useState<IdentityReviewRequest | null>(null);
   const [requestNonce, setRequestNonce] = useState(0);
   const paletteOpener = useRef<HTMLElement | null>(null);
@@ -226,9 +229,20 @@ function App() {
         locked={locked}
         onNavigate={setPage}
         onRefresh={() => window.setTimeout(() => window.dispatchEvent(new Event(APP_REFRESH_EVENT)), 0)}
-        onOpenHandoff={() => setPage('help')}
+        onOpenHandoff={() => setHandoffOpen(true)}
         onReviewIdentity={openIdentityReview}
       />
+      <AppDialog
+        open={handoffOpen}
+        onOpenChange={open => {
+          setHandoffOpen(open);
+          if (!open) restorePaletteFocus();
+        }}
+        title={t('handoff.title')}
+        width={640}
+      >
+        <TaskHandoff />
+      </AppDialog>
     </>
   );
 }

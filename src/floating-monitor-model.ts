@@ -1,5 +1,5 @@
 // [INPUT]: Native monitor_live_telemetry payload, active-account quota windows, and account-scoped shared-ledger token counters.
-// [OUTPUT]: Pure token composition/formatting, window time-pace calculation & badge formatting, truthful quota labels, HUD opacity persistence, adaptive local polling cadence, and cross-window BroadcastChannel helpers.
+// [OUTPUT]: Pure token composition/formatting, window time-pace calculation & positive buffer badge formatting, truthful quota labels, HUD opacity persistence, adaptive local polling cadence, and singleton cross-window BroadcastChannel helpers.
 // [POS]: Pure model layer for the toggleable Floating Monitor HUD and main-window live telemetry strip; zero network I/O.
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -108,9 +108,10 @@ export function formatWindowPaceBadge(
       : `超前 +${pace.paceDeltaPct}%`
   }
   if (pace.paceDeltaPct < 0) {
+    const bufferPct = Math.abs(pace.paceDeltaPct)
     return language === 'en'
-      ? `${pace.paceDeltaPct}% vs time`
-      : `余量 ${pace.paceDeltaPct}%`
+      ? `${bufferPct}% buffer`
+      : `余量 ${bufferPct}%`
   }
   return language === 'en' ? 'On pace' : '匀速'
 }
@@ -159,6 +160,7 @@ export interface MonitorCurrentAccount {
   quota_7d_observed_at_ms?: number
   quota_5h_used?: number
   quota_5h_reset_at?: number
+  quota_no_5h_limit?: boolean
   quota_7d_used?: number
   quota_7d_reset_at?: number
 }
@@ -204,6 +206,8 @@ export interface MonitorRelayStandbyHint {
 
 export type MonitorBusMessage =
   | { type: 'telemetry-updated'; revision?: string }
+  | { type: 'quota-ledger-updated'; revision?: string }
+  | { type: 'identity-switched' }
   | { type: 'appearance-updated' }
   | { type: 'privacy-updated'; hideAccount: boolean }
   | { type: 'language-updated'; language: Locale }
@@ -471,13 +475,16 @@ export function formatWindowResetLabel(
   return '—'
 }
 
+let sharedMonitorBusChannel: BroadcastChannel | null = null
+
 export function postMonitorBusMessage(message: MonitorBusMessage): void {
   if (typeof BroadcastChannel === 'undefined') return
   try {
-    const channel = new BroadcastChannel(MONITOR_BUS_CHANNEL)
-    channel.postMessage(message)
-    channel.close()
+    if (!sharedMonitorBusChannel) {
+      sharedMonitorBusChannel = new BroadcastChannel(MONITOR_BUS_CHANNEL)
+    }
+    sharedMonitorBusChannel.postMessage(message)
   } catch {
-    // Ignore environments without BroadcastChannel support
+    sharedMonitorBusChannel = null
   }
 }

@@ -478,6 +478,15 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                   >
                     {t(local.cli_security.telemetry_shield_active ? 'risk.cliSecurity.shieldOk' : 'risk.cliSecurity.shieldWarn')}
                   </span>
+                  {local.cli_security.nonessential_traffic_blocked && (
+                    <span
+                      className="risk-context-pill warn"
+                      data-risk-cli-nonessential="blocked"
+                      title={t('risk.cliSecurity.nonessentialBlockedHint')}
+                    >
+                      {t('risk.cliSecurity.nonessentialBlockedWarn')}
+                    </span>
+                  )}
                   <span
                     className={`risk-context-pill${local.cli_security.unpinned_npx_count === 0 && local.cli_security.remote_http_mcp_count === 0 && local.cli_security.windows_bare_npx_count === 0 && !local.cli_security.has_custom_hooks_or_helpers ? ' ok' : ''}`}
                     data-risk-mcp-audit={local.cli_security.unpinned_npx_count === 0 && local.cli_security.remote_http_mcp_count === 0 && local.cli_security.windows_bare_npx_count === 0 && !local.cli_security.has_custom_hooks_or_helpers ? 'ok' : 'warn'}

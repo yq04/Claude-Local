@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # [INPUT]: Passive statusLine data, isolated account evidence, strict quota_archive frames and bounded sibling Rust quota protocol.
-# [OUTPUT]: Serialized atomic quota summaries with validated observed percentages, trusted-reset inference and original observations.
+# [OUTPUT]: Serialized atomic quota summaries with validated observed percentages, Ultra five_hour=null, model-scoped weekly pools, speed/Mythos pricing, trusted-reset inference and original observations.
 # [POS]: Sole quota-ledger writer; standalone legacy rules mirror Rust without polling or editing Claude configuration.
 # [PROTOCOL]: Update scripts/CLAUDE.md when changing window evidence or persistence behavior.
 """
@@ -57,9 +57,28 @@ def clean_anchor_percentages(anchor):
     """Copy only valid observed windows; never mutate a source cache in place."""
     if not isinstance(anchor, dict):
         return None
-    utilization = anchor.get("utilization")
+    cleaned = dict(anchor)
+    if "no_five_hour" in cleaned:
+        if cleaned.get("no_five_hour") is True:
+            cleaned["no_five_hour"] = True
+        else:
+            cleaned.pop("no_five_hour", None)
+    if "scoped_fable_7d" in cleaned:
+        sf = cleaned.get("scoped_fable_7d")
+        sf_pct = observed_percentage(sf.get("pct")) if isinstance(sf, dict) else None
+        sf_reset = sf.get("resetsAt") if isinstance(sf, dict) else None
+        if (sf_pct is not None and isinstance(sf_reset, (int, float))
+                and not isinstance(sf_reset, bool) and math.isfinite(sf_reset) and int(sf_reset) > 0):
+            sf_copy = {"pct": sf_pct, "resetsAt": int(sf_reset)}
+            sf_obs = sf.get("fetchedAtMs")
+            if isinstance(sf_obs, (int, float)) and not isinstance(sf_obs, bool) and sf_obs > 0:
+                sf_copy["fetchedAtMs"] = int(sf_obs)
+            cleaned["scoped_fable_7d"] = sf_copy
+        else:
+            cleaned.pop("scoped_fable_7d", None)
+    utilization = cleaned.get("utilization")
     if not isinstance(utilization, dict):
-        return dict(anchor)
+        return cleaned
     utilization = dict(utilization)
     for window in ("five_hour", "seven_day"):
         raw = utilization.get(window)
@@ -69,7 +88,8 @@ def clean_anchor_percentages(anchor):
                 utilization.pop(window)
             else:
                 utilization[window] = {**raw, "utilization": percentage}
-    return {**anchor, "utilization": utilization}
+    cleaned["utilization"] = utilization
+    return cleaned
 
 
 def quota_identity(account: dict) -> str | None:
@@ -139,17 +159,25 @@ def tier_multiplier(plan_str: str) -> float:
 def window_fetched_at_ms(anchor: dict | None, window: str) -> int:
     if not isinstance(anchor, dict):
         return 0
+    top_ms = anchor_fetched_at_ms(anchor)
+    observed_windows = anchor.get("server_anchor_observed_windows")
     util = anchor.get("utilization")
     if isinstance(util, dict):
         win = util.get(window)
         if isinstance(win, dict):
             val = win.get("fetchedAtMs")
             if isinstance(val, (int, float)) and val > 0:
-                return int(val)
-    observed_windows = anchor.get("server_anchor_observed_windows")
+                w_ms = int(val)
+                if top_ms > w_ms and not isinstance(observed_windows, list):
+                    sib_key = "seven_day" if window == "five_hour" else "five_hour"
+                    sib = util.get(sib_key)
+                    sib_val = sib.get("fetchedAtMs") if isinstance(sib, dict) else None
+                    if sib_val is None or int(sib_val) == w_ms:
+                        return top_ms
+                return w_ms
     if isinstance(observed_windows, list) and window not in observed_windows:
         return 0
-    return anchor_fetched_at_ms(anchor)
+    return top_ms
 
 
 def aggregate_quota_source(s5: str | None, s7: str | None) -> str:
@@ -248,7 +276,10 @@ def _legacy_merge_window_state(current: tuple, candidate: tuple, now_sec: int) -
         return current
     if ct == nt and cr != nr:
         return current
-    if cr == nr and cu > nu:
+    newer_authoritative_server_lowering = (
+        ns == "server_anchor" and ct is not None and nt is not None and nt > ct
+    )
+    if cr == nr and cu > nu and not newer_authoritative_server_lowering:
         return cu, cr, cs, max((value for value in (ct, nt) if value is not None), default=None)
     return candidate
 
@@ -485,12 +516,26 @@ def estimate_turn_cost_usd(model: str, usage: dict) -> float:
         p_in, p_out, p_cw5, p_cw1h, p_cr = 2.00, 10.00, 2.50, 4.00, 0.10
     elif "sonnet-5" in m:
         p_in, p_out, p_cw5, p_cw1h, p_cr = 2.00, 10.00, 2.50, 4.00, 0.20
-    elif "fable" in m:
+    elif "mythos-preview" in m:
+        p_in, p_out, p_cw5, p_cw1h, p_cr = 25.00, 125.00, 31.25, 50.00, 2.50
+    elif any(k in m for k in ("fable-5-2", "fable-5.2", "mythos-5-2", "mythos-5.2")):
+        p_in, p_out, p_cw5, p_cw1h, p_cr = 8.00, 40.00, 10.00, 16.00, 0.20
+    elif any(k in m for k in ("fable-5-1", "fable-5.1", "mythos-5-1", "mythos-5.1")):
+        p_in, p_out, p_cw5, p_cw1h, p_cr = 10.00, 50.00, 12.50, 20.00, 0.25
+    elif "fable" in m or "mythos" in m:
         p_in, p_out, p_cw5, p_cw1h, p_cr = 10.00, 50.00, 12.50, 20.00, 1.00
     else:
         p_in, p_out, p_cw5, p_cw1h, p_cr = 3.00, 15.00, 3.75, 6.00, 0.30
 
     cost = (in_tok * p_in + out_tok * p_out + cw_5m * p_cw5 + cw_1h * p_cw1h + cr_tok * p_cr) / 1_000_000.0
+    speed = str(usage.get("speed") or "").strip().lower()
+    if speed == "ultrafast" and ("fable-5-2" in m or "fable-5.2" in m):
+        cost *= 4.0
+    elif speed == "fast":
+        if any(k in m for k in ("fable-5-2", "fable-5.2", "opus-4-8", "opus-4.8", "opus-5")):
+            cost *= 2.0
+        elif any(k in m for k in ("opus-4-6", "opus-4.6", "opus-4-7", "opus-4.7")):
+            cost *= 6.0
     if str(usage.get("inference_geo") or "").lower() == "us":
         cost *= 1.1
     st = usage.get("server_tool_use")
@@ -501,21 +546,38 @@ def estimate_turn_cost_usd(model: str, usage: dict) -> float:
     return cost
 
 
-def parse_jsonl_file_into(
+MAX_JSONL_LINE_BYTES = 2 * 1024 * 1024
+
+
+def _iter_bounded_jsonl_lines(fp: str):
+    """Stream .jsonl lines without loading whole files into RAM; skip any single line > 2 MiB."""
+    with open(fp, "rb") as bf:
+        while True:
+            chunk = bf.readline(MAX_JSONL_LINE_BYTES + 1)
+            if not chunk:
+                break
+            if len(chunk) > MAX_JSONL_LINE_BYTES:
+                while chunk and not chunk.endswith(b"\n"):
+                    chunk = bf.readline(65536)
+                continue
+            yield chunk.decode("utf-8", errors="replace")
+
+
+def parse_jsonl_lines_into(
     fp: str,
-    raw_text: str,
+    lines,
     global_turns: dict[tuple[str, str], tuple[datetime, float]],
     fallback_slices: list[tuple[datetime, float]],
 ) -> datetime | None:
-    """Parse a single .jsonl file into a shared cross-file deduplicated turn map."""
+    """Parse an iterable of .jsonl lines into a shared cross-file deduplicated turn map."""
     file_cs_slices: list[tuple[datetime, float]] = []
     saw_assistant_usage = False
     current_dt: datetime | None = None
     last_dt: datetime | None = None
     prev_cumulative_cost = 0.0
 
-    for line_idx, line in enumerate(raw_text.splitlines()):
-        if not line.strip():
+    for line_idx, line in enumerate(lines):
+        if len(line) > MAX_JSONL_LINE_BYTES or not line.strip():
             continue
         if '"timestamp"' not in line and '"cost-state"' not in line:
             continue
@@ -568,6 +630,16 @@ def parse_jsonl_file_into(
     return last_dt
 
 
+def parse_jsonl_file_into(
+    fp: str,
+    raw_text: str,
+    global_turns: dict[tuple[str, str], tuple[datetime, float]],
+    fallback_slices: list[tuple[datetime, float]],
+) -> datetime | None:
+    """Parse a single .jsonl text buffer into a shared cross-file deduplicated turn map."""
+    return parse_jsonl_lines_into(fp, raw_text.splitlines(), global_turns, fallback_slices)
+
+
 def collect_session_slices_from_dir(proj_root: str) -> tuple[list[tuple[datetime, float]], datetime | None]:
     global_turns: dict[tuple[str, str], tuple[datetime, float]] = {}
     fallback_slices: list[tuple[datetime, float]] = []
@@ -579,8 +651,9 @@ def collect_session_slices_from_dir(proj_root: str) -> tuple[list[tuple[datetime
             if fn.endswith(".jsonl"):
                 fp = os.path.join(root, fn)
                 try:
-                    with open(fp, "r", encoding="utf-8", errors="replace") as f:
-                        file_last_dt = parse_jsonl_file_into(fp, f.read(), global_turns, fallback_slices)
+                    file_last_dt = parse_jsonl_lines_into(
+                        fp, _iter_bounded_jsonl_lines(fp), global_turns, fallback_slices
+                    )
                     if file_last_dt and (latest_dt is None or file_last_dt > latest_dt):
                         latest_dt = file_last_dt
                 except Exception:
@@ -714,11 +787,23 @@ def evaluate_quota(
     cu = raw_cu if (isinstance(raw_cu, dict) and (not acc_uuid or not cu_uuid or acc_uuid == cu_uuid)) else {}
 
     util = cu.get("utilization", {}) if isinstance(cu, dict) else {}
-    fetched_ms = cu.get("fetchedAtMs") if isinstance(cu, dict) else None
+    fetched_ms = anchor_fetched_at_ms(cu) or None
+    fetched_5h_ms = window_fetched_at_ms(cu, "five_hour") or fetched_ms
+    fetched_7d_ms = window_fetched_at_ms(cu, "seven_day") or fetched_ms
     snap_dt = (
         datetime.fromtimestamp(fetched_ms / 1000.0, tz=timezone.utc)
         if fetched_ms
         else datetime.fromtimestamp(0, tz=timezone.utc)
+    )
+    snap_5h_dt = (
+        datetime.fromtimestamp(fetched_5h_ms / 1000.0, tz=timezone.utc)
+        if fetched_5h_ms
+        else snap_dt
+    )
+    snap_7d_dt = (
+        datetime.fromtimestamp(fetched_7d_ms / 1000.0, tz=timezone.utc)
+        if fetched_7d_ms
+        else snap_dt
     )
     mult = tier_multiplier(plan_str)
     default_usd_per_pct_7d = (PRO_WEEKLY_COST_USD * mult) / 100.0
@@ -735,24 +820,28 @@ def evaluate_quota(
     reset_5h_dt = parse_reset_dt(w5.get("resets_at"))
 
     # Adaptive per-account window rate calibration from official snapshot + pre-snapshot slices
-    if raw_7d_used is not None and reset_7d_dt is not None and fetched_ms and raw_7d_used >= 15.0:
+    if raw_7d_used is not None and reset_7d_dt is not None and fetched_7d_ms and raw_7d_used >= 15.0:
         snap_w7_start = reset_7d_dt - timedelta(days=7)
+        if active_since_dt is not None and active_since_dt > snap_w7_start:
+            snap_w7_start = active_since_dt
         cost_before_snap_7d = sum(
-            c for dt, c in slices if snap_w7_start <= dt <= snap_dt + timedelta(seconds=5)
+            c for dt, c in slices if snap_w7_start <= dt <= snap_7d_dt + timedelta(seconds=5)
         )
         if cost_before_snap_7d >= 5.0 * mult:
             emp_7d = cost_before_snap_7d / raw_7d_used
-            if 0.70 * default_usd_per_pct_7d <= emp_7d <= 1.40 * default_usd_per_pct_7d:
+            if 0.70 * default_usd_per_pct_7d <= emp_7d <= 3.50 * default_usd_per_pct_7d:
                 usd_per_pct_7d = emp_7d
 
-    if raw_5h_used is not None and reset_5h_dt is not None and fetched_ms and raw_5h_used >= 15.0:
+    if raw_5h_used is not None and reset_5h_dt is not None and fetched_5h_ms and raw_5h_used >= 15.0:
         snap_w5_start = reset_5h_dt - timedelta(hours=5)
+        if active_since_dt is not None and active_since_dt > snap_w5_start:
+            snap_w5_start = active_since_dt
         cost_before_snap_5h = sum(
-            c for dt, c in slices if snap_w5_start <= dt <= snap_dt + timedelta(seconds=5)
+            c for dt, c in slices if snap_w5_start <= dt <= snap_5h_dt + timedelta(seconds=5)
         )
         if cost_before_snap_5h >= 1.5 * mult:
             emp_5h = cost_before_snap_5h / raw_5h_used
-            if 0.70 * default_usd_per_pct_5h <= emp_5h <= 1.40 * default_usd_per_pct_5h:
+            if 0.70 * default_usd_per_pct_5h <= emp_5h <= 3.50 * default_usd_per_pct_5h:
                 usd_per_pct_5h = emp_5h
 
     # --- 7-day weekly window (with automatic multi-week rollover) ---
@@ -776,7 +865,7 @@ def evaluate_quota(
         if active_since_dt is not None and active_since_dt > win_start_7d:
             win_start_7d = active_since_dt
         cost_after_snap = sum(
-            c for dt, c in slices if dt > snap_dt + timedelta(seconds=5) and dt >= win_start_7d
+            c for dt, c in slices if dt > snap_7d_dt + timedelta(seconds=5) and dt >= win_start_7d
         )
         extra_7d_pct = (cost_after_snap / usd_per_pct_7d) if usd_per_pct_7d > 0 else 0.0
         used_7d = min(100, int(round(raw_7d_used + extra_7d_pct)))
@@ -813,7 +902,7 @@ def evaluate_quota(
             note_5h = "🟢 5h 窗口已重置 (发消息即开启新 5h 周期)"
     else:
         win_start_5h = reset_5h_dt - timedelta(hours=5)
-        floor_dt = max(snap_dt + timedelta(seconds=5), win_start_5h)
+        floor_dt = max(snap_5h_dt + timedelta(seconds=5), win_start_5h)
         cost_after_snap_5h = sum(
             c
             for dt, c in slices
@@ -914,6 +1003,12 @@ def format_account(
 
     exp_ms = oa.get("expiresAt", 0)
     has_refresh = bool(oa.get("refreshToken"))
+    raw_rt_exp = oa.get("refreshTokenExpiresAt")
+    refresh_token_expires_at = None
+    if (isinstance(raw_rt_exp, (int, float)) and not isinstance(raw_rt_exp, bool)
+            and math.isfinite(raw_rt_exp) and raw_rt_exp > 0):
+        rt_int = int(raw_rt_exp)
+        refresh_token_expires_at = rt_int // 1000 if rt_int >= 100_000_000_000 else rt_int
     rem_token_min = round((exp_ms - now_utc.timestamp() * 1000) / 60000.0, 1) if exp_ms else -1
     if rem_token_min > 5:
         auth_str = f"🟢 凭据有效 (余 {int(rem_token_min)} 分钟)"
@@ -940,7 +1035,18 @@ def format_account(
         observed = window_fetched_at_ms(candidate_anchor, window) or None
         if (raw_used is not None and raw_reset is not None and raw_reset > now_utc
                 and observed and q.get(used_key) is not None):
-            state = (q[used_key], q[reset_key], "server_anchor", observed)
+            snap_win_dt = datetime.fromtimestamp(observed / 1000.0, tz=timezone.utc)
+            floor_dt = max(snap_win_dt + timedelta(seconds=5), raw_reset - span)
+            if active_since_dt is not None and active_since_dt > floor_dt:
+                floor_dt = active_since_dt
+            post_snap_local_ms = max(
+                (int(dt.timestamp() * 1000) for dt, cost in slices if floor_dt < dt <= now_utc and cost > 0),
+                default=None,
+            )
+            if post_snap_local_ms is not None and q[used_key] > int(round(raw_used)):
+                state = (q[used_key], q[reset_key], "local_estimate", max(observed, post_snap_local_ms))
+            else:
+                state = (int(round(raw_used)), q[reset_key], "server_anchor", observed)
         else:
             evidence_start = max(now_utc - span, active_since_dt or (now_utc - span))
             local_evidence = active_since_dt is not None and any(
@@ -967,8 +1073,26 @@ def format_account(
             q[f"note_{suffix}"] = suffix
         window_results[suffix] = state
     quota_source = aggregate_quota_source(window_results["5h"][2], window_results["7d"][2])
+    no_5h_limit = bool(
+        isinstance(candidate_anchor, dict)
+        and candidate_anchor.get("no_five_hour") is True
+        and window_results["5h"][0] is None
+    )
+    if no_5h_limit and window_results["7d"][2] in QUOTA_SOURCES and window_results["7d"][2] != "unknown":
+        quota_source = window_results["7d"][2]
+    fable_7d_used = None
+    fable_7d_reset = None
+    if isinstance(candidate_anchor, dict) and isinstance(candidate_anchor.get("scoped_fable_7d"), dict):
+        sf = candidate_anchor["scoped_fable_7d"]
+        sf_pct = observed_percentage(sf.get("pct"))
+        sf_reset = sf.get("resetsAt")
+        if sf_pct is not None and isinstance(sf_reset, int) and sf_reset > int(now_utc.timestamp()):
+            fable_7d_used = sf_pct
+            fable_7d_reset = sf_reset
     if all(window_results[s][0] is not None for s in ("5h", "7d")):
         q["effective_rem"] = min(q["rem_5h"], q["rem_7d"])
+    elif no_5h_limit and window_results["7d"][0] is not None:
+        q["effective_rem"] = q["rem_7d"]
     else:
         q["effective_rem"] = None
     if q["effective_rem"] == 0:
@@ -993,6 +1117,10 @@ def format_account(
         "quota_7d_source": window_results["7d"][2],
         "quota_5h_observed_at_ms": window_results["5h"][3],
         "quota_7d_observed_at_ms": window_results["7d"][3],
+        "quota_no_5h_limit": no_5h_limit,
+        "quota_7d_fable_used": fable_7d_used,
+        "quota_7d_fable_reset_at": fable_7d_reset,
+        "refresh_token_expires_at": refresh_token_expires_at,
         "server_anchor": candidate_anchor,
         "plan": plan,
         "auth_status": auth_status,
@@ -1049,8 +1177,32 @@ def apply_ledger_fallback_to_account(info: dict, ledger_accounts: dict, saved_at
     # merged copy so an unobserved window is not lost on the next write.
     if entry.get("server_anchor"):
         info["server_anchor"] = entry["server_anchor"]
+    eff_anchor = info.get("server_anchor") if isinstance(info.get("server_anchor"), dict) else {}
+    no_5h_limit = bool(
+        (eff_anchor.get("no_five_hour") is True or entry.get("quota_no_5h_limit") is True)
+        and merged["5h"][0] is None
+    )
+    info["quota_no_5h_limit"] = no_5h_limit
+    if no_5h_limit and merged["7d"][2] in QUOTA_SOURCES and merged["7d"][2] != "unknown":
+        info["quota_source"] = merged["7d"][2]
+    sf = eff_anchor.get("scoped_fable_7d")
+    if isinstance(sf, dict) and isinstance(sf.get("resetsAt"), int) and sf["resetsAt"] > now_sec:
+        sf_pct = observed_percentage(sf.get("pct"))
+        if sf_pct is not None:
+            info["quota_7d_fable_used"] = sf_pct
+            info["quota_7d_fable_reset_at"] = sf["resetsAt"]
+    if entry.get("plan") == "Ultra" and info.get("plan") in (None, "Max", "Pro", "Pro / Max"):
+        info["plan"] = "Ultra"
     if all(merged[s][0] is not None for s in ("5h", "7d")):
         info["effective_rem"] = min(info["rem_5h"], info["rem_7d"])
+        if info["effective_rem"] == 0:
+            info["avail_badge"] = "🔴 额度已耗尽 (不可用)"
+        elif info["effective_rem"] <= 20:
+            info["avail_badge"] = f"🟠 额度紧张 (可用 {info['effective_rem']}%)"
+        else:
+            info["avail_badge"] = f"🟢 额度充足 (可用 {info['effective_rem']}%)"
+    elif no_5h_limit and merged["7d"][0] is not None:
+        info["effective_rem"] = info["rem_7d"]
         if info["effective_rem"] == 0:
             info["avail_badge"] = "🔴 额度已耗尽 (不可用)"
         elif info["effective_rem"] <= 20:
@@ -1165,6 +1317,7 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
             continue
         item = dict(item)
         observed = item.get("server_anchor_observed_windows")
+        explicit_no_5h = isinstance(incoming_anchor, dict) and incoming_anchor.get("no_five_hour") is True
         if (isinstance(incoming_anchor, dict) and isinstance(prev_anchor, dict)
                 and incoming_anchor.get("accountUuid")
                 and incoming_anchor.get("accountUuid") == prev_anchor.get("accountUuid")
@@ -1173,6 +1326,9 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
             previous_utilization = prev_anchor.get("utilization") or {}
             baseline_ms = int(item.get("server_anchor_base_fetched_at_ms") or 0)
             for window, suffix in (("five_hour", "5h"), ("seven_day", "7d")):
+                if window == "five_hour" and explicit_no_5h and incoming_ms >= window_fetched_at_ms(prev_anchor, "five_hour"):
+                    utilization.pop("five_hour", None)
+                    continue
                 previous_window_ms = window_fetched_at_ms(prev_anchor, window)
                 incoming_window_ms = window_fetched_at_ms(incoming_anchor, window)
                 stale_window = previous_window_ms > 0 and incoming_window_ms > 0 and incoming_window_ms < previous_window_ms
@@ -1192,7 +1348,20 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 incoming_anchor = prev_anchor
             else:
                 incoming_anchor = {**incoming_anchor, "fetchedAtMs": merged_anchor_ms, "utilization": utilization}
+                if "five_hour" in utilization:
+                    incoming_anchor.pop("no_five_hour", None)
+                elif explicit_no_5h or prev_anchor.get("no_five_hour") is True:
+                    incoming_anchor["no_five_hour"] = True
+                prev_sf = prev_anchor.get("scoped_fable_7d")
+                inc_sf = incoming_anchor.get("scoped_fable_7d")
+                if inc_sf is None and isinstance(prev_sf, dict) and int(prev_sf.get("resetsAt") or 0) > now_sec:
+                    incoming_anchor["scoped_fable_7d"] = dict(prev_sf)
+                elif isinstance(inc_sf, dict) and isinstance(prev_sf, dict):
+                    if int(prev_sf.get("fetchedAtMs") or 0) > int(inc_sf.get("fetchedAtMs") or 0) and int(prev_sf.get("resetsAt") or 0) > now_sec:
+                        incoming_anchor["scoped_fable_7d"] = dict(prev_sf)
         current_states = [entry_window_state(prev_entry, suffix, window, now_sec) for suffix, window in QUOTA_WINDOWS]
+        if isinstance(incoming_anchor, dict) and incoming_anchor.get("no_five_hour") is True and "five_hour" not in (incoming_anchor.get("utilization") or {}):
+            current_states[0] = (None, None, "unknown", None)
         incoming_states = [info_window_state(item, suffix, window, now_sec) for suffix, window in QUOTA_WINDOWS]
         merged_values = merge_window_states(current_states, incoming_states, now_sec)
         merged_states = {suffix: state for (suffix, _), state in zip(QUOTA_WINDOWS, merged_values)}
@@ -1202,8 +1371,25 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
             item[f"reset_{suffix}_ts"] = reset
             item[f"quota_{suffix}_source"] = source
             item[f"quota_{suffix}_observed_at_ms"] = observed_at
-        item["quota_source"] = aggregate_quota_source(merged_states["5h"][2], merged_states["7d"][2])
+        eff_anchor = incoming_anchor if isinstance(incoming_anchor, dict) else (prev_anchor if isinstance(prev_anchor, dict) else {})
+        no_5h_active = bool(eff_anchor.get("no_five_hour") is True and merged_states["5h"][0] is None)
+        item["quota_no_5h_limit"] = no_5h_active
+        agg_src = aggregate_quota_source(merged_states["5h"][2], merged_states["7d"][2])
+        if no_5h_active and merged_states["7d"][2] in QUOTA_SOURCES and merged_states["7d"][2] != "unknown":
+            agg_src = merged_states["7d"][2]
+        item["quota_source"] = agg_src
         item["quota_observed_at_ms"] = aggregate_observed_at_ms(merged_states["5h"][3], merged_states["7d"][3])
+        sf_entry = eff_anchor.get("scoped_fable_7d")
+        if isinstance(sf_entry, dict) and int(sf_entry.get("resetsAt") or 0) > now_sec and observed_percentage(sf_entry.get("pct")) is not None:
+            item["quota_7d_fable_used"] = observed_percentage(sf_entry.get("pct"))
+            item["quota_7d_fable_reset_at"] = int(sf_entry["resetsAt"])
+        else:
+            item["quota_7d_fable_used"] = None
+            item["quota_7d_fable_reset_at"] = None
+        if prev_entry.get("plan") == "Ultra" and item.get("plan") in (None, "Max", "Pro", "Pro / Max"):
+            item["plan"] = "Ultra"
+        if item.get("refresh_token_expires_at") is None and prev_entry.get("refresh_token_expires_at") is not None:
+            item["refresh_token_expires_at"] = prev_entry.get("refresh_token_expires_at")
         item["server_anchor"] = incoming_anchor
         accepted_accounts.append(item)
         accs[key] = {
@@ -1225,6 +1411,20 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
             "quota_5h_reset_at": item.get("reset_5h_ts"),
             "quota_7d_used": item.get("used_7d"),
             "quota_7d_reset_at": item.get("reset_7d_ts"),
+            "quota_no_5h_limit": no_5h_active,
+            **(
+                {
+                    "quota_7d_fable_used": item["quota_7d_fable_used"],
+                    "quota_7d_fable_reset_at": item["quota_7d_fable_reset_at"],
+                }
+                if item.get("quota_7d_fable_used") is not None and item.get("quota_7d_fable_reset_at") is not None
+                else {}
+            ),
+            **(
+                {"refresh_token_expires_at": item["refresh_token_expires_at"]}
+                if item.get("refresh_token_expires_at") is not None
+                else {}
+            ),
             "updated_at_sec": now_sec,
             **(
                 {"server_anchor": item.get("server_anchor") or prev_anchor}
@@ -1284,16 +1484,22 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 continue
             if prev.get("quota_identity") and matched.get("quota_identity") != prev["quota_identity"]:
                 continue
+            resolved_plan = matched.get("plan") or prev.get("plan") or "Pro"
+            if prev.get("plan") == "Ultra" and resolved_plan in ("Max", "Pro", "Pro / Max"):
+                resolved_plan = "Ultra"
             new_sum = {
                 "display_name": matched.get("display") or prev.get("display_name"),
                 "email": matched.get("email") or prev.get("email"),
                 "organization": matched.get("organization") or prev.get("organization"),
-                "plan": matched.get("plan") or prev.get("plan") or "Pro",
+                "plan": resolved_plan,
                 "auth_status": matched.get("auth_status") or prev.get("auth_status"),
                 "quota_5h_used": matched.get("used_5h"),
                 "quota_5h_reset_at": matched.get("reset_5h_ts"),
                 "quota_7d_used": matched.get("used_7d"),
                 "quota_7d_reset_at": matched.get("reset_7d_ts"),
+                "quota_no_5h_limit": bool(matched.get("quota_no_5h_limit")) if matched.get("quota_no_5h_limit") is not None else bool(prev.get("quota_no_5h_limit") and matched.get("used_5h") is None),
+                "quota_7d_fable_used": matched.get("quota_7d_fable_used"),
+                "quota_7d_fable_reset_at": matched.get("quota_7d_fable_reset_at"),
                 "quota_checked": True,
                 "quota_version": CURRENT_QUOTA_VERSION,
                 "quota_identity": matched.get("quota_identity") or prev.get("quota_identity"),
@@ -1304,14 +1510,26 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 "quota_5h_observed_at_ms": matched.get("quota_5h_observed_at_ms") or prev.get("quota_5h_observed_at_ms"),
                 "quota_7d_observed_at_ms": matched.get("quota_7d_observed_at_ms") or prev.get("quota_7d_observed_at_ms"),
                 "auth_expires_at": matched.get("auth_expires_at") or prev.get("auth_expires_at"),
+                "refresh_token_expires_at": matched.get("refresh_token_expires_at") or prev.get("refresh_token_expires_at"),
                 "auth_has_refresh": (
                     matched.get("auth_has_refresh")
                     if matched.get("auth_has_refresh") is not None
                     else prev.get("auth_has_refresh")
                 ),
             }
-            if prev.get("proxy"):
-                new_sum["proxy"] = prev["proxy"]
+            for keep_key in (
+                "proxy",
+                "subscription_expires_at",
+                "subscription_renews_at",
+                "manual_resets_remaining",
+                "manual_resets_valid_until",
+                "manual_resets_grant_ends_at",
+                "metadata_observed_at_ms",
+                "billing_observed_at_ms",
+                "manual_resets_observed_at_ms",
+            ):
+                if prev.get(keep_key) is not None and new_sum.get(keep_key) is None:
+                    new_sum[keep_key] = prev[keep_key]
             # Remove None values to match Rust skip_serializing_if = Option::is_none
             clean_sum = {k: v for k, v in new_sum.items() if v is not None}
             cur.execute(
@@ -1369,12 +1587,13 @@ def handle_statusline() -> None:
     rl_7d["used_percentage"] = observed_percentage(rl_7d.get("used_percentage"))
 
     if is_isolated_relay:
-        parts = [f"🔗 Relay │ {model_name}"]
-        if ctx_pct is not None:
-            parts.append(f"Ctx {int(round(float(ctx_pct)))}%")
-        if sess_cost is not None:
-            parts.append(f"${float(sess_cost):.2f}")
-        print(" │ ".join(parts))
+        if "--quiet" not in sys.argv:
+            parts = [f"🔗 Relay │ {model_name}"]
+            if ctx_pct is not None:
+                parts.append(f"Ctx {int(round(float(ctx_pct)))}%")
+            if sess_cost is not None:
+                parts.append(f"${float(sess_cost):.2f}")
+            print(" │ ".join(parts))
         return
 
     live_cj_path = os.path.join(home, ".claude.json")
@@ -1542,7 +1761,66 @@ def handle_statusline() -> None:
             now_utc,
         )
 
+    if "--quiet" in sys.argv:
+        return
+
+    effort_val = (
+        payload.get("effort")
+        or model_obj.get("effort")
+        or os.environ.get("CLAUDE_CODE_EFFORT_LEVEL")
+        or ""
+    )
+    if isinstance(effort_val, dict):
+        effort_raw = str(effort_val.get("level") or effort_val.get("effort") or effort_val.get("effortLevel") or "")
+    else:
+        effort_raw = str(effort_val or "")
+    if not effort_raw:
+        settings_dir = env_claude_dir or default_claude_dir
+        settings_path = os.path.join(settings_dir, "settings.json")
+        if os.path.isfile(settings_path):
+            try:
+                with open(settings_path, "r", encoding="utf-8") as sf:
+                    s_obj = json.load(sf)
+                if isinstance(s_obj, dict):
+                    effort_raw = str(s_obj.get("effortLevel") or "")
+                    if not effort_raw and isinstance(s_obj.get("modelSettings"), dict):
+                        ms = s_obj["modelSettings"]
+                        m_id = str(model_obj.get("id") or "").lower()
+                        m_disp = str(model_name or "").lower()
+                        for k, v in ms.items():
+                            if not isinstance(v, dict):
+                                continue
+                            kl = str(k).lower()
+                            if (m_id and (kl in m_id or m_id in kl)) or (
+                                "fable" in kl and "fable" in m_disp
+                            ) or ("mythos" in kl and "mythos" in m_disp) or (
+                                "opus" in kl and "opus" in m_disp
+                            ) or (
+                                "sonnet" in kl and "sonnet" in m_disp
+                            ) or ("haiku" in kl and "haiku" in m_disp):
+                                effort_raw = str(v.get("effortLevel") or "")
+                                if effort_raw:
+                                    break
+            except Exception:
+                pass
+    effort_map = {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "xhigh": "xHigh",
+        "max": "Max",
+    }
+    effort_label = effort_map.get(str(effort_raw).strip().lower(), str(effort_raw).strip())
+
     m_part = model_name
+    if "--no-quota-bar" in sys.argv:
+        if effort_label and effort_label.lower() not in m_part.lower():
+            m_part += f" · {effort_label}"
+        if ctx_pct is not None:
+            m_part += f" (Ctx {int(round(float(ctx_pct)))}%)"
+        print(m_part)
+        return
+
     if ctx_pct is not None:
         m_part += f" (Ctx {int(round(float(ctx_pct)))}%)"
     parts = [m_part]
@@ -1645,15 +1923,19 @@ def select_best_relay_candidate(valid_accounts: list[dict], now_sec: int, hyster
         for a in valid_accounts
         if a.get("role") == "saved"
         and a.get("auth_status") != "expired"
-        and a.get("quota_7d_source") not in ("unknown", "reset_inferred") and a.get("quota_5h_source") != "unknown"
+        and a.get("quota_7d_source") not in ("unknown", "reset_inferred")
+        and (a.get("quota_5h_source") != "unknown" or bool(a.get("quota_no_5h_limit")))
         and int(a.get("effective_rem") or 0) > 0
     ]
 
     max_saved_eff = max((int(a.get("effective_rem") or 0) for a in saved_ready), default=0)
 
+    def _effective_rem_5h(a: dict) -> int:
+        return 100 if a.get("quota_no_5h_limit") else int(a.get("rem_5h") or 0)
+
     def candidate_sort_key(a: dict) -> tuple:
         eff = int(a.get("effective_rem") or 0)
-        rem5 = int(a.get("rem_5h") or 0)
+        rem5 = _effective_rem_5h(a)
         rem7 = int(a.get("rem_7d") or 0)
         r7 = a.get("reset_7d_ts")
         r7_int = int(r7) if r7 and int(r7) > now_sec else None
@@ -1682,7 +1964,7 @@ def select_best_relay_candidate(valid_accounts: list[dict], now_sec: int, hyster
         curr_r7 = curr.get("reset_7d_ts") if curr else None
         consume_first_urgent = (
             curr_ready
-            and int(best_saved.get("rem_5h") or 0) >= 60
+            and _effective_rem_5h(best_saved) >= 60
             and bs_eff >= curr_eff - 5
             and bs_r7
             and curr_r7
@@ -1693,7 +1975,7 @@ def select_best_relay_candidate(valid_accounts: list[dict], now_sec: int, hyster
         if not curr_ready or bs_eff >= curr_eff + threshold or consume_first_urgent:
             reason = (
                 "consume_first_7d"
-                if (consume_first_urgent or (bs_r7 and int(best_saved.get("rem_5h") or 0) >= 50 and max_saved_eff - bs_eff <= 15))
+                if (consume_first_urgent or (bs_r7 and _effective_rem_5h(best_saved) >= 50 and max_saved_eff - bs_eff <= 15))
                 else "higher_headroom"
             )
             return {
@@ -1883,7 +2165,7 @@ def main():
                 continue
             try:
                 cached_entry = quota_cache.get(archive)
-                if isinstance(cached_entry, dict) and cached_entry.get("v") == 4:
+                if isinstance(cached_entry, dict) and cached_entry.get("v") == 5:
                     baga_cj = cached_entry["cj"]
                     baga_cred = cached_entry["cred"]
                     baga_slices = [
@@ -1916,10 +2198,11 @@ def main():
                             "rateLimitTier": oa_raw.get("rateLimitTier"),
                             "expiresAt": oa_raw.get("expiresAt", 0),
                             "refreshToken": "present" if oa_raw.get("refreshToken") else "",
+                            "refreshTokenExpiresAt": oa_raw.get("refreshTokenExpiresAt"),
                         }
                     }
                     quota_cache[archive] = {
-                        "v": 4,
+                        "v": 5,
                         "cj": baga_cj,
                         "cred": baga_cred,
                         "slices": [[dt.timestamp(), round(c, 6)] for dt, c in baga_slices],
@@ -1946,13 +2229,27 @@ def main():
                 accounts_out.append({"role": "error", "name": name, "archive": archive, "error": str(e)})
 
         if cache_dirty:
+            tmp_cache_path = None
             try:
                 active_archives = {r[2] for r in rows}
                 quota_cache = {k: v for k, v in quota_cache.items() if k in active_archives}
-                with open(cache_path, "w", encoding="utf-8") as cf:
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=vault, prefix=".quota-cache-", suffix=".tmp", delete=False
+                ) as cf:
+                    tmp_cache_path = cf.name
                     json.dump(quota_cache, cf, ensure_ascii=False)
+                    cf.flush()
+                    os.fsync(cf.fileno())
+                os.replace(tmp_cache_path, cache_path)
+                tmp_cache_path = None
             except Exception:
                 pass
+            finally:
+                if tmp_cache_path and os.path.isfile(tmp_cache_path):
+                    try:
+                        os.unlink(tmp_cache_path)
+                    except OSError:
+                        pass
 
     # Persist multi-account ledger and synchronize identities.sqlite summaries
     save_ledger_and_sync_sqlite(app_dir, vault, accounts_out, now_utc)
@@ -1994,12 +2291,24 @@ def main():
         prefix = "▶ [当前激活工作区]" if is_curr else "⏸ [保险库暂存归档]"
         print(f"\n{prefix} {item['name']} <{item['email']}>  [{item['plan'].upper()}]  {item['avail_badge']}")
         print(f"  凭据状态 : {item['auth_str']}")
-        print(f"  5h 滑窗  : [{render_bar(item['rem_5h'])}] 剩余 {item['rem_5h']:>3}%  | {item['note_5h']}")
-        print(f"  7d 周限额: [{render_bar(item['rem_7d'])}] 剩余 {item['rem_7d']:>3}%  | {item['note_7d']}")
+        rem5_val = item.get("rem_5h")
+        rem7_val = item.get("rem_7d")
+        if item.get("quota_no_5h_limit"):
+            bar5_str, pct5_str = render_bar(100), "无上限"
+        elif rem5_val is None:
+            bar5_str, pct5_str = render_bar(0), "未知 "
+        else:
+            bar5_str, pct5_str = render_bar(rem5_val), f"剩余 {rem5_val:>3}%"
+        if rem7_val is None:
+            bar7_str, pct7_str = render_bar(0), "未知 "
+        else:
+            bar7_str, pct7_str = render_bar(rem7_val), f"剩余 {rem7_val:>3}%"
+        print(f"  5h 滑窗  : [{bar5_str}] {pct5_str}  | {item['note_5h']}")
+        print(f"  7d 周限额: [{bar7_str}] {pct7_str}  | {item['note_7d']}")
         if is_curr and item["burn_1h_usd"] > 0:
             tte_note = ""
-            if item.get("burn_5h_pct_hr", 0) > 0 and item.get("rem_5h", 0) > 0:
-                tte_sec = int(round((item["rem_5h"] / item["burn_5h_pct_hr"]) * 3600))
+            if item.get("burn_5h_pct_hr", 0) > 0 and (rem5_val or 0) > 0:
+                tte_sec = int(round((rem5_val / item["burn_5h_pct_hr"]) * 3600))
                 tte_note = f" · 按当前速率预计可续航 ~{format_compact_eta(tte_sec)}"
             print(f"  近1h速率 : 消耗 ${item['burn_1h_usd']:.2f}/h (约合 5h 滑窗 {item['burn_5h_pct_hr']:.1f}%/h{tte_note})")
         if is_curr:

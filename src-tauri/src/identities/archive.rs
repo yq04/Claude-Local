@@ -1,5 +1,5 @@
 // [INPUT]: 白名单身份源、SQLite 账号目录、Zstandard/旧 gzip 与认证加密流。
-// [OUTPUT]: 不可变归档代次与有界解包区、逐源完成/压缩落盘/完整验收进度；首身份或受控养号转正复用浏览器编号，转正时旧 CLI 归档不消费草稿。
+// [OUTPUT]: 不可变归档代次与有界解包区、逐源完成/压缩落盘/完整验收进度；实时工作区快照跳过瞬态 .claude/debug/latest 链接，归档解包与恢复遍历仍严格拒绝链接；首身份或受控养号转正复用浏览器编号，转正时旧 CLI 归档不消费草稿。
 // [POS]: 保险库的数据格式与资源边界，与 store 的工作区切换事务分离，旧 gzip 归档保持可读，认证尾部仍完整验收。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -42,11 +42,37 @@ impl Drop for Stage {
         let _ = fs::remove_dir_all(&self.path);
     }
 }
+fn is_transient_claude_debug_latest_link(debug_pointer: Option<&Path>, path: &Path) -> bool {
+    debug_pointer == Some(path)
+        && fs::symlink_metadata(path).is_ok_and(|metadata| {
+            metadata.file_type().is_symlink() || crate::cleaner::linked(&metadata)
+        })
+}
 pub(super) fn walk(
     path: &Path,
     base: &Path,
     visit: &mut impl FnMut(&Path, &Path, bool) -> Result<(), String>,
 ) -> Result<(), String> {
+    walk_inner(path, base, None, visit)
+}
+pub(super) fn walk_workspace(
+    path: &Path,
+    base: &Path,
+    debug_pointer: &Path,
+    visit: &mut impl FnMut(&Path, &Path, bool) -> Result<(), String>,
+) -> Result<(), String> {
+    walk_inner(path, base, Some(debug_pointer), visit)
+}
+fn walk_inner(
+    path: &Path,
+    base: &Path,
+    debug_pointer: Option<&Path>,
+    visit: &mut impl FnMut(&Path, &Path, bool) -> Result<(), String>,
+) -> Result<(), String> {
+    // 仅实时工作区快照跳过 Claude Code 生成的固定 .claude/debug/latest 瞬态链接；不跟随目标，通用恢复遍历仍严格拒绝链接。
+    if is_transient_claude_debug_latest_link(debug_pointer, path) {
+        return Ok(());
+    }
     private::safe(path)?;
     let meta = fs::symlink_metadata(path).map_err(problem)?;
     visit(
@@ -61,7 +87,7 @@ pub(super) fn walk(
             .map_err(problem)?;
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
-            walk(&entry.path(), base, visit)?;
+            walk_inner(&entry.path(), base, debug_pointer, visit)?;
         }
     }
     Ok(())
@@ -337,19 +363,25 @@ impl Store {
                     append(&mut tar, &archive_path, &bytes)?;
                 } else if source.path.is_dir() {
                     let parent = source.path.parent().ok_or("身份路径无效。")?;
-                    walk(&source.path, parent, &mut |path, relative, directory| {
-                        self.during_io()?;
-                        let suffix = relative
-                            .strip_prefix(source.path.file_name().unwrap())
-                            .map_err(problem)?;
-                        let target = archive_path.join(suffix);
-                        if directory {
-                            tar.append_dir(target, path).map_err(problem)
-                        } else {
-                            let mut file = fs::File::open(path).map_err(problem)?;
-                            tar.append_file(target, &mut file).map_err(problem)
-                        }
-                    })?;
+                    let debug_latest = self.home.join(".claude/debug/latest");
+                    walk_workspace(
+                        &source.path,
+                        parent,
+                        debug_latest.as_path(),
+                        &mut |path, relative, directory| {
+                            self.during_io()?;
+                            let suffix = relative
+                                .strip_prefix(source.path.file_name().unwrap())
+                                .map_err(problem)?;
+                            let target = archive_path.join(suffix);
+                            if directory {
+                                tar.append_dir(target, path).map_err(problem)
+                            } else {
+                                let mut file = fs::File::open(path).map_err(problem)?;
+                                tar.append_file(target, &mut file).map_err(problem)
+                            }
+                        },
+                    )?;
                 } else {
                     let mut file = fs::File::open(&source.path).map_err(problem)?;
                     tar.append_file(archive_path, &mut file).map_err(problem)?;

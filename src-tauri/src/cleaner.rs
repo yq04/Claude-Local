@@ -308,6 +308,7 @@ fn diagnostics(scan: &mut Scan) {
                 "HTTP_PROXY"
                     | "HTTPS_PROXY"
                     | "ALL_PROXY"
+                    | "GRPC_PROXY"
                     | "NO_PROXY"
                     | "CLAUDE_CODE_OAUTH_TOKEN"
                     | "CLAUDE_CONFIG_DIR"
@@ -348,6 +349,8 @@ fn diagnostics(scan: &mut Scan) {
     let enabled = [
         "ALL_PROXY",
         "all_proxy",
+        "GRPC_PROXY",
+        "grpc_proxy",
         "HTTPS_PROXY",
         "https_proxy",
         "HTTP_PROXY",
@@ -380,6 +383,8 @@ fn diagnostics(scan: &mut Scan) {
         let env_enabled = [
             "ALL_PROXY",
             "all_proxy",
+            "GRPC_PROXY",
+            "grpc_proxy",
             "HTTPS_PROXY",
             "https_proxy",
             "HTTP_PROXY",

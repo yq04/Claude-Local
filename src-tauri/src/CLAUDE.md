@@ -1,6 +1,6 @@
 # src/
 browser/lifecycle.rs: 当前槽位只读SQLite快照与精确资料进程/窗口三态；窄读公开账号元数据并以既有HMAC证明当前CLI，提供遮罩摘要、确认后的仅浏览器返回核验与失败补偿，不调用CLI停止/身份切换或全量摘要读取。
-windows_process.rs / windows.rs: 精确当前用户Chrome资料进程和可见顶层窗口的只读状态；后台进程与用户窗口分开，保留原进程占用保护与原生Claude零VM_READ边界。
+windows_process.rs / windows.rs: 精确当前用户Chrome资料进程（优先经 PROCESS_QUERY_LIMITED_INFORMATION + NtQueryInformationProcess 读取命令行并以文件句柄 VolumeSerialNumber/FileIndex 核验资料目录，零 PROCESS_VM_READ）和可见顶层窗口的只读状态；后台进程与用户窗口分开，保留原进程占用保护与原生Claude零VM_READ边界。
 risk_check.rs: 本地快照可携带同context_id核对后的遮罩浏览器归属，旧快照字段缺失仍兼容；不改变配置/HTTP采样的核验范围。
 > L2 | 父级: ../CLAUDE.md
 identities/wakeup.rs: setup创建唯一进程级自动续杯owner；Root前端仅迁移/订阅，切页/托盘隐藏不中断，实际Exit停止。与手动入口共用既有collect门禁与预算，不添加服务、计划任务或新HTTP。

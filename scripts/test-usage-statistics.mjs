@@ -264,7 +264,7 @@ try {
   const verifyIdentityGeometry=(geometries,label)=>{
     const normalizeFamily=value=>value.replaceAll('"','').replaceAll("'",'').replaceAll(' ','').toLowerCase();
     for(const geometry of geometries){
-      assert.equal(geometry.card.width,180);assert.equal(geometry.card.height,286);
+      assert.equal(geometry.card.width,166);assert.equal(geometry.card.height,286);
       assert.ok(geometry.scrollWidth<=geometry.width+1,label+': long identity names must stay inside their card');
       assert.ok(geometry.heading.bottom<=geometry.email.y,label+': title and email must not overlap');
       assert.ok(geometry.email.bottom<=geometry.windows[0].y,label+': the email must remain above quota details');
@@ -272,7 +272,7 @@ try {
       assert.ok(geometry.windows[1].bottom<=(geometry.subscription?.y??geometry.footer.y),label+': quota windows and subscription/actions must not overlap');
       if(geometry.subscription)assert.ok(geometry.subscription.bottom<=geometry.footer.y,label+': subscription and action buttons must not overlap');
       assert.ok(geometry.footer.bottom<=geometry.card.bottom-2,label+': identity actions must remain inside the card');
-      assert.ok(geometry.bars.every(bar=>bar.height===6&&bar.width>140));
+      assert.ok(geometry.bars.every(bar=>bar.height===6&&bar.width>=130));
       for(const text of geometry.typography){
         assert.equal(text.fontSize,'12px',label+': quota and reset text must share the readable font size');
         assert.equal(text.lineHeight,'16px',label+': quota and reset text must share a stable line height');
@@ -334,7 +334,8 @@ try {
   await page.locator('.usage-table').scrollIntoViewIfNeeded();
   assert.equal(await page.locator('.usage-table').getByRole('row').count(), 4, 'Only ordinary accounts belong in account details');
   assert.equal(await page.locator('.usage-model-row').count(),3,'Model distribution must render every synthetic model');
-  assert.deepEqual(await page.locator('.usage-model-track > span').evaluateAll(nodes=>nodes.map(node=>node.style.width)),['60%','30%','10%']);
+  // Rows follow sortUsageModels family priority (Sonnet, Haiku, then unrecognized families), not share.
+  assert.deepEqual(await page.locator('.usage-model-track > span').evaluateAll(nodes=>nodes.map(node=>node.style.width)),['30%','10%','60%']);
   await page.setViewportSize({width:1440,height:900});
   await page.getByRole('heading',{name:'用量分析',exact:true}).click();
   const wideGeometry=await usageGeometry('Chinese wide layout');

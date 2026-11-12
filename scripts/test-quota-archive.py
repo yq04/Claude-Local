@@ -224,6 +224,28 @@ class QuotaArchiveTests(unittest.TestCase):
         self.assertEqual(cj_many["oauthAccount"]["accountUuid"], "fixture-account")
         self.assertEqual(cred_many["claudeAiOauth"]["accessToken"], "synthetic-only")
 
+    def test_grpc_proxy_env_keys_projected(self):
+        upper_projected = archive.proxy_fields({
+            "env": {
+                "GRPC_PROXY": "http://grpc-upper.invalid:8443",
+                "ALL_PROXY": "socks5://proxy.invalid:1080",
+                "UNRELATED_SECRET": "must-not-appear",
+            }
+        })
+        self.assertEqual(
+            upper_projected,
+            {
+                "GRPC_PROXY": "http://grpc-upper.invalid:8443",
+                "ALL_PROXY": "socks5://proxy.invalid:1080",
+            },
+        )
+        lower_projected = archive.proxy_fields({
+            "env": {"grpc_proxy": "http://grpc-lower.invalid:8443"},
+        })
+        self.assertEqual(lower_projected, {"GRPC_PROXY": "http://grpc-lower.invalid:8443"})
+        dot_projected = archive.proxy_fields({"env.grpc_proxy": "http://grpc-dot.invalid:8443"})
+        self.assertEqual(dot_projected, {"GRPC_PROXY": "http://grpc-dot.invalid:8443"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -278,6 +278,15 @@
   color: #34d399;
 }
 
+.risk-context-pill.warn {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.36);
+  color: #b45309;
+}
+:root.dark .risk-context-pill.warn {
+  color: #fbbf24;
+}
+
 .risk-context-note {
   font-size: 11px;
   color: var(--muted-foreground);

@@ -33,7 +33,7 @@ async function cardAction(card:Locator,name:string){
  await card.page().getByRole('menuitem',{name,exact:true}).click();
 }
 const engine=process.platform==='darwin'?'Browser.app/Contents/MacOS/Chromium':process.platform==='win32'?'WindowsBrowser/chrome.exe':'LinuxBrowser/chrome';
-const server=await createServer({server:{host:'127.0.0.1',port:0,strictPort:false,watch:{ignored:['**/src-tauri/**','**/browser-runtime/**','**/releases/**','**/dist/**']}},optimizeDeps:{include:['@tauri-apps/api/mocks']}});
+const server=await createServer({server:{host:'127.0.0.1',port:0,strictPort:false,hmr:false,watch:{ignored:['**/src-tauri/**','**/browser-runtime/**','**/releases/**','**/.local/**','**/dist/**']}},optimizeDeps:{entries:['index.html','browser.html','tests/identities.html'],include:['@tauri-apps/api/mocks']}});
 await server.listen();
 const address=server.httpServer!.address() as {port:number};
 const base=`http://127.0.0.1:${address.port}`;
@@ -110,7 +110,7 @@ try{
  await quotaDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();
  await cards.nth(1).locator('.identity-quota-open').click();
  quotaDialog=page.getByRole('dialog');
- assert.equal(await quotaDialog.getByRole('button',{name:'打开官方用量页',exact:true}).isEnabled(),false);
+ assert.equal(await quotaDialog.getByRole('button',{name:'打开官方用量页',exact:true}).isEnabled(),true);
  await quotaDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();checks++;
  await cardAction(current,'直接删除');
  await page.getByRole('alertdialog').getByText('PID 4201',{exact:true}).waitFor();

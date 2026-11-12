@@ -214,6 +214,73 @@ test('subscription metadata preserves independent clocks and marks expired manua
   expect(expired.manualResets?.usable).toBe(false);
 });
 
+test('manual resets older than the 24h freshness cap need re-sync instead of disappearing', () => {
+  const nowMs = 2_000_000_000_000;
+  const nowSec = nowMs / 1000;
+  const observed = nowMs - 25 * 3600 * 1000;
+  // Legacy entry: valid_until equals the observation + 24h cap; real grant end unknown.
+  const capped = formatSubscriptionAndResets({
+    manual_resets_remaining: 2,
+    manual_resets_observed_at_ms: observed,
+    manual_resets_valid_until: Math.floor(observed / 1000) + 24 * 3600,
+  }, 'zh', key => key, nowMs).manualResets!;
+  expect(capped.stale).toBe(true);
+  expect(capped.usable).toBe(false);
+  expect(capped.ended).toBe(false);
+  expect(capped.needsResync).toBe(true);
+  expect(capped.realExpiresAt).toBeNull();
+  expect(capped.urgency).toBe('normal');
+
+  // New entry with an uncapped grant end still in the future: re-sync, not ended.
+  const withGrant = formatSubscriptionAndResets({
+    manual_resets_remaining: 2,
+    manual_resets_observed_at_ms: observed,
+    manual_resets_valid_until: Math.floor(observed / 1000) + 24 * 3600,
+    manual_resets_grant_ends_at: nowSec + 10 * 86400,
+  }, 'zh', key => key, nowMs).manualResets!;
+  expect(withGrant.needsResync).toBe(true);
+  expect(withGrant.ended).toBe(false);
+  expect(withGrant.realExpiresAt).toBe(nowSec + 10 * 86400);
+
+  // Grant end already passed: the resets ended and the row is hidden.
+  const ended = formatSubscriptionAndResets({
+    manual_resets_remaining: 2,
+    manual_resets_observed_at_ms: observed,
+    manual_resets_valid_until: Math.floor(observed / 1000) + 24 * 3600,
+    manual_resets_grant_ends_at: nowSec - 60,
+  }, 'zh', key => key, nowMs).manualResets!;
+  expect(ended.ended).toBe(true);
+  expect(ended.needsResync).toBe(false);
+
+  // A legacy sub-24h valid_until is a real grant end; once passed the resets ended.
+  const legacyEnded = formatSubscriptionAndResets({
+    manual_resets_remaining: 1,
+    manual_resets_observed_at_ms: nowMs - 3 * 3600 * 1000,
+    manual_resets_valid_until: nowSec - 60,
+  }, 'zh', key => key, nowMs).manualResets!;
+  expect(legacyEnded.ended).toBe(true);
+
+  // Fresh sync with a far grant end: no false "expiring soon" from the 24h freshness cap.
+  const fresh = formatSubscriptionAndResets({
+    manual_resets_remaining: 3,
+    manual_resets_observed_at_ms: nowMs - 60_000,
+    manual_resets_valid_until: Math.floor((nowMs - 60_000) / 1000) + 24 * 3600,
+    manual_resets_grant_ends_at: nowSec + 20 * 86400,
+  }, 'zh', key => key, nowMs).manualResets!;
+  expect(fresh.usable).toBe(true);
+  expect(fresh.urgency).toBe('normal');
+  expect(fresh.expiresInSec).toBe(20 * 86400);
+
+  // A stale zero balance never "ends"; it only needs re-verification.
+  const staleZero = formatSubscriptionAndResets({
+    manual_resets_remaining: 0,
+    manual_resets_observed_at_ms: observed,
+    manual_resets_valid_until: Math.floor(observed / 1000) + 6 * 3600,
+  }, 'zh', key => key, nowMs).manualResets!;
+  expect(staleZero.ended).toBe(false);
+  expect(staleZero.needsResync).toBe(true);
+});
+
 test('ForegroundQuotaScheduler pauses when background and respects generation invalidation', async () => {
   let simulatedTime = 10_000;
   let isForeground = true;
@@ -913,6 +980,75 @@ test('buildStaleOrUnknownBatchTargets filters out fresh known accounts and keeps
     'rec_inferred',
     'rec_stale',
   ]);
+});
+
+test('formatBatchProgress omits zero-count clauses and formatSubscriptionAndResets classifies expiry urgency', () => {
+  const catalog: Record<string, string> = {
+    'quotaOnline.batchComplete': 'Query complete {completed}/{total}: {clauses}',
+    'quotaOnline.batchClauseSep': ', ',
+    'quotaOnline.batchClause.success': 'updated {count}',
+    'quotaOnline.batchClause.cached': 'recent observations kept {count}',
+    'quotaOnline.batchClause.cooldown': 'waiting to retry {count}',
+    'quotaOnline.batchClause.auth': 'reconnect needed {count}',
+    'quotaOnline.batchClause.failed': 'other errors {count}',
+    'quotaOnline.batchClause.remaining': 'not run {count}',
+    'identityCard.manualResetsRemaining': 'Manual resets remaining',
+  };
+  const realT = (key: string, slots?: Record<string, string | number>) => {
+    let tpl = catalog[key] ?? key;
+    if (slots) {
+      for (const [k, v] of Object.entries(slots)) {
+        tpl = tpl.replace(`{${k}}`, String(v));
+      }
+    }
+    return tpl;
+  };
+
+  const cleanDone = formatBatchProgress(
+    {
+      inProgress: false,
+      requestId: 'req_done',
+      state: 'completed',
+      total: 3,
+      completed: 3,
+      successCount: 2,
+      cachedCount: 1,
+      cooldownCount: 0,
+      authRequiredCount: 0,
+      errorCount: 0,
+      notRunCount: 0,
+    },
+    realT
+  );
+  expect(cleanDone).toBe('Query complete 3/3: updated 2, recent observations kept 1');
+  expect(cleanDone).not.toContain('0');
+
+  const nowMs = 1_710_000_000_000;
+  const nowSec = Math.floor(nowMs / 1000);
+  const critical = formatSubscriptionAndResets(
+    {
+      manual_resets_remaining: 1,
+      manual_resets_valid_until: nowSec + 1800,
+      manual_resets_observed_at_ms: nowMs - 60_000,
+    },
+    'en',
+    realT,
+    nowMs
+  );
+  expect(critical.manualResets?.urgency).toBe('critical');
+  expect(critical.manualResets?.expiresInSec).toBe(1800);
+
+  const soon = formatSubscriptionAndResets(
+    {
+      manual_resets_remaining: 2,
+      manual_resets_valid_until: nowSec + 12 * 3600,
+      manual_resets_observed_at_ms: nowMs - 60_000,
+    },
+    'en',
+    realT,
+    nowMs
+  );
+  expect(soon.manualResets?.urgency).toBe('soon');
 });
 
 

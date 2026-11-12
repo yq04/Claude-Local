@@ -1,6 +1,6 @@
-// [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话账单增量、本地 settings.json 代理环境变量、只读外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据；当前无可信订阅到期来源。
-// [OUTPUT]: 当前/保存身份的脱敏摘要与一致的OAuth有效期/刷新存在性投影、逐窗额度和有界活动会话；共享纯账号指纹派生供浏览器绑定复核，不输出令牌、不联网验证账号。
-// [POS]: 身份卡片的只读展示边界；账号匹配与旧格式适配留在此处，逐窗合并/过期/推定恢复/聚合复用 quota_core；归档时间不代表额度新鲜度，账本只读且不匹配项不污染摘要。
+// [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt/refreshTokenExpiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话流式账单增量、本地 settings.json 代理环境变量、只读有界外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据。
+// [OUTPUT]: 当前/保存身份的脱敏摘要与一致的 OAuth 有效期/refreshToken 过期时间投影、逐窗额度（含 Ultra 无 5h 限制标记与 Fable 周池）、有界活动会话；共享纯账号指纹派生供浏览器绑定复核，不输出令牌、不联网验证账号。
+// [POS]: 身份卡片的只读展示边界；账号匹配与旧格式适配留在此处，逐窗合并/过期/推定恢复/聚合复用 quota_core；归档时间不代表额度新鲜度，账本单次安全有界读取且不匹配项不污染摘要。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub use crate::quota_core::QuotaSource;
 use crate::quota_core::{
@@ -53,6 +53,8 @@ pub struct Current {
     pub auth_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_expires_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token_expires_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_has_refresh: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -65,11 +67,17 @@ pub struct Current {
     pub quota_7d_used: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quota_7d_reset_at: Option<u64>,
+    #[serde(default)]
+    pub quota_no_5h_limit: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_7d_fable_used: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_7d_fable_reset_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_expires_at: Option<u64>,
 }
 pub const CURRENT_QUOTA_VERSION: u8 = 7;
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Summary {
     #[serde(default, flatten)]
     pub web: super::online::WebMetadata,
@@ -107,12 +115,20 @@ pub struct Summary {
     pub quota_7d_used: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_7d_reset_at: Option<u64>,
+    #[serde(default)]
+    pub quota_no_5h_limit: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_7d_fable_used: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_7d_fable_reset_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_checked: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_version: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_expires_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token_expires_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subscription_expires_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -148,8 +164,24 @@ impl Summary {
             self.quota_5h_observed_at_ms,
             now_sec,
         );
+        if self.quota_5h_used.is_some() {
+            self.quota_no_5h_limit = false;
+        }
+        if self
+            .quota_7d_fable_reset_at
+            .is_some_and(|reset_at| reset_at <= now_sec as i64)
+        {
+            self.quota_7d_fable_used = None;
+            self.quota_7d_fable_reset_at = None;
+        }
         if self.quota_5h_source.is_some() || self.quota_7d_source.is_some() {
             self.quota_source = aggregate_source(self.quota_5h_source, self.quota_7d_source);
+            if self.quota_no_5h_limit
+                && self.quota_5h_used.is_none()
+                && matches!(self.quota_7d_source, Some(s) if s != QuotaSource::Unknown)
+            {
+                self.quota_source = self.quota_7d_source;
+            }
         }
         if self.quota_5h_observed_at_ms.is_some() || self.quota_7d_observed_at_ms.is_some() {
             self.quota_observed_at_ms =
@@ -187,9 +219,13 @@ impl Summary {
             quota_5h_reset_at: cur.quota_5h_reset_at,
             quota_7d_used: cur.quota_7d_used,
             quota_7d_reset_at: cur.quota_7d_reset_at,
+            quota_no_5h_limit: cur.quota_no_5h_limit,
+            quota_7d_fable_used: cur.quota_7d_fable_used,
+            quota_7d_fable_reset_at: cur.quota_7d_fable_reset_at,
             quota_checked: Some(true),
             quota_version: Some(CURRENT_QUOTA_VERSION),
             auth_expires_at: cur.auth_expires_at,
+            refresh_token_expires_at: cur.refresh_token_expires_at,
             subscription_expires_at: cur.subscription_expires_at,
             auth_has_refresh: cur.auth_has_refresh,
         }
@@ -329,7 +365,21 @@ fn estimate_turn_cost_usd(model: &str, usage: &Value) -> f64 {
         (2.00, 10.00, 2.50, 4.00, 0.10)
     } else if m.contains("sonnet-5") {
         (2.00, 10.00, 2.50, 4.00, 0.20)
-    } else if m.contains("fable") {
+    } else if m.contains("mythos-preview") {
+        (25.00, 125.00, 31.25, 50.00, 2.50)
+    } else if m.contains("fable-5-2")
+        || m.contains("fable-5.2")
+        || m.contains("mythos-5-2")
+        || m.contains("mythos-5.2")
+    {
+        (8.00, 40.00, 10.00, 16.00, 0.20)
+    } else if m.contains("fable-5-1")
+        || m.contains("fable-5.1")
+        || m.contains("mythos-5-1")
+        || m.contains("mythos-5.1")
+    {
+        (10.00, 50.00, 12.50, 20.00, 0.25)
+    } else if m.contains("fable") || m.contains("mythos") {
         (10.00, 50.00, 12.50, 20.00, 1.00)
     } else {
         (3.00, 15.00, 3.75, 6.00, 0.30)
@@ -337,6 +387,27 @@ fn estimate_turn_cost_usd(model: &str, usage: &Value) -> f64 {
     let mut cost =
         (in_tok * p_in + out_tok * p_out + cw_5m * p_cw5 + cw_1h * p_cw1h + cr_tok * p_cr)
             / 1_000_000.0;
+    if let Some(speed) = usage.get("speed").and_then(Value::as_str) {
+        let sp = speed.trim().to_ascii_lowercase();
+        if sp == "ultrafast" && (m.contains("fable-5-2") || m.contains("fable-5.2")) {
+            cost *= 4.0;
+        } else if sp == "fast" {
+            if m.contains("fable-5-2")
+                || m.contains("fable-5.2")
+                || m.contains("opus-4-8")
+                || m.contains("opus-4.8")
+                || m.contains("opus-5")
+            {
+                cost *= 2.0;
+            } else if m.contains("opus-4-6")
+                || m.contains("opus-4.6")
+                || m.contains("opus-4-7")
+                || m.contains("opus-4.7")
+            {
+                cost *= 6.0;
+            }
+        }
+    }
     if usage
         .get("inference_geo")
         .and_then(Value::as_str)
@@ -372,9 +443,68 @@ fn project_slice_cache(
     PROJECT_SLICE_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
+const MAX_JSONL_LINE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_JSONL_SCAN_BYTES: u64 = 256 * 1024 * 1024;
+
+fn read_bounded_jsonl_line(
+    reader: &mut impl std::io::BufRead,
+    buf: &mut Vec<u8>,
+    remaining_budget: &mut u64,
+) -> std::io::Result<Option<bool>> {
+    buf.clear();
+    let mut oversized = false;
+    loop {
+        if *remaining_budget == 0 {
+            return Ok(None);
+        }
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return if buf.is_empty() && !oversized {
+                Ok(None)
+            } else {
+                Ok(Some(!oversized))
+            };
+        }
+        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+            let take_len = pos + 1;
+            let consumed = (take_len as u64).min(*remaining_budget) as usize;
+            *remaining_budget = remaining_budget.saturating_sub(consumed as u64);
+            if !oversized {
+                if buf.len().saturating_add(consumed) > MAX_JSONL_LINE_BYTES {
+                    oversized = true;
+                    buf.clear();
+                } else {
+                    buf.extend_from_slice(&available[..consumed]);
+                }
+            }
+            reader.consume(consumed);
+            if consumed < take_len {
+                return Ok(None);
+            }
+            return Ok(Some(!oversized));
+        }
+        let take_len = available.len();
+        let consumed = (take_len as u64).min(*remaining_budget) as usize;
+        *remaining_budget = remaining_budget.saturating_sub(consumed as u64);
+        if !oversized {
+            if buf.len().saturating_add(consumed) > MAX_JSONL_LINE_BYTES {
+                oversized = true;
+                buf.clear();
+            } else {
+                buf.extend_from_slice(&available[..consumed]);
+            }
+        }
+        reader.consume(consumed);
+        if consumed < take_len {
+            return Ok(None);
+        }
+    }
+}
+
 fn parse_jsonl_file_into(
     path: &Path,
     min_epoch_sec: u64,
+    remaining_budget: &mut u64,
     global_turns: &mut BTreeMap<(String, String), (u64, f64)>,
     fallback_slices: &mut Vec<(u64, f64)>,
 ) {
@@ -382,7 +512,7 @@ fn parse_jsonl_file_into(
         return;
     };
     let len = meta.len();
-    if !meta.is_file() || len == 0 || len > 32 * 1024 * 1024 {
+    if !meta.is_file() || crate::cleaner::linked(&meta) || len == 0 {
         return;
     }
     let mut mtime_nanos = 0u128;
@@ -416,20 +546,42 @@ fn parse_jsonl_file_into(
             }
         }
     }
-    let Ok(text) = fs::read_to_string(path) else {
+    if *remaining_budget == 0 || super::private::safe(path).is_err() {
+        return;
+    }
+    let Ok(file) = fs::File::open(path) else {
         return;
     };
+    let mut reader = std::io::BufReader::with_capacity(64 * 1024, file);
+    let mut line_buf = Vec::with_capacity(4096);
     let mut file_turns: Vec<((String, String), u64, f64)> = Vec::new();
     let mut file_cs_slices = Vec::new();
     let mut saw_assistant_usage = false;
     let mut current_ts: Option<u64> = None;
     let mut prev_cumulative_cost = 0.0f64;
     let path_tag = path.to_string_lossy();
-    for (line_idx, line) in text.lines().enumerate() {
+    let mut line_idx = 0usize;
+    let mut completed_file = false;
+    loop {
+        match read_bounded_jsonl_line(&mut reader, &mut line_buf, remaining_budget) {
+            Ok(Some(true)) => {}
+            Ok(Some(false)) => {
+                line_idx += 1;
+                continue;
+            }
+            Ok(None) => {
+                completed_file = *remaining_budget > 0;
+                break;
+            }
+            Err(_) => break,
+        }
+        let cur_idx = line_idx;
+        line_idx += 1;
+        let line = String::from_utf8_lossy(&line_buf);
         if !line.contains("\"timestamp\"") && !line.contains("\"cost-state\"") {
             continue;
         }
-        let Ok(obj) = serde_json::from_str::<Value>(line) else {
+        let Ok(obj) = serde_json::from_str::<Value>(line.as_ref()) else {
             continue;
         };
         if let Some(ts_str) = obj.get("timestamp").and_then(Value::as_str) {
@@ -457,7 +609,7 @@ fn parse_jsonl_file_into(
                                     .unwrap_or("")
                                     .to_string();
                                 let key = if msg_id.is_empty() && req_id.is_empty() {
-                                    (format!("{path_tag}#{ts}"), line_idx.to_string())
+                                    (format!("{path_tag}#{ts}"), cur_idx.to_string())
                                 } else {
                                     (msg_id, req_id)
                                 };
@@ -503,7 +655,7 @@ fn parse_jsonl_file_into(
             }
         }
     }
-    if mtime_nanos > 0 {
+    if mtime_nanos > 0 && completed_file {
         if let Ok(mut guard) = project_slice_cache().lock() {
             if guard.len() > 512 {
                 guard.clear();
@@ -525,27 +677,38 @@ fn collect_project_slices_rec(
     dir: &Path,
     min_epoch_sec: u64,
     depth: usize,
+    remaining_budget: &mut u64,
     global_turns: &mut BTreeMap<(String, String), (u64, f64)>,
     fallback_slices: &mut Vec<(u64, f64)>,
 ) {
-    if depth > 4 {
+    if depth > 4 || *remaining_budget == 0 {
         return;
     }
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
+        if *remaining_budget == 0 {
+            break;
+        }
         let path = entry.path();
         let Ok(meta) = fs::symlink_metadata(&path) else {
             continue;
         };
         if meta.is_file() && path.extension().is_some_and(|e| e == "jsonl") {
-            parse_jsonl_file_into(&path, min_epoch_sec, global_turns, fallback_slices);
-        } else if meta.is_dir() {
+            parse_jsonl_file_into(
+                &path,
+                min_epoch_sec,
+                remaining_budget,
+                global_turns,
+                fallback_slices,
+            );
+        } else if meta.is_dir() && !crate::cleaner::linked(&meta) {
             collect_project_slices_rec(
                 &path,
                 min_epoch_sec,
                 depth + 1,
+                remaining_budget,
                 global_turns,
                 fallback_slices,
             );
@@ -555,10 +718,12 @@ fn collect_project_slices_rec(
 fn collect_project_slices(projects_dir: &Path, min_epoch_sec: u64) -> Vec<(u64, f64)> {
     let mut global_turns = BTreeMap::new();
     let mut fallback_slices = Vec::new();
+    let mut remaining_budget = MAX_JSONL_SCAN_BYTES;
     collect_project_slices_rec(
         projects_dir,
         min_epoch_sec,
         0,
+        &mut remaining_budget,
         &mut global_turns,
         &mut fallback_slices,
     );
@@ -644,6 +809,19 @@ fn extract_quota(
     let w5 = util.get("five_hour");
     let w7 = util.get("seven_day");
 
+    let snap_sec_5h = w5
+        .and_then(|w| w.get("fetchedAtMs"))
+        .and_then(Value::as_u64)
+        .map(|ms| ms / 1000)
+        .filter(|s| *s > 0)
+        .unwrap_or(snap_sec);
+    let snap_sec_7d = w7
+        .and_then(|w| w.get("fetchedAtMs"))
+        .and_then(Value::as_u64)
+        .map(|ms| ms / 1000)
+        .filter(|s| *s > 0)
+        .unwrap_or(snap_sec);
+
     let raw_7d = w7
         .and_then(|w| w.get("utilization"))
         .and_then(Value::as_f64)
@@ -662,8 +840,14 @@ fn extract_quota(
 
     let fallback_7d_start = now_sec.saturating_sub(7 * 86400);
     let win_start_7d = reset_7d.unwrap_or(now_sec).saturating_sub(7 * 86400);
-    let min_scan_sec = if snap_sec > 0 {
-        snap_sec.min(win_start_7d).min(fallback_7d_start)
+    let min_snap_sec = match (snap_sec_5h > 0, snap_sec_7d > 0) {
+        (true, true) => snap_sec_5h.min(snap_sec_7d),
+        (true, false) => snap_sec_5h,
+        (false, true) => snap_sec_7d,
+        (false, false) => snap_sec,
+    };
+    let min_scan_sec = if min_snap_sec > 0 {
+        min_snap_sec.min(win_start_7d).min(fallback_7d_start)
     } else {
         fallback_7d_start
     };
@@ -678,16 +862,16 @@ fn extract_quota(
     // Adaptive per-account window rate calibration from official snapshot + pre-snapshot slices
     let mut usd_per_pct_7d = default_usd_per_pct_7d;
     if let (Some(raw), Some(r7)) = (raw_7d, reset_7d) {
-        if snap_sec > 0 && raw >= 15.0 {
-            let snap_w7_start = r7.saturating_sub(7 * 86400);
+        if snap_sec_7d > 0 && raw >= 15.0 {
+            let snap_w7_start = r7.saturating_sub(7 * 86400).max(active_since);
             let cost_before_snap: f64 = slices
                 .iter()
-                .filter(|(ts, _)| *ts >= snap_w7_start && *ts <= snap_sec.saturating_add(5))
+                .filter(|(ts, _)| *ts >= snap_w7_start && *ts <= snap_sec_7d.saturating_add(5))
                 .map(|(_, c)| *c)
                 .sum();
             if cost_before_snap >= 5.0 * mult {
                 let emp = cost_before_snap / raw;
-                if emp >= 0.70 * default_usd_per_pct_7d && emp <= 1.40 * default_usd_per_pct_7d {
+                if emp >= 0.70 * default_usd_per_pct_7d && emp <= 3.50 * default_usd_per_pct_7d {
                     usd_per_pct_7d = emp;
                 }
             }
@@ -696,16 +880,16 @@ fn extract_quota(
 
     let mut usd_per_pct_5h = default_usd_per_pct_5h;
     if let (Some(raw), Some(r5)) = (raw_5h, reset_5h) {
-        if snap_sec > 0 && raw >= 15.0 {
-            let snap_w5_start = r5.saturating_sub(5 * 3600);
+        if snap_sec_5h > 0 && raw >= 15.0 {
+            let snap_w5_start = r5.saturating_sub(5 * 3600).max(active_since);
             let cost_before_snap: f64 = slices
                 .iter()
-                .filter(|(ts, _)| *ts >= snap_w5_start && *ts <= snap_sec.saturating_add(5))
+                .filter(|(ts, _)| *ts >= snap_w5_start && *ts <= snap_sec_5h.saturating_add(5))
                 .map(|(_, c)| *c)
                 .sum();
             if cost_before_snap >= 1.5 * mult {
                 let emp = cost_before_snap / raw;
-                if emp >= 0.70 * default_usd_per_pct_5h && emp <= 1.40 * default_usd_per_pct_5h {
+                if emp >= 0.70 * default_usd_per_pct_5h && emp <= 3.50 * default_usd_per_pct_5h {
                     usd_per_pct_5h = emp;
                 }
             }
@@ -735,7 +919,7 @@ fn extract_quota(
                 let floor_7d = win_start_7d.max(active_since);
                 let cost_after_snap: f64 = slices
                     .iter()
-                    .filter(|(ts, _)| *ts > snap_sec.saturating_add(5) && *ts >= floor_7d)
+                    .filter(|(ts, _)| *ts > snap_sec_7d.saturating_add(5) && *ts >= floor_7d)
                     .map(|(_, c)| *c)
                     .sum();
                 let extra_pct = cost_after_snap / usd_per_pct_7d;
@@ -745,7 +929,7 @@ fn extract_quota(
             let floor_7d = fallback_7d_start.max(active_since);
             let cost_after_snap: f64 = slices
                 .iter()
-                .filter(|(ts, _)| *ts > snap_sec.saturating_add(5) && *ts >= floor_7d)
+                .filter(|(ts, _)| *ts > snap_sec_7d.saturating_add(5) && *ts >= floor_7d)
                 .map(|(_, c)| *c)
                 .sum();
             let extra_pct = cost_after_snap / usd_per_pct_7d;
@@ -770,7 +954,7 @@ fn extract_quota(
             active_end.map(|_| ((block_cost / usd_per_pct_5h).round() as i64).clamp(0, 100) as u8)
         } else {
             let win_start_5h = reset_5h.unwrap_or(now_sec).saturating_sub(5 * 3600);
-            let floor_ts = snap_sec.saturating_add(5).max(win_start_5h);
+            let floor_ts = snap_sec_5h.saturating_add(5).max(win_start_5h);
             let cost_after_snap_5h: f64 = slices
                 .iter()
                 .filter(|(ts, _)| {
@@ -788,27 +972,31 @@ fn extract_quota(
         active_end.map(|_| ((block_cost / usd_per_pct_5h).round() as i64).clamp(0, 100) as u8)
     };
 
+    let min_local_5h_ts = if raw_5h.is_some() && reset_5h.is_some_and(|r| now_sec < r) {
+        snap_sec_5h.saturating_add(6)
+    } else {
+        reset_5h.unwrap_or(0).max(now_sec.saturating_sub(5 * 3600))
+    }
+    .max(active_since);
     let local_5h_observed_at_ms = if projects_dir.is_some() && active_since > 0 {
         slices
             .iter()
-            .filter(|(ts, cost)| {
-                *cost > 0.0
-                    && *ts >= active_since.max(now_sec.saturating_sub(5 * 3600))
-                    && *ts <= now_sec
-            })
+            .filter(|(ts, cost)| *cost > 0.0 && *ts >= min_local_5h_ts && *ts <= now_sec)
             .map(|(ts, _)| ts.saturating_mul(1000))
             .max()
     } else {
         None
     };
+    let min_local_7d_ts = if raw_7d.is_some() && reset_7d.is_some_and(|r| now_sec < r) {
+        snap_sec_7d.saturating_add(6)
+    } else {
+        reset_7d.unwrap_or(0).max(now_sec.saturating_sub(7 * 86400))
+    }
+    .max(active_since);
     let local_7d_observed_at_ms = if projects_dir.is_some() && active_since > 0 {
         slices
             .iter()
-            .filter(|(ts, cost)| {
-                *cost > 0.0
-                    && *ts >= active_since.max(now_sec.saturating_sub(7 * 86400))
-                    && *ts <= now_sec
-            })
+            .filter(|(ts, cost)| *cost > 0.0 && *ts >= min_local_7d_ts && *ts <= now_sec)
             .map(|(ts, _)| ts.saturating_mul(1000))
             .max()
     } else {
@@ -1206,24 +1394,38 @@ fn ledger_window_observed_at(entry: &Value, window: &str) -> Option<u64> {
         .and_then(Value::as_u64)
         .filter(|v| *v > 0)
         .or_else(|| {
-            entry
-                .pointer(&format!("/server_anchor/utilization/{window}/fetchedAtMs"))
-                .and_then(Value::as_u64)
-                .filter(|v| *v > 0)
-        })
-        .or_else(|| {
             let observed_windows = entry
                 .get("server_anchor_observed_windows")
                 .and_then(Value::as_array);
-            let explicitly_included = observed_windows
-                .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(window)));
-            if observed_windows.is_some() && !explicitly_included {
-                return None;
-            }
-            entry
-                .pointer("/server_anchor/fetchedAtMs")
+            let explicitly_excluded = observed_windows
+                .is_some_and(|items| !items.iter().any(|item| item.as_str() == Some(window)));
+            let window_ms = entry
+                .pointer(&format!("/server_anchor/utilization/{window}/fetchedAtMs"))
                 .and_then(Value::as_u64)
-                .filter(|v| *v > 0)
+                .filter(|v| *v > 0);
+            let anchor_ms = if explicitly_excluded {
+                None
+            } else {
+                entry
+                    .pointer("/server_anchor/fetchedAtMs")
+                    .and_then(Value::as_u64)
+                    .filter(|v| *v > 0)
+            };
+            let sibling = if window == "five_hour" {
+                "seven_day"
+            } else {
+                "five_hour"
+            };
+            let sibling_ms = entry
+                .pointer(&format!("/server_anchor/utilization/{sibling}/fetchedAtMs"))
+                .and_then(Value::as_u64)
+                .filter(|v| *v > 0);
+            match (window_ms, anchor_ms) {
+                (Some(w_ms), Some(a_ms)) if a_ms > w_ms && sibling_ms == Some(w_ms) => Some(a_ms),
+                (Some(w_ms), _) => Some(w_ms),
+                (None, Some(a_ms)) => Some(a_ms),
+                (None, None) => None,
+            }
         })
 }
 
@@ -1376,9 +1578,77 @@ fn merge_summary_window(
 
 pub(super) fn read_ledger_root(vault_dir: &Path) -> Option<Value> {
     let parent = vault_dir.parent()?;
-    let ledger_path = parent.join("quota_ledger.json");
-    let raw = fs::read_to_string(&ledger_path).ok()?;
-    serde_json::from_str::<Value>(&raw).ok()
+    read_bounded_json(&parent.join("quota_ledger.json"), 8 * 1024 * 1024)
+}
+
+fn apply_anchor_scoped_extras(
+    anchor: Option<&Value>,
+    entry: Option<&Value>,
+    now_sec: u64,
+    has_5h: bool,
+    no_5h_limit: &mut bool,
+    fable_used: &mut Option<f64>,
+    fable_reset: &mut Option<i64>,
+) -> bool {
+    let before = (*no_5h_limit, *fable_used, *fable_reset);
+    if has_5h
+        || anchor
+            .and_then(|a| a.pointer("/utilization/five_hour"))
+            .is_some_and(Value::is_object)
+    {
+        *no_5h_limit = false;
+    } else if anchor
+        .and_then(|a| a.get("no_five_hour"))
+        .and_then(Value::as_bool)
+        == Some(true)
+        || entry
+            .and_then(|e| e.get("quota_no_5h_limit"))
+            .and_then(Value::as_bool)
+            == Some(true)
+    {
+        *no_5h_limit = true;
+    }
+    let anchor_sf = anchor.and_then(|a| a.get("scoped_fable_7d"));
+    let parsed_sf = anchor_sf
+        .and_then(|sf| {
+            let pct = sf
+                .get("pct")
+                .and_then(Value::as_f64)
+                .and_then(crate::quota_core::observed_percentage)?;
+            let reset = sf.get("resetsAt").and_then(Value::as_i64)?;
+            (reset > now_sec as i64).then_some((pct, reset))
+        })
+        .or_else(|| {
+            let e = entry?;
+            let pct = e
+                .get("quota_7d_fable_used")
+                .and_then(Value::as_f64)
+                .and_then(crate::quota_core::observed_percentage)?;
+            let reset = e.get("quota_7d_fable_reset_at").and_then(Value::as_i64)?;
+            (reset > now_sec as i64).then_some((pct, reset))
+        });
+    if let Some((pct, reset)) = parsed_sf {
+        *fable_used = Some(pct);
+        *fable_reset = Some(reset);
+    } else if fable_reset.is_some_and(|r| r <= now_sec as i64) {
+        *fable_used = None;
+        *fable_reset = None;
+    }
+    (*no_5h_limit, *fable_used, *fable_reset) != before
+}
+
+pub(super) fn apply_web_plan_tier(plan: &mut Option<String>, web: &super::online::WebMetadata) {
+    match web.plan_tier.as_deref() {
+        Some("Ultra") => {
+            *plan = Some("Ultra".into());
+        }
+        Some(tier @ ("Team" | "Enterprise"))
+            if plan.as_deref().is_none_or(|p| p == "Pro / Max") =>
+        {
+            *plan = Some(tier.into());
+        }
+        _ => {}
+    }
 }
 
 pub(super) fn apply_ledger_to_summary(
@@ -1441,6 +1711,25 @@ pub(super) fn apply_parsed_ledger_to_summary(
         summary.quota_7d_source = summary.quota_source;
     }
 
+    let explicit_no_5h = entry
+        .pointer("/server_anchor/no_five_hour")
+        .and_then(Value::as_bool)
+        == Some(true)
+        && !entry
+            .pointer("/server_anchor/utilization/five_hour")
+            .is_some_and(Value::is_object);
+    if explicit_no_5h {
+        let anchor_ms = entry
+            .pointer("/server_anchor/fetchedAtMs")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if anchor_ms >= summary.quota_5h_observed_at_ms.unwrap_or(0) {
+            summary.quota_5h_used = None;
+            summary.quota_5h_reset_at = None;
+            summary.quota_5h_source = Some(QuotaSource::Unknown);
+        }
+    }
+
     let merged_5h = merge_summary_window(
         &mut summary.quota_5h_used,
         &mut summary.quota_5h_reset_at,
@@ -1459,11 +1748,36 @@ pub(super) fn apply_parsed_ledger_to_summary(
             .or_else(|| ledger_reset_inferred_value(entry, "seven_day", now_sec)),
         now_sec,
     );
-    if merged_5h || merged_7d {
+    let merged_extras = apply_anchor_scoped_extras(
+        entry.get("server_anchor"),
+        Some(entry),
+        now_sec,
+        summary.quota_5h_used.is_some(),
+        &mut summary.quota_no_5h_limit,
+        &mut summary.quota_7d_fable_used,
+        &mut summary.quota_7d_fable_reset_at,
+    );
+    if summary.refresh_token_expires_at.is_none() {
+        summary.refresh_token_expires_at = entry
+            .get("refresh_token_expires_at")
+            .and_then(Value::as_i64)
+            .filter(|&v| v > 0)
+            .map(normalize_epoch_sec);
+    }
+    if entry.get("plan").and_then(Value::as_str) == Some("Ultra") {
+        summary.plan = Some("Ultra".into());
+    }
+    if merged_5h || merged_7d || merged_extras {
         summary.quota_checked = Some(true);
         summary.quota_version = Some(CURRENT_QUOTA_VERSION);
     }
     summary.quota_source = aggregate_source(summary.quota_5h_source, summary.quota_7d_source);
+    if summary.quota_no_5h_limit
+        && summary.quota_5h_used.is_none()
+        && matches!(summary.quota_7d_source, Some(s) if s != QuotaSource::Unknown)
+    {
+        summary.quota_source = summary.quota_7d_source;
+    }
     summary.quota_observed_at_ms = max_observation(
         summary.quota_5h_observed_at_ms,
         summary.quota_7d_observed_at_ms,
@@ -1532,6 +1846,27 @@ fn read_bounded_json(path: &Path, max_bytes: u64) -> Option<Value> {
         return None;
     }
     serde_json::from_slice(&bytes).ok()
+}
+fn normalize_epoch_sec(raw: i64) -> i64 {
+    if raw >= 100_000_000_000 {
+        raw / 1000
+    } else {
+        raw
+    }
+}
+fn extract_refresh_token_expires_at(value: &Value) -> Option<i64> {
+    let oauth = value.get("claudeAiOauth").unwrap_or(value);
+    oauth
+        .get("refreshTokenExpiresAt")
+        .and_then(|v| {
+            v.as_i64().or_else(|| {
+                v.as_f64()
+                    .filter(|f| f.is_finite() && *f > 0.0)
+                    .map(|f| f as i64)
+            })
+        })
+        .filter(|&v| v > 0)
+        .map(normalize_epoch_sec)
 }
 fn extract_credentials_meta(
     value: &Value,
@@ -1640,12 +1975,16 @@ fn parse(bytes: &[u8]) -> Result<Current, serde_json::Error> {
             plan: format_plan(None, None, account.billing_type.as_deref()),
             auth_status: None,
             auth_expires_at: None,
+            refresh_token_expires_at: None,
             auth_has_refresh: None,
             proxy: None,
             quota_5h_used: None,
             quota_5h_reset_at: None,
             quota_7d_used: None,
             quota_7d_reset_at: None,
+            quota_no_5h_limit: false,
+            quota_7d_fable_used: None,
+            quota_7d_fable_reset_at: None,
             subscription_expires_at: None,
         },
         None => Current {
@@ -1655,12 +1994,45 @@ fn parse(bytes: &[u8]) -> Result<Current, serde_json::Error> {
     })
 }
 pub fn read(home: &Path) -> Current {
-    read_with_ledger(home, None)
+    read_with_ledger(home, None, None)
 }
 pub(crate) fn read_live(home: &Path, vault_dir: &Path) -> Current {
-    read_with_ledger(home, vault_dir.parent())
+    let ledger = read_ledger_root(vault_dir);
+    read_with_ledger(home, vault_dir.parent(), ledger.as_ref())
 }
-fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
+pub(crate) fn read_live_with_ledger(
+    home: &Path,
+    vault_dir: &Path,
+    ledger_root: Option<&Value>,
+) -> Current {
+    read_with_ledger(home, vault_dir.parent(), ledger_root)
+}
+fn read_live_active_since(app_dir: &Path) -> u64 {
+    let db_path = app_dir.join("identity-vault/identities.sqlite");
+    if !db_path.is_file() {
+        return 0;
+    }
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return 0;
+    };
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(2500));
+    conn.query_row(
+        "SELECT value FROM state WHERE key='active_since'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|raw| raw.parse::<u64>().ok())
+    .unwrap_or(0)
+}
+fn read_with_ledger(
+    home: &Path,
+    app_dir: Option<&Path>,
+    preloaded_ledger: Option<&Value>,
+) -> Current {
     let path = home.join(".claude.json");
     let mut billing_type = None;
     let mut has_primary_api_key = false;
@@ -1705,6 +2077,7 @@ fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
             let (s, t, status, expires_at, has_refresh) = extract_credentials_meta(&cred);
             sub = s;
             tier = t;
+            current.refresh_token_expires_at = extract_refresh_token_expires_at(&cred);
             if status.is_some() {
                 current.auth_status = status;
                 current.auth_expires_at = expires_at;
@@ -1718,36 +2091,21 @@ fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
             current.plan = Some(resolved_plan);
         }
         let mut active_since = 0u64;
-        let ledger_root = app_dir
-            .and_then(|dir| read_bounded_json(&dir.join("quota_ledger.json"), 8 * 1024 * 1024));
+        let ledger_ref = preloaded_ledger;
         if let Some(app_dir) = app_dir {
-            if let (Some(cj), Some(ref ledger)) = (claude_val.as_mut(), &ledger_root) {
+            if let (Some(cj), Some(ledger)) = (claude_val.as_mut(), ledger_ref) {
                 merge_server_anchor(cj, ledger);
             }
-            let db_path = app_dir.join("identity-vault/identities.sqlite");
-            if db_path.is_file() {
-                if let Ok(conn) = rusqlite::Connection::open_with_flags(
-                    &db_path,
-                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                        | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-                ) {
-                    if let Ok(raw) = conn.query_row(
-                        "SELECT value FROM state WHERE key='active_since'",
-                        [],
-                        |row| row.get::<_, String>(0),
-                    ) {
-                        active_since = raw.parse::<u64>().unwrap_or(0);
-                    }
-                }
-            }
+            active_since = read_live_active_since(app_dir);
         }
         if let Some(ref cj) = claude_val {
+            let now_sec = now_epoch_sec();
             let proj_dir = home.join(".claude/projects");
             let extracted = extract_quota(
                 cj,
                 proj_dir.is_dir().then_some(proj_dir.as_path()),
                 current.plan.as_deref(),
-                now_epoch_sec(),
+                now_sec,
                 active_since,
             );
             current.quota_5h_used = extracted.used_5h;
@@ -1755,19 +2113,28 @@ fn read_with_ledger(home: &Path, app_dir: Option<&Path>) -> Current {
             current.quota_7d_used = extracted.used_7d;
             current.quota_7d_reset_at = extracted.reset_7d;
             current.quota_identity = quota_identity(cj);
-            set_quota_evidence(cj, &extracted, now_epoch_sec(), &mut current);
+            set_quota_evidence(cj, &extracted, now_sec, &mut current);
+            apply_anchor_scoped_extras(
+                cj.get("cachedUsageUtilization"),
+                None,
+                now_sec,
+                current.quota_5h_used.is_some(),
+                &mut current.quota_no_5h_limit,
+                &mut current.quota_7d_fable_used,
+                &mut current.quota_7d_fable_reset_at,
+            );
             if app_dir.is_some() {
                 let mut effective = Summary::from_current(&current);
-                apply_parsed_ledger_to_summary(
-                    ledger_root.as_ref(),
-                    &mut effective,
-                    0,
-                    now_epoch_sec(),
-                );
+                apply_parsed_ledger_to_summary(ledger_ref, &mut effective, 0, now_sec);
+                current.plan = effective.plan;
                 current.quota_5h_used = effective.quota_5h_used;
                 current.quota_5h_reset_at = effective.quota_5h_reset_at;
                 current.quota_7d_used = effective.quota_7d_used;
                 current.quota_7d_reset_at = effective.quota_7d_reset_at;
+                current.quota_no_5h_limit = effective.quota_no_5h_limit;
+                current.quota_7d_fable_used = effective.quota_7d_fable_used;
+                current.quota_7d_fable_reset_at = effective.quota_7d_fable_reset_at;
+                current.refresh_token_expires_at = effective.refresh_token_expires_at;
                 current.quota_observed_at_ms = effective.quota_observed_at_ms;
                 current.quota_source = effective.quota_source;
                 current.quota_5h_source = effective.quota_5h_source;
@@ -1837,6 +2204,9 @@ pub(super) fn summarize_stage(stage: &super::archive::Stage) -> Summary {
             if exp_at.is_some() {
                 summary.auth_expires_at = exp_at;
             }
+            if let Some(rt_exp) = extract_refresh_token_expires_at(&val) {
+                summary.refresh_token_expires_at = Some(rt_exp);
+            }
             if has_ref.is_some() {
                 summary.auth_has_refresh = has_ref;
             }
@@ -1870,6 +2240,10 @@ pub(super) fn summarize_stage(stage: &super::archive::Stage) -> Summary {
                         if summary.auth_expires_at.is_none() {
                             summary.auth_expires_at = exp_at;
                         }
+                        if summary.refresh_token_expires_at.is_none() {
+                            summary.refresh_token_expires_at =
+                                extract_refresh_token_expires_at(&val);
+                        }
                         if summary.auth_has_refresh.is_none() {
                             summary.auth_has_refresh = has_ref;
                         }
@@ -1883,13 +2257,23 @@ pub(super) fn summarize_stage(stage: &super::archive::Stage) -> Summary {
         summary.auth_status = Some("api_key".into());
     }
     if let Some(ref cj) = claude_val {
-        let extracted = extract_quota(cj, None, summary.plan.as_deref(), now_epoch_sec(), 0);
+        let now_sec = now_epoch_sec();
+        let extracted = extract_quota(cj, None, summary.plan.as_deref(), now_sec, 0);
         summary.quota_5h_used = extracted.used_5h;
         summary.quota_5h_reset_at = extracted.reset_5h;
         summary.quota_7d_used = extracted.used_7d;
         summary.quota_7d_reset_at = extracted.reset_7d;
         summary.quota_identity = quota_identity(cj);
-        set_summary_quota_evidence(cj, &extracted, now_epoch_sec(), &mut summary);
+        set_summary_quota_evidence(cj, &extracted, now_sec, &mut summary);
+        apply_anchor_scoped_extras(
+            cj.get("cachedUsageUtilization"),
+            None,
+            now_sec,
+            summary.quota_5h_used.is_some(),
+            &mut summary.quota_no_5h_limit,
+            &mut summary.quota_7d_fable_used,
+            &mut summary.quota_7d_fable_reset_at,
+        );
     }
     summary
 }

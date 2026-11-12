@@ -1,6 +1,6 @@
 /* [INPUT]: Identity/warming shared count headers, readable saved-profile email, selected-slot/runtime state, short onboarding, expiry, quota, wakeup and smart-relay state.
- * [OUTPUT]: Accessible ⋯ dropdown menu, Pro/Max pill + right-hand MM/DD subscription expiry tag, manual recharge/expiry date editor dialog, compact primary auto-wake/smart-relay and secondary HUD/sync/menu header action groups with uniform 28px controls, header auto-wakeup & smart-relay pills, auto-wakeup time-window & status panel with compact wrap-safe 4-zone account blocks, Magpie-style multi-account smart relay dialog & banner, quota estimation track with 7d pace tick, sync confirmation pill, result ages and centralized connection recovery styling without changing card geometry.
- * [POS]: Identity productivity presentation; the 180×286 badge remains owned by style.css.
+ * [OUTPUT]: Accessible ⋯ dropdown menu, Pro/Max/Ultra pill + right-hand MM/DD subscription expiry tag, manual recharge/expiry date editor dialog, uniform 28px header action groups, auto-wakeup & smart-relay dialogs, quota estimation track with 7d pace tick, reset urgency & refresh-token warnings, static active-card aura (0% idle paint), and Dark/Glass contrast parity without changing 166×286 card geometry.
+ * [POS]: Identity productivity presentation; the 166×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
  */
 .identity-confirm-target.warming-promote-target {
@@ -425,9 +425,10 @@
   background: color-mix(in srgb, var(--border) 85%, transparent);
 }
 .identity-header-actions button.isolate {
-  height: 30px !important;
+  height: 28px !important;
+  min-height: 28px !important;
   border-radius: 8px !important;
-  padding-inline: 11px !important;
+  padding-inline: 10px !important;
   font-size: 12px !important;
   font-weight: 550 !important;
 }
@@ -435,9 +436,9 @@
 .identity-header-actions .identity-menu-trigger {
   display: inline-grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  min-width: 30px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
   padding: 0;
   margin-left: 0;
   border-radius: 8px;
@@ -484,9 +485,10 @@
 /* 顶部自动续杯与智能接力一体化分段胶囊与触发按钮 */
 .wakeup-header-pill,
 .relay-header-pill {
+  box-sizing: border-box;
   display: inline-flex;
-  align-items: stretch;
-  height: 30px;
+  align-items: center;
+  height: 28px;
   gap: 0;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -502,7 +504,8 @@
 }
 .wakeup-header-pill .wakeup-toggle-btn.isolate,
 .relay-header-pill .relay-toggle-btn.isolate {
-  height: 28px !important;
+  height: 100% !important;
+  min-height: 0 !important;
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -519,7 +522,7 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  height: 28px;
+  height: 100%;
   padding: 0 9px;
   border: 0;
   border-left: 1px solid var(--border);
@@ -1161,9 +1164,15 @@
 }
 
 .cleanroom-macro-pill.macro-error {
-  border-color: #e0b0a9;
-  background: #fbece9;
-  color: #ac3025;
+  border-color: color-mix(in srgb, #ef4444 36%, var(--border));
+  background: color-mix(in srgb, #ef4444 10%, var(--panel));
+  color: color-mix(in srgb, #b91c1c 86%, var(--foreground));
+}
+
+:root.dark .cleanroom-macro-pill.macro-error {
+  border-color: rgba(248, 113, 113, 0.38);
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
 }
 
 .identity-relay-cooling-pill,
@@ -1202,27 +1211,44 @@
   color: #6ee7b7;
 }
 
-@keyframes clActiveCardAura {
-  0%, 100% {
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--local-accent) 28%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--local-accent) 48%, transparent),
-      0 6px 18px -6px color-mix(in srgb, var(--local-accent) 18%, transparent);
-  }
+.identity-card.current,
+.identity-card.current-identity {
+  box-shadow:
+    inset 0 1px 0 #ffffff30,
+    inset 0 -2px 0 #080808,
+    0 0 0 1px color-mix(in srgb, var(--local-accent) 36%, transparent),
+    0 6px 0 #2d2b28,
+    0 7px 0 #111,
+    0 18px 26px -12px #00000070;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .identity-card.current,
-  .identity-card.current-identity {
-    animation: clActiveCardAura 4.5s ease-in-out infinite;
-  }
+.identity-menu-trigger.is-syncing {
+  border-color: var(--local-accent);
+  color: var(--local-accent);
+}
+
+.identity-sub-resets-row[data-reset-urgency="soon"] > span,
+.identity-reset-urgency-badge[data-urgency="soon"] {
+  color: var(--identity-warn, #b45309);
+  font-weight: 600;
+}
+
+.identity-sub-resets-row[data-reset-urgency="critical"] > span,
+.identity-reset-urgency-badge[data-urgency="critical"] {
+  color: var(--identity-empty, #b42318);
+  font-weight: 600;
+}
+
+.identity-refresh-token-warn[data-refresh-token-warn="soon"] > strong {
+  color: var(--identity-warn, #b45309);
+}
+
+.identity-refresh-token-warn[data-refresh-token-warn="expired"] > strong {
+  color: var(--identity-empty, #b42318);
 }
 
 html[data-window-hidden="true"] *,
 html[data-window-hidden="true"] *::before,
-html[data-window-hidden="true"] *::after,
-body:has(.app-dialog-overlay) .identity-card.current,
-body:has(.app-dialog-overlay) .identity-card.current-identity {
+html[data-window-hidden="true"] *::after {
   animation-play-state: paused !important;
 }

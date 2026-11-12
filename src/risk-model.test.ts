@@ -554,9 +554,10 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
   expect(parsed.env.grpc_proxy).toBe('http://127.0.0.1:7899');
   expect(parsed.env.NO_PROXY).toContain('169.254.0.0/16');
   expect(parsed.env.no_proxy).toBe(parsed.env.NO_PROXY);
-  expect(parsed.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
+  expect(parsed.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined();
   expect(parsed.env.DISABLE_TELEMETRY).toBe('1');
   expect(parsed.env.DISABLE_ERROR_REPORTING).toBe('1');
+  expect(parsed.env.DO_NOT_TRACK).toBe('1');
 
   const desktopYamlFull = buildDesktopMihomoAntiLeakYaml(7899).configText;
   expect(desktopYamlFull).toContain('DOMAIN-KEYWORD,datadoghq,');
@@ -575,6 +576,7 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
   });
   expect(hardenedAudit.settings_present).toBe(true);
   expect(hardenedAudit.telemetry_shield_active).toBe(true);
+  expect(hardenedAudit.nonessential_traffic_blocked).toBe(false);
   expect(hardenedAudit.proxy_env_complete).toBe(true);
   expect(hardenedAudit.socks5_in_cli_env).toBe(false);
   expect(hardenedAudit.has_custom_hooks_or_helpers).toBe(false);
@@ -582,10 +584,50 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
   expect(hardenedAudit.windows_bare_npx_count).toBe(0);
   expect(hardenedAudit.remote_http_mcp_count).toBe(0);
 
+  // Windows uppercase-only proxy vars + 2-var telemetry shield + settings.local.json override + project-scoped mcpServers
+  const winUpperAudit = auditClaudeCliSecurityBoundary({
+    settingsJson: {
+      env: {
+        HTTP_PROXY: 'http://127.0.0.1:7899',
+        HTTPS_PROXY: 'http://127.0.0.1:7899',
+        ALL_PROXY: 'http://127.0.0.1:7899',
+        GRPC_PROXY: 'http://127.0.0.1:7899',
+        NO_PROXY: 'localhost,127.0.0.1',
+        DISABLE_TELEMETRY: '1',
+        DISABLE_ERROR_REPORTING: '1',
+      },
+    },
+    mcpJson: {
+      projects: {
+        'D:/repo/a': {
+          mcpServers: {
+            projectUnpinned: {command: 'npx', args: ['-y', '@scope/proj-pkg@latest']},
+            projectRemote: {url: 'https://proj-mcp.example.com/mcp'},
+          },
+        },
+      },
+    },
+  });
+  expect(winUpperAudit.telemetry_shield_active).toBe(true);
+  expect(winUpperAudit.nonessential_traffic_blocked).toBe(false);
+  expect(winUpperAudit.proxy_env_complete).toBe(true);
+  expect(winUpperAudit.unpinned_npx_count).toBe(1);
+  expect(winUpperAudit.windows_bare_npx_count).toBe(1);
+  expect(winUpperAudit.remote_http_mcp_count).toBe(1);
+
   const riskyAudit = auditClaudeCliSecurityBoundary({
     settingsJson: {
-      env: {HTTP_PROXY: 'socks5://127.0.0.1:7899', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'},
+      env: {
+        DISABLE_TELEMETRY: '1',
+        DISABLE_ERROR_REPORTING: '1',
+      },
       apiKeyHelper: 'echo token',
+    },
+    settingsLocalJson: {
+      env: {
+        HTTP_PROXY: 'socks://127.0.0.1:7899',
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      },
     },
     claudeJson: {
       mcpServers: {
@@ -596,6 +638,7 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
     pendingFailedTelemetryFiles: 2,
   });
   expect(riskyAudit.telemetry_shield_active).toBe(false);
+  expect(riskyAudit.nonessential_traffic_blocked).toBe(true);
   expect(riskyAudit.proxy_env_complete).toBe(false);
   expect(riskyAudit.socks5_in_cli_env).toBe(true);
   expect(riskyAudit.has_custom_hooks_or_helpers).toBe(true);

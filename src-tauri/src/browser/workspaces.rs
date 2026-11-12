@@ -1,5 +1,5 @@
 // [INPUT]: 身份 SQLite 绑定、独立浏览器根目录、受限配置和用户确认后的切换事务。
-// [OUTPUT]: CLI/养号独占资料与稳定种子、只读槽位查询、普通CLI事务保留养号会话、显式返回/转正/恢复启动阻断。
+// [OUTPUT]: CLI/养号独占资料与稳定种子、按需具化任意已绑定身份资料槽位、只读槽位查询、普通CLI事务保留养号会话、显式返回/转正/恢复启动阻断。
 // [POS]: 身份与浏览器的协调边界；资料不压缩、不复制、不合并 Cookie，失败状态如实返回。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -126,11 +126,14 @@ pub(super) fn ensure(root: &Path) -> Result<PathBuf, String> {
         return Err("浏览器保持关闭，请先恢复身份切换。".into());
     }
     let slot = db.browser_slot()?;
-    let path = slot_path(root, &slot)?;
+    ensure_slot(root, &db, &slot)
+}
+pub(super) fn ensure_slot(root: &Path, db: &Database, slot: &str) -> Result<PathBuf, String> {
+    let path = slot_path(root, slot)?;
     private::directory(&path)?;
-    let seed = match db.browser_seed(&slot)? {
+    let seed = match db.browser_seed(slot)? {
         Some(seed) => seed,
-        None => browser_link::seed(&db.browser_draft()?.unwrap_or_else(|| slot.clone()), 0).max(1),
+        None => browser_link::seed(&db.browser_draft()?.unwrap_or_else(|| slot.to_string()), 0).max(1),
     };
     let stamp = path.join("seed.owner");
     profile::check_path(root, &stamp)?;
@@ -152,6 +155,17 @@ pub(super) fn ensure(root: &Path) -> Result<PathBuf, String> {
     }
     private::directory(&path.join("profile"))?;
     Ok(path)
+}
+pub(crate) fn ensure_identity_slot(root: &Path, owner_id: &str) -> Result<PathBuf, String> {
+    let mut db = database(root)?;
+    if db.get("recovery")?.is_some() {
+        return Err("quotaOnline.busy".into());
+    }
+    if !db.browser_link()?.enabled {
+        return Err("quotaOnline.unavailable".into());
+    }
+    let (slot, _) = db.ensure_identity_binding(owner_id)?;
+    ensure_slot(root, &db, &slot)
 }
 pub(super) fn block(app: &tauri::AppHandle, root: &Path) -> Result<(), String> {
     private::directory(root)?;

@@ -65,7 +65,7 @@ export async function runWindowLayoutChecks({page, output, base, errors}) {
             assert.equal(geometry.sidebar.width, 72, label + ': chosen compact navigation retains its existing width');
           }
           for (const card of geometry.cards) {
-            assert.equal(card.width, 180, label + ': identity card width is preserved');
+            assert.equal(card.width, 166, label + ': identity card width is preserved');
             assert.equal(card.height, 286, label + ': identity card height is preserved');
           }
           if (geometry.onboarding?.wrap === 'wrap') {

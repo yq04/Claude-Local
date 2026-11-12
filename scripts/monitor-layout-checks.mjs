@@ -17,7 +17,7 @@ export async function checkMonitorLayouts(page,base,output){
     },{language,theme});
     for(const mode of ['expanded','compact','collapsed']){
       if(mode==='compact'){
-        await page.locator('.monitor-hud-controls button').nth(5).click();
+        await page.locator('.monitor-hud-controls button').nth(6).click();
         await page.setViewportSize({width:340,height:152});
         await page.locator('.monitor-hud-shell[data-compact="true"]').waitFor();
       }
@@ -49,7 +49,7 @@ export async function checkMonitorLayouts(page,base,output){
   await page.goto(base+'/__local-preview.html?window=monitor');
   await page.locator('.monitor-usage-value').first().filter({hasText:'149k'}).waitFor();
   await page.evaluate(()=>{window.__monitorUsageAvailable=false;});
-  await page.locator('.monitor-hud-controls button').nth(6).click();
+  await page.locator('.monitor-hud-controls button').nth(7).click();
   await page.getByText('当前账号用量未确认',{exact:true}).waitFor();
   assert.deepEqual(await page.locator('.monitor-usage-value').allTextContents(),['—','—','—']);
   return results;

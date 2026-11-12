@@ -61,22 +61,54 @@ pub fn check_path(root: &Path, path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+static WRITE_JSON_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    use std::io::Write;
     let root = path.parent().ok_or("配置目录无效。")?;
     check_path(root, path)?;
     fs::create_dir_all(root).map_err(|_| "无法创建浏览器目录。")?;
     let _ = crate::identities::private::ensure_owner_dacl(root);
-    let temp = path.with_extension("pending");
+    let seq = WRITE_JSON_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let stem = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("config");
+    let temp = root.join(format!(
+        ".{stem}.{}.{nanos}.{seq}.pending",
+        std::process::id()
+    ));
     check_path(root, &temp)?;
     let data = serde_json::to_vec_pretty(value).map_err(|_| "配置编码失败。")?;
-    fs::write(&temp, data).map_err(|_| "配置写入失败。")?;
-    #[cfg(unix)]
-    fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))
-        .map_err(|_| "配置权限设置失败。")?;
+    let write_result = (|| -> Result<(), String> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp).map_err(|_| "配置写入失败。")?;
+        file.write_all(&data).map_err(|_| "配置写入失败。")?;
+        #[cfg(unix)]
+        fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))
+            .map_err(|_| "配置权限设置失败。")?;
+        file.sync_all().map_err(|_| "配置写入失败。")?;
+        Ok(())
+    })();
+    if let Err(err) = write_result {
+        let _ = fs::remove_file(&temp);
+        return Err(err);
+    }
     if fs::rename(&temp, path).is_err() {
         let _ = fs::remove_file(&temp);
         return Err("配置保存失败。".into());
     }
+    crate::identities::private::sync_parent(path);
     Ok(())
 }
 pub fn preferences(

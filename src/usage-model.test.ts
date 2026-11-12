@@ -11,6 +11,7 @@ import {
   estimateSnapshotCostUsd,
   estimateTotalsCostUsd,
   formatUsageNumber,
+  formatUsagePeakBucketLabel,
   formatUsdCost,
   resolveModelPricing,
   sortUsageEfforts,
@@ -105,10 +106,13 @@ test('hourly averages divide by actual elapsed interval duration for partial DST
   expect(summarizeUsageTrend(rows)).toEqual({average: 60, peak: rows[0]});
 });
 
-test('detectModelFamily classifies Opus, Sonnet, Fable and Haiku identifiers cleanly', () => {
+test('detectModelFamily classifies Opus, Sonnet, Fable/Mythos and Haiku identifiers cleanly', () => {
   expect(detectModelFamily('claude-opus-4-7')).toEqual({key: 'opus', label: 'Opus'});
   expect(detectModelFamily('claude-sonnet-4-6')).toEqual({key: 'sonnet', label: 'Sonnet'});
   expect(detectModelFamily('claude-fable-preview')).toEqual({key: 'fable', label: 'Fable'});
+  expect(detectModelFamily('claude-fable-5-2')).toEqual({key: 'fable', label: 'Fable'});
+  expect(detectModelFamily('claude-mythos-5-2')).toEqual({key: 'fable', label: 'Mythos'});
+  expect(detectModelFamily('claude-mythos-preview')).toEqual({key: 'fable', label: 'Mythos'});
   expect(detectModelFamily('claude-haiku-4-5')).toEqual({key: 'haiku', label: 'Haiku'});
   expect(detectModelFamily('claude-test-model')).toEqual({key: 'other', label: null});
 });
@@ -137,6 +141,18 @@ test('estimates USD API cost and prompt cache savings across Opus 5.5/4.6, Sonne
     outputPerM: 25,
     cacheWritePerM: 6.25,
     cacheReadPerM: 0.5,
+  });
+  expect(resolveModelPricing('claude-fable-5-2')).toEqual({
+    inputPerM: 8,
+    outputPerM: 40,
+    cacheWritePerM: 10,
+    cacheReadPerM: 0.2,
+  });
+  expect(resolveModelPricing('claude-fable-5-1')).toEqual({
+    inputPerM: 10,
+    outputPerM: 50,
+    cacheWritePerM: 12.5,
+    cacheReadPerM: 0.25,
   });
   const opus55 = estimateTotalsCostUsd({
     ...emptyUsage(),
@@ -200,11 +216,39 @@ test('sortUsageEfforts orders thinking depth from max -> xhigh -> high -> medium
     {effort: 'max', totals: {...emptyUsage(), total_tokens: 88_300}},
     {effort: 'xhigh', totals: {...emptyUsage(), total_tokens: 500_000}},
   ];
-  expect(sortUsageEfforts(efforts).map(e => e.effort)).toEqual([
+    expect(sortUsageEfforts(efforts).map(e => e.effort)).toEqual([
     'max',
     'xhigh',
     'high',
     'medium',
     'low',
   ]);
+});
+
+test('differentiates Mythos preview, Mythos 5.2 and Mythos 5.1 pricing tiers', () => {
+  expect(resolveModelPricing('claude-mythos-preview')).toEqual({
+    inputPerM: 25,
+    outputPerM: 125,
+    cacheWritePerM: 31.25,
+    cacheReadPerM: 2.5,
+  });
+  expect(resolveModelPricing('claude-mythos-5-2')).toEqual({
+    inputPerM: 8,
+    outputPerM: 40,
+    cacheWritePerM: 10,
+    cacheReadPerM: 0.2,
+  });
+  expect(resolveModelPricing('claude-mythos-5-1')).toEqual({
+    inputPerM: 10,
+    outputPerM: 50,
+    cacheWritePerM: 12.5,
+    cacheReadPerM: 0.25,
+  });
+});
+
+test('formatUsagePeakBucketLabel extracts HH:mm cleanly across named-timezone hourly, legacy hourly and daily keys', () => {
+  expect(formatUsagePeakBucketLabel('2026-11-10T14:00-05:00', true)).toBe('14:00');
+  expect(formatUsagePeakBucketLabel('2026-04-05T01:30+10:30', true)).toBe('01:30');
+  expect(formatUsagePeakBucketLabel('2026-11-10T09:00', true)).toBe('09:00');
+  expect(formatUsagePeakBucketLabel('2026-11-10', false)).toBe('11-10');
 });

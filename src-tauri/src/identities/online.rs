@@ -1,5 +1,5 @@
-// [INPUT]: Explicit account selectors and frozen fingerprints, packaged Python collector, account-bound browser summaries and fixed local quota/config file metadata.
-// [OUTPUT]: Bounded quota batches, structured scheduler admission, strict wakeup confirmation/effect contract and native private audit; Python owns every ledger write.
+// [INPUT]: Explicit account selectors and frozen fingerprints, packaged Python collector, account-bound browser summaries and fixed local quota/config/credentials file metadata.
+// [OUTPUT]: Bounded quota batches, structured scheduler admission, strict wakeup confirmation/effect contract, sanitized plan_tier metadata and native private audit; Python owns every ledger write.
 // [POS]: Shared orchestration allows 10s cold runtime probes within one 30s preparation budget outside the identity door; frozen identity/epoch is rechecked at commit.
 // [PROTOCOL]: Batch progress is quota-batch-progress; update identities/CLAUDE.md and the package resource allowlist.
 use serde::{Deserialize, Serialize};
@@ -309,6 +309,10 @@ pub struct WebMetadata {
     pub manual_resets_remaining: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manual_resets_valid_until: Option<u64>,
+    /// Uncapped earliest active grant end from the same web observation (optional; older
+    /// metadata lacks it). Lets the UI separate "needs re-verification" from "ended".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manual_resets_grant_ends_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_observed_at_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -321,47 +325,165 @@ pub struct WebMetadata {
     pub subscription_recharge_ymd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_date_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_tier: Option<String>,
 }
 
 fn valid_account(account: &str) -> bool {
     account == "current" || super::valid_id(account)
 }
 
-/// Inspect fixed local quota/config metadata only. Full identity summaries are
-/// read by the visible page after their local observations have changed.
+/// Inspect fixed local quota/config files only. Full identity summaries are read by the
+/// visible page after their local observations have changed. Small product files are
+/// content-hashed so an identical rewrite does not trigger a reload; `.claude.json` is
+/// hashed without high-churn CLI bookkeeping keys that never feed identity or quota state.
 #[tauri::command]
-pub fn identities_quota_revision(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn identities_quota_revision(app: tauri::AppHandle) -> Result<String, String> {
     let root = app
         .path()
         .app_data_dir()
         .map_err(|_| "quotaOnline.unavailable")?;
     let home = crate::cleaner::identity::root().map_err(|_| "quotaOnline.unavailable")?;
-    quota_revision(&root, &home)
+    tauri::async_runtime::spawn_blocking(move || quota_revision(&root, &home))
+        .await
+        .map_err(|_| "quotaOnline.unavailable".to_string())?
+}
+
+/// Top-level `.claude.json` keys rewritten during normal CLI use (per-project stats, tips,
+/// feature-flag caches, counters). None is read by identity, quota or subscription state.
+const REVISION_IGNORED_CONFIG_KEYS: &[&str] = &[
+    "projects",
+    "tipsHistory",
+    "tipsHistoryByCommand",
+    "tipLifetimeShownCounts",
+    "numStartups",
+    "promptQueueUseCount",
+    "cachedGrowthBookFeatures",
+    "cachedGrowthBookFeaturesAt",
+    "cachedStatsigGates",
+    "cachedDynamicConfigs",
+    "cachedExperimentData",
+    "cachedExperimentFeatures",
+    "cachedArtifactRoster",
+    "clientDataCacheSlots",
+    "skillUsage",
+    "pluginUsage",
+    "agentLastUsed",
+    "lastPlanModeUse",
+    "announcementImpressions",
+    "changelogLastFetched",
+    "closedIssuesLastChecked",
+    "autoCompactOffer",
+    "autoCompactWindowsCache",
+    "feedbackSurveyState",
+    "seenNotifications",
+    "memoryUsageCount",
+    "lastReleaseNotesSeen",
+    "githubRepoPaths",
+    "githubWebConnectionStatusCache",
+    "remoteControlUpsellSeenCount",
+];
+const REVISION_CONTENT_LIMIT: u64 = 8 * 1024 * 1024;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RevisionKind {
+    /// Length + modification time only (credentials are never read for a revision).
+    Metadata,
+    /// Whole-file content hash.
+    Content,
+    /// Content hash of `.claude.json` without `REVISION_IGNORED_CONFIG_KEYS`.
+    Config,
+}
+
+/// (path, len, mtime) → digest, so unchanged files are not re-read every poll.
+static REVISION_CACHE: std::sync::Mutex<Option<HashMap<PathBuf, (u64, u128, String)>>> =
+    std::sync::Mutex::new(None);
+
+fn revision_digest(bytes: &[u8]) -> String {
+    ring::digest::digest(&ring::digest::SHA256, bytes)
+        .as_ref()
+        .iter()
+        .take(16)
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn file_revision(path: &Path, kind: RevisionKind) -> Result<String, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !crate::cleaner::linked(&metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok("missing".into()),
+        _ => return Err("quotaOnline.unavailable".into()),
+    };
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|time| time.as_nanos())
+        .unwrap_or(0);
+    let len = metadata.len();
+    let raw = format!("{len}:{modified}");
+    if kind == RevisionKind::Metadata || len > REVISION_CONTENT_LIMIT {
+        return Ok(raw);
+    }
+    if let Some((_, _, digest)) = REVISION_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|cache| cache.get(path))
+        .filter(|(l, m, _)| *l == len && *m == modified)
+    {
+        return Ok(digest.clone());
+    }
+    if super::private::safe(path).is_err() {
+        return Err("quotaOnline.unavailable".into());
+    }
+    let mut bytes = zeroize::Zeroizing::new(Vec::new());
+    if fs::File::open(path)
+        .and_then(|file| file.take(REVISION_CONTENT_LIMIT + 1).read_to_end(&mut bytes))
+        .is_err()
+    {
+        return Ok(raw);
+    }
+    let digest = match kind {
+        RevisionKind::Config => match serde_json::from_slice::<Value>(&bytes) {
+            Ok(Value::Object(mut map)) => {
+                for key in REVISION_IGNORED_CONFIG_KEYS {
+                    map.remove(*key);
+                }
+                let filtered = zeroize::Zeroizing::new(
+                    serde_json::to_vec(&Value::Object(map)).unwrap_or_default(),
+                );
+                format!("c{}", revision_digest(&filtered))
+            }
+            _ => format!("r{}", revision_digest(&bytes)),
+        },
+        _ => format!("h{}", revision_digest(&bytes)),
+    };
+    REVISION_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(path.to_path_buf(), (len, modified, digest.clone()));
+    Ok(digest)
 }
 
 fn quota_revision(root: &Path, home: &Path) -> Result<String, String> {
     let mut revision = String::new();
-    for path in [
-        root.join("quota_ledger.json"),
-        root.join("identity-vault/quota_web_metadata.json"),
-        root.join("identity-vault/manual_subscriptions.json"),
-        home.join(".claude.json"),
+    for (path, kind) in [
+        (root.join("quota_ledger.json"), RevisionKind::Content),
+        (
+            root.join("identity-vault/quota_web_metadata.json"),
+            RevisionKind::Content,
+        ),
+        (
+            root.join("identity-vault/manual_subscriptions.json"),
+            RevisionKind::Content,
+        ),
+        (home.join(".claude.json"), RevisionKind::Config),
+        (home.join(".claude/.credentials.json"), RevisionKind::Metadata),
     ] {
-        match fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.is_file() && !crate::cleaner::linked(&metadata) => {
-                let modified = metadata
-                    .modified()
-                    .ok()
-                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|time| time.as_nanos())
-                    .unwrap_or(0);
-                revision.push_str(&format!("{}:{modified};", metadata.len()));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                revision.push_str("missing;")
-            }
-            _ => return Err("quotaOnline.unavailable".into()),
-        }
+        revision.push_str(&file_revision(&path, kind)?);
+        revision.push(';');
     }
     Ok(revision)
 }
@@ -1442,14 +1564,16 @@ pub(crate) fn import_browser_snapshot(
         return Err("quotaOnline.unavailable".into());
     }
     let result = (|| {
-        let (current_id, current_identity) = current_browser_binding(app)?;
-        if account_id != current_id || !matches_identity(expected_identity, Some(&current_identity))
+        let (_slot_owner, collector_id, bound_identity) =
+            target_browser_binding(app, Some(account_id))?;
+        if (account_id != "current" && account_id != collector_id && account_id != _slot_owner)
+            || !matches_identity(expected_identity, Some(&bound_identity))
         {
             return Err("quotaOnline.accountMismatch".into());
         }
         let result = collect(
             app,
-            json!({"account_id": account_id, "expected_identity": expected_identity, "browser_snapshot": snapshot}),
+            json!({"account_id": collector_id, "expected_identity": expected_identity, "browser_snapshot": snapshot}),
         )?;
         serde_json::to_value(result).map_err(|_| "quotaOnline.unavailable".into())
     })();
@@ -1457,15 +1581,48 @@ pub(crate) fn import_browser_snapshot(
 }
 
 pub(crate) fn current_browser_binding(app: &tauri::AppHandle) -> Result<(String, String), String> {
+    let (slot_owner, _collector_id, identity) = target_browser_binding(app, None)?;
+    Ok((slot_owner, identity))
+}
+
+pub(crate) fn target_browser_binding(
+    app: &tauri::AppHandle,
+    requested_account_id: Option<&str>,
+) -> Result<(String, String, String), String> {
     let state = super::state_for(app, false)?;
-    if state.recovery.is_some() || !state.current.present {
+    if state.recovery.is_some() {
         return Err("quotaOnline.unavailable".into());
     }
-    let identity = state
-        .current
-        .quota_identity
-        .ok_or("quotaOnline.unavailable")?;
-    Ok((state.active, identity))
+    match requested_account_id {
+        None | Some("current") => {
+            if !state.current.present {
+                return Err("quotaOnline.unavailable".into());
+            }
+            let identity = state
+                .current
+                .quota_identity
+                .ok_or("quotaOnline.unavailable")?;
+            Ok((state.active, "current".into(), identity))
+        }
+        Some(id) if state.active == id && state.current.present => {
+            let identity = state
+                .current
+                .quota_identity
+                .ok_or("quotaOnline.unavailable")?;
+            Ok((id.into(), "current".into(), identity))
+        }
+        Some(id) => {
+            if !super::valid_id(id) || !state.records.iter().any(|record| record.id == id) {
+                return Err("quotaOnline.unavailable".into());
+            }
+            let identity = state
+                .summaries
+                .get(id)
+                .and_then(|summary| summary.quota_identity.clone())
+                .ok_or("quotaOnline.unavailable")?;
+            Ok((id.into(), id.into(), identity))
+        }
+    }
 }
 
 fn metadata_entry(root: &Value, identity: &str, now_ms: u64) -> Option<WebMetadata> {
@@ -1503,8 +1660,17 @@ fn metadata_entry(root: &Value, identity: &str, now_ms: u64) -> Option<WebMetada
         data.manual_resets_remaining = None;
         data.manual_resets_valid_until = None;
         data.manual_resets_observed_at_ms = None;
+        data.manual_resets_grant_ends_at = None;
     } else if data.manual_resets_remaining.is_some() {
         data.manual_resets_observed_at_ms = reset_time;
+        let observed_sec = reset_time.unwrap_or(0) / 1000;
+        let floor = data.manual_resets_valid_until.unwrap_or(0);
+        data.manual_resets_grant_ends_at = data.manual_resets_grant_ends_at.filter(|ends| {
+            data.manual_resets_remaining.is_some_and(|n| n > 0)
+                && *ends > observed_sec
+                && *ends >= floor
+                && *ends <= 253402300799
+        });
     }
     data.metadata_observed_at_ms = data
         .billing_observed_at_ms
@@ -1512,6 +1678,9 @@ fn metadata_entry(root: &Value, identity: &str, now_ms: u64) -> Option<WebMetada
     data.subscription_expiry_ymd = None;
     data.subscription_recharge_ymd = None;
     data.subscription_date_source = data.billing_date.map(|_| "browser".into());
+    data.plan_tier = data
+        .plan_tier
+        .filter(|tier| matches!(tier.as_str(), "Ultra" | "Team" | "Enterprise"));
     Some(data)
 }
 
@@ -1976,6 +2145,30 @@ print(json.dumps({'type':'result','result':{'status':'updated','source':'oauth'}
         let expired_but_well_formed = make(Some(1));
         assert_eq!(expired_but_well_formed.manual_resets_remaining, Some(1));
         assert_eq!(expired_but_well_formed.manual_resets_valid_until, Some(1));
+    }
+
+    #[test]
+    fn reset_grant_end_is_kept_only_when_plausible_and_positive() {
+        let key = "a".repeat(64);
+        let make = |remaining: u32, grant: Option<u64>| {
+            let mut root = json!({"version":1,"accounts":{}});
+            root["accounts"][&key] = json!({
+                "manual_resets_remaining": remaining,
+                "manual_resets_observed_at_ms": 1_000_000,
+                "manual_resets_valid_until": 87_400,
+                "manual_resets_grant_ends_at": grant
+            });
+            metadata_entry(&root, &key, 2_000_000).unwrap()
+        };
+        assert_eq!(make(2, Some(9_000_000)).manual_resets_grant_ends_at, Some(9_000_000));
+        // Older metadata without the field stays valid and simply has no real end.
+        assert_eq!(make(2, None).manual_resets_grant_ends_at, None);
+        assert_eq!(make(2, None).manual_resets_remaining, Some(2));
+        // Before the freshness bound, before observation, absurd, or zero balance: dropped.
+        for invalid in [Some(80_000), Some(500), Some(253402300800)] {
+            assert_eq!(make(2, invalid).manual_resets_grant_ends_at, None);
+        }
+        assert_eq!(make(0, Some(9_000_000)).manual_resets_grant_ends_at, None);
     }
 
     fn target(account_id: &str, fingerprint: &str) -> QuotaTarget {

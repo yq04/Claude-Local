@@ -25,7 +25,7 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
  const hasHighRiskSelected=selected.some(item=>item.risk!=='safe');
  const envOverrideWarnings=(scan?.warnings??[]).filter(warning=>/ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN/.test(warning));
  const cliSec=scan?.cli_security??null;
- const cliShieldOk=Boolean(cliSec&&cliSec.telemetry_shield_active&&cliSec.proxy_env_complete&&!cliSec.socks5_in_cli_env);
+ const cliShieldOk=Boolean(cliSec&&cliSec.telemetry_shield_active&&!cliSec.nonessential_traffic_blocked&&cliSec.proxy_env_complete&&!cliSec.socks5_in_cli_env);
  const cliMcpOk=Boolean(cliSec&&cliSec.unpinned_npx_count===0&&cliSec.remote_http_mcp_count===0&&cliSec.windows_bare_npx_count===0&&!cliSec.has_custom_hooks_or_helpers);
  const bytes=(rows:typeof items)=>rows.reduce((sum,item)=>sum+item.bytes,0);
  const locked=blocked||!!action;
@@ -88,11 +88,12 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
    {cliSec&&<div className={`claude-residue-smart-bar ${cliShieldOk&&cliMcpOk?'safe':'warn'}`} role="status">
     <span>
      {cliShieldOk?t('risk.cliSecurity.shieldOk'):t('risk.cliSecurity.shieldWarn')}
+     {cliSec.nonessential_traffic_blocked&&<>{' · '}<strong title={t('risk.cliSecurity.nonessentialBlockedHint')}>{t('risk.cliSecurity.nonessentialBlockedWarn')}</strong></>}
      {' · '}
      {cliMcpOk?t('risk.cliSecurity.mcpOk'):t('risk.cliSecurity.mcpWarn',{unpinned:Math.max(cliSec.unpinned_npx_count,cliSec.windows_bare_npx_count),remote:cliSec.remote_http_mcp_count+(cliSec.has_custom_hooks_or_helpers?1:0)})}
     </span>
     <div className="claude-residue-presets">
-     <Button variant="secondary" size="small" onClick={()=>void copyCliAntiLeakJson()}>{t(copiedCliCfg?'risk.action.copied':'risk.action.copyCliSettingsJson')}</Button>
+     <Button variant="secondary" size="small" onClick={()=>void copyCliAntiLeakJson()}>{t(copiedCliCfg?'risk.feedback.copied':'risk.action.copyCliSettingsJson')}</Button>
     </div>
    </div>}
    {scan.warnings.length>0&&<Disclosure className="claude-residue-warnings" triggerClassName="claude-residue-warnings-trigger" summary={t('{v0} 条扫描提示',{v0:scan.warnings.length})}><ul>{scan.warnings.map((warning,i)=><li key={i}>{t(warning)}</li>)}</ul></Disclosure>}

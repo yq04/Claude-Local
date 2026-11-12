@@ -354,16 +354,47 @@ fn account_reset_preserves_projects_and_mcp_and_removes_only_known_account_keys(
 }
 #[test]
 fn settings_cleanup_preserves_telemetry_hooks_permissions_and_unrelated_secrets() {
-    let original = r#"{"env":{"ANTHROPIC_API_KEY":"test-only","HTTPS_PROXY":"test-proxy","DISABLE_TELEMETRY":"1","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1","OTHER_SECRET":"keep"},"hooks":{"Stop":[]},"permissions":{"allow":["Read"]},"model":"keep"}"#;
-    let (updated, _) = config::transform(original, config::EditKind::Settings).unwrap();
+    let original = r#"{"env":{"ANTHROPIC_API_KEY":"test-only","HTTPS_PROXY":"test-proxy","GRPC_PROXY":"http://127.0.0.1:7897","grpc_proxy":"http://127.0.0.1:7897","DISABLE_TELEMETRY":"1","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1","OTHER_SECRET":"keep"},"hooks":{"Stop":[]},"permissions":{"allow":["Read"]},"model":"keep"}"#;
+    let (updated, removed) = config::transform(original, config::EditKind::Settings).unwrap();
     let value: serde_json::Value = serde_json::from_str(&updated).unwrap();
     assert!(value["env"].get("ANTHROPIC_API_KEY").is_none());
+    assert!(value["env"].get("GRPC_PROXY").is_none());
+    assert!(value["env"].get("grpc_proxy").is_none());
+    assert!(removed.iter().any(|k| k == "env.GRPC_PROXY"));
+    assert!(removed.iter().any(|k| k == "env.grpc_proxy"));
     assert_eq!(value["env"]["DISABLE_TELEMETRY"], "1");
     assert_eq!(value["env"]["OTHER_SECRET"], "keep");
     assert_eq!(value["hooks"]["Stop"], serde_json::json!([]));
     assert_eq!(value["model"], "keep");
     assert!(config::transform("{invalid", config::EditKind::Settings).is_err());
     assert!(config::transform(r#"{"env":[]}"#, config::EditKind::Settings).is_err());
+}
+#[test]
+fn account_cleanup_removes_v2_1_322_org_picker_and_subscription_keys() {
+    let before = serde_json::json!({
+        "userID": "device-user",
+        "fable52OrgPickMoveDone": true,
+        "fable52OrgPickMoveWaitingSince": 1700000000000u64,
+        "hasAvailableSubscription": true,
+        "subscriptionNoticeCount": 3,
+        "opusProMigrationComplete": true,
+        "sonnet1m45MigrationComplete": true
+    });
+    let (after, removed) =
+        config::transform(&before.to_string(), config::EditKind::Account).unwrap();
+    let after: serde_json::Value = serde_json::from_str(&after).unwrap();
+    assert_eq!(after["userID"], "device-user");
+    for key in [
+        "fable52OrgPickMoveDone",
+        "fable52OrgPickMoveWaitingSince",
+        "hasAvailableSubscription",
+        "subscriptionNoticeCount",
+        "opusProMigrationComplete",
+        "sonnet1m45MigrationComplete",
+    ] {
+        assert!(after.get(key).is_none(), "expected {key} removed");
+        assert!(removed.iter().any(|k| k == key));
+    }
 }
 #[test]
 fn shell_and_git_cleanups_do_not_remove_unrelated_commands() {

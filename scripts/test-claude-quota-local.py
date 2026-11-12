@@ -105,10 +105,21 @@ class LocalQuotaTests(unittest.TestCase):
         now = int(datetime.now(timezone.utc).timestamp())
         with patch.object(quota, "_quota_core_executable", return_value=executable):
             states = quota.merge_window_states(
-                [(90, now + 600, "local_estimate", 1000), (20, now + 900, "server_anchor", 1500)],
-                [(80, now + 600, "server_anchor", 2000), (35, now + 1200, "server_anchor", 2500)], now)
-        self.assertEqual(states[0], (90, now + 600, "local_estimate", 2000))
-        self.assertEqual(states[1], (35, now + 1200, "server_anchor", 2500))
+                [
+                    (90, now + 600, "local_estimate", 1000),
+                    (90, now + 600, "local_estimate", 1000),
+                    (20, now + 900, "server_anchor", 1500),
+                ],
+                [
+                    (80, now + 600, "server_anchor", 1000),
+                    (80, now + 600, "server_anchor", 2000),
+                    (35, now + 1200, "server_anchor", 2500),
+                ],
+                now,
+            )
+        self.assertEqual(states[0], (90, now + 600, "local_estimate", 1000))
+        self.assertEqual(states[1], (80, now + 600, "server_anchor", 2000))
+        self.assertEqual(states[2], (35, now + 1200, "server_anchor", 2500))
 
     def test_reset_inference_matches_between_real_core_and_legacy_python(self):
         executable = Path(__file__).resolve().parents[1] / "src-tauri" / "target" / "debug" / "claude-local.exe"
@@ -616,6 +627,24 @@ class LocalQuotaTests(unittest.TestCase):
         res = quota.evaluate_quota(cj, slices, slices[-1][0], "Pro", now, active_since_dt=active_since)
         self.assertEqual(res["used_5h"], 10)
 
+    def test_legacy_statusline_anchor_prefers_top_level_fetched_at_over_stale_nested_timestamps(self):
+        anchor = {
+            "accountUuid": "acct-a",
+            "fetchedAtMs": 1_792_202_000_000,
+            "utilization": {
+                "five_hour": {"utilization": 36.0, "resets_at": 1_792_210_000, "fetchedAtMs": 1_792_200_000_000},
+                "seven_day": {"utilization": 92.0, "resets_at": 1_792_300_000, "fetchedAtMs": 1_792_200_000_000},
+            },
+        }
+        self.assertEqual(quota.window_fetched_at_ms(anchor, "five_hour"), 1_792_202_000_000)
+        self.assertEqual(quota.window_fetched_at_ms(anchor, "seven_day"), 1_792_202_000_000)
+        now = datetime.fromtimestamp(1_792_202_100, tz=timezone.utc)
+        slices = [(datetime.fromtimestamp(1_792_201_500, tz=timezone.utc), 18.0)]
+        cj = {"oauthAccount": {"accountUuid": "acct-a"}, "cachedUsageUtilization": anchor}
+        res = quota.evaluate_quota(cj, slices, slices[-1][0], "Pro", now)
+        self.assertEqual(res["used_5h"], 36)
+        self.assertEqual(res["used_7d"], 92)
+
     def test_select_best_relay_candidate_consume_first_and_hysteresis(self):
         now_sec = 1_792_200_000
         # 1. Hysteresis: current has 75% (> 20%), saved has 80% (+5% < 10% threshold) -> stay
@@ -781,6 +810,147 @@ class LocalQuotaTests(unittest.TestCase):
             self.assertNotIn("5h:", out)
             self.assertNotIn("7d:", out)
             self.assertIn("🚨 额度耗尽→切[Acct-B:80%]后 /resume", out)
+
+    def test_speed_multipliers_and_mythos_preview_pricing(self):
+        # claude-mythos-preview ($25/$125) vs claude-mythos-5-2 ($8/$40)
+        prev_cost = quota.estimate_turn_cost_usd(
+            "claude-mythos-preview", {"input_tokens": 1_000_000, "output_tokens": 1_000_000}
+        )
+        m52_cost = quota.estimate_turn_cost_usd(
+            "claude-mythos-5-2", {"input_tokens": 1_000_000, "output_tokens": 1_000_000}
+        )
+        self.assertAlmostEqual(prev_cost, 150.0, places=4)
+        self.assertAlmostEqual(m52_cost, 48.0, places=4)
+
+        # usage.speed multipliers: fast -> 2x on fable-5-2/opus-4-8/opus-5*, 6x on opus-4-6/opus-4-7; ultrafast -> 4x on fable-5-2
+        fable_std = quota.estimate_turn_cost_usd("claude-fable-5-2", {"input_tokens": 1_000_000})
+        fable_fast = quota.estimate_turn_cost_usd("claude-fable-5-2", {"input_tokens": 1_000_000, "speed": "fast"})
+        fable_ultra = quota.estimate_turn_cost_usd("claude-fable-5-2", {"input_tokens": 1_000_000, "speed": "ultrafast"})
+        self.assertAlmostEqual(fable_std, 8.0, places=4)
+        self.assertAlmostEqual(fable_fast, 16.0, places=4)
+        self.assertAlmostEqual(fable_ultra, 32.0, places=4)
+
+        opus47_std = quota.estimate_turn_cost_usd("claude-opus-4-7", {"input_tokens": 1_000_000})
+        opus47_fast = quota.estimate_turn_cost_usd("claude-opus-4-7", {"input_tokens": 1_000_000, "speed": "fast"})
+        opus55_fast = quota.estimate_turn_cost_usd("claude-opus-5-5", {"input_tokens": 1_000_000, "speed": "fast"})
+        self.assertAlmostEqual(opus47_std, 5.0, places=4)
+        self.assertAlmostEqual(opus47_fast, 30.0, places=4)
+        self.assertAlmostEqual(opus55_fast, 8.0, places=4)
+
+    def test_streaming_jsonl_skips_oversized_single_line_and_reads_valid_turns(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proj_dir = Path(temp) / "projects" / "demo"
+            proj_dir.mkdir(parents=True)
+            jsonl = proj_dir / "heavy-session.jsonl"
+            turn1 = json.dumps({
+                "type": "assistant",
+                "timestamp": "2026-11-10T11:30:00Z",
+                "message": {
+                    "id": "msg-before",
+                    "model": "claude-fable-5-2",
+                    "usage": {"input_tokens": 100_000, "output_tokens": 50_000, "speed": "fast"},
+                },
+            })
+            oversized = '{"type":"user","timestamp":"2026-11-10T11:35:00Z","blob":"' + ("x" * (2 * 1024 * 1024 + 4096)) + '"}'
+            turn2 = json.dumps({
+                "type": "assistant",
+                "timestamp": "2026-11-10T11:45:00Z",
+                "message": {
+                    "id": "msg-after",
+                    "model": "claude-fable-5-2",
+                    "usage": {"input_tokens": 200_000, "output_tokens": 25_000},
+                },
+            })
+            jsonl.write_text(f"{turn1}\n{oversized}\n{turn2}\n", encoding="utf-8")
+            slices, latest_dt = quota.collect_session_slices_from_dir(str(Path(temp) / "projects"))
+            self.assertEqual(len(slices), 2)
+            self.assertIsNotNone(latest_dt)
+            # turn1 fast: 2 * (0.1*8 + 0.05*40) = 5.6; turn2 std: 0.2*8 + 0.025*40 = 2.6 -> total 8.2
+            self.assertAlmostEqual(sum(cost for _dt, cost in slices), 8.2, places=4)
+
+    def test_ledger_sync_preserves_eight_web_metadata_keys_and_ultra_fields(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = root / "app"
+            vault = root / "vault"
+            app.mkdir()
+            vault.mkdir()
+            now = 2_000_000_000
+            ident_id = "0192e2b3aaaa70008000000000000001"
+            q_ident = quota.quota_identity({"accountUuid": "uuid-ultra", "emailAddress": "ultra@example.invalid"})
+
+            db_path = vault / "identities.sqlite"
+            conn = sqlite3.connect(str(db_path))
+            conn.executescript(
+                "CREATE TABLE identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, empty INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE identity_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);"
+            )
+            conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, 'UltraAcct', 0)", (ident_id,))
+            seeded_summary = {
+                "display_name": "UltraAcct",
+                "email": "ultra@example.invalid",
+                "plan": "Ultra",
+                "quota_identity": q_ident,
+                "proxy": "socks5://proxy.invalid:1080",
+                "subscription_expires_at": now + 600_000,
+                "subscription_renews_at": now + 500_000,
+                "manual_resets_remaining": 3,
+                "manual_resets_valid_until": now + 40_000,
+                "metadata_observed_at_ms": now * 1000,
+                "billing_observed_at_ms": now * 1000,
+                "manual_resets_observed_at_ms": now * 1000,
+            }
+            conn.execute("INSERT INTO identity_summaries(id, summary) VALUES(?, ?)", (ident_id, json.dumps(seeded_summary)))
+            conn.commit()
+            conn.close()
+
+            anchor = {
+                "accountUuid": "uuid-ultra",
+                "fetchedAtMs": now * 1000,
+                "no_five_hour": True,
+                "scoped_fable_7d": {"pct": 37, "resetsAt": now + 200_000, "fetchedAtMs": now * 1000},
+                "utilization": {
+                    "seven_day": {"utilization": 19, "resets_at": now + 300_000, "fetchedAtMs": now * 1000},
+                },
+            }
+            acct = quota.format_account(
+                cj={
+                    "oauthAccount": {"accountUuid": "uuid-ultra", "emailAddress": "ultra@example.invalid", "displayName": "UltraAcct"},
+                    "cachedUsageUtilization": anchor,
+                },
+                cred={"claudeAiOauth": {"subscriptionType": "max", "expiresAt": (now + 3600) * 1000, "refreshTokenExpiresAt": (now + 86400) * 1000}},
+                slices=[],
+                latest_dt=None,
+                now_utc=datetime.fromtimestamp(now, timezone.utc),
+            )
+            acct["role"] = "saved"
+            acct["id"] = ident_id
+            self.assertTrue(acct["quota_no_5h_limit"])
+            self.assertEqual(acct["quota_7d_fable_used"], 37)
+            self.assertEqual(acct["refresh_token_expires_at"], now + 86400)
+
+            quota.save_ledger_and_sync_sqlite(str(app), str(vault), [acct], datetime.fromtimestamp(now, timezone.utc))
+            conn = sqlite3.connect(str(db_path))
+            synced = json.loads(conn.execute("SELECT summary FROM identity_summaries WHERE id=?", (ident_id,)).fetchone()[0])
+            conn.close()
+
+            for web_key in (
+                "proxy",
+                "subscription_expires_at",
+                "subscription_renews_at",
+                "manual_resets_remaining",
+                "manual_resets_valid_until",
+                "metadata_observed_at_ms",
+                "billing_observed_at_ms",
+                "manual_resets_observed_at_ms",
+            ):
+                self.assertEqual(synced.get(web_key), seeded_summary[web_key], f"missing/altered {web_key}")
+            self.assertEqual(synced["plan"], "Ultra")
+            self.assertTrue(synced["quota_no_5h_limit"])
+            self.assertEqual(synced["quota_7d_used"], 19)
+            self.assertEqual(synced["quota_7d_fable_used"], 37)
+            self.assertEqual(synced["quota_7d_fable_reset_at"], now + 200_000)
+            self.assertEqual(synced["refresh_token_expires_at"], now + 86400)
 
 
 if __name__ == "__main__":

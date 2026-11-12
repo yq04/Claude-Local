@@ -82,7 +82,7 @@ fn cached(account: &str, observed: u64, used: u8, reset: u64) -> Value {
 }
 
 #[test]
-fn passive_quota_revision_watches_only_fixed_files_without_parsing_contents() {
+fn passive_quota_revision_watches_only_fixed_files() {
     let f = Fixture::new();
     let baseline = f.revision();
     private::write(&f.home.join(".claude.json"), b"invalid synthetic config").unwrap();
@@ -112,6 +112,43 @@ fn passive_quota_revision_watches_only_fixed_files_without_parsing_contents() {
     )
     .unwrap();
     assert_ne!(web_revision, f.revision());
+}
+
+#[test]
+fn passive_quota_revision_ignores_cli_bookkeeping_and_identical_rewrites() {
+    let f = Fixture::new();
+    let now = now_ms() / 1000;
+    let mut config = cached("fixture-a", (now - 60) * 1000, 9, now + 3600);
+    config["numStartups"] = json!(1);
+    config["projects"] = json!({"synthetic": {"lastCost": 0.1}});
+    f.config(&config);
+    let baseline = f.revision();
+
+    // High-churn CLI bookkeeping never feeds identity/quota state: no reload.
+    config["numStartups"] = json!(12345);
+    config["projects"] = json!({"synthetic": {"lastCost": 2.75, "lastSessionId": "x"}});
+    config["tipsHistory"] = json!({"synthetic-tip": 99});
+    config["cachedGrowthBookFeatures"] = json!({"flag": true});
+    f.config(&config);
+    assert_eq!(baseline, f.revision());
+
+    // An identical product-file rewrite (new mtime, same bytes) is not a change either.
+    let ledger = br#"{"accounts":{}}"#;
+    private::write(&f.app.join("quota_ledger.json"), ledger).unwrap();
+    let ledger_revision = f.revision();
+    assert_ne!(baseline, ledger_revision);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    private::write(&f.app.join("quota_ledger.json"), ledger).unwrap();
+    assert_eq!(ledger_revision, f.revision());
+
+    // Quota-bearing keys still change the revision.
+    config["cachedUsageUtilization"]["fetchedAtMs"] = json!((now - 5) * 1000);
+    f.config(&config);
+    assert_ne!(ledger_revision, f.revision());
+    config["oauthAccount"]["accountUuid"] = json!("fixture-b");
+    let before = f.revision();
+    f.config(&config);
+    assert_ne!(before, f.revision());
 }
 
 #[test]

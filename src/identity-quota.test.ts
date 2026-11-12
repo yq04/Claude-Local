@@ -117,3 +117,37 @@ test('weekly pace calculation suppresses first-24h false alarms and flags ahead-
   expect(formatElapsedSinceReset(now - 8100, now)).toBe('2h 15m');
   expect(formatElapsedSinceReset(now + 60, now)).toBe('');
 });
+
+test('Claude Ultra quota_no_5h_limit and Ultra plan null 5h treat 5h as Unlimited with 7d effectiveRem', () => {
+  const now = 2_000_000_000;
+  const ultraExplicit = evaluateQuota({
+    quota_no_5h_limit: true,
+    quota_5h_used: null,
+    quota_5h_reset_at: null,
+    quota_7d_source: 'server_anchor',
+    quota_7d_used: 35,
+    quota_7d_reset_at: now + 3 * 86400,
+    quota_7d_observed_at_ms: (now - 60) * 1000,
+  }, now)!;
+  expect(ultraExplicit.no5hLimit).toBe(true);
+  expect(ultraExplicit.known5h).toBe(true);
+  expect(ultraExplicit.rem5h).toBe(100);
+  expect(ultraExplicit.used5h).toBe(0);
+  expect(ultraExplicit.effectiveRem).toBe(65);
+  expect(ultraExplicit.recommendable).toBe(true);
+  expect(ultraExplicit.badge).toContain('5h Unlimited · 7d 65%');
+
+  const ultraByPlan = evaluateQuota({
+    plan: 'Ultra',
+    quota_5h_used: null,
+    quota_7d_source: 'server_anchor',
+    quota_7d_used: 82,
+    quota_7d_reset_at: now + 86400,
+    quota_7d_observed_at_ms: (now - 60) * 1000,
+  }, now)!;
+  expect(ultraByPlan.no5hLimit).toBe(true);
+  expect(ultraByPlan.rem5h).toBe(100);
+  expect(ultraByPlan.effectiveRem).toBe(18);
+  expect(ultraByPlan.level).toBe('warn');
+  expect(ultraByPlan.recommendable).toBe(true);
+});

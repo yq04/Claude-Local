@@ -1,7 +1,7 @@
 // [INPUT]: Bounded Claude Code usage JSONL, identity HMAC keys, private SQLite ledger and optional IANA display timezone.
-// [OUTPUT]: Conserved scoped aggregates, proven session/activity counts, live HMAC identity registration, historical-only fallback and account-isolated HUD telemetry.
+// [OUTPUT]: Conserved scoped aggregates, per-account model/effort breakdowns, proven session/activity counts, live HMAC identity registration, historical-only fallback and account-isolated HUD telemetry.
 // [POS]: Read-only Claude source consumer and pre-switch collection boundary; never writes credentials, Claude configuration, archives or quota ledgers.
-// [PROTOCOL]: Complete-line offsets, bounded prefix/tail hashes, and bounded cursor effort context live only in the usage ledger; identity database user_version remains 3. See identities/CLAUDE.md.
+// [PROTOCOL]: Complete-line offsets, zero-open unchanged cursor fast path (no per-file owner query before skip), damaged-cursor caching with warning replay, write-free empty scans, bounded prefix/tail hashes, validated in-process snapshot cache, and v3 object/string cursor effort context live only in the usage ledger; identity database user_version remains 3. See identities/CLAUDE.md.
 use super::{catalog, private};
 use chrono::{DateTime, Datelike, Days, LocalResult, NaiveDate, TimeZone, Utc};
 use chrono_tz::{GapInfo, Tz};
@@ -23,6 +23,9 @@ mod attribution;
 #[cfg(test)]
 #[path = "usage_reliability_tests.rs"]
 mod reliability_tests;
+#[cfg(test)]
+#[path = "usage_perf_tests.rs"]
+mod perf_tests;
 
 const MAX_DEPTH: usize = 6;
 const MAX_LINE_BYTES: usize = 2 * 1024 * 1024;
@@ -48,6 +51,16 @@ pub struct UsageAccount {
     pub email: Option<String>,
     pub current: bool,
     pub totals: UsageTotals,
+}
+#[derive(Clone, Serialize)]
+pub struct UsageAccountSummary {
+    pub id: String,
+    pub name: String,
+    pub email: Option<String>,
+    pub current: bool,
+    pub totals: UsageTotals,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<UsageModel>,
 }
 #[derive(Clone, Serialize)]
 pub struct UsageDaily {
@@ -96,7 +109,7 @@ pub struct UsageSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activity: Option<UsageActivity>,
     pub unattributed: UsageTotals,
-    pub accounts: Vec<UsageAccount>,
+    pub accounts: Vec<UsageAccountSummary>,
     pub daily: Vec<UsageDaily>,
     pub granularity: String,
     pub models: Vec<UsageModel>,
@@ -198,7 +211,7 @@ fn now() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
-pub(super) const USAGE_PARSER_VERSION: i64 = 2;
+pub(super) const USAGE_PARSER_VERSION: i64 = 3;
 pub(super) const MAX_EFFORT_RECOVERY_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug)]
@@ -209,6 +222,102 @@ pub(super) struct FileCursor {
     pub guard: String,
     pub effort: String,
     pub parser_version: i64,
+    /// A terminated line before `offset` was invalid or oversized. Such lines never become
+    /// valid later, so the cursor is cached and the warning is replayed from this flag.
+    pub damaged: bool,
+}
+
+/// One completed file cursor produced by a scan and committed by `persist_scan`.
+#[derive(Clone, Debug)]
+pub(super) struct CursorUpdate {
+    pub key: String,
+    pub size: u64,
+    pub mtime: u64,
+    pub offset: u64,
+    pub guard: String,
+    pub effort: String,
+    pub parser_version: i64,
+    pub damaged: bool,
+}
+
+/// In-process record of the newest scan per ledger path. Empty scans update this instead of
+/// committing a durable write every few seconds; the durable `meta.last_scan` is refreshed at
+/// most once per `LAST_SCAN_PERSIST_SECS` or together with real ledger changes.
+static LAST_SCAN: std::sync::Mutex<Option<HashMap<String, u64>>> = std::sync::Mutex::new(None);
+const LAST_SCAN_PERSIST_SECS: u64 = 60;
+
+fn ledger_key(conn: &Connection) -> String {
+    conn.path().unwrap_or_default().to_string()
+}
+
+fn remember_scan(conn: &Connection, at: u64) {
+    let mut guard = LAST_SCAN.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    let entry = map.entry(ledger_key(conn)).or_insert(0);
+    *entry = (*entry).max(at);
+}
+
+fn persisted_last_scan(conn: &Connection) -> Option<u64> {
+    conn.query_row("SELECT value FROM meta WHERE key='last_scan'", [], |r| {
+        r.get::<_, String>(0)
+    })
+    .optional()
+    .ok()
+    .flatten()
+    .and_then(|v| v.parse::<u64>().ok())
+}
+
+/// Newest completed scan known to this process or persisted by an earlier run.
+fn effective_last_scan(conn: &Connection) -> Option<u64> {
+    let memory = LAST_SCAN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|map| map.get(&ledger_key(conn)).copied());
+    match (persisted_last_scan(conn), memory) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+fn load_cursors(conn: &Connection) -> HashMap<String, FileCursor> {
+    let mut known = HashMap::new();
+    if let Ok(mut q) = conn.prepare(
+        "SELECT file_key,size,mtime,offset,guard,COALESCE(effort,''),COALESCE(parser_version,0),COALESCE(damaged,0) FROM files",
+    ) {
+        if let Ok(rows) = q.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                FileCursor {
+                    size: r.get::<_, i64>(1)?.max(0) as u64,
+                    mtime: r.get::<_, i64>(2)?.max(0) as u64,
+                    offset: r.get::<_, i64>(3)?.max(0) as u64,
+                    guard: r.get::<_, String>(4)?,
+                    effort: r.get::<_, String>(5)?,
+                    parser_version: r.get::<_, i64>(6)?,
+                    damaged: r.get::<_, i64>(7)? != 0,
+                },
+            ))
+        }) {
+            known.extend(rows.flatten());
+        }
+    }
+    known
+}
+
+fn load_boundaries(conn: &Connection) -> Vec<(u64, Option<String>)> {
+    let mut boundaries = Vec::new();
+    if let Ok(mut q) = conn.prepare("SELECT ts,account_key FROM boundaries ORDER BY ts") {
+        if let Ok(rows) = q.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?.max(0) as u64,
+                r.get::<_, Option<String>>(1)?,
+            ))
+        }) {
+            boundaries.extend(rows.flatten());
+        }
+    }
+    boundaries
 }
 
 fn clean_model(v: &Value) -> String {
@@ -235,13 +344,22 @@ fn clean_effort_str(raw: &str) -> String {
         .to_ascii_lowercase()
 }
 
+fn extract_effort_value(v: &Value) -> Option<&str> {
+    v.as_str()
+        .or_else(|| v.get("level").and_then(Value::as_str))
+        .or_else(|| v.get("effort").and_then(Value::as_str))
+        .or_else(|| v.get("effortLevel").and_then(Value::as_str))
+}
+
 fn clean_effort(obj: &Value, msg: &Value) -> String {
     let raw = obj
         .get("perTurnEffort")
-        .and_then(Value::as_str)
-        .or_else(|| obj.get("effort").and_then(Value::as_str))
-        .or_else(|| msg.get("perTurnEffort").and_then(Value::as_str))
-        .or_else(|| msg.get("effort").and_then(Value::as_str))
+        .and_then(extract_effort_value)
+        .or_else(|| obj.get("effort").and_then(extract_effort_value))
+        .or_else(|| msg.get("perTurnEffort").and_then(extract_effort_value))
+        .or_else(|| msg.get("effort").and_then(extract_effort_value))
+        .or_else(|| msg.pointer("/output_config/effort").and_then(extract_effort_value))
+        .or_else(|| obj.pointer("/output_config/effort").and_then(extract_effort_value))
         .unwrap_or("")
         .trim();
     clean_effort_str(raw)
@@ -382,6 +500,36 @@ pub(super) fn parse_file_from_with_context(
     start_offset: u64,
     initial_effort: &str,
 ) -> Option<(u64, u64, u64, bool, String)> {
+    let outcome = parse_file_core(path, file_tag, events, warnings, start_offset, initial_effort)?;
+    Some((
+        outcome.size,
+        outcome.mtime,
+        outcome.offset,
+        outcome.io_complete && !outcome.damaged,
+        outcome.last_effort,
+    ))
+}
+
+/// Result of one bounded incremental parse. `io_complete=false` means a read failed and the
+/// cursor must be retried; `damaged=true` means a terminated line was invalid or oversized,
+/// which is permanent for append-only logs and therefore still allows caching the cursor.
+pub(super) struct ParseOutcome {
+    pub size: u64,
+    pub mtime: u64,
+    pub offset: u64,
+    pub io_complete: bool,
+    pub damaged: bool,
+    pub last_effort: String,
+}
+
+fn parse_file_core(
+    path: &Path,
+    file_tag: &str,
+    events: &mut HashMap<String, Event>,
+    warnings: &mut Vec<String>,
+    start_offset: u64,
+    initial_effort: &str,
+) -> Option<ParseOutcome> {
     let meta = match fs::symlink_metadata(path) {
         Ok(v) => v,
         Err(_) => {
@@ -423,6 +571,7 @@ pub(super) fn parse_file_from_with_context(
     let mut complete_offset = start_offset;
     let mut weak = false;
     let mut complete = true;
+    let mut damaged = false;
     let mut last_effort = clean_effort_str(initial_effort);
     let session_roots = attribution::session_roots(path);
     loop {
@@ -443,12 +592,12 @@ pub(super) fn parse_file_from_with_context(
         complete_offset = reader.stream_position().ok()?;
         if line.is_empty() {
             warnings.push("invalid_records".into());
-            complete = false;
+            damaged = true;
             continue;
         }
         let Ok(obj) = serde_json::from_slice::<Value>(&line) else {
             warnings.push("invalid_records".into());
-            complete = false;
+            damaged = true;
             continue;
         };
         let line_effort = clean_effort(&obj, obj.get("message").unwrap_or(&Value::Null));
@@ -464,7 +613,7 @@ pub(super) fn parse_file_from_with_context(
             .and_then(super::profile::parse_iso_epoch_sec)
         else {
             warnings.push("invalid_records".into());
-            complete = false;
+            damaged = true;
             continue;
         };
         let Some(msg) = obj.get("message") else {
@@ -568,7 +717,14 @@ pub(super) fn parse_file_from_with_context(
     if weak {
         warnings.push("weak_ids".into());
     }
-    Some((meta.len(), modified, complete_offset, complete, last_effort))
+    Some(ParseOutcome {
+        size: meta.len(),
+        mtime: modified,
+        offset: complete_offset,
+        io_complete: complete,
+        damaged,
+        last_effort,
+    })
 }
 
 // At most 8 KiB of completed data is read to distinguish normal appends from
@@ -588,7 +744,7 @@ fn scan_dir(
     depth: usize,
     events: &mut HashMap<String, Event>,
     warnings: &mut Vec<String>,
-    cache: &mut Vec<(String, u64, u64, u64, String, String, i64)>,
+    cache: &mut Vec<CursorUpdate>,
     known: &HashMap<String, FileCursor>,
 ) {
     if depth > MAX_DEPTH {
@@ -609,11 +765,17 @@ fn scan_dir(
             warnings.push("partial_scan".into());
             continue;
         };
-        if super::private::safe(&path).is_err() {
+        // Links and special files are rejected from metadata alone; the owner (SID) check
+        // below runs before any byte of a file is opened or a directory is traversed.
+        if crate::cleaner::linked(&meta) || (!meta.is_file() && !meta.is_dir()) {
             warnings.push("partial_scan".into());
             continue;
         }
         if meta.is_dir() {
+            if super::private::safe(&path).is_err() {
+                warnings.push("partial_scan".into());
+                continue;
+            }
             scan_dir(&path, depth + 1, events, warnings, cache, known);
         } else if meta.is_file() && path.extension().is_some_and(|x| x == "jsonl") {
             let tag = hex_hash(path.to_string_lossy().as_bytes());
@@ -622,21 +784,30 @@ fn scan_dir(
                 .ok()
                 .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
                 .map(|v| v.as_nanos() as u64);
+            if let (Some(old), Some(mtime)) = (known.get(&tag), mtime) {
+                if old.parser_version >= USAGE_PARSER_VERSION
+                    && old.size == meta.len()
+                    && old.mtime == mtime
+                    && old.offset == meta.len()
+                    && !old.guard.is_empty()
+                {
+                    // Zero-open fast path: nothing is read from an unchanged file.
+                    if old.damaged {
+                        warnings.push("invalid_records".into());
+                    }
+                    continue;
+                }
+            }
+            if super::private::safe(&path).is_err() {
+                warnings.push("partial_scan".into());
+                continue;
+            }
             let old = known.get(&tag).filter(|old| {
                 old.offset <= meta.len()
                     && !old.guard.is_empty()
                     && cursor_guard(&path, old.offset).ok().as_ref() == Some(&old.guard)
             });
-            if let (Some(old), Some(mtime)) = (old, mtime) {
-                if old.parser_version >= USAGE_PARSER_VERSION
-                    && old.size == meta.len()
-                    && old.mtime == mtime
-                    && old.offset == meta.len()
-                {
-                    continue;
-                }
-            }
-            let (start_offset, initial_effort) = match (old, mtime) {
+            let (start_offset, initial_effort, inherited_damage) = match (old, mtime) {
                 (Some(old), Some(mtime))
                     if old.parser_version >= USAGE_PARSER_VERSION
                         && (meta.len() > old.size
@@ -650,11 +821,14 @@ fn scan_dir(
                     } else {
                         String::new()
                     };
-                    (offset, effort)
+                    if old.damaged {
+                        warnings.push("invalid_records".into());
+                    }
+                    (offset, effort, old.damaged)
                 }
-                _ => (0, String::new()),
+                _ => (0, String::new(), false),
             };
-            if let Some((len, mtime, offset, complete, last_effort)) = parse_file_from_with_context(
+            if let Some(outcome) = parse_file_core(
                 &path,
                 &tag,
                 events,
@@ -662,19 +836,23 @@ fn scan_dir(
                 start_offset,
                 &initial_effort,
             ) {
-                if !complete {
+                // Read failures retry from the old cursor. Invalid or oversized terminated
+                // lines are permanent in an append-only log, so their cursor is cached with a
+                // damage flag instead of re-parsing the whole file on every scan.
+                if !outcome.io_complete {
                     continue;
                 }
-                match cursor_guard(&path, offset) {
-                    Ok(guard) => cache.push((
-                        tag,
-                        len,
-                        mtime,
-                        offset,
+                match cursor_guard(&path, outcome.offset) {
+                    Ok(guard) => cache.push(CursorUpdate {
+                        key: tag,
+                        size: outcome.size,
+                        mtime: outcome.mtime,
+                        offset: outcome.offset,
                         guard,
-                        last_effort,
-                        USAGE_PARSER_VERSION,
-                    )),
+                        effort: outcome.last_effort,
+                        parser_version: USAGE_PARSER_VERSION,
+                        damaged: inherited_damage || outcome.damaged,
+                    }),
                     Err(_) => warnings.push("partial_scan".into()),
                 }
             }
@@ -682,7 +860,69 @@ fn scan_dir(
     }
 }
 
+/// Incrementally ingest `~/.claude/projects` into the ledger. Shared by the statistics
+/// page, the HUD tick and the pre-switch collection; aggregation is left to the caller.
+fn ingest_projects(
+    conn: &Connection,
+    vault: &Path,
+    home: &Path,
+    clock: u64,
+    warnings: &mut Vec<String>,
+) {
+    ensure_tracking_start(conn, vault, home);
+    attribution::observe(conn, vault, home, clock);
+    mark_external_gap(conn, vault, home);
+    let mut events = HashMap::new();
+    let mut cache = Vec::new();
+    let projects = home.join(".claude").join("projects");
+    if let Ok(meta) = fs::symlink_metadata(&projects) {
+        if meta.is_dir() && private::safe(&projects).is_ok() {
+            let known = load_cursors(conn);
+            scan_dir(&projects, 0, &mut events, warnings, &mut cache, &known);
+        }
+    }
+    attribution::observe(conn, vault, home, clock);
+    mark_external_gap(conn, vault, home);
+    let boundaries = load_boundaries(conn);
+    if persist_scan(conn, events, boundaries.as_slice(), &cache).is_err() {
+        warnings.push("partial_scan".into());
+    }
+}
+
+/// Ledger paths whose schema/migrations/ACL were completed by this process. Later opens
+/// skip the repeated DDL, `PRAGMA table_info` probes and DACL rewrite (still re-validating
+/// that the file is a private, owned, non-link file).
+static LEDGER_READY: std::sync::Mutex<Option<HashSet<std::path::PathBuf>>> =
+    std::sync::Mutex::new(None);
+
 pub(super) fn open_ledger(path: &Path) -> Result<Connection, String> {
+    let ready = path.exists()
+        && LEDGER_READY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|set| set.contains(path));
+    if ready {
+        private::parents(path.parent().ok_or("usage ledger path invalid")?)?;
+        private::safe(path)?;
+        let conn = Connection::open(path).map_err(|_| "usage ledger cannot be opened")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| "usage ledger busy")?;
+        conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")
+            .map_err(|_| "usage ledger schema unavailable")?;
+        attribution::freeze_legacy_fallback(&conn)?;
+        return Ok(conn);
+    }
+    let conn = open_ledger_full(path)?;
+    LEDGER_READY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashSet::new)
+        .insert(path.to_path_buf());
+    Ok(conn)
+}
+
+fn open_ledger_full(path: &Path) -> Result<Connection, String> {
     private::directory(path.parent().ok_or("usage ledger path invalid")?)?;
     if !path.exists() {
         private::create(path)
@@ -760,6 +1000,22 @@ pub(super) fn open_ledger(path: &Path) -> Result<Connection, String> {
         )
         .map_err(|_| "usage ledger migration failed")?;
     }
+    let has_damaged: bool = conn
+        .prepare("PRAGMA table_info(files)")
+        .and_then(|mut q| {
+            let rows = q.query_map([], |r| r.get::<_, String>(1))?;
+            Ok(rows.flatten().any(|name| name == "damaged"))
+        })
+        .map_err(|_| "usage ledger schema unavailable")?;
+    if !has_damaged {
+        // Cursors that previously could not be cached because of a permanent invalid line
+        // are simply absent; they are cached with this flag on the next scan.
+        conn.execute(
+            "ALTER TABLE files ADD COLUMN damaged INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|_| "usage ledger migration failed")?;
+    }
     let has_message: bool = conn
         .prepare("PRAGMA table_info(events)")
         .ok()
@@ -807,7 +1063,7 @@ pub(super) fn open_ledger(path: &Path) -> Result<Connection, String> {
         conn.execute("UPDATE files SET guard=''", [])
             .map_err(|_| "usage ledger migration failed")?;
     }
-    conn.execute_batch("CREATE INDEX IF NOT EXISTS events_timestamp ON events(ts); CREATE INDEX IF NOT EXISTS events_message ON events(message_key,sidechain);")
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS events_timestamp ON events(ts); CREATE INDEX IF NOT EXISTS events_message ON events(message_key,sidechain); CREATE INDEX IF NOT EXISTS events_account ON events(account_key);")
         .map_err(|_| "usage ledger index unavailable")?;
     attribution::migrate(&conn)?;
     Ok(conn)
@@ -878,11 +1134,13 @@ fn identity_db_readonly(vault: &Path) -> Result<Connection, String> {
     let path = vault.join("identities.sqlite");
     private::parents(vault)?;
     private::safe(&path)?;
-    Connection::open_with_flags(
+    let conn = Connection::open_with_flags(
         &path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(|_| "identity index unavailable".into())
+    .map_err(|_| String::from("identity index unavailable"))?;
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(2500));
+    Ok(conn)
 }
 pub(crate) fn live_account_key(vault: &Path, home: &Path) -> Option<String> {
     let key_path = vault.join("key.bin");
@@ -914,42 +1172,49 @@ fn mark_external_gap(conn: &Connection, vault: &Path, home: &Path) {
     let Some((latest_at, Some(previous))) = latest else {
         return;
     };
-    let active = identity_db_readonly(vault).ok().and_then(|db| {
-        db.query_row("SELECT value FROM state WHERE key='active'", [], |r| {
-            r.get::<_, String>(0)
-        })
-        .optional()
-        .ok()
-        .flatten()
-    });
+    let identity_db = if vault.join("identities.sqlite").exists() {
+        let Ok(db) = identity_db_readonly(vault) else {
+            return;
+        };
+        Some(db)
+    } else {
+        None
+    };
+    let active = if let Some(db) = identity_db.as_ref() {
+        let Ok(active_row) = db
+            .query_row("SELECT value FROM state WHERE key='active'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()
+        else {
+            return;
+        };
+        active_row
+    } else {
+        None
+    };
     let actual = live_account_key(vault, home);
-    let valid = if let (Some(key), Some(id)) = (actual.as_ref(), active.as_ref()) {
-        identity_db_readonly(vault).ok().and_then(|db| {
-            db.query_row(
+    let valid = if let (Some(key), Some(id), Some(db)) =
+        (actual.as_ref(), active.as_ref(), identity_db.as_ref())
+    {
+        let Ok(found_row) = db
+            .query_row(
                 "SELECT id FROM identities WHERE account_key=?1 AND empty=0",
                 [key],
                 |r| r.get::<_, String>(0),
             )
             .optional()
-            .ok()
-            .flatten()
-            .filter(|found| found == id)
-            .map(|_| key.clone())
-        })
+        else {
+            return;
+        };
+        found_row.filter(|found| found == id).map(|_| key.clone())
     } else {
         None
     };
     if valid.as_deref() == Some(previous.as_str()) {
         return;
     }
-    let cutoff = conn
-        .query_row("SELECT value FROM meta WHERE key='last_scan'", [], |r| {
-            r.get::<_, String>(0)
-        })
-        .optional()
-        .ok()
-        .flatten()
-        .and_then(|v| v.parse::<u64>().ok())
+    let cutoff = effective_last_scan(conn)
         .or_else(|| {
             conn.query_row(
                 "SELECT value FROM meta WHERE key='tracking_since'",
@@ -972,8 +1237,21 @@ pub(super) fn persist_scan(
     conn: &Connection,
     events: HashMap<String, Event>,
     boundaries: &[(u64, Option<String>)],
-    cache: &[(String, u64, u64, u64, String, String, i64)],
+    cache: &[CursorUpdate],
 ) -> Result<(), String> {
+    let scanned_at = now();
+    if events.is_empty() && cache.is_empty() {
+        // Nothing new: avoid a durable (fsync) commit on every HUD tick or page refresh.
+        // The in-process marker keeps gap cutoffs exact; the durable value is refreshed
+        // at a bounded cadence so a restart only ever moves the cutoff earlier.
+        remember_scan(conn, scanned_at);
+        let stale = persisted_last_scan(conn)
+            .is_none_or(|at| scanned_at.saturating_sub(at) >= LAST_SCAN_PERSIST_SECS);
+        if stale {
+            conn.execute("INSERT INTO meta(key,value) VALUES('last_scan',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[scanned_at.to_string()]).map_err(|_|"usage scan timestamp write failed")?;
+        }
+        return Ok(());
+    }
     let tx = conn
         .unchecked_transaction()
         .map_err(|_| "usage ledger write failed")?;
@@ -982,11 +1260,11 @@ pub(super) fn persist_scan(
     let mut bounds = boundaries.to_vec();
     bounds.sort_by_key(|b| b.0);
     for mut e in sorted {
-        e.account = bounds
-            .iter()
-            .rev()
-            .find(|(ts, _)| *ts <= e.ts)
-            .and_then(|(_, a)| a.clone());
+        // Last boundary at or before the event (same as a reverse linear search).
+        let index = bounds.partition_point(|(ts, _)| *ts <= e.ts);
+        e.account = index
+            .checked_sub(1)
+            .and_then(|i| bounds[i].1.clone());
         if e.account.is_none() {
             e.account = attribution::session_owner(&tx, &e);
         }
@@ -1011,23 +1289,26 @@ pub(super) fn persist_scan(
         }
         tx.execute("INSERT INTO events(event_key,message_key,session_key,ts,model,effort,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,?2,?14,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(event_key) DO UPDATE SET ts=MAX(events.ts,excluded.ts),session_key=COALESCE(events.session_key,excluded.session_key),input=MAX(events.input,excluded.input),output=MAX(events.output,excluded.output),creation=MAX(events.creation,excluded.creation),cache_read=MAX(events.cache_read,excluded.cache_read),reasoning=CASE WHEN events.reasoning IS NULL THEN excluded.reasoning WHEN excluded.reasoning IS NULL THEN events.reasoning ELSE MAX(events.reasoning,excluded.reasoning) END,model=CASE WHEN events.model='unknown' THEN excluded.model ELSE events.model END,effort=CASE WHEN excluded.effort!='' THEN excluded.effort ELSE events.effort END,weak=MIN(events.weak,excluded.weak)",params![e.event_key,e.message_key,e.ts as i64,e.model,e.effort,e.counts.input as i64,e.counts.output as i64,e.counts.creation as i64,e.counts.read as i64,e.counts.reasoning.map(|x|x as i64),e.account,e.weak as i64,e.sidechain as i64,e.session_key]).map_err(|_|"usage event write failed")?;
     }
-    for (key, size, mtime, offset, guard, effort, parser_version) in cache {
+    for update in cache {
         tx.execute(
-            "INSERT INTO files(file_key,size,mtime,offset,guard,effort,parser_version) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(file_key) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,offset=excluded.offset,guard=excluded.guard,effort=excluded.effort,parser_version=excluded.parser_version",
+            "INSERT INTO files(file_key,size,mtime,offset,guard,effort,parser_version,damaged) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(file_key) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,offset=excluded.offset,guard=excluded.guard,effort=excluded.effort,parser_version=excluded.parser_version,damaged=excluded.damaged",
             params![
-                key,
-                *size as i64,
-                *mtime as i64,
-                *offset as i64,
-                guard,
-                effort,
-                *parser_version,
+                update.key,
+                update.size as i64,
+                update.mtime as i64,
+                update.offset as i64,
+                update.guard,
+                update.effort,
+                update.parser_version,
+                update.damaged as i64,
             ],
         )
         .map_err(|_| "usage cache write failed")?;
     }
-    tx.execute("INSERT INTO meta(key,value) VALUES('last_scan',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[now().to_string()]).map_err(|_|"usage scan timestamp write failed")?;
-    tx.commit().map_err(|_| "usage ledger commit failed".into())
+    tx.execute("INSERT INTO meta(key,value) VALUES('last_scan',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[scanned_at.to_string()]).map_err(|_|"usage scan timestamp write failed")?;
+    tx.commit().map_err(|_| "usage ledger commit failed")?;
+    remember_scan(conn, scanned_at);
+    Ok(())
 }
 
 fn offset_start(period: &str, now_sec: u64, offset: i32) -> Result<Option<u64>, String> {
@@ -1257,19 +1538,16 @@ pub(crate) fn monitor_usage(
     };
     let conn = open_ledger(&vault.join("usage.sqlite"))?;
     attribution::observe(&conn, vault, home, clock);
-    let scanned = conn
-        .query_row("SELECT value FROM meta WHERE key='last_scan'", [], |r| {
-            r.get::<_, String>(0)
-        })
-        .optional()
-        .ok()
-        .flatten()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(0);
+    let scanned = effective_last_scan(&conn).unwrap_or(0);
     if clock.saturating_sub(scanned) >= 5 {
-        // This path uses the same complete-line cursors as the statistics page.
-        // The three-second HUD tick only queries SQLite between shared scans.
-        read_at_with_timezone_now(vault, home, "today", None, 0, None, None, clock)?;
+        // Same complete-line cursors as the statistics page, but ingestion only: the HUD
+        // never pays for a full-history aggregation or identity catalog join.
+        let mut warnings = Vec::new();
+        ingest_projects(&conn, vault, home, clock, &mut warnings);
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO meta(key,value) VALUES('tracking_since',?1)",
+            [now().to_string()],
+        );
     }
     if live_account_key(vault, home).as_deref() != Some(owner.as_str()) {
         return Ok(None);
@@ -1354,45 +1632,8 @@ pub(crate) fn collect_before_switch(vault: &Path, home: &Path, _account_key: Opt
     let Ok(conn) = open_ledger(&ledger_path) else {
         return;
     };
-    ensure_tracking_start(&conn, vault, home);
-    attribution::observe(&conn, vault, home, now());
-    mark_external_gap(&conn, vault, home);
-    let mut known = HashMap::new();
-    if let Ok(mut q) = conn.prepare(
-        "SELECT file_key,size,mtime,offset,guard,COALESCE(effort,''),COALESCE(parser_version,0) FROM files",
-    ) {
-        if let Ok(rows) = q.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                FileCursor {
-                    size: r.get::<_, i64>(1)?.max(0) as u64,
-                    mtime: r.get::<_, i64>(2)?.max(0) as u64,
-                    offset: r.get::<_, i64>(3)?.max(0) as u64,
-                    guard: r.get::<_, String>(4)?,
-                    effort: r.get::<_, String>(5)?,
-                    parser_version: r.get::<_, i64>(6)?,
-                },
-            ))
-        }) {
-            known.extend(rows.flatten());
-        }
-    }
-    let mut events = HashMap::new();
     let mut warnings = Vec::new();
-    let mut cache = Vec::new();
-    scan_dir(&projects, 0, &mut events, &mut warnings, &mut cache, &known);
-    let mut boundaries = Vec::new();
-    if let Ok(mut q) = conn.prepare("SELECT ts,account_key FROM boundaries ORDER BY ts") {
-        if let Ok(rows) = q.query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?.max(0) as u64,
-                r.get::<_, Option<String>>(1)?,
-            ))
-        }) {
-            boundaries.extend(rows.flatten());
-        }
-    }
-    let _ = persist_scan(&conn, events, &boundaries, &cache);
+    ingest_projects(&conn, vault, home, now(), &mut warnings);
 }
 
 pub(crate) fn commit_switch_boundary(vault: &Path, home: &Path, account_key: Option<&str>) {
@@ -1467,7 +1708,14 @@ pub(crate) fn commit_switch_boundary(vault: &Path, home: &Path, account_key: Opt
 }
 
 pub(crate) fn observe_current(vault: &Path, home: &Path) {
-    let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Identity reads must never queue behind a long usage scan. Every holder of the
+    // usage lock that ingests logs observes the live login itself, so a busy lock can
+    // safely skip this opportunistic observation; the next read repeats it.
+    let _guard = match USAGE_LOCK.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return,
+    };
     if let Ok(conn) = open_ledger(&vault.join("usage.sqlite")) {
         attribution::observe(&conn, vault, home, now());
         mark_external_gap(&conn, vault, home);
@@ -1636,6 +1884,59 @@ pub(crate) fn clear_fallback_account_id(vault: &Path) -> Result<UsageAttribution
     read_attribution_config(vault)
 }
 
+fn count_unassigned_events(conn: &Connection, is_known: impl Fn(&str) -> bool) -> (u64, u64) {
+    let mut unassigned_requests = 0u64;
+    let mut unassigned_tokens = 0u64;
+    if let Ok(mut q) = conn.prepare(
+        "SELECT COALESCE(account_key,''), COUNT(*), COALESCE(SUM(input + output + creation + cache_read), 0) FROM events GROUP BY 1",
+    ) {
+        if let Ok(rows) = q.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?.max(0) as u64,
+                r.get::<_, i64>(2)?.max(0) as u64,
+            ))
+        }) {
+            for (owner, count, tokens) in rows.flatten() {
+                if owner.is_empty() || !is_known(&owner) {
+                    unassigned_requests = unassigned_requests.saturating_add(count);
+                    unassigned_tokens = unassigned_tokens.saturating_add(tokens);
+                }
+            }
+        }
+    }
+    (unassigned_requests, unassigned_tokens)
+}
+
+fn build_usage_models(
+    models: BTreeMap<String, UsageTotals>,
+    mut model_efforts: BTreeMap<String, BTreeMap<String, UsageTotals>>,
+) -> Vec<UsageModel> {
+    models
+        .into_iter()
+        .map(|(model, totals)| {
+            let mut efforts: Vec<UsageEffort> = model_efforts
+                .remove(&model)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(effort, totals)| UsageEffort { effort, totals })
+                .collect();
+            efforts.sort_by(|a, b| {
+                b.totals
+                    .total_tokens
+                    .cmp(&a.totals.total_tokens)
+                    .then_with(|| effort_rank(&a.effort).cmp(&effort_rank(&b.effort)))
+                    .then_with(|| a.effort.cmp(&b.effort))
+            });
+            UsageModel {
+                model,
+                totals,
+                efforts,
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn read_attribution_config(vault: &Path) -> Result<UsageAttributionConfig, String> {
     let ledger_path = vault.join("usage.sqlite");
     let conn = open_ledger(&ledger_path)?;
@@ -1688,33 +1989,8 @@ pub(crate) fn read_attribution_config(vault: &Path) -> Result<UsageAttributionCo
         }
     }
 
-    let mut unassigned_requests = 0u64;
-    let mut unassigned_tokens = 0u64;
-    if let Ok(mut q) =
-        conn.prepare("SELECT COALESCE(account_key,''),input,output,creation,cache_read FROM events")
-    {
-        if let Ok(rows) = q.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?.max(0) as u64,
-                r.get::<_, i64>(2)?.max(0) as u64,
-                r.get::<_, i64>(3)?.max(0) as u64,
-                r.get::<_, i64>(4)?.max(0) as u64,
-            ))
-        }) {
-            for row in rows.flatten() {
-                let (owner, i, o, c, r) = row;
-                if owner.is_empty() || !known_keys.contains(&owner) {
-                    unassigned_requests = unassigned_requests.saturating_add(1);
-                    unassigned_tokens = unassigned_tokens
-                        .saturating_add(i)
-                        .saturating_add(o)
-                        .saturating_add(c)
-                        .saturating_add(r);
-                }
-            }
-        }
-    }
+    let (unassigned_requests, unassigned_tokens) =
+        count_unassigned_events(&conn, |owner| known_keys.contains(owner));
 
     Ok(UsageAttributionConfig {
         fallback_account_id: effective_fallback_id,
@@ -1787,53 +2063,139 @@ pub(super) fn read_at_with_timezone_now(
     let ledger_path = vault.join("usage.sqlite");
     let mut warnings = Vec::new();
     let conn = open_ledger(&ledger_path)?;
-    ensure_tracking_start(&conn, vault, home);
-    attribution::observe(&conn, vault, home, snapshot_now);
-    mark_external_gap(&conn, vault, home);
-    let mut events = HashMap::new();
-    let mut cache = Vec::new();
-    let mut known = HashMap::new();
-    let projects = home.join(".claude").join("projects");
-    if let Ok(meta) = fs::symlink_metadata(&projects) {
-        if meta.is_dir() && private::safe(&projects).is_ok() {
-            if let Ok(mut q) = conn.prepare(
-                "SELECT file_key,size,mtime,offset,guard,COALESCE(effort,''),COALESCE(parser_version,0) FROM files",
-            ) {
-                if let Ok(rows) = q.query_map([], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        FileCursor {
-                            size: r.get::<_, i64>(1)?.max(0) as u64,
-                            mtime: r.get::<_, i64>(2)?.max(0) as u64,
-                            offset: r.get::<_, i64>(3)?.max(0) as u64,
-                            guard: r.get::<_, String>(4)?,
-                            effort: r.get::<_, String>(5)?,
-                            parser_version: r.get::<_, i64>(6)?,
-                        },
-                    ))
-                }) {
-                    known.extend(rows.flatten());
-                }
-            }
-            scan_dir(&projects, 0, &mut events, &mut warnings, &mut cache, &known);
+    ingest_projects(&conn, vault, home, snapshot_now, &mut warnings);
+    // After ingestion, an unchanged ledger + identity catalog + live login within the same
+    // minute yields the same aggregate; reuse it instead of re-reading the full history.
+    let cache_key = snapshot_cache_key(
+        vault,
+        home,
+        &ledger_path,
+        period,
+        account_id,
+        offset,
+        fallback_name,
+        timezone.map(|tz| tz.name()),
+        snapshot_now,
+    );
+    if let Some(mut cached) = cache_key.as_deref().and_then(cached_snapshot) {
+        cached.generated_at = snapshot_now;
+        return Ok(cached);
+    }
+    let snapshot = aggregate_snapshot(
+        &conn,
+        vault,
+        home,
+        period,
+        account_id,
+        offset,
+        fallback_name,
+        timezone,
+        snapshot_now,
+        start,
+        end,
+        hourly,
+        hourly_slots.take(),
+        warnings,
+    )?;
+    if let Some(key) = cache_key {
+        // The key is re-derived after the write-free aggregation; tracking_since initialization
+        // or any other write changes the ledger stamp and simply skips caching this round.
+        let still = snapshot_cache_key(
+            vault,
+            home,
+            &ledger_path,
+            period,
+            account_id,
+            offset,
+            fallback_name,
+            timezone.map(|tz| tz.name()),
+            snapshot_now,
+        );
+        if still.as_deref() == Some(key.as_str()) {
+            store_snapshot(key, &snapshot);
         }
     }
-    attribution::observe(&conn, vault, home, snapshot_now);
-    mark_external_gap(&conn, vault, home);
-    let mut boundaries = Vec::new();
-    if let Ok(mut q) = conn.prepare("SELECT ts,account_key FROM boundaries ORDER BY ts") {
-        if let Ok(rows) = q.query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?.max(0) as u64,
-                r.get::<_, Option<String>>(1)?,
-            ))
-        }) {
-            boundaries.extend(rows.flatten());
-        }
+    Ok(snapshot)
+}
+
+static SNAPSHOT_CACHE: std::sync::Mutex<Option<HashMap<String, UsageSnapshot>>> =
+    std::sync::Mutex::new(None);
+const SNAPSHOT_CACHE_ENTRIES: usize = 24;
+
+fn file_stamp(path: &Path) -> Option<String> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(format!("{}:{mtime}", meta.len()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn snapshot_cache_key(
+    vault: &Path,
+    home: &Path,
+    ledger: &Path,
+    period: &str,
+    account_id: Option<&str>,
+    offset: i32,
+    fallback_name: Option<&str>,
+    timezone: Option<&str>,
+    snapshot_now: u64,
+) -> Option<String> {
+    let ledger_stamp = file_stamp(ledger)?;
+    let catalog_stamp =
+        file_stamp(&vault.join("identities.sqlite")).unwrap_or_else(|| "none".into());
+    let live = live_account_key(vault, home).unwrap_or_default();
+    Some(hex_hash(
+        format!(
+            "{}\0{ledger_stamp}\0{catalog_stamp}\0{live}\0{period}\0{}\0{offset}\0{}\0{}\0{}",
+            ledger.to_string_lossy(),
+            account_id.unwrap_or("*"),
+            fallback_name.unwrap_or(""),
+            timezone.unwrap_or(""),
+            snapshot_now / 60
+        )
+        .as_bytes(),
+    ))
+}
+
+fn cached_snapshot(key: &str) -> Option<UsageSnapshot> {
+    SNAPSHOT_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|cache| cache.get(key).cloned())
+}
+
+fn store_snapshot(key: String, snapshot: &UsageSnapshot) {
+    let mut guard = SNAPSHOT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = guard.get_or_insert_with(HashMap::new);
+    if cache.len() >= SNAPSHOT_CACHE_ENTRIES {
+        cache.clear();
     }
-    if persist_scan(&conn, events, boundaries.as_slice(), &cache).is_err() {
-        warnings.push("partial_scan".into());
-    }
+    cache.insert(key, snapshot.clone());
+}
+
+#[allow(clippy::too_many_arguments)]
+fn aggregate_snapshot(
+    conn: &Connection,
+    vault: &Path,
+    home: &Path,
+    period: &str,
+    account_id: Option<&str>,
+    offset: i32,
+    fallback_name: Option<&str>,
+    timezone: Option<Tz>,
+    snapshot_now: u64,
+    start: Option<u64>,
+    end: Option<u64>,
+    hourly: bool,
+    mut hourly_slots: Option<Vec<UsageDaily>>,
+    mut warnings: Vec<String>,
+) -> Result<UsageSnapshot, String> {
     let tracking = conn
         .query_row(
             "SELECT value FROM meta WHERE key='tracking_since'",
@@ -2005,9 +2367,20 @@ pub(super) fn read_at_with_timezone_now(
     let mut buckets: BTreeMap<i64, UsageTotals> = BTreeMap::new();
     let mut models: BTreeMap<String, UsageTotals> = BTreeMap::new();
     let mut model_efforts: BTreeMap<String, BTreeMap<String, UsageTotals>> = BTreeMap::new();
+    let mut account_models: HashMap<String, BTreeMap<String, UsageTotals>> = HashMap::new();
+    let mut account_model_efforts: HashMap<String, BTreeMap<String, BTreeMap<String, UsageTotals>>> =
+        HashMap::new();
     let mut sessions = HashSet::new();
     let mut session_complete = true;
     let mut active_days = HashSet::new();
+    // Account ID → catalog key, so each row resolves its account in O(1).
+    let id_to_key: HashMap<String, String> = account_map
+        .iter()
+        .map(|(key, account)| (account.id.clone(), key.clone()))
+        .collect();
+    // Every IANA offset is a multiple of 15 minutes, so the local day (and day bucket) is
+    // constant within a 15-minute UTC slot. Rows arrive ordered by ts; memoize the slot.
+    let mut day_slot: Option<(u64, String, i64)> = None;
     for (owner, ts, model, effort, i, o, c, r, reason, session) in rows {
         if start.is_some_and(|s| ts < s) || end.is_some_and(|e| ts >= e) || ts > snapshot_now {
             continue;
@@ -2020,8 +2393,36 @@ pub(super) fn read_at_with_timezone_now(
         if id.is_none() {
             add_row(&mut unknown, i, o, c, r, reason);
         } else if let Some(id) = id.as_ref() {
-            if let Some(a) = account_map.values_mut().find(|a| &a.id == id) {
+            if let Some(a) = id_to_key.get(id).and_then(|key| account_map.get_mut(key)) {
                 add_row(&mut a.totals, i, o, c, r, reason);
+                add_row(
+                    account_models
+                        .entry(id.clone())
+                        .or_default()
+                        .entry(model.clone())
+                        .or_default(),
+                    i,
+                    o,
+                    c,
+                    r,
+                    reason,
+                );
+                if !effort.is_empty() {
+                    add_row(
+                        account_model_efforts
+                            .entry(id.clone())
+                            .or_default()
+                            .entry(model.clone())
+                            .or_default()
+                            .entry(effort.clone())
+                            .or_default(),
+                        i,
+                        o,
+                        c,
+                        r,
+                        reason,
+                    );
+                }
             }
         }
         let selected = match account_id {
@@ -2035,33 +2436,40 @@ pub(super) fn read_at_with_timezone_now(
             } else {
                 session_complete = false;
             }
-            active_days.insert(if let Some(timezone) = timezone {
-                local_datetime(timezone, ts)?
-                    .date_naive()
-                    .format("%Y-%m-%d")
-                    .to_string()
+            // Named zones: key on the 15-minute UTC slot. Fixed offsets (any minute value):
+            // key on the exact local day number, which is what both outputs derive from.
+            let local_second = (ts as i64).saturating_add(offset as i64 * 60);
+            let slot = if timezone.is_some() {
+                (ts / 900) as i64
             } else {
-                day_label(ts, offset)
-            });
+                local_second.div_euclid(86400)
+            };
+            if day_slot.as_ref().map(|(s, _, _)| *s as i64) != Some(slot) {
+                day_slot = Some(if let Some(timezone) = timezone {
+                    let date = local_datetime(timezone, ts)?.date_naive();
+                    (
+                        slot as u64,
+                        date.format("%Y-%m-%d").to_string(),
+                        date.num_days_from_ce() as i64,
+                    )
+                } else {
+                    (slot as u64, day_label(ts, offset), slot)
+                });
+            }
+            let (_, day, day_bucket) = day_slot.as_ref().expect("day slot initialized");
+            if !active_days.contains(day) {
+                active_days.insert(day.clone());
+            }
             add_row(&mut totals, i, o, c, r, reason);
-            let bucket = if let Some(timezone) = timezone {
-                if let Some(slots) = hourly_slots.as_ref() {
-                    let index = slots
-                        .partition_point(|slot| slot.start_at.unwrap_or(0) <= ts)
-                        .saturating_sub(1);
-                    slots[index].start_at.unwrap_or(0) as i64
-                } else {
-                    local_datetime(timezone, ts)?
-                        .date_naive()
-                        .num_days_from_ce() as i64
-                }
+            let bucket = if let Some(slots) = hourly_slots.as_ref().filter(|_| timezone.is_some()) {
+                let index = slots
+                    .partition_point(|slot| slot.start_at.unwrap_or(0) <= ts)
+                    .saturating_sub(1);
+                slots[index].start_at.unwrap_or(0) as i64
+            } else if timezone.is_none() && hourly {
+                local_second.div_euclid(3600)
             } else {
-                let local_second = (ts as i64).saturating_add(offset as i64 * 60);
-                if hourly {
-                    local_second.div_euclid(3600)
-                } else {
-                    local_second.div_euclid(86400)
-                }
+                *day_bucket
             };
             add_row(buckets.entry(bucket).or_default(), i, o, c, r, reason);
             add_row(models.entry(model.clone()).or_default(), i, o, c, r, reason);
@@ -2088,8 +2496,23 @@ pub(super) fn read_at_with_timezone_now(
         warnings.sort();
         warnings.dedup();
     }
-    let mut accounts: Vec<_> = account_map.into_values().collect();
-    accounts.extend(unbound_accounts);
+    let mut raw_accounts: Vec<_> = account_map.into_values().collect();
+    raw_accounts.extend(unbound_accounts);
+    let accounts: Vec<UsageAccountSummary> = raw_accounts
+        .into_iter()
+        .map(|acc| {
+            let acc_models = account_models.remove(&acc.id).unwrap_or_default();
+            let acc_efforts = account_model_efforts.remove(&acc.id).unwrap_or_default();
+            UsageAccountSummary {
+                id: acc.id,
+                name: acc.name,
+                email: acc.email,
+                current: acc.current,
+                totals: acc.totals,
+                models: build_usage_models(acc_models, acc_efforts),
+            }
+        })
+        .collect();
     let earliest = buckets.keys().next().copied();
     let (first_bucket, last_bucket) = if let Some(timezone) = timezone {
         let today = local_datetime(timezone, snapshot_now)?
@@ -2144,33 +2567,8 @@ pub(super) fn read_at_with_timezone_now(
                 .find(|a| &a.id == id)
                 .map(|a| a.name.clone())
         });
-        let mut unassigned_requests = 0u64;
-        let mut unassigned_tokens = 0u64;
-        if let Ok(mut q) = conn
-            .prepare("SELECT COALESCE(account_key,''),input,output,creation,cache_read FROM events")
-        {
-            if let Ok(rows) = q.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, i64>(1)?.max(0) as u64,
-                    r.get::<_, i64>(2)?.max(0) as u64,
-                    r.get::<_, i64>(3)?.max(0) as u64,
-                    r.get::<_, i64>(4)?.max(0) as u64,
-                ))
-            }) {
-                for row in rows.flatten() {
-                    let (owner, i, o, c, r) = row;
-                    if owner.is_empty() || !key_to_id.contains_key(&owner) {
-                        unassigned_requests = unassigned_requests.saturating_add(1);
-                        unassigned_tokens = unassigned_tokens
-                            .saturating_add(i)
-                            .saturating_add(o)
-                            .saturating_add(c)
-                            .saturating_add(r);
-                    }
-                }
-            }
-        }
+        let (unassigned_requests, unassigned_tokens) =
+            count_unassigned_events(&conn, |owner| key_to_id.contains_key(owner));
         UsageAttributionConfig {
             fallback_account_id: effective_id,
             fallback_account_name,
@@ -2195,29 +2593,7 @@ pub(super) fn read_at_with_timezone_now(
         accounts,
         daily,
         granularity: if hourly { "hour" } else { "day" }.into(),
-        models: models
-            .into_iter()
-            .map(|(model, totals)| {
-                let mut efforts: Vec<UsageEffort> = model_efforts
-                    .remove(&model)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(effort, totals)| UsageEffort { effort, totals })
-                    .collect();
-                efforts.sort_by(|a, b| {
-                    b.totals
-                        .total_tokens
-                        .cmp(&a.totals.total_tokens)
-                        .then_with(|| effort_rank(&a.effort).cmp(&effort_rank(&b.effort)))
-                        .then_with(|| a.effort.cmp(&b.effort))
-                });
-                UsageModel {
-                    model,
-                    totals,
-                    efforts,
-                }
-            })
-            .collect(),
+        models: build_usage_models(models, model_efforts),
         warnings,
         attribution,
     })
