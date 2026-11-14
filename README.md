@@ -208,7 +208,7 @@ Get-FileHash .\Claude-Local_0.3.3_x64-setup.exe -Algorithm SHA256
 
 | 版本 | 发布日期 | 核心演进内容 | 详细文档 |
 | :--- | :--- | :--- | :--- |
-| **`v0.3.3`** *(Latest)* | 2026-11-14 | **内核句柄级 CLI 进程存活核验与分级状态徽章（过滤终止滞留僵尸句柄、`identities_live_sessions` 实时同步）**、**瞬态文件锁退避自愈、切号单故障零残留回滚与一键干净恢复**、**CLI 代理/遥测安全边界统一判定与防断流提示增强**、**用量分析 `单会话均耗` / `单次均耗` KPI 升级与 KPI/模型分布/2× 长图海报对齐精修** | [发布说明](docs/RELEASE_NOTES_0.3.3.md) |
+| **`v0.3.3`** *(Latest)* | 2026-11-14 | **内核句柄级 CLI 进程存活核验与分级状态徽章（过滤终止滞留僵尸句柄、`identities_live_sessions` 实时同步）**、**瞬态文件锁退避自愈、切号单故障零残留回滚与一键干净恢复**、**CLI 代理/遥测安全边界统一判定与防断流提示增强**、**用量分析 `单会话均耗` / `单次均耗` KPI 升级与 KPI/模型分布/2× 长图海报对齐精修** | [发布说明](docs/RELEASE_NOTES_0.3.3.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.3.md) |
 | **`v0.3.2`** | 2026-11-12 | **五大核心域全量打磨与加固（身份卡片、账号隔离、风险规避、额度查询、用量分析）**、**额度/用量加载提速（损坏日志游标缓存、零读取快路径、无变更零写入、按内容判断身份变化）**、**额度详情弹窗重设计与主动重置次数真实到期**、**多账号并发网页同步与隔离浏览器并排打开官方用量页** | [发布说明](docs/RELEASE_NOTES_0.3.2.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.2.md) |
 | **`v0.3.1`** | 2026-11-09 | **智能接力与自动续杯弹窗全链路防卡顿优化（去除全屏 `feTurbulence` 实时滤镜与双重毛玻璃合成、React 40 卡计算缓存与子树按需挂载、`quota_ledger.json`/`quota_web_metadata.json` 单次解析、Python 运行时探针缓存）**、**用量分析 2× 高清长图海报一键复制/保存与模型等高排版**、**净室切号设备指纹连续性（`s13` 保留 `userID`/`cachedGrowthBookFeatures`/`metricsStatusCacheByPrincipal`）** | [发布说明](docs/RELEASE_NOTES_0.3.1.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.1.md) |
 | **`v0.3.0`** | 2026-11-07 | **Claude Code v2.1.309~2.1.318 净室隔离与三锁协议（7 凭据键 + 25 账号缓存键 + `1p_failed_events`/`statsig` 净室隔离 + 8 锁清理）**、**OAuth 授权 URL 零泄露直投伴生浏览器**、**CLI 遥测护盾与 MCP 供应链安全审计**、**智能接力 2.0（动态防乒乓、冷却监狱、单向不回跳、WeekLow 晋升、真实小数百分比）**、**悬浮窗 2.0（接力备选胶囊、时间消耗步调）** 及 **三段式净室切换管线与 5h 续杯锚点核验** | [发布说明](docs/RELEASE_NOTES_0.3.0.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.0.md) |

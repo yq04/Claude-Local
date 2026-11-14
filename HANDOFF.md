@@ -10,7 +10,7 @@
 
 ## 接手先读：30 秒全局速览
 
-1. **当前版本与 Git 基线**：正在完成 **`v0.3.3`** 正式补丁版本发布闭环（基线为不可变的 `v0.3.2` 提交 `260f80e` / `a72a145`），已同步全部版本元数据、[`docs/RELEASE_NOTES_0.3.3.md`](docs/RELEASE_NOTES_0.3.3.md)、[`README.md`](README.md)、[`README_EN.md`](README_EN.md)、[`docs/RELEASE_POLICY.md`](docs/RELEASE_POLICY.md) 与 [`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml)。
+1. **当前版本与 Git 基线**：`v0.3.3` 已于 `2026-11-14T05:24:26Z` 正式提交打标并发布至 GitHub Release（源码 commit `01f7085481e4e7f8a5b60e95a38eea68957b430f` / tag `v0.3.3`，参见 [`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md)）；既往 `v0.3.2`（`260f80ec78729fbd1f01dbd8d268e873f8ff2209` / `a72a145`）标签与资产保持不可变。
 2. **当前工作区与本机安装状态（`v0.3.3` 全量验证、NSIS 打包与本机原子热更新已生效）**：
    - **2.7 节（2026-11-12 晚）**：完成了 **CLI 代理/遥测安全边界统一判定与防断流界面提示增强**；
    - **2.8 节（2026-11-13 晨）**：完成了仓库只读全栈审计，并打通了外置 **Magpie 网关 + Claude Code CLI Gemini 子代理多账号多模型无碰撞并发调度**；
@@ -228,30 +228,29 @@
 
 ## 3. 当前卡在哪
 
-**没有任何代码缺陷、测试失败或本机部署未同步项阻塞。** 当前处于 **`v0.3.3` 正式发布收尾** 阶段：
+**没有任何代码缺陷、测试失败、发布滞后或本机部署未同步项阻塞。** **`v0.3.3` 已完成全部验证、NSIS 打包审计、GitHub Release 发布与本机原子热更新**，当前工作区仅余常规后续演进空间：
 
-1. **本机桌面端与外置混合工具链均已无损生效并在线运行**：
-   - `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 与 `browser-ui/*` 已原子热更新至 **`0.3.3`** Release 构建（SHA-256 `1f65697954a866f088f440451e8a288885ccc68500e54a1b578930d3cc83ae7b`，交互桌面窗口已验证存活，`missingClaudeCount == 0`）；
+1. **GitHub Release `v0.3.3` 与本机桌面端均已同步生效**：
+   - `v0.3.3`（源码 commit `01f7085481e4e7f8a5b60e95a38eea68957b430f`）已在 GitHub Release 发布为 `Latest`（非草稿、非预发布），`Claude-Local_0.3.3_x64-setup.exe` 与 `SHA256SUMS.txt` 服务端 SHA-256 与本地构建文件 100% 一致；
+   - `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 与 `browser-ui/*` 已原子热更新至 **`0.3.3`** Release 构建（`hostSha256` `1f65697954a866f088f440451e8a288885ccc68500e54a1b578930d3cc83ae7b`，交互桌面窗口已验证存活，`missingClaudeCount == 0`）；
    - 外置 9 席三池嵌套路由网关、回环 MCP、动态规则代理端口自愈、WMI Job-Object 守护以及 6-Tier 子代理舰队均已热加载就绪（详见 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`）。
-2. **工作区受跟踪改动清单（与本地未暂存 `AGENTS.md` 严格分离）**：
-   - 仅显式暂存并提交经过隐私与 LF 核验的源码/版本/文档文件，**严禁暂存或提交 `AGENTS.md` 与 `.local/`**。
-3. **可选后续动作**：
+2. **可选后续动作**：
    - 用户可在退出所有活跃 `claude.exe` 会话后按下方 **场景 E** 可选写入 2 个零遥测 `/advisor` 环境变量以启用 Mode B；或按 **场景 C** 视需要清理 2.8 剩余的 4 项轻量代码整理点。
 
 ---
 
 ## 4. 下一步计划是什么（给零上下文新会话的执行手册）
 
-### 场景 A：用户要求将当前已在本机热更新验收的 2.7 + 2.9 增量打成新补丁版本（如 `v0.3.3`）并正式发布
-1. **切勿修改或移动已发布的 `v0.3.2` 标签与安装包**；按新版本升版本号（`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.lock`、`src-tauri/CLAUDE.md`、`src/locales/{zh,en}.yaml` 若涉及版本文案）。
-2. 编写对应版本 `docs/RELEASE_NOTES_<ver>.md` 与验证文档，并在 [`CLAUDE.md`](CLAUDE.md) 登记。
-3. 跑齐 `bun test`、`bun run build`、`cargo test --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --bin claude-local`、Python 合成套件与 Playwright 相关回归。
+### 场景 A：后续版本（如 `v0.3.4`）迭代与发布规范
+1. **切勿修改或移动已发布的 `v0.3.3`、`v0.3.2` 及更早标签与安装包**；按新版本升版本号（`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.lock`、`src-tauri/CLAUDE.md`、`.github/ISSUE_TEMPLATE/bug_report.yml`）。
+2. 编写对应版本 `docs/RELEASE_NOTES_<ver>.md` 与 `docs/RELEASE_VERIFICATION_<ver>.md`，更新 `README.md` / `README_EN.md` / `docs/RELEASE_POLICY.md` 并在 [`CLAUDE.md`](CLAUDE.md) 登记。
+3. 跑齐 `bun test`、`bun run build`、`cargo test --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --bin claude-local`、Python 合成套件与 Playwright 串行回归。
 4. 源码文件清单核对与隐私/行尾预检：
    - 运行 `git status --short` 逐一核对文件，仅显式 `git add` 经审查的跟踪源码与文档：
      - **严禁暂存或提交 `AGENTS.md`**；
      - **严禁暂存或提交 `.local/`** 下的任何文件；
    - 确认所有待提交文本保持纯 LF（`0` CRLF）且零工作站绝对路径/个人身份/代理凭据泄露。
-5. 调用 `bun run build:windows`（[`scripts/build-windows-share.ps1`](scripts/build-windows-share.ps1)）生成中性目录 NSIS 安装包并完成解包白名单与外置隐私探针审计，再执行新 commit / 新 tag / 发布上传（如同步热更新本机，传 `-ExpectedVersion '<ver>'` 给 `.local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1`）。
+5. 调用 `bun run build:windows`（[`scripts/build-windows-share.ps1`](scripts/build-windows-share.ps1)，若环境无系统 `7z.exe` 需显式传 `-SevenZipPath`）生成中性目录 NSIS 安装包并完成解包白名单与外置隐私探针审计，再执行新 commit / 新 tag / 发布上传（如同步热更新本机，传 `-ExpectedVersion '<ver>'` 给 `.local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1`）。
 
 ### 场景 B：用户在工作区继续新增改动后需要再次热更新本机桌面端
 1. 按顺序执行 `bun test` -> `bun run build` -> `cargo test --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --bin claude-local` -> `cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml`（严禁中断任何运行中 `claude.exe`）；
@@ -289,7 +288,7 @@
    - `BAGAID01` 魔数、`.baga` 加密归档结构、SQLite `user_version=3`、账号 HMAC 算法及历史遗留 `CCBaga` 浏览器种子域字符串属于持久化兼容层，严禁在优化或重构中改动。
 
 5. **先查 `git log` / `git tag` 再判断当前发布状态，严禁重写已发布 tag**：
-   - `v0.3.2` 已经过 `260f80e` + `a72a145` 提交并作为不可变资产发布，绝不要覆盖移动 `v0.3.2` tag。任何新会话接手时必须先执行 `git status --short && git log -n 3 --oneline` 核对当前基线，再决定后续版本策略。
+   - `v0.3.3`（`01f7085` + 交付核验跟进提交）与 `v0.3.2`（`260f80e` + `a72a145`）均已作为不可变资产发布，绝不要覆盖或移动既有发布 tag。任何新会话接手时必须先执行 `git status --short && git log -n 3 --oneline` 核对当前基线，再决定后续版本策略。
 6. **风控验证页严禁脱离 `isCliSecurityShieldOk` 单字段判绿，也严禁乱改用户既有本机代理**：
    - 检查 CLI 安全护盾时必须通过 `isCliSecurityShieldOk`（`telemetry_shield_active && !nonessential_traffic_blocked && proxy_env_complete && !socks5_in_cli_env`），仅检查 `telemetry_shield_active` 会遗漏 TUN-only 缺显式 HTTP 代理及 `socks5://` 误配；
    - 评估外部“防封攻略”时务必逐条对照现有代码核实——切勿盲从“改用普通/机房 IP 也可以”“删除代理 env 只靠系统 TUN”“填入虚拟卡/邀请码”等反向建议，也严禁擅自调试或覆盖用户本机既有的 `~/.claude/settings.json` 与桌面代理规则。
@@ -346,7 +345,7 @@
 
 ## 6. 核心文件快速导航
 
-- **方案与交接**：[`HANDOFF.md`](HANDOFF.md)、[`CLAUDE.md`](CLAUDE.md)、[`docs/RELEASE_VERIFICATION_0.3.2.md`](docs/RELEASE_VERIFICATION_0.3.2.md)、[`docs/plans/2026-11-10-v0.3.2-polish-and-hardening/00-README.md`](docs/plans/2026-11-10-v0.3.2-polish-and-hardening/00-README.md)
+- **方案与交接**：[`HANDOFF.md`](HANDOFF.md)、[`CLAUDE.md`](CLAUDE.md)、[`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md)、[`docs/RELEASE_VERIFICATION_0.3.2.md`](docs/RELEASE_VERIFICATION_0.3.2.md)、[`docs/plans/2026-11-10-v0.3.2-polish-and-hardening/00-README.md`](docs/plans/2026-11-10-v0.3.2-polish-and-hardening/00-README.md)
 - **本机工作站外置工具链交接（Git 忽略）**：`.local/tasks/20261112-session-handoff/HANDOFF.local.md`
 - **版本与打包审计**：[`package.json`](package.json)、[`src-tauri/Cargo.toml`](src-tauri/Cargo.toml)、[`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json)、[`scripts/build-windows-share.ps1`](scripts/build-windows-share.ps1)、[`scripts/audit-windows-package.py`](scripts/audit-windows-package.py)、[`scripts/runtime-resources.json`](scripts/runtime-resources.json)
 - **隔离、风控与伴生浏览器**：[`src-tauri/src/identities/store.rs`](src-tauri/src/identities/store.rs)、[`src-tauri/src/identities/browser_link.rs`](src-tauri/src/identities/browser_link.rs)、[`src-tauri/src/identities/archive.rs`](src-tauri/src/identities/archive.rs)、[`src-tauri/src/cleaner_identity.rs`](src-tauri/src/cleaner_identity.rs)、[`src-tauri/src/cleaner_targets.rs`](src-tauri/src/cleaner_targets.rs)、[`src-tauri/src/cleaner_io.rs`](src-tauri/src/cleaner_io.rs)、[`src-tauri/src/cleaner_config.rs`](src-tauri/src/cleaner_config.rs)、[`src-tauri/src/cleaner.rs`](src-tauri/src/cleaner.rs)、[`src-tauri/src/risk_check.rs`](src-tauri/src/risk_check.rs)、[`src-tauri/src/windows_process.rs`](src-tauri/src/windows_process.rs)、[`src-tauri/src/browser/workspaces.rs`](src-tauri/src/browser/workspaces.rs)、[`src-tauri/src/browser/quota_connection.rs`](src-tauri/src/browser/quota_connection.rs)、[`src-tauri/src/browser/quota_existing.rs`](src-tauri/src/browser/quota_existing.rs)、[`src-tauri/src/browser/kill_switch.rs`](src-tauri/src/browser/kill_switch.rs)、[`src-tauri/src/browser/profile.rs`](src-tauri/src/browser/profile.rs)
