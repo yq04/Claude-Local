@@ -1,5 +1,5 @@
 // [INPUT]: Claude 白名单、所选文件夹发现、配置变换、原子写入、官方原生 CLI 版本路径及 macOS/Linux/Windows 白名单路径边界。
-// [OUTPUT]: 全机/文件夹元数据扫描、文件残留专用快照与选择清理、实时 Claude 进程检查与停止；CLI、身份和残留操作共用互斥门，身份写入显式提升代次，额度短提交门保持只读代次。
+// [OUTPUT]: 全机/文件夹元数据扫描、文件残留专用快照与选择清理、实时 Claude 进程检查/停止与退出后工作区文件句柄释放等待；CLI、身份和残留操作共用互斥门，身份写入显式提升代次，额度短提交门保持只读代次。
 // [POS]: 白名单与进程共用边界；身份由 identities 编排，残留入口仅允许文件操作且不访问钥匙串。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use crate::native;
@@ -25,7 +25,7 @@ use tauri::{ipc::Channel, Manager};
 #[path = "cleaner_config.rs"]
 mod config;
 #[path = "cleaner_io.rs"]
-mod file_io;
+pub(crate) mod file_io;
 #[path = "cleaner_folder.rs"]
 mod folder;
 #[path = "cleaner_identity.rs"]
@@ -33,7 +33,7 @@ pub(crate) mod identity;
 #[path = "cleaner_residue.rs"]
 pub(crate) mod residue;
 #[path = "cleaner_targets.rs"]
-mod targets;
+pub(crate) mod targets;
 #[path = "cleaner_transaction.rs"]
 mod transaction;
 #[cfg(test)]
@@ -700,8 +700,50 @@ pub(crate) fn stop_processes() -> Result<usize, String> {
     }
     if let Ok(root) = home() {
         identity::clear_stale_locks(&root);
+        wait_claude_workspace_handles_released(&root, 600);
     }
     Ok(targets.len())
+}
+pub(crate) fn wait_claude_workspace_handles_released(home: &Path, timeout_ms: u64) {
+    #[cfg(not(windows))]
+    let _ = (home, timeout_ms);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let candidates = [
+            home.join(".claude.json"),
+            home.join(".claude/.credentials.json"),
+            home.join(".claude/settings.json"),
+            home.join(".claude/settings.local.json"),
+        ];
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            let mut busy = false;
+            for path in &candidates {
+                let Ok(meta) = fs::symlink_metadata(path) else {
+                    continue;
+                };
+                if !meta.is_file() || linked(&meta) || !crate::windows::owned(path) {
+                    continue;
+                }
+                if let Err(err) = fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(0)
+                    .open(path)
+                {
+                    if matches!(err.raw_os_error(), Some(32 | 33)) {
+                        busy = true;
+                        break;
+                    }
+                }
+            }
+            if !busy || std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
 }
 #[tauri::command]
 pub async fn cleaner_stop(app: tauri::AppHandle) -> Result<Scan, String> {

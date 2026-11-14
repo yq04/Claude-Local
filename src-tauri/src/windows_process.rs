@@ -1,5 +1,5 @@
 // [INPUT]: Win32 Toolhelp/进程句柄、当前用户 SID、精确 CLI 入口与独立浏览器资料路径。
-// [OUTPUT]: Claude 进程零侵入识别（优先 PROCESS_QUERY_LIMITED_INFORMATION + (pid, created) 缓存）、创建时间/所有权复核后的结束、浏览器在 PROCESS_QUERY_LIMITED_INFORMATION 下经 NtQueryInformationProcess(ProcessCommandLineInformation = 60) 零 VM_READ 读取完整参数（必要时优雅回退）并以文件句柄标识（GetFileInformationByHandle + 未建路径词法回退）匹配关闭及只读可见窗口采样。
+// [OUTPUT]: Claude 进程零侵入识别（PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE + WaitForSingleObject/GetExitCodeProcess 存活复核 + (pid, created) 缓存并自动剔除已退出句柄）、node/bun 与浏览器优先经 NtQueryInformationProcess(ProcessCommandLineInformation = 60) 零 VM_READ 读取完整参数（必要时优雅回退）、创建时间/所有权复核后的同步等待结束（1500ms 句柄排空），及以文件句柄标识匹配关闭与只读可见窗口采样。
 // [POS]: Windows 进程边界；原生二进制与受管浏览器免 PROCESS_VM_READ/ReadProcessMemory；参数仅用于 node/bun/chrome 判定，不返回 UI。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{current_sid, input, process_sid, response};
@@ -12,7 +12,10 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, LocalFree, FILETIME, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM},
+    Foundation::{
+        CloseHandle, LocalFree, FILETIME, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM, STILL_ACTIVE,
+        WAIT_OBJECT_0, WAIT_TIMEOUT,
+    },
     System::{
         Diagnostics::{
             Debug::ReadProcessMemory,
@@ -22,8 +25,9 @@ use windows_sys::Win32::{
             },
         },
         Threading::{
-            GetProcessTimes, IsWow64Process, OpenProcess, QueryFullProcessImageNameW,
-            TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+            GetExitCodeProcess, GetProcessTimes, IsWow64Process, OpenProcess,
+            QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
             PROCESS_VM_READ,
         },
     },
@@ -54,16 +58,51 @@ impl Handle {
         }
         Some(handle)
     }
-    /// Open with `PROCESS_QUERY_LIMITED_INFORMATION` only (zero `PROCESS_VM_READ`).
-    /// Prevents cross-process PEB/memory reads on native `claude.exe` / `versions\X.Y.Z.exe`.
+    /// Open with `PROCESS_QUERY_LIMITED_INFORMATION` (+ `PROCESS_SYNCHRONIZE` when allowed, zero `PROCESS_VM_READ`).
+    /// Prevents cross-process PEB/memory reads on native `claude.exe` / `versions\X.Y.Z.exe` while detecting exited handles.
     fn open_limited(pid: u32) -> Option<Self> {
-        Self::open_with_flags(pid, PROCESS_QUERY_LIMITED_INFORMATION)
+        Self::open_with_flags(pid, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE)
+            .or_else(|| Self::open_with_flags(pid, PROCESS_QUERY_LIMITED_INFORMATION))
+    }
+    /// Open for verified termination without `PROCESS_VM_READ`.
+    fn open_terminate_limited(pid: u32) -> Option<Self> {
+        let base = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE;
+        Self::open_with_flags(pid, base | PROCESS_SYNCHRONIZE)
+            .or_else(|| Self::open_with_flags(pid, base))
     }
     fn open(pid: u32, terminate: bool) -> Option<Self> {
-        let flags = PROCESS_QUERY_LIMITED_INFORMATION
+        let base = PROCESS_QUERY_LIMITED_INFORMATION
             | PROCESS_VM_READ
             | if terminate { PROCESS_TERMINATE } else { 0 };
-        Self::open_with_flags(pid, flags)
+        Self::open_with_flags(pid, base | PROCESS_SYNCHRONIZE)
+            .or_else(|| Self::open_with_flags(pid, base))
+    }
+    fn is_alive(&self) -> bool {
+        match unsafe { WaitForSingleObject(self.0, 0) } {
+            WAIT_TIMEOUT => true,
+            WAIT_OBJECT_0 => false,
+            _ => {
+                let mut code = 0u32;
+                unsafe { GetExitCodeProcess(self.0, &mut code) != 0 && code == STILL_ACTIVE as u32 }
+            }
+        }
+    }
+    fn wait_exited(&self, timeout_ms: u32) -> bool {
+        match unsafe { WaitForSingleObject(self.0, timeout_ms) } {
+            WAIT_OBJECT_0 => true,
+            WAIT_TIMEOUT => false,
+            _ => {
+                let deadline = std::time::Instant::now()
+                    + std::time::Duration::from_millis(timeout_ms as u64);
+                while self.is_alive() {
+                    if std::time::Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                true
+            }
+        }
     }
     fn image(&self) -> Option<String> {
         let mut buffer = vec![0u16; 32768];
@@ -425,52 +464,18 @@ fn claude_candidate_pids() -> Result<Vec<(u32, String)>, String> {
     Ok(result)
 }
 
-fn processes(terminate: bool) -> Result<Vec<(u32, Handle)>, String> {
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-    if snapshot == INVALID_HANDLE_VALUE {
-        return Err("无法检查 Windows 进程。".into());
-    }
-    let snapshot = Handle(snapshot);
-    let mut entry = unsafe { std::mem::zeroed::<PROCESSENTRY32W>() };
-    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-    let mut result = vec![];
-    let mut has = unsafe { Process32FirstW(snapshot.0, &mut entry) };
-    while has != 0 {
-        let name = String::from_utf16_lossy(&entry.szExeFile)
-            .trim_end_matches('\0')
-            .to_lowercase();
-        if ([
-            "claude.exe",
-            "claude-code-helper.exe",
-            "cowork-svc.exe",
-            "claude-ssh-askpass.exe",
-            "claude-ssh-proxy.exe",
-            "node.exe",
-            "bun.exe",
-            "chrome.exe",
-        ]
-        .contains(&name.as_str())
-            || version_name(&name))
-            && entry.th32ProcessID > 1
-        {
-            if let Some(handle) = Handle::open(entry.th32ProcessID, terminate) {
-                result.push((entry.th32ProcessID, handle));
-            }
-        }
-        has = unsafe { Process32NextW(snapshot.0, &mut entry) };
-    }
-    Ok(result)
-}
-
 pub fn claude_processes() -> Result<Vec<ClaudeProcess>, String> {
     let candidates = claude_candidate_pids()?;
     let mut found = vec![];
     let mut active_keys = HashSet::with_capacity(candidates.len());
     for (pid, exe_name) in candidates {
-        // Always open with PROCESS_QUERY_LIMITED_INFORMATION first (zero PROCESS_VM_READ).
+        // Always open with PROCESS_QUERY_LIMITED_INFORMATION (+ PROCESS_SYNCHRONIZE) first (zero PROCESS_VM_READ).
         let Some(limited) = Handle::open_limited(pid) else {
             continue;
         };
+        if !limited.is_alive() {
+            continue;
+        }
         let Some(created) = limited.created() else {
             continue;
         };
@@ -495,9 +500,7 @@ pub fn claude_processes() -> Result<Vec<ClaudeProcess>, String> {
         let kind = if limited.packaged_claude() {
             Some("Claude Desktop")
         } else if needs_vm_arguments(&exe_name) {
-            let args = Handle::open(pid, false)
-                .and_then(|vm_handle| arguments(&vm_handle))
-                .unwrap_or_default();
+            let args = browser_arguments(pid, &limited, created).unwrap_or_default();
             claude_kind(&image, &args)
         } else {
             claude_kind(&image, &[])
@@ -522,10 +525,20 @@ pub fn claude_processes() -> Result<Vec<ClaudeProcess>, String> {
 }
 
 pub fn kill_process(target: &ClaudeProcess) -> Result<(), String> {
-    let Some(handle) = Handle::open(target.pid as u32, true) else {
+    let pid = target.pid as u32;
+    let Some(handle) = Handle::open_terminate_limited(pid) else {
+        if let Some(limited) = Handle::open_limited(pid) {
+            if limited.is_alive()
+                && limited.created() == Some(target.created)
+                && limited.image().as_deref() == Some(target.executable.as_str())
+            {
+                return Err("无法终止已核验的 Claude 进程。".into());
+            }
+        }
         return Ok(());
     };
-    if handle.created() != Some(target.created)
+    if !handle.is_alive()
+        || handle.created() != Some(target.created)
         || handle.image().as_deref() != Some(target.executable.as_str())
     {
         return Ok(());
@@ -536,7 +549,7 @@ pub fn kill_process(target: &ClaudeProcess) -> Result<(), String> {
         .unwrap_or_default()
         .to_string();
     let args = if needs_vm_arguments(&exe_name) {
-        arguments(&handle).unwrap_or_default()
+        browser_arguments(pid, &handle, target.created).unwrap_or_default()
     } else {
         vec![]
     };
@@ -544,19 +557,29 @@ pub fn kill_process(target: &ClaudeProcess) -> Result<(), String> {
         return Ok(());
     }
     if unsafe { TerminateProcess(handle.0, 1) } == 0 {
+        if !handle.is_alive() {
+            if let Ok(mut cache) = claude_proc_cache().lock() {
+                cache.remove(&(pid, target.created));
+            }
+            return Ok(());
+        }
         return Err("无法终止已核验的 Claude 进程。".into());
+    }
+    let _ = handle.wait_exited(1500);
+    if let Ok(mut cache) = claude_proc_cache().lock() {
+        cache.remove(&(pid, target.created));
     }
     Ok(())
 }
 fn browser_arguments(pid: u32, limited: &Handle, expected_created: u64) -> Option<Vec<String>> {
     if let Some(args) = query_command_line_limited(limited.0) {
-        if limited.created() == Some(expected_created) {
+        if limited.is_alive() && limited.created() == Some(expected_created) {
             return Some(args);
         }
         return None;
     }
     let vm = Handle::open(pid, false)?;
-    if vm.created() != Some(expected_created) {
+    if !vm.is_alive() || vm.created() != Some(expected_created) {
         return None;
     }
     arguments(&vm)
@@ -704,9 +727,10 @@ fn browser(profile: &str, close: bool) -> Result<bool, String> {
         let pid = entry.th32ProcessID;
         if name == "chrome.exe" && pid > 1 {
             if let Some(limited) = Handle::open_limited(pid) {
-                if limited
-                    .image()
-                    .is_some_and(|image| normalized(&image).ends_with("\\chrome.exe"))
+                if limited.is_alive()
+                    && limited
+                        .image()
+                        .is_some_and(|image| normalized(&image).ends_with("\\chrome.exe"))
                 {
                     if let Some(created) = limited.created() {
                         if let Some(args) = browser_arguments(pid, &limited, created) {
@@ -767,7 +791,8 @@ unsafe extern "system" fn inspect_browser_window(window: HWND, state: LPARAM) ->
     // exit/reuse. Reopen and compare its creation time and exact executable.
     match Handle::open_limited(owner) {
         Some(handle)
-            if handle.created() == Some(*created)
+            if handle.is_alive()
+                && handle.created() == Some(*created)
                 && handle.image().as_deref() == Some(image.as_str()) =>
         {
             probe.visible = true;
@@ -778,7 +803,7 @@ unsafe extern "system" fn inspect_browser_window(window: HWND, state: LPARAM) ->
 }
 
 /// Read-only current-user Chrome/profile observation. This deliberately avoids
-/// `processes()`: it never opens a Claude/node/bun process or reads its arguments.
+/// `claude_processes()`: it never opens a Claude/node/bun process or reads its arguments.
 /// An inspection failure is unknown to callers, never evidence of a closed UI.
 pub(crate) fn browser_runtime(profile: &Path) -> Result<(bool, bool), String> {
     const UNKNOWN: &str = "无法检查浏览器窗口状态。";
@@ -808,14 +833,24 @@ pub(crate) fn browser_runtime(profile: &Path) -> Result<(bool, bool), String> {
             .trim_end_matches('\0')
             .to_lowercase();
         if name == "chrome.exe" && entry.th32ProcessID > 1 {
-            let raw =
-                unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, entry.th32ProcessID) };
+            let mut raw = unsafe {
+                OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                    0,
+                    entry.th32ProcessID,
+                )
+            };
+            if raw.is_null() {
+                raw = unsafe {
+                    OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, entry.th32ProcessID)
+                };
+            }
             if raw.is_null() {
                 return Err(UNKNOWN.into());
             }
             let limited = Handle(raw);
             let owner = unsafe { process_sid(limited.0) }.ok_or(UNKNOWN)?;
-            if &owner == sid {
+            if &owner == sid && limited.is_alive() {
                 let image = limited.image().ok_or(UNKNOWN)?;
                 if normalized(&image).ends_with("\\chrome.exe") {
                     let created = limited.created().ok_or(UNKNOWN)?;
@@ -1027,5 +1062,37 @@ mod tests {
             cold.to_str().unwrap()
         ));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn exited_process_with_unclosed_parent_handle_is_not_reported_alive() {
+        use std::os::windows::io::AsRawHandle;
+        use std::os::windows::process::CommandExt;
+        let mut child = std::process::Command::new("cmd.exe")
+            .creation_flags(0x0800_0000)
+            .args(["/C", "exit", "0"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn disposable cmd.exe");
+        let pid = child.id();
+        let wait_status = unsafe { WaitForSingleObject(child.as_raw_handle() as HANDLE, 5000) };
+        assert_eq!(wait_status, WAIT_OBJECT_0);
+        // `child` still holds an open parent HANDLE to the exited EPROCESS, reproducing
+        // Windows Terminal / ConPTY lingering handles after terminal closure.
+        let reopened = Handle::open_limited(pid).expect("reopen exited EPROCESS while handle held");
+        assert!(
+            !reopened.is_alive(),
+            "exited EPROCESS with lingering handle must not be reported alive"
+        );
+        let dummy_target = ClaudeProcess {
+            pid: pid as i32,
+            name: "Claude Code".into(),
+            executable: reopened.image().unwrap_or_default(),
+            created: reopened.created().unwrap_or(0),
+        };
+        assert_eq!(kill_process(&dummy_target), Ok(()));
+        let _ = child.wait();
     }
 }

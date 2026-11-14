@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.3.2 five-core-area polish and hardening with quota/usage load performance and redesigned quota details, plus 0.3.1 Smart Relay/Auto-Wakeup GPU/React/IPC optimizations, Usage Analytics 2.1 with 2x Retina Auto-Screenshot Engine, Cleanroom s13 device fingerprint continuity, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.3.3 kernel-handle CLI liveness, transient lock self-healing & zero-residue rollback, unified CLI proxy/telemetry shield, Usage Avg. session cost KPI & aligned KPI/model/poster layout, built on 0.3.2 five-core-area polish/hardening, 0.3.1 Smart Relay/Usage Analytics 2.1, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
 [OUTPUT]: Full English flagship project presentation foregrounding anti-ban & multi-identity isolation engineering, architectural lineage, feature matrix, visual tour, installation workflow and runtime boundaries.
 [POS]: English repository introduction linked bidirectionally with README.md.
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -15,7 +15,7 @@
 
 Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://github.com/liseami)) and independently maintained, retaining the original contributors' copyright and [MIT license](LICENSE) · 100% Local-First · Zero Cloud Credential Hosting · Never Force-Kills Running `claude.exe` Sessions
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.3.2-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.2)
+[![Latest Release](https://img.shields.io/badge/Release-v0.3.3-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.3)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@ Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://git
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.2/Claude-Local_0.3.2_x64-setup.exe"><strong>⬇️ Download v0.3.2 Installer (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.3/Claude-Local_0.3.3_x64-setup.exe"><strong>⬇️ Download v0.3.3 Installer (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.2"><strong>✨ v0.3.2 Release Notes</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.3"><strong>✨ v0.3.3 Release Notes</strong></a>
   ·
   <a href="#-why-claude-local-solving-the-4-multi-account-anti-ban-pain-points"><strong>🔥 Anti-Ban Core Architecture</strong></a>
   ·
@@ -187,29 +187,30 @@ While preserving 100% compatibility with existing `.baga` vaults and browser see
 
 ## 📦 Download, Installation & Release History
 
-### 1. Latest Windows x64 Installer (`v0.3.2`)
+### 1. Latest Windows x64 Installer (`v0.3.3`)
 
 | Asset | Platform | File Size | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.3.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.2/Claude-Local_0.3.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | See Release assets | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.2/SHA256SUMS.txt) |
+| **[Claude-Local_0.3.3_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.3/Claude-Local_0.3.3_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | See Release assets | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.3/SHA256SUMS.txt) |
 
-Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.3.2 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.2):
+Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.3.3 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.3):
 
 ```powershell
-Get-FileHash .\Claude-Local_0.3.2_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Claude-Local_0.3.3_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. Installation & Non-Disruptive Upgrade Notes
 
 1. **Install Location & Identifiers**: Per-user NSIS installer defaulting to `%LOCALAPPDATA%\Programs\Claude-Local`; main executable `claude-local.exe`, bundle identifier `ai.local.claude-local`, companion browser registration `Claude-Local-Browser`.
 2. **User Data Root**: All encrypted vaults, master keys, quota/usage ledgers, appearance settings, and browser profiles live under `%APPDATA%\ai.local.claude-local`.
-3. **Seamless Upgrades**: Upgrading from `0.1.x`, `0.2.x`, `0.3.0`, or `0.3.1` to `0.3.2` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
+3. **Seamless Upgrades**: Upgrading from `0.1.x`, `0.2.x`, `0.3.0`, `0.3.1`, or `0.3.2` to `0.3.3` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
 
-### 3. Public Release Series (`0.1.0` – `0.3.2`)
+### 3. Public Release Series (`0.1.0` – `0.3.3`)
 
 | Version | Date | Highlights | Documentation |
 | :--- | :--- | :--- | :--- |
-| **`v0.3.2`** *(Latest)* | 2026-11-12 | **Full polish and hardening across the five core areas (identity cards, account isolation, risk avoidance, quota query, usage analytics)**, **faster quota/usage loading (damaged-log cursor caching, zero-read fast path, write-free idle scans, content-based identity change detection)**, **redesigned quota details dialog with real manual-reset expiry**, **concurrent multi-account web sync and side-by-side isolated usage pages** | [Release notes](docs/RELEASE_NOTES_0.3.2.md) |
+| **`v0.3.3`** *(Latest)* | 2026-11-14 | **Kernel handle-level CLI liveness filtering stale child handles & `identities_live_sessions` graded active badges**, **transient file-lock backoff self-healing, zero-residue switch rollback & one-click clean recovery**, **unified CLI proxy/telemetry shield checks**, **Usage Analytics `Avg. session cost` / `Avg. turn cost` KPI upgrade & aligned KPI/model/2× Retina poster layout** | [Release notes](docs/RELEASE_NOTES_0.3.3.md) |
+| **`v0.3.2`** | 2026-11-12 | **Full polish and hardening across the five core areas (identity cards, account isolation, risk avoidance, quota query, usage analytics)**, **faster quota/usage loading (damaged-log cursor caching, zero-read fast path, write-free idle scans, content-based identity change detection)**, **redesigned quota details dialog with real manual-reset expiry**, **concurrent multi-account web sync and side-by-side isolated usage pages** | [Release notes](docs/RELEASE_NOTES_0.3.2.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.2.md) |
 | **`v0.3.1`** | 2026-11-09 | **Smart Relay & Auto-Wakeup dialog GPU/React/IPC frame-rate optimizations (removal of full-screen `feTurbulence` SVG noise filter & double backdrop blur, 40-card `useMemo` & on-demand dialog subtree mounting, single-pass `quota_ledger.json`/`quota_web_metadata.json` reads, and cached Python runtime probe)**, **2× Retina Usage Overview poster export & equal-height model layout**, and **cleanroom `s13` device fingerprint continuity** | [Release Notes](docs/RELEASE_NOTES_0.3.1.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.1.md) |
 | **`v0.3.0`** | 2026-11-07 | **Claude Code v2.1.309~2.1.318 cleanroom isolation & 3-lock protocol (7 credential keys + 25 account cache keys + `1p_failed_events`/`statsig` cleanroom + 8-lock cleanup)**, **zero-leak OAuth URL clipboard direct launch**, **CLI telemetry shield & MCP supply-chain security audit**, **Smart Relay 2.0 (dynamic anti-ping-pong margin, 429 cooldown jail, one-way no-return lock, Magpie `WeekLow` promotion, truthful decimal percentages)**, **Floating HUD 2.0 (next-relay standby pill, burn-pace badge, 24h weekly lead-in silence)**, and **3-stage cleanroom pipeline & 5h wakeup anchor verification** | [Release Notes](docs/RELEASE_NOTES_0.3.0.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.0.md) |
 | **`v0.2.7`** | 2026-11-03 | CLI telemetry (`datadoghq.com`) & OpenAI Codex co-routing rules, same-port dual-protocol (`socks5://` Browser vs. `http://` CLI) alignment, one-click CLI anti-leak `settings.json` snippet, and native `GRPC_PROXY` vault archiving | [Release Notes](docs/RELEASE_NOTES_0.2.7.md) |

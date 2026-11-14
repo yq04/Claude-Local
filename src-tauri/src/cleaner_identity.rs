@@ -418,6 +418,7 @@ pub(crate) fn ensure_stopped() -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn processes_running() -> Result<bool, String> {
     running()
 }

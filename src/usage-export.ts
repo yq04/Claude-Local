@@ -1,6 +1,6 @@
 /**
  * [INPUT]: The currently rendered aggregate snapshot, selected scope and privacy-safe display aliases.
- * [OUTPUT]: Formula-safe TSV (with summary and per-account blended USD cost & cache savings) and privacy-masked Markdown summary card containing scoped usage totals, per-request token/cost averages, cost/cache efficiency, top models, and elapsed time buckets.
+ * [OUTPUT]: Formula-safe TSV (with summary and per-account blended USD cost & cache savings) and privacy-masked Markdown summary card containing scoped usage totals, per-request token/cost averages, per-session cost/depth efficiency, cache efficiency, top models, and elapsed time buckets.
  * [POS]: Pure export formatter; never reads files, identities, paths or request content.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -9,8 +9,10 @@ import {
   cacheHitRate,
   estimateSnapshotCostUsd,
   estimateTotalsCostUsd,
+  formatTurnsPerSession,
   formatUsageNumber,
   formatUsdCost,
+  summarizeSessionEfficiency,
   type UsageDay,
   type UsagePeriod,
   type UsageSnapshot,
@@ -130,6 +132,11 @@ export function formatUsageMarkdownSummary(
     totals.requests > 0 ? Math.round(totals.total_tokens / totals.requests) : null;
   const avgCostPerReq =
     totals.requests > 0 ? formatUsdCost(costEst.costUsd / totals.requests) : null;
+  const sessionEff = summarizeSessionEfficiency(totals, report.activity, costEst.costUsd);
+  const avgSessionText =
+    sessionEff.sessions && sessionEff.sessions > 0 && sessionEff.avgSessionCostUsd != null
+      ? formatUsdCost(sessionEff.avgSessionCostUsd)
+      : null;
 
   const lines: string[] = [
     isEn ? '### Claude-Local Usage Summary' : '### Claude-Local 用量统计简报',
@@ -144,8 +151,8 @@ export function formatUsageMarkdownSummary(
       ? `- **Token Breakdown**: Input ${fmtCompact(totals.input_tokens)} (${fmtShare(totals.input_tokens, totals.total_tokens)}) · Output ${fmtCompact(totals.output_tokens)} (${fmtShare(totals.output_tokens, totals.total_tokens)}) · Cache Write ${fmtCompact(totals.cache_creation_tokens)} (${fmtShare(totals.cache_creation_tokens, totals.total_tokens)}) · Cache Read ${fmtCompact(totals.cache_read_tokens)} (${fmtShare(totals.cache_read_tokens, totals.total_tokens)})`
       : `- **四类构成**：未缓存输入 ${fmtCompact(totals.input_tokens)} (${fmtShare(totals.input_tokens, totals.total_tokens)}) · 输出 ${fmtCompact(totals.output_tokens)} (${fmtShare(totals.output_tokens, totals.total_tokens)}) · 缓存写入 ${fmtCompact(totals.cache_creation_tokens)} (${fmtShare(totals.cache_creation_tokens, totals.total_tokens)}) · 缓存读取 ${fmtCompact(totals.cache_read_tokens)} (${fmtShare(totals.cache_read_tokens, totals.total_tokens)})`,
     isEn
-      ? `- **Est. API Cost**: **${costText}**${avgCostPerReq != null ? ` (${avgCostPerReq}/req)` : ''} · **Cache Savings**: **${savedText}** · **Cache Hit Rate**: **${hitText}**${reuseText ? ` (${reuseText})` : ''}`
-      : `- **API 等效花费**：**${costText}**${avgCostPerReq != null ? `（单次 ${avgCostPerReq}/次）` : ''} · **缓存节省**：**${savedText}** · **缓存命中率**：**${hitText}**${reuseText ? `（复用 ${reuseText}）` : ''}`,
+      ? `- **Est. API Cost**: **${costText}**${avgCostPerReq != null ? ` (${avgCostPerReq}/req)` : ''}${avgSessionText ? ` · **Avg. Session Cost**: **${avgSessionText}** (${formatTurnsPerSession(sessionEff.avgTurnsPerSession, 'en')} turns/sess)` : ''} · **Cache Savings**: **${savedText}** · **Cache Hit Rate**: **${hitText}**${reuseText ? ` (${reuseText})` : ''}`
+      : `- **API 等效花费**：**${costText}**${avgCostPerReq != null ? `（单次 ${avgCostPerReq}/次）` : ''}${avgSessionText ? ` · **单会话均耗**：**${avgSessionText}**（均 ${formatTurnsPerSession(sessionEff.avgTurnsPerSession, 'zh')} 轮/会话）` : ''} · **缓存节省**：**${savedText}** · **缓存命中率**：**${hitText}**${reuseText ? `（复用 ${reuseText}）` : ''}`,
   ];
 
   if (models.length > 0) {

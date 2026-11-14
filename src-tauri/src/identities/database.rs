@@ -1,5 +1,5 @@
 // [INPUT]: rusqlite/内嵌 SQLite、私有保险库目录和脱敏身份元数据与本机加盐的账号索引。
-// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、SQLite v3 浏览器绑定与持久切换/恢复状态和身份移除事务；已初始化 v3 库的无写锁快速打开与首开/迁移的进程内串行化。
+// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、SQLite v3 浏览器绑定、切换前目录快照与无残留回滚撤销（abort_pending / finish_transient_recovery）及身份移除事务；已初始化 v3 库的无写锁快速打开与首开/迁移的进程内串行化。
 // [POS]: 保险库的索引事务；短期 Mutex 保护打开边界，v3 已就绪时跳过写事务与重复 DDL，未初始化或旧版本时以 IMMEDIATE 事务保护跨连接版本迁移与默认状态，凭据和会话正文仅进入加密归档。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -20,6 +20,18 @@ pub struct Record {
 }
 pub struct Database {
     pub(super) connection: Connection,
+}
+pub(super) struct PreSwitchSnapshot {
+    pub(super) prior_record: Option<Record>,
+    pub(super) prior_summary_raw: Option<String>,
+    pub(super) prior_active: Option<String>,
+    pub(super) prior_active_since: Option<String>,
+    pub(super) prior_record_binding: Option<(String, u32)>,
+    pub(super) prior_target_binding: Option<(String, u32)>,
+    pub(super) prior_browser_active: Option<String>,
+    pub(super) prior_browser_enabled: Option<String>,
+    pub(super) prior_browser_draft: Option<String>,
+    pub(super) prior_browser_promotion: Option<String>,
 }
 pub(super) fn error(_: rusqlite::Error) -> String {
     "身份数据库无法读写；未提交身份切换。".into()
@@ -282,10 +294,61 @@ impl Database {
             .map_err(error)?;
         Ok(())
     }
+    pub(super) fn snapshot_before_switch(
+        &self,
+        record_id: &str,
+        target: &str,
+    ) -> Result<PreSwitchSnapshot, String> {
+        let prior_record = self.records()?.into_iter().find(|r| r.id == record_id);
+        let prior_summary_raw = self
+            .connection
+            .query_row(
+                "SELECT summary FROM identity_summaries WHERE id=?1",
+                [record_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(error)?;
+        let binding_for = |id: &str| -> Result<Option<(String, u32)>, String> {
+            self.connection
+                .query_row(
+                    "SELECT slot,seed FROM browser_bindings WHERE identity=?1",
+                    [id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(error)
+        };
+        let prior_record_binding = binding_for(record_id)?;
+        let prior_target_binding = if target != "empty" && target != record_id {
+            binding_for(target)?
+        } else {
+            None
+        };
+        Ok(PreSwitchSnapshot {
+            prior_record,
+            prior_summary_raw,
+            prior_active: self.get("active")?,
+            prior_active_since: self.get("active_since")?,
+            prior_record_binding,
+            prior_target_binding,
+            prior_browser_active: self.get("browser.active")?,
+            prior_browser_enabled: self.get("browser.enabled")?,
+            prior_browser_draft: self.get("browser.draft")?,
+            prior_browser_promotion: self.get("browser.promotion")?,
+        })
+    }
     pub fn pending(&mut self, record: &Record, target: &str) -> Result<(), String> {
         let saved_at = i64::try_from(record.saved_at).map_err(|_| "身份元数据无效。")?;
         let bytes = i64::try_from(record.bytes).map_err(|_| "身份元数据无效。")?;
         let tx = self.connection.transaction().map_err(error)?;
+        let existed: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM identities WHERE id=?1)",
+                [&record.id],
+                |r| r.get(0),
+            )
+            .map_err(error)?;
         tx.execute(
             "INSERT INTO identities(id,name,archive,saved_at,bytes,policy,empty,account_key) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
                  ON CONFLICT(id) DO UPDATE SET archive=excluded.archive,saved_at=excluded.saved_at,bytes=excluded.bytes,policy=excluded.policy,empty=excluded.empty,account_key=excluded.account_key",
@@ -308,7 +371,156 @@ impl Database {
         .map_err(error)?;
         tx.execute("INSERT OR REPLACE INTO state VALUES('target',?1)", [target])
             .map_err(error)?;
+        if existed {
+            tx.execute("DELETE FROM state WHERE key='recovery_transient'", [])
+                .map_err(error)?;
+        } else {
+            tx.execute(
+                "INSERT OR REPLACE INTO state VALUES('recovery_transient','1')",
+                [],
+            )
+            .map_err(error)?;
+        }
         super::browser_link::pending(&tx, record, target)?;
+        tx.commit().map_err(error)
+    }
+    pub(super) fn abort_pending(
+        &mut self,
+        snap: &PreSwitchSnapshot,
+        record_id: &str,
+        target: &str,
+    ) -> Result<(), String> {
+        let tx = self.connection.transaction().map_err(error)?;
+        if let Some(prev) = &snap.prior_record {
+            let saved_at = i64::try_from(prev.saved_at).map_err(|_| "身份元数据无效。")?;
+            let bytes = i64::try_from(prev.bytes).map_err(|_| "身份元数据无效。")?;
+            tx.execute(
+                "INSERT INTO identities(id,name,archive,saved_at,bytes,policy,empty,account_key) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+                 ON CONFLICT(id) DO UPDATE SET name=excluded.name,archive=excluded.archive,saved_at=excluded.saved_at,bytes=excluded.bytes,policy=excluded.policy,empty=excluded.empty,account_key=excluded.account_key",
+                params![
+                    prev.id,
+                    prev.name,
+                    prev.archive,
+                    saved_at,
+                    bytes,
+                    serde_json::to_string(&prev.policy).unwrap(),
+                    prev.empty,
+                    prev.account_key
+                ],
+            )
+            .map_err(error)?;
+            if let Some(raw) = &snap.prior_summary_raw {
+                tx.execute(
+                    "INSERT OR REPLACE INTO identity_summaries(id,summary) VALUES(?1,?2)",
+                    params![record_id, raw],
+                )
+                .map_err(error)?;
+            } else {
+                tx.execute("DELETE FROM identity_summaries WHERE id=?1", [record_id])
+                    .map_err(error)?;
+            }
+        } else {
+            tx.execute("DELETE FROM identity_summaries WHERE id=?1", [record_id])
+                .map_err(error)?;
+            tx.execute("DELETE FROM identities WHERE id=?1", [record_id])
+                .map_err(error)?;
+        }
+        if let Some((slot, seed)) = &snap.prior_record_binding {
+            tx.execute(
+                "INSERT OR REPLACE INTO browser_bindings(identity,slot,seed) VALUES(?1,?2,?3)",
+                params![record_id, slot, seed],
+            )
+            .map_err(error)?;
+        } else {
+            tx.execute("DELETE FROM browser_bindings WHERE identity=?1", [record_id])
+                .map_err(error)?;
+        }
+        if target != "empty" && target != record_id && snap.prior_target_binding.is_none() {
+            tx.execute("DELETE FROM browser_bindings WHERE identity=?1", [target])
+                .map_err(error)?;
+        }
+        tx.execute(
+            "DELETE FROM state WHERE key IN ('recovery','target','recovery_transient','browser.previous','browser.next')",
+            [],
+        )
+        .map_err(error)?;
+        let restore_key = |key: &str, value: &Option<String>| -> Result<(), String> {
+            match value {
+                Some(v) => tx
+                    .execute("INSERT OR REPLACE INTO state VALUES(?1,?2)", params![key, v])
+                    .map_err(error)?,
+                None => tx
+                    .execute("DELETE FROM state WHERE key=?1", [key])
+                    .map_err(error)?,
+            };
+            Ok(())
+        };
+        restore_key("active", &snap.prior_active)?;
+        restore_key("active_since", &snap.prior_active_since)?;
+        restore_key("browser.active", &snap.prior_browser_active)?;
+        restore_key("browser.enabled", &snap.prior_browser_enabled)?;
+        restore_key("browser.draft", &snap.prior_browser_draft)?;
+        if snap.prior_browser_promotion.is_some() {
+            super::browser_link::abort_promotion(&tx)?;
+        }
+        tx.commit().map_err(error)
+    }
+    pub(super) fn finish_transient_recovery(
+        &mut self,
+        transient_id: &str,
+        restored_empty: bool,
+    ) -> Result<(), String> {
+        let tx = self.connection.transaction().map_err(error)?;
+        let previous_slot: Option<String> = tx
+            .query_row(
+                "SELECT value FROM state WHERE key='browser.previous'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(error)?;
+        if let Some(slot) = previous_slot.filter(|s| super::browser_link::valid_slot(s)) {
+            tx.execute(
+                "INSERT OR REPLACE INTO state VALUES('browser.active',?1)",
+                [slot],
+            )
+            .map_err(error)?;
+        }
+        super::browser_link::abort_promotion(&tx)?;
+        tx.execute(
+            "DELETE FROM state WHERE key IN ('recovery','target','recovery_transient','browser.previous','browser.next')",
+            [],
+        )
+        .map_err(error)?;
+        tx.execute("DELETE FROM identity_summaries WHERE id=?1", [transient_id])
+            .map_err(error)?;
+        tx.execute("DELETE FROM identities WHERE id=?1", [transient_id])
+            .map_err(error)?;
+        tx.execute("DELETE FROM browser_bindings WHERE identity=?1", [transient_id])
+            .map_err(error)?;
+        if !restored_empty && super::valid_id(transient_id) {
+            let legacy_unbound: bool = tx
+                .query_row(
+                    "SELECT COALESCE((SELECT value FROM state WHERE key='browser.active')='legacy', 0)
+                        AND NOT EXISTS(SELECT 1 FROM browser_bindings WHERE slot='legacy')",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(error)?;
+            if legacy_unbound {
+                tx.execute(
+                    "INSERT OR IGNORE INTO state VALUES('browser.draft',?1)",
+                    [transient_id],
+                )
+                .map_err(error)?;
+            }
+        }
+        let next_active = if restored_empty { "empty" } else { "current" };
+        tx.execute(
+            "INSERT OR REPLACE INTO state VALUES('active',?1)",
+            [next_active],
+        )
+        .map_err(error)?;
         tx.commit().map_err(error)
     }
     pub fn complete(&mut self, active: &str) -> Result<(), String> {
@@ -340,8 +552,11 @@ impl Database {
         }
         tx.execute("INSERT OR REPLACE INTO state VALUES('active',?1)", [active])
             .map_err(error)?;
-        tx.execute("DELETE FROM state WHERE key IN ('recovery','target')", [])
-            .map_err(error)?;
+        tx.execute(
+            "DELETE FROM state WHERE key IN ('recovery','target','recovery_transient')",
+            [],
+        )
+        .map_err(error)?;
         tx.commit().map_err(error)
     }
     pub fn forget(&mut self, id: &str) -> Result<(), String> {

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Tauri 官方 mockIPC、真实身份/浏览器组件与虚构的内存状态。
- * [OUTPUT]: 显式开启的原生调度快照mock、40 个虚构身份、可控在线结果、养号/浏览器选择与运行窗口、IP一致性预检与断路器mock及冻结延迟响应；可切至真实BrowserPanel验证返回CLI时草稿同步，无生产路由。
+ * [OUTPUT]: 显式开启的原生调度快照mock、40 个虚构身份、实时会话快照（identities_live_sessions）与无版本变动的终端关闭模拟、可控在线结果、养号/浏览器选择与运行窗口、IP一致性预检与断路器mock及冻结延迟响应；可切至真实BrowserPanel验证返回CLI时草稿同步，无生产路由。
  * [POS]: 独立测试入口；保留browser结果来源与一次CLI恢复许可，无原生命令/真实目录/账号/网络，生产包不含此入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -11,7 +11,7 @@ import {IdentityPanel} from '../src/identities';
 import {initializeNativeWakeupBridge, DEFAULT_AUTO_WAKEUP_CONFIG, type NativeWakeupSnapshot} from '../src/identity-online-quota';
 import {BrowserPanel} from '../src/browser';
 import type {BrowserIdentity,BrowserState} from '../src/browser-model';
-import {defaultPolicy,type IdentityState} from '../src/identity-model';
+import {defaultPolicy,type ActiveSession,type IdentityState} from '../src/identity-model';
 import type {Scan,CleanResult} from '../src/cleaner-model';
 import type {Progress} from '../src/cleaner-activity';
 import {setLocale} from '../src/i18n';
@@ -21,7 +21,7 @@ const id=(number:number)=>number.toString(16).padStart(32,'0');
 const fingerprint=(number:number)=>number.toString(16).padStart(64,'0');
 const user={present:true,display_name:'Fixture user',email:'fixture@example.invalid',organization:'Fixture team',plan:'Pro',auth_status:'valid',proxy:null,quota_5h_used:35,quota_7d_used:40,unavailable:false,quota_identity:fingerprint(1)};
 const summaries=Object.fromEntries(Array.from({length:40},(_,n)=>[id(n+1),{display_name:`Identity ${n+1}`,email:`user${n+1}@example.invalid`,organization:`Org ${n+1}`,plan:n%2===0?'Max 20x':'Pro',auth_status:'valid',proxy:null,quota_5h_used:20,quota_7d_used:30,quota_identity:fingerprint(n+1)}]));
-const state:IdentityState={browser:{enabled:true,bound_ids:[]},browser_warning:null,active:id(1),recovery:null,running:true,sessions:[{pid:4201,workspace:'Claude-Local',entrypoint:'VS Code'}],current:{...user},summaries,records:Array.from({length:40},(_,n)=>({id:id(n+1),name:`Identity ${n+1}`,saved_at:1780000000000+n,bytes:2048,policy:{...defaultPolicy}})),warming_cards:[],active_browser_slot:"default"};
+const state:IdentityState={browser:{enabled:true,bound_ids:[]},browser_warning:null,active:id(1),recovery:null,running:true,cli_running:true,sessions:[{pid:4201,workspace:'Claude-Local',entrypoint:'VS Code'}],current:{...user},summaries,records:Array.from({length:40},(_,n)=>({id:id(n+1),name:`Identity ${n+1}`,saved_at:1780000000000+n,bytes:2048,policy:{...defaultPolicy}})),warming_cards:[],active_browser_slot:"default"};
 const browserMode=new URLSearchParams(location.search).get('panel')==='browser';
 const browserState:BrowserState={ui_language:'zh',exit_services:[],region:null,config:{seed:123,proxy:'',follow_machine:true,language:'en-US',timezone:'America/New_York',native_graphics:true},machine:{platform:'macos',version:'fixture',cores:8,timezone:'America/New_York',languages:['en-US'],locale:'en_US',locale_country:'US',location_enabled:false,timezones:['America/New_York']},engine_version:'fixture',engine_ready:true,running:false,profile:'/fixture/profiles/current',identity_linked:true,cache:[],cache_error:'',report:null,report_received_at:null,machine_exit:null,checks:[]};
 const cliBrowserConfig={...browserState.config};
@@ -46,6 +46,7 @@ let identityReads=0;
 let identityReadAttempts=0;
 let identityReadFailures=0;
 let quotaRevisionReads=0;
+let liveSessionReads=0;
 const residue={scans:0,cleanMode:'success',remaining:['fixture-cache','fixture-history','fixture-account','fixture-incomplete']};
 const residueItems:Scan['items']=[
  {id:'fixture-cache',path:'/fixture/Claude/Cache',title:'虚构缓存',group:'cache',risk:'safe',impact:'可再生成',bytes:4096,files:2,exact:true,keys:[]},
@@ -62,7 +63,8 @@ const nativeWakeupMode=Boolean((window as any).__enableNativeWakeupTest);
 
 const eventListeners=new Map<number,{event:string;handler:number}>();let nextEventId=1;
 function emitFixtureEvent(event:string,payload:unknown){for(const [id,listener] of eventListeners){if(listener.event===event)(window as any).__TAURI_INTERNALS__.runCallback(listener.handler,{event,id,payload});}}
-const fixture={commands,state,residue,browser:browserState,runtime,browserBusy:false,quotaRevision:1,onlineResultsById:{} as Record<string,any>,onlineResult:{status:'updated',updated_windows:['5h','7d'],verified_at_ms:Date.now(),retry_at_ms:0},root:null as any,get identityReads(){return identityReads;},get identityReadAttempts(){return identityReadAttempts;},get identityReadFailures(){return identityReadFailures;},get quotaRevisionReads(){return quotaRevisionReads;},get pending(){return pending.map(row=>row.command);},language:setLocale,setFailure:(command:string)=>{fail=command;},recover:()=>{state.recovery=id(1);},
+const fixture={commands,state,residue,browser:browserState,runtime,browserBusy:false,supportsLiveSessions:true,quotaRevision:1,onlineResultsById:{} as Record<string,any>,onlineResult:{status:'updated',updated_windows:['5h','7d'],verified_at_ms:Date.now(),retry_at_ms:0},root:null as any,get identityReads(){return identityReads;},get identityReadAttempts(){return identityReadAttempts;},get identityReadFailures(){return identityReadFailures;},get quotaRevisionReads(){return quotaRevisionReads;},get liveSessionReads(){return liveSessionReads;},get pending(){return pending.map(row=>row.command);},language:setLocale,setFailure:(command:string)=>{fail=command;},recover:()=>{state.recovery=id(1);},
+ setLiveSessions:(running:boolean,sessions:ActiveSession[]=[],cliRunning?:boolean)=>{state.running=running;state.sessions=structuredClone(sessions);state.cli_running=cliRunning??(running&&sessions.some(s=>s.entrypoint!=='Claude Desktop'));},
  setRuntime:(patch:Partial<typeof runtime>)=>{Object.assign(runtime,patch);browserState.running=runtime.running===true;},
  updatePassiveQuota:(used:number)=>{Object.assign(state.current,{quota_5h_used:used,quota_5h_source:'server_anchor',quota_5h_observed_at_ms:Date.now()});fixture.quotaRevision++;},
  emitEvent:emitFixtureEvent,
@@ -111,7 +113,7 @@ const fixture={commands,state,residue,browser:browserState,runtime,browserBusy:f
 };
 Object.assign(window,{identityFixture:fixture});
 mockIPC((command,args:any)=>{
- if(!['identities_read','identities_quota_revision','claude_cli_read','monitor_window_state','browser_kill_switch_state'].includes(command))commands.push({command,args});
+ if(!['identities_read','identities_quota_revision','identities_live_sessions','claude_cli_read','monitor_window_state','browser_kill_switch_state'].includes(command))commands.push({command,args});
  if(command==='identities_refresh_all_quotas')batchState={request_id:args.requestId,results:[],completed:0,total:args.targets.length,state:'running',targets:structuredClone(args.targets),started_at_ms:Date.now(),deadline_at_ms:Date.now()+120000};
  if(deferred.delete(command))return new Promise((resolve,reject)=>pending.push({command,args,resolve,reject,index:0,...(command==='browser_runtime_read'?{runtimeSnapshot:structuredClone(runtime)}:{})}));
  return execute(command,args);
@@ -142,6 +144,7 @@ function execute(command:string,args:any){
  if(command==='browser_open_identity_profile')return;
  if(command==='browser_launch'){state.browser_warning=null;selectBrowser(state.active_browser_slot||'default',true);return browserSnapshot();}
  if(command==='identities_read'){identityReads++;return structuredClone(state);}
+ if(command==='identities_live_sessions'){liveSessionReads++;return {running:state.running,cli_running:state.cli_running??(state.running&&(state.sessions?.some(s=>s.entrypoint!=='Claude Desktop')??false)),sessions:structuredClone(state.sessions||[])};}
  if(command==='identities_quota_revision'){quotaRevisionReads++;return String(fixture.quotaRevision);}
  if(command==='identities_quota_batch_state')return args.requestId===null?structuredClone(batchState):batchState?.request_id===args.requestId?structuredClone(batchState):null;
  if(command==='identities_cancel_quota_batch')return fixture.cancelBatch();
@@ -223,7 +226,7 @@ function execute(command:string,args:any){
   return {cleaned:selected.length,errors:[],completed:true} satisfies CleanResult;
  }
  if(command==='claude_cli_read')return {method:'',path:'',version:''};
- if(command==='identities_stop'){state.running=false;state.sessions=[];return {running:false};}
+ if(command==='identities_stop'){state.running=false;state.cli_running=false;state.sessions=[];return {running:false};}
  if(command==='identities_save'){
   const existing=state.records.find(row=>row.id===state.active);
   if(existing){existing.name=args.currentName;existing.saved_at=1780000010000+commands.length;existing.policy={...args.policy};}

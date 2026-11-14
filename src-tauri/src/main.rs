@@ -1,5 +1,5 @@
 // [INPUT]: macOS/Linux/Windows 平台边界、Tauri 生命周期、发布构建 custom-protocol 与清理、CLI 安装管理、浏览器、地区、系统及系统修改记录/恢复命令、固定网络资源导航与风控 DNS/跨域名只读核验、独立界面语言与本地 Token 统计命令；独立本地版不加载上游更新或重启插件，浏览器仅显式启动。
-// [OUTPUT]: Claude-Local 独立窗口及尺寸记忆、托盘、SQLite 身份暂存/恢复、浏览器养号与出口一致性探针/只读运行状态/断流急停守护与冻结CLI归属返回、有界在线额度、脱敏 Token 聚合、文件残留清理、CLI 管理、系统恢复与风控核验；--quota-core 在 GUI 初始化前合并纯 JSON 额度。
+// [OUTPUT]: Claude-Local 独立窗口及尺寸记忆、托盘、SQLite 身份暂存/一键无残留恢复与轻量实时会话查询（identities_live_sessions）、浏览器养号与出口一致性探针/只读运行状态/断流急停守护与冻结CLI归属返回、有界在线额度、脱敏 Token 聚合、文件残留清理、CLI 管理、系统恢复与风控核验；--quota-core 在 GUI 初始化前合并纯 JSON 额度。
 // [POS]: 应用编排层；setup注册唯一进程级唤醒owner、主窗状态恢复、monitor隐式预热与伴生浏览器断流急停监控，实际Exit停止；CloseRequested仅隐藏托盘。不读取翻译设置或API密钥。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -184,6 +184,7 @@ fn main() {
             cleaner::residue::claude_residue_scan,
             cleaner::residue::claude_residue_clean,
             identities::identities_read,
+            identities::identities_live_sessions,
             identities::warming::identities_warming_create,
             identities::warming::identities_warming_update,
             identities::warming::identities_warming_open,

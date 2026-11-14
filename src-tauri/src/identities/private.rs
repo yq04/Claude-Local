@@ -1,5 +1,5 @@
 // [INPUT]: 标准库文件系统、当前用户身份与 Windows ACL API。
-// [OUTPUT]: 私有目录/文件、链接与所有权检查、本人目录继承权限补齐、同步原子写入与超过 MAX_PATH 的 Win32 名称调用。
+// [OUTPUT]: 私有目录/文件、链接与所有权检查、本人目录继承权限补齐、带瞬态共享锁退避的同步原子写入与超过 MAX_PATH 的 Win32 名称调用。
 // [POS]: 身份保险库的磁盘边界；创建时明确用户所有者/DACL，已有父目录仅校验而不覆写权限；Win32 调用统一使用长路径。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use std::{fs, io::Write, path::Path};
@@ -260,12 +260,12 @@ pub fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
             .and_then(|_| f.sync_all())
             .map_err(|_| "无法保存身份文件。")?;
         drop(f);
-        fs::rename(&temp, path).map_err(|_| "无法提交身份文件。")?;
+        crate::cleaner::file_io::rename_retry(&temp, path).map_err(|_| "无法提交身份文件。")?;
         sync_parent(path);
         Ok(())
     })();
     if result.is_err() {
-        let _ = fs::remove_file(temp);
+        let _ = crate::cleaner::file_io::remove_file_retry(&temp);
     }
     result
 }

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Node.js 标准管道、已锁定 playwright-core、固定引擎、Vite 与 tests/ 的虚构 Tauri IPC。
- * [OUTPUT]: 单行本地保存名与长名称重命名、隐私提示、工牌/离线额度、浏览器/网络与清理确认、真实阶段动画及额度重置推定恢复的双语 DOM 验收。
+ * [OUTPUT]: 单行本地保存名与长名称重命名、隐私提示、实时 CLI/桌面/当前使用徽章与切换前会话即时刷新、一键无残留恢复、工牌/离线额度、浏览器/网络与清理确认、真实阶段动画及额度重置推定恢复的双语 DOM 验收。
  * [POS]: 发布前无头行为回归；无真实账号/文件修改，不加载原生宿主，不允许外网请求。支持 --quota-reset-only、--passive-only、--wakeup-only、--verification-only 与 --warming-only；养号预览仅存 ignored .local/。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -98,6 +98,7 @@ try{
  await linking.getByRole('button',{name:'确认',exact:true}).click();
  await page.waitForFunction(()=>(window as any).identityFixture.state.browser.enabled===true);checks++;
  const current=page.locator('.identity-card.current');
+ assert.equal(await current.locator('.identity-live-badge').innerText(),'CLI 运行中');
  const stopsBeforeQuota=await page.evaluate(()=>(window as any).identityFixture.commands.filter((row:any)=>row.command==='identities_stop').length);
  await current.locator('.identity-quota-open').click();
  let quotaDialog=page.getByRole('dialog');
@@ -150,7 +151,25 @@ try{
  assert.match(await dialog.innerText(),/PID 4201/);assert.match(await dialog.innerText(),/Claude-Local/);
  await dialog.getByRole('button',{name:'确认保存备份',exact:true}).click();
  await page.waitForFunction(()=>((window as any).identityFixture.commands as any[]).some(row=>row.command==='identities_save'));
- assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);checks++;
+ assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);
+ assert.equal(await current.locator('.identity-live-badge').innerText(),'当前使用');
+ const revBeforeLiveCheck=await page.evaluate(()=>(window as any).identityFixture.quotaRevision);
+ await page.evaluate(()=>{(window as any).identityFixture.setLiveSessions(true,[{pid:15016,workspace:'AKun_MPlot',entrypoint:'CLI'}]);window.dispatchEvent(new Event('focus'));});
+ await page.waitForFunction(()=>document.querySelector('.identity-card.current .identity-live-badge')?.textContent==='CLI 运行中');
+ assert.equal(await page.evaluate(()=>(window as any).identityFixture.quotaRevision),revBeforeLiveCheck);
+ await page.evaluate(()=>{(window as any).identityFixture.setLiveSessions(false,[]);});
+ await savedSecond.getByRole('button',{name:'切换',exact:true}).click();
+ dialog=page.getByRole('dialog');await dialog.waitFor();
+ await page.waitForFunction(()=>!document.querySelector('.identity-confirm-sessions'));
+ assert.doesNotMatch(await dialog.innerText(),/PID 15016/);
+ assert.match(await dialog.innerText(),/当前未检测到运行中的 Claude 会话/);
+ assert.equal(await current.locator('.identity-live-badge').innerText(),'当前使用');
+ await page.evaluate(()=>{(window as any).identityFixture.setLiveSessions(true,[{pid:16020,workspace:null,entrypoint:'Claude Desktop'}],false);});
+ await page.waitForFunction(()=>document.querySelector('.identity-confirm-sessions')?.textContent?.includes('PID 16020'));
+ assert.equal(await current.locator('.identity-live-badge').innerText(),'桌面端运行');
+ await page.evaluate(()=>{(window as any).identityFixture.setLiveSessions(false,[]);});
+ await dialog.getByRole('button',{name:'取消',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('.identity-card.current .identity-live-badge')?.textContent==='当前使用');checks++;
  await page.getByText('保留在工作区',{exact:true}).click();
  await page.getByRole('checkbox',{name:'Skills 与命令'}).uncheck();
  await page.getByRole('button',{name:'新身份',exact:true}).click();
@@ -203,16 +222,21 @@ try{
  await dialog.getByRole('button',{name:'确认直接删除'}).click();await renamed.waitFor({state:'detached'});
  assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);checks++;
  await page.evaluate(()=>{(window as any).identityFixture.language('en');});
- await page.getByRole('button',{name:'New identity',exact:true}).waitFor();assert.match(await page.locator('.identity-library:not(.identity-warming-library) .identity-onboarding-bar').innerText(),/Add a new account in 3 steps/);checks++;
+ await page.getByRole('button',{name:'New identity',exact:true}).waitFor();assert.match(await page.locator('.identity-library:not(.identity-warming-library) .identity-onboarding-bar').innerText(),/Add a new account in 3 steps/);
+ assert.equal(await current.locator('.identity-live-badge').innerText(),'Active');checks++;
  await page.evaluate(()=>{(window as any).identityFixture.setFailure('identities_switch');});
  await page.getByRole('button',{name:'New identity',exact:true}).click();
  await page.getByRole('dialog').getByRole('button',{name:'Archive & switch'}).click();
  await page.getByText(/fixture operation failed/).first().waitFor();assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.current.present),true);checks++;
+ const recordsBeforeRecover=await page.evaluate(()=>(window as any).identityFixture.state.records.length);
  await page.evaluate(()=>{(window as any).identityFixture.recover();});
  await page.getByRole('button',{name:await page.evaluate(async()=>(await import('/src/i18n.ts')).translate('identityCard.localQuotaSync')),exact:true}).click();
  await page.getByRole('button',{name:'Restore previous identity',exact:true}).click();
- await page.getByRole('dialog').getByRole('button',{name:'Restore'}).click();
- await page.waitForFunction(()=>(window as any).identityFixture.state.recovery===null);checks++;
+ await page.waitForFunction(()=>(window as any).identityFixture.state.recovery===null);
+ assert.equal(await page.getByRole('dialog').count(),0,'One-click clean recovery must not open a checkpoint naming dialog');
+ assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.records.length),recordsBeforeRecover,'One-click clean recovery must not spawn a transient checkpoint card');
+ const recoverSwitch=await page.evaluate(()=>{const rows=((window as any).identityFixture.commands as any[]).filter(row=>row.command==='identities_switch');return rows[rows.length-1]?.args;});
+ assert.equal(recoverSwitch.recover,true);assert.equal(recoverSwitch.currentName,'');checks++;
  await page.emulateMedia({reducedMotion:'reduce'});
  await page.mouse.move(10,10);await page.waitForTimeout(250);
  const before=await current.getAttribute('style');await current.hover();await page.waitForTimeout(150);

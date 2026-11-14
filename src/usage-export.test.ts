@@ -255,3 +255,51 @@ test('TSV accounts section uses per-account models blended cost when available a
   // Legacy without models: falls back to primaryModel claude-opus-5-5 (1M input = $4.0000)
   expect(tsv).toContain('# accounts\tLegacy\t1000000\t1000000\t0\t0\t0\t10\t4.0000\t0.0000');
 });
+
+test('formatUsageMarkdownSummary includes Avg. Session Cost when sessions are recorded and omits it for legacy logs', () => {
+  const totals = {
+    ...emptyUsage(),
+    input_tokens: 1_000_000,
+    output_tokens: 500_000,
+    cache_creation_tokens: 2_000_000,
+    cache_read_tokens: 10_000_000,
+    total_tokens: 13_500_000,
+    requests: 45,
+    sessions: 5,
+  };
+  const snapshot: UsageSnapshot = {
+    generated_at: 1_800_000_000,
+    tracking_since: 1_790_000_000,
+    totals,
+    unattributed: emptyUsage(),
+    accounts: [],
+    daily: [],
+    models: [{model: 'claude-opus-5-5', totals}],
+    warnings: [],
+    activity: {sessions: 5, active_days: 3},
+  };
+  const baseOptions = {
+    period: 'week' as const,
+    periodLabel: '7 天',
+    rangeLabel: '2026-10-25 – 2026-10-31',
+    accountId: 'all',
+    accountLabel: '全部',
+    accountIsAll: true,
+    timezone: 'UTC',
+    privacyMask: false,
+  };
+
+  const zh = formatUsageMarkdownSummary(snapshot, {...baseOptions, locale: 'zh'});
+  expect(zh).toContain('**单会话均耗**：**$5.20**（均 9 轮/会话）');
+
+  const en = formatUsageMarkdownSummary(snapshot, {...baseOptions, periodLabel: '7 days', accountLabel: 'All', locale: 'en'});
+  expect(en).toContain('**Avg. Session Cost**: **$5.20** (9 turns/sess)');
+
+  const legacySnapshot: UsageSnapshot = {
+    ...snapshot,
+    totals: {...totals, sessions: undefined},
+    activity: undefined,
+  };
+  const legacyZh = formatUsageMarkdownSummary(legacySnapshot, {...baseOptions, locale: 'zh'});
+  expect(legacyZh).not.toContain('单会话均耗');
+});

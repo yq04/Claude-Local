@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Native numeric usage aggregates, shared locale and display/privacy preferences.
- * [OUTPUT]: Token-first overview with four-part composition and per-bucket USD cost, per-request token/cost telemetry, equivalent API USD cost & cache savings cards, one-click Retina Token consumption screenshots (overview & trend) plus export menu, full model distribution with per-model/effort cost, per-account blended cost breakdown and responsive trend/data views.
+ * [OUTPUT]: Token-first overview with four-part composition and per-bucket USD cost, per-request token/cost telemetry, top-aligned 2x2 equivalent API USD cost & per-session efficiency cards with atomic nowrap sub-items, one-click Retina Token consumption screenshots (overview & trend) plus export menu, full model distribution with aligned 2x2 micro-metric stats and effort popovers, per-account blended cost breakdown and responsive trend/data views.
  * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh with a per-query session snapshot cache (instant revisit, background revalidation), no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -18,11 +18,13 @@ import {
   detectModelFamily,
   estimateSnapshotCostUsd,
   estimateTotalsCostUsd,
+  formatTurnsPerSession,
   formatUsageNumber,
   formatUsagePeakBucketLabel,
   formatUsdCost,
   sortUsageEfforts,
   sortUsageModels,
+  summarizeSessionEfficiency,
   summarizeUsageTrend,
   tokenComposition,
   type UsageCostEstimate,
@@ -62,14 +64,14 @@ function GroupTitle({children, aside}: {children: ReactNode; aside?: ReactNode})
   return <div className="settings-group-heading usage-group-heading"><span className="settings-group-bar" aria-hidden="true" /><h2>{children}</h2>{aside && <span className="usage-section-caption">{aside}</span>}</div>;
 }
 
-function MetricGlyph({kind}: {kind: 'total' | 'cost' | 'savings' | 'cache' | 'pace'}) {
+function MetricGlyph({kind}: {kind: 'total' | 'cost' | 'session' | 'cache' | 'pace'}) {
   return <span className="usage-metric-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
     {kind === 'total' ? (
       <><path d="m12 3 8 4-8 4-8-4 8-4Z" /><path d="m4 12 8 4 8-4M4 17l8 4 8-4" /></>
     ) : kind === 'cost' ? (
       <><circle cx="12" cy="12" r="9" /><path d="M14.8 9.2a2.6 2.6 0 0 0-2.4-1.4h-1c-1.3 0-2.3.8-2.3 2s1 1.8 2.3 2.1l1.2.3c1.4.3 2.4 1 2.4 2.2 0 1.2-1.1 2.1-2.5 2.1h-1a2.7 2.7 0 0 1-2.5-1.5M12 6.2v11.6" /></>
-    ) : kind === 'savings' ? (
-      <><path d="M12 3 5 6v6c0 4.5 3 7.9 7 9 4-1.1 7-4.5 7-9V6l-7-3Z" /><path d="m9.5 12.2 1.8 1.8 3.6-3.8" /></>
+    ) : kind === 'session' ? (
+      <><rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="m8 10 2.5 2L8 14M12.5 14H16" /></>
     ) : kind === 'pace' ? (
       <><path d="M3 12h4l2.6-6 4.8 12 2.6-6H21" /></>
     ) : (
@@ -118,7 +120,7 @@ function TokenComposition({
   </div>;
 }
 
-type AccountSortField = 'total_tokens' | 'cost' | 'savings' | 'cache_hit' | 'requests';
+type AccountSortField = 'total_tokens' | 'cost' | 'avg_cost' | 'cache_hit' | 'requests';
 
 export function UsageStatisticsPanel() {
   const {t, locale} = useI18n();
@@ -215,6 +217,7 @@ export function UsageStatisticsPanel() {
   const dstType = isHourly ? getDstDayType(days) : null;
   const primaryModel = dominantModel ?? models[0]?.model;
   const costSummary = estimateSnapshotCostUsd(totals, models);
+  const sessionEff = summarizeSessionEfficiency(totals, snapshot?.activity, costSummary.costUsd);
   const avgTokensPerRequest = totals && totals.requests > 0 ? Math.round(totals.total_tokens / totals.requests) : null;
   const avgCostPerReq = totals && totals.requests > 0 ? costSummary.costUsd / totals.requests : null;
   const accountRows = (snapshot?.accounts ?? []).map(row => {
@@ -225,7 +228,7 @@ export function UsageStatisticsPanel() {
     return {
       ...row,
       cost: est.costUsd,
-      savings: est.cacheSavingsUsd,
+      avgTurnCost: row.totals.requests > 0 ? est.costUsd / row.totals.requests : 0,
       cacheHit: cacheHitRate(row.totals),
       requests: row.totals.requests,
     };
@@ -235,8 +238,8 @@ export function UsageStatisticsPanel() {
         ? a.totals.total_tokens - b.totals.total_tokens
         : accountSortBy === 'cost'
           ? a.cost - b.cost
-          : accountSortBy === 'savings'
-            ? a.savings - b.savings
+          : accountSortBy === 'avg_cost'
+            ? a.avgTurnCost - b.avgTurnCost
             : accountSortBy === 'cache_hit'
               ? (a.cacheHit ?? -1) - (b.cacheHit ?? -1)
               : a.requests - b.requests;
@@ -475,23 +478,88 @@ export function UsageStatisticsPanel() {
           <div className="usage-summary">
             <div data-usage-metric="cost" className="settings-card usage-metric" title={totals ? t('usage.costTooltipBreakdown', {input: formatUsdCost(costSummary.inputCostUsd), output: formatUsdCost(costSummary.outputCostUsd), write: formatUsdCost(costSummary.cacheWriteCostUsd), read: formatUsdCost(costSummary.cacheReadCostUsd)}) : t('usage.estimatedCostHint')}>
               <div className="usage-metric-heading"><MetricGlyph kind="cost" /><span>{t('usage.estimatedCost')}</span></div>
-              <strong>{totals ? formatUsdCost(costSummary.costUsd) : '—'}</strong>
-              <small>{totals && costSummary.costUsd > 0 ? `${t('usage.costBreakdownSub', {output: formatUsdCost(costSummary.outputCostUsd, true), cache: formatUsdCost(costSummary.cacheWriteCostUsd + costSummary.cacheReadCostUsd, true)})}${avgCostPerReq != null ? ` · ${t('usage.avgCostPerRequest', {cost: formatUsdCost(avgCostPerReq)})}` : ''}` : t('usage.estimatedCostHint')}</small>
+              <strong title={totals ? formatUsdCost(costSummary.costUsd) : undefined}>{totals ? formatUsdCost(costSummary.costUsd, costSummary.costUsd >= 10_000) : '—'}</strong>
+              <small className={totals && costSummary.costUsd > 0 ? 'usage-metric-sub has-items' : 'usage-metric-sub'}>
+                {totals && costSummary.costUsd > 0 ? (
+                  <>
+                    <span className="usage-metric-sub-item">{t('usage.costOutputSub', {cost: formatUsdCost(costSummary.outputCostUsd, true)})}</span>{' '}
+                    <span className="usage-metric-sub-item">{t('usage.costCacheSub', {cost: formatUsdCost(costSummary.cacheWriteCostUsd + costSummary.cacheReadCostUsd, true)})}</span>
+                    {avgCostPerReq != null && (
+                      <>
+                        {' '}
+                        <span className="usage-metric-sub-item">{t('usage.avgCostPerRequest', {cost: formatUsdCost(avgCostPerReq)})}</span>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  t('usage.estimatedCostHint')
+                )}
+              </small>
             </div>
-            <div data-usage-metric="savings" className="settings-card usage-metric" title={t('usage.cacheSavingsHint')}>
-              <div className="usage-metric-heading"><MetricGlyph kind="savings" /><span>{t('usage.cacheSavings')}</span></div>
-              <strong title={totals ? formatUsdCost(costSummary.cacheSavingsUsd) : undefined}>{totals ? formatUsdCost(costSummary.cacheSavingsUsd, true) : '—'}</strong>
-              <small>{totals && costSummary.savingsRate != null ? t('usage.cacheSavingsRate', {rate: percent(costSummary.savingsRate)}) : t('usage.cacheSavingsHint')}</small>
+            <div
+              data-usage-metric="session"
+              className="settings-card usage-metric"
+              title={
+                sessionEff.sessions != null &&
+                sessionEff.sessions > 0 &&
+                sessionEff.avgSessionCostUsd != null &&
+                sessionEff.avgTokensPerSession != null &&
+                sessionEff.avgOutputPerSession != null
+                  ? t('usage.sessionEfficiencyTooltip', {
+                      sessions: num(sessionEff.sessions),
+                      cost: formatUsdCost(sessionEff.avgSessionCostUsd),
+                      tokens: num(sessionEff.avgTokensPerSession, true),
+                      output: num(sessionEff.avgOutputPerSession, true),
+                    })
+                  : totals && totals.requests > 0
+                    ? t('usage.sessionCostUnavailable')
+                    : t('usage.sessionCostHint')
+              }
+            >
+              <div className="usage-metric-heading"><MetricGlyph kind="session" /><span>{t('usage.sessionCost')}</span></div>
+              <strong title={sessionEff.avgSessionCostUsd != null ? formatUsdCost(sessionEff.avgSessionCostUsd) : undefined}>
+                {sessionEff.avgSessionCostUsd != null ? formatUsdCost(sessionEff.avgSessionCostUsd, sessionEff.avgSessionCostUsd >= 10_000) : '—'}
+              </strong>
+              <small className={sessionEff.avgTurnsPerSession != null && sessionEff.avgOutputPerSession != null ? 'usage-metric-sub has-items' : 'usage-metric-sub'}>
+                {sessionEff.avgTurnsPerSession != null && sessionEff.avgOutputPerSession != null ? (
+                  <>
+                    <span className="usage-metric-sub-item">{t('usage.sessionTurnsSub', {turns: formatTurnsPerSession(sessionEff.avgTurnsPerSession, locale)})}</span>{' '}
+                    <span className="usage-metric-sub-item">{t('usage.sessionOutputSub', {output: num(sessionEff.avgOutputPerSession, true)})}</span>
+                  </>
+                ) : totals && totals.requests > 0 ? (
+                  t('usage.sessionCostUnavailable')
+                ) : (
+                  t('usage.sessionCostHint')
+                )}
+              </small>
             </div>
             <div data-usage-metric="cache" className="settings-card usage-metric">
               <div className="usage-metric-heading"><MetricGlyph kind="cache" /><span>{t('usage.cacheHit')}</span></div>
               <strong>{totals ? rate(totals) : '—'}</strong>
-              <small>{totals && costSummary.cacheReuseRatio != null ? t('usage.cacheReuseSub', {ratio: costSummary.cacheReuseRatio.toFixed(1), read: num(totals.cache_read_tokens, true)}) : t('usage.cacheHitHint')}</small>
+              <small className={totals && costSummary.cacheReuseRatio != null ? 'usage-metric-sub has-items' : 'usage-metric-sub'}>
+                {totals && costSummary.cacheReuseRatio != null ? (
+                  <>
+                    <span className="usage-metric-sub-item">{t('usage.cacheReuseRatioSub', {ratio: costSummary.cacheReuseRatio.toFixed(1)})}</span>{' '}
+                    <span className="usage-metric-sub-item">{t('usage.cacheReadSub', {read: num(totals.cache_read_tokens, true)})}</span>
+                  </>
+                ) : (
+                  t('usage.cacheHitHint')
+                )}
+              </small>
             </div>
-            <div data-usage-metric="pace" className="settings-card usage-metric" title={t('usage.paceHint')}>
+            <div data-usage-metric="pace" className="settings-card usage-metric" title={trend.peak && peakBucketCostUsd != null && peakLabel ? `${t('usage.peakCostSub', {cost: formatUsdCost(peakBucketCostUsd), label: peakLabel})} · ${t('usage.paceHint')}` : t('usage.paceHint')}>
               <div className="usage-metric-heading"><MetricGlyph kind="pace" /><span>{t(isHourly ? 'usage.hourlyCostPace' : 'usage.dailyCostPace')}</span></div>
-              <strong>{totals && avgBucketCostUsd != null ? formatUsdCost(avgBucketCostUsd) : '—'}</strong>
-              <small>{trend.peak && peakBucketCostUsd != null && peakLabel ? t('usage.peakCostSub', {cost: formatUsdCost(peakBucketCostUsd), label: peakLabel}) : t('usage.paceHint')}</small>
+              <strong title={totals && avgBucketCostUsd != null ? formatUsdCost(avgBucketCostUsd) : undefined}>{totals && avgBucketCostUsd != null ? formatUsdCost(avgBucketCostUsd, avgBucketCostUsd >= 10_000) : '—'}</strong>
+              <small className={trend.peak && peakBucketCostUsd != null && peakLabel ? 'usage-metric-sub has-items' : 'usage-metric-sub'}>
+                {trend.peak && peakBucketCostUsd != null && peakLabel ? (
+                  <>
+                    <span className="usage-metric-sub-item">{t('usage.pacePeakCostSub', {cost: formatUsdCost(peakBucketCostUsd, true)})}</span>{' '}
+                    <span className="usage-metric-sub-item">{peakLabel}</span>
+                  </>
+                ) : (
+                  t('usage.paceHint')
+                )}
+              </small>
             </div>
           </div>
         </div>
@@ -525,17 +593,34 @@ export function UsageStatisticsPanel() {
                     data-has-efforts={efforts.length > 0 ? 'true' : undefined}
                     tabIndex={efforts.length > 0 ? 0 : undefined}
                   >
-                    <div>
+                    <div className="usage-model-head">
                       <span className="usage-model-title">
                         {family.label && <em className="usage-model-family" data-family={family.key}>{family.label}</em>}
                         <strong title={modelLabel}>{modelLabel}</strong>
                       </span>
-                      <span title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}<small>{sharePercent(row.totals.total_tokens, totals?.total_tokens)}</small></span>
+                      <span className="usage-model-total" title={num(row.totals.total_tokens)}>
+                        <span className="usage-model-tokens">{num(row.totals.total_tokens, true)}</span>
+                        <small className="usage-model-share">{sharePercent(row.totals.total_tokens, totals?.total_tokens)}</small>
+                      </span>
                     </div>
                     <div className="usage-model-track"><span style={{width: `${totals?.total_tokens ? Math.min(100, Math.max(row.totals.total_tokens > 0 ? 1.5 : 0, row.totals.total_tokens / totals.total_tokens * 100)) : 0}%`}} /></div>
                     <div className="usage-model-caption">
-                      <small>{t('usage.modelCostCaption', {cost: formatUsdCost(modelCost.costUsd), output: num(row.totals.output_tokens, true)})}</small>
-                      <small>{t('usage.modelCacheCaption', {rate: rate(row.totals), savings: formatUsdCost(modelCost.cacheSavingsUsd, true)})}</small>
+                      <small className="usage-model-stat" title={formatUsdCost(modelCost.costUsd)}>
+                        <span className="usage-model-stat-label">{t('usage.modelStatEstLabel')}</span>{' '}
+                        <span className="usage-model-stat-value">{formatUsdCost(modelCost.costUsd, modelCost.costUsd >= 10_000)}</span>
+                      </small>
+                      <small className="usage-model-stat" title={num(row.totals.output_tokens)}>
+                        <span className="usage-model-stat-label">{t('usage.modelStatOutputLabel')}</span>{' '}
+                        <span className="usage-model-stat-value">{num(row.totals.output_tokens, true)}</span>
+                      </small>
+                      <small className="usage-model-stat" title={num(row.totals.requests)}>
+                        <span className="usage-model-stat-value">{num(row.totals.requests, true)}</span>{' '}
+                        <span className="usage-model-stat-label">{t('usage.modelStatTurnsUnit')}</span>
+                      </small>
+                      <small className="usage-model-stat">
+                        <span className="usage-model-stat-label">{t('usage.modelStatHitLabel')}</span>{' '}
+                        <span className="usage-model-stat-value">{rate(row.totals)}</span>
+                      </small>
                     </div>
                     <TokenComposition totals={row.totals} />
                     {efforts.length > 0 && (
@@ -572,8 +657,8 @@ export function UsageStatisticsPanel() {
           <section className="settings-card usage-accounts-card">
             <div className="usage-panel-header"><div><GroupTitle aside={String(accountRows.length)}>{t('usage.accounts')}</GroupTitle></div></div>
             <div className="usage-table-wrap" role="region" aria-label={t('usage.accounts')} tabIndex={0}>
-              <table className="usage-table" aria-label={t('usage.accounts')}><thead><tr><th scope="col">{t('usage.account')}</th>{accountSortHeader('total_tokens', t('usage.total'))}{accountSortHeader('cost', t('usage.estimatedCost'))}{accountSortHeader('savings', t('usage.cacheSavings'))}<th scope="col">{t('usage.input')}</th><th scope="col">{t('usage.output')}</th><th scope="col">{t('usage.cacheWrite')}</th><th scope="col">{t('usage.cacheRead')}</th>{accountSortHeader('cache_hit', t('usage.cacheHit'))}{accountSortHeader('requests', t('usage.requests'))}</tr></thead>
-                <tbody>{accountRows.map(row => <tr key={row.id} className={account === row.id ? 'usage-row-selected' : ''}><th scope="row"><button type="button" className="usage-account-name" onClick={() => setAccount(row.id)}><span>{maskDisplayName(row.name, row.email, prefs.privacyMask)}{row.current && <em>{t('usage.current')}</em>}</span>{row.email && <small>{maskEmailAddress(row.email, prefs.privacyMask)}</small>}</button></th><td title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</td><td title={formatUsdCost(row.cost)}>{formatUsdCost(row.cost)}</td><td title={formatUsdCost(row.savings)}>{formatUsdCost(row.savings, true)}</td><td title={num(row.totals.input_tokens)}>{num(row.totals.input_tokens, true)}</td><td title={num(row.totals.output_tokens)}>{num(row.totals.output_tokens, true)}</td><td title={num(row.totals.cache_creation_tokens)}>{num(row.totals.cache_creation_tokens, true)}</td><td title={num(row.totals.cache_read_tokens)}>{num(row.totals.cache_read_tokens, true)}</td><td>{rate(row.totals)}</td><td title={num(row.requests)}>{num(row.requests, true)}</td></tr>)}
+              <table className="usage-table" aria-label={t('usage.accounts')}><thead><tr><th scope="col">{t('usage.account')}</th>{accountSortHeader('total_tokens', t('usage.total'))}{accountSortHeader('cost', t('usage.estimatedCost'))}{accountSortHeader('avg_cost', t('usage.avgTurnCost'))}<th scope="col">{t('usage.input')}</th><th scope="col">{t('usage.output')}</th><th scope="col">{t('usage.cacheWrite')}</th><th scope="col">{t('usage.cacheRead')}</th>{accountSortHeader('cache_hit', t('usage.cacheHit'))}{accountSortHeader('requests', t('usage.requests'))}</tr></thead>
+                <tbody>{accountRows.map(row => <tr key={row.id} className={account === row.id ? 'usage-row-selected' : ''}><th scope="row"><button type="button" className="usage-account-name" onClick={() => setAccount(row.id)}><span>{maskDisplayName(row.name, row.email, prefs.privacyMask)}{row.current && <em>{t('usage.current')}</em>}</span>{row.email && <small>{maskEmailAddress(row.email, prefs.privacyMask)}</small>}</button></th><td title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</td><td title={formatUsdCost(row.cost)}>{formatUsdCost(row.cost)}</td><td title={row.requests > 0 ? formatUsdCost(row.avgTurnCost) : '$0.00'}>{row.requests > 0 ? formatUsdCost(row.avgTurnCost, row.avgTurnCost >= 10_000) : '$0.00'}</td><td title={num(row.totals.input_tokens)}>{num(row.totals.input_tokens, true)}</td><td title={num(row.totals.output_tokens)}>{num(row.totals.output_tokens, true)}</td><td title={num(row.totals.cache_creation_tokens)}>{num(row.totals.cache_creation_tokens, true)}</td><td title={num(row.totals.cache_read_tokens)}>{num(row.totals.cache_read_tokens, true)}</td><td>{rate(row.totals)}</td><td title={num(row.requests)}>{num(row.requests, true)}</td></tr>)}
                 </tbody>
               </table>
               {!accountRows.length && <p className="usage-model-empty">{t('usage.noAccounts')}</p>}

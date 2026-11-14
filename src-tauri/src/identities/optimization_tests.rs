@@ -1,5 +1,5 @@
 // [INPUT]: 虚构 UUID/组织/凭据、隔离文件系统和归档格式。
-// [OUTPUT]: A/B 往返去重、原始会话保留、窄缓存维护、旧68键归档只读兼容与设备/客户端写回保护、显式MCP/项目映射策略、刷新凭据覆盖及故障回归。
+// [OUTPUT]: A/B 往返去重、原始会话保留、窄缓存维护、旧68键归档只读兼容与设备/客户端写回保护、显式MCP/项目映射策略、刷新凭据覆盖、Windows 共享锁退避/句柄释放等待及瞬态锁文件跳过回归。
 // [POS]: 账号匹配、读/保存工作区无副作用与不可变归档代次的离线证明，不读取真实用户数据。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -1460,4 +1460,99 @@ fn workspace_walk_skips_transient_claude_debug_latest_link_while_generic_walk_re
         assert!(status.success());
     }
     assert!(archive::walk_workspace(&debug_dir, parent, &latest_link, &mut |_, _, _| Ok(())).is_err());
+}
+
+#[test]
+fn fingerprint_and_workspace_walk_ignore_transient_locks_and_temp_files() {
+    let f = Fixture::new();
+    f.write(".claude/debug/session.log", b"stable-debug-log");
+    let debug_dir = f.home.join(".claude/debug");
+    let baseline = crate::cleaner::identity::fingerprint(&debug_dir).unwrap();
+
+    f.write(".claude/debug/.oauth_refresh.lock", b"12345");
+    f.write(".claude/debug/.oauth_refresh.lock.owner", b"owner");
+    f.write(".claude/debug/settings.json.tmp.4321.99", b"partial");
+    f.write(".claude/debug/.storage-write.lock", b"lock");
+    let with_transients = crate::cleaner::identity::fingerprint(&debug_dir).unwrap();
+    assert_eq!(baseline, with_transients);
+
+    let parent = debug_dir.parent().unwrap();
+    let latest_link = f.home.join(".claude/debug/latest");
+    let mut visited = Vec::new();
+    archive::walk_workspace(&debug_dir, parent, &latest_link, &mut |_p, rel, is_dir| {
+        if !is_dir {
+            visited.push(rel.to_string_lossy().replace('\\', "/"));
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(visited, vec!["debug/session.log".to_string()]);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_transient_share_lock_retry_and_handle_drain_wait_succeed() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let f = Fixture::new();
+    f.login("lock-user", "lock-org", "lock-token");
+    f.write(".claude/settings.json", br#"{"model":"sonnet"}"#);
+
+    // 1. Verify wait_claude_workspace_handles_released waits for a FILE_SHARE_READ-only handle to close.
+    let claude_json = f.home.join(".claude.json");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let b_bg = barrier.clone();
+    let hold_path = claude_json.clone();
+    let holder = std::thread::spawn(move || {
+        let _handle = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&hold_path)
+            .unwrap();
+        b_bg.wait();
+        std::thread::sleep(std::time::Duration::from_millis(75));
+    });
+    barrier.wait();
+    let started = Instant::now();
+    crate::cleaner::wait_claude_workspace_handles_released(&f.home, 500);
+    assert!(started.elapsed() >= std::time::Duration::from_millis(55));
+    holder.join().unwrap();
+
+    // 2. Verify private::write and remove_file_retry succeed through transient sharing violation.
+    let settings_path = f.home.join(".claude/settings.json");
+    let barrier2 = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let b_bg2 = barrier2.clone();
+    let hold_settings = settings_path.clone();
+    let holder2 = std::thread::spawn(move || {
+        let _handle = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&hold_settings)
+            .unwrap();
+        b_bg2.wait();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    });
+    barrier2.wait();
+    private::write(&settings_path, br#"{"model":"opus"}"#).unwrap();
+    holder2.join().unwrap();
+    assert_eq!(
+        fs::read(&settings_path).unwrap(),
+        br#"{"model":"opus"}"#.as_slice()
+    );
+
+    let barrier3 = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let b_bg3 = barrier3.clone();
+    let hold_settings3 = settings_path.clone();
+    let holder3 = std::thread::spawn(move || {
+        let _handle = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&hold_settings3)
+            .unwrap();
+        b_bg3.wait();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    });
+    barrier3.wait();
+    crate::cleaner::file_io::remove_file_retry(&settings_path).unwrap();
+    holder3.join().unwrap();
+    assert!(!settings_path.exists());
 }

@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务门与显式身份写入代次、Tauri 进度通道。
-// [OUTPUT]: 有界归档加载、单次解析共享额度账本的身份/网页摘要（含 Ultra/Team/Enterprise 套餐消歧）、浏览器独立养号卡及受控转正、手动订阅到期管理命令、轻量usage身份观察登记与唯一进程级唤醒owner。
+// [OUTPUT]: 有界归档加载、单次解析共享额度账本的身份/网页摘要（含 Ultra/Team/Enterprise 套餐消歧）、轻量实时会话快照（identities_live_sessions）、一键无残留恢复接线（recover_clean 与句柄排空等待）、浏览器独立养号卡及受控转正、手动订阅到期管理命令、轻量usage身份观察登记与唯一进程级唤醒owner。
 // [POS]: GUI 身份管理的原生入口；在线子模块仅允许固定额度端点和白名单回执，不提供凭据读取或任意文件/网络接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 mod archive;
@@ -92,7 +92,43 @@ pub struct State {
     pub active: String,
     pub recovery: Option<String>,
     pub running: bool,
+    pub cli_running: bool,
     pub current: profile::Current,
+}
+#[derive(Serialize)]
+pub struct LiveSessionsSnapshot {
+    pub running: bool,
+    pub cli_running: bool,
+    pub sessions: Vec<profile::ActiveSession>,
+}
+fn live_sessions_snapshot(
+    root_path: &std::path::Path,
+    include_sessions: bool,
+) -> Result<LiveSessionsSnapshot, String> {
+    #[cfg(target_os = "windows")]
+    let procs = crate::windows::claude_processes()?;
+    #[cfg(not(target_os = "windows"))]
+    let procs = if crate::cleaner::identity::processes_running()? {
+        crate::cleaner::identity::running_processes()
+    } else {
+        Vec::new()
+    };
+    let running = !procs.is_empty();
+    let sessions = if include_sessions || running {
+        profile::active_sessions_from_processes(root_path, &procs)
+    } else {
+        Vec::new()
+    };
+    let cli_running = sessions.iter().any(|s| s.entrypoint != "Claude Desktop");
+    Ok(LiveSessionsSnapshot {
+        running,
+        cli_running,
+        sessions: if include_sessions {
+            sessions
+        } else {
+            Vec::new()
+        },
+    })
 }
 pub(crate) fn new_id() -> Result<String, String> {
     Ok(codec::random::<16>()?
@@ -231,6 +267,7 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
         cleaner.leave();
         cleanup?;
     }
+    let live_sessions = live_sessions_snapshot(&root_path, include_sessions)?;
     Ok(State {
         warming_cards: warming::views(&vault_path, &db)?,
         active_browser_slot: db.browser_slot()?,
@@ -243,14 +280,11 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
             .clone(),
         records,
         summaries,
-        sessions: if include_sessions {
-            profile::active_sessions(&root_path)
-        } else {
-            Vec::new()
-        },
+        sessions: live_sessions.sessions,
         active,
         recovery: db.get("recovery")?,
-        running: crate::cleaner::identity::processes_running()?,
+        running: live_sessions.running,
+        cli_running: live_sessions.cli_running,
         current,
     })
 }
@@ -259,6 +293,15 @@ pub async fn identities_read(app: tauri::AppHandle) -> Result<State, String> {
     tauri::async_runtime::spawn_blocking(move || state(&app))
         .await
         .map_err(|_| "身份列表读取被中断。".to_string())?
+}
+#[tauri::command]
+pub async fn identities_live_sessions() -> Result<LiveSessionsSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let root_path = crate::cleaner::identity::root()?;
+        live_sessions_snapshot(&root_path, true)
+    })
+    .await
+    .map_err(|_| "实时会话读取被中断。".to_string())?
 }
 #[tauri::command]
 pub async fn identities_stop(
@@ -302,8 +345,9 @@ pub async fn identities_save(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(Some(on_progress));
         let result = (|| {
-            let mut store =
-                store::Store::open(&vault(&worker)?, &crate::cleaner::identity::root()?)?;
+            let root = crate::cleaner::identity::root()?;
+            crate::cleaner::wait_claude_workspace_handles_released(&root, 600);
+            let mut store = store::Store::open(&vault(&worker)?, &root)?;
             store.save_current(&current_name, &policy, &reporter)?;
             crate::browser::sync_current_launch_args(&worker);
             state(&worker)
@@ -328,7 +372,12 @@ pub async fn identities_switch(
     recover: bool,
     on_progress: Channel<Progress>,
 ) -> Result<State, String> {
-    let current_name = name(&current_name)?;
+    let clean_recover = recover && current_name.trim().is_empty();
+    let current_name = if clean_recover {
+        String::new()
+    } else {
+        name(&current_name)?
+    };
     if target_id != "empty" && !valid_id(&target_id) {
         return Err("身份编号无效。".into());
     }
@@ -339,9 +388,12 @@ pub async fn identities_switch(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(Some(on_progress));
         let result = crate::browser::switch_identity(&worker, &reporter, || {
-            let mut store =
-                store::Store::open(&vault(&worker)?, &crate::cleaner::identity::root()?)?;
-            if recover {
+            let root = crate::cleaner::identity::root()?;
+            crate::cleaner::wait_claude_workspace_handles_released(&root, 600);
+            let mut store = store::Store::open(&vault(&worker)?, &root)?;
+            if clean_recover {
+                store.recover_clean(&reporter)?;
+            } else if recover {
                 store.recover(&current_name, &reporter)?;
             } else {
                 store.switch(&target_id, &current_name, &policy, &reporter)?;
@@ -408,7 +460,11 @@ pub async fn identities_delete(
         let reporter = Reporter::channel(Some(on_progress));
         let action = || {
             let vault_path = vault(&worker)?;
-            let mut store = store::Store::open(&vault_path, &crate::cleaner::identity::root()?)?;
+            let root = crate::cleaner::identity::root()?;
+            if id == "current" {
+                crate::cleaner::wait_claude_workspace_handles_released(&root, 600);
+            }
+            let mut store = store::Store::open(&vault_path, &root)?;
             store.delete(&id, &policy, &reporter)?;
             if id != "current" {
                 subscription::remove_record_entry(&vault_path, &id);

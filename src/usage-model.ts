@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Redacted native usage aggregates and the current local calendar/locale.
- * [OUTPUT]: Typed accounting/activity contract (including optional per-account models), four-part token composition, family-first model & thinking-depth effort sorting, official API USD cost/cache-savings estimation (including Mythos preview/5.2/5.1), peak bucket label formatting, cache-rate/K-M-B formatting, calendar series and elapsed-period averages/peaks.
+ * [OUTPUT]: Typed accounting/activity contract (including optional per-account models), four-part token composition, family-first model & thinking-depth effort sorting, official API USD cost estimation (including Mythos preview/5.2/5.1), per-session cost/depth efficiency summary, peak bucket label formatting, cache-rate/K-M-B formatting, calendar series and elapsed-period averages/peaks.
  * [POS]: Pure usage presentation helpers; no identity files, credentials or network access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -260,6 +260,74 @@ export function estimateSnapshotCostUsd(totals?: UsageTotals | null, models?: Us
     savingsRate,
     cacheReuseRatio,
   };
+}
+
+export type UsageSessionEfficiency = {
+  /** Recorded distinct session count when complete; null when legacy logs omit session IDs. */
+  sessions: number | null;
+  /** Average API-equivalent USD cost per session ($0 when requests === 0, null when unavailable). */
+  avgSessionCostUsd: number | null;
+  /** Average deduplicated responses (turns) per session. */
+  avgTurnsPerSession: number | null;
+  /** Average output tokens per session (rounded integer). */
+  avgOutputPerSession: number | null;
+  /** Average total tokens per session (rounded integer). */
+  avgTokensPerSession: number | null;
+};
+
+export function summarizeSessionEfficiency(
+  totals: UsageTotals | null | undefined,
+  activity: UsageSnapshot['activity'] | null | undefined,
+  costUsd: number,
+): UsageSessionEfficiency {
+  if (!totals) {
+    return {
+      sessions: null,
+      avgSessionCostUsd: null,
+      avgTurnsPerSession: null,
+      avgOutputPerSession: null,
+      avgTokensPerSession: null,
+    };
+  }
+  const rawSessions = activity?.sessions ?? totals.sessions;
+  const sessions = rawSessions != null && Number.isFinite(rawSessions) ? rawSessions : null;
+  if (totals.requests === 0) {
+    return {
+      sessions: sessions ?? 0,
+      avgSessionCostUsd: 0,
+      avgTurnsPerSession: null,
+      avgOutputPerSession: null,
+      avgTokensPerSession: null,
+    };
+  }
+  if (sessions == null || sessions <= 0) {
+    return {
+      sessions: null,
+      avgSessionCostUsd: null,
+      avgTurnsPerSession: null,
+      avgOutputPerSession: null,
+      avgTokensPerSession: null,
+    };
+  }
+  return {
+    sessions,
+    avgSessionCostUsd: costUsd / sessions,
+    avgTurnsPerSession: totals.requests / sessions,
+    avgOutputPerSession: Math.round(totals.output_tokens / sessions),
+    avgTokensPerSession: Math.round(totals.total_tokens / sessions),
+  };
+}
+
+export function formatTurnsPerSession(
+  turns: number | null | undefined,
+  locale: 'zh' | 'en' = 'zh',
+): string {
+  if (turns == null || !Number.isFinite(turns) || turns <= 0) return '—';
+  const digits = turns >= 10 || Math.abs(turns - Math.round(turns)) < 0.05 ? 0 : 1;
+  return new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(turns);
 }
 
 export function formatUsdCost(usd: number | null | undefined, compact = false): string {

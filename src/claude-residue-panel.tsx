@@ -12,7 +12,7 @@ import {AppDialog} from './dialog';
 import type {ActivityController} from './cleaner-activity';
 import {deselectItems,effectiveItems,formatBytes,presetIds,riskLabels,type CleanResult,type Scan} from './cleaner-model';
 import {useI18n} from './i18n';
-import {buildClaudeCliAntiLeakSettingsJson} from './risk-model';
+import {buildClaudeCliAntiLeakSettingsJson,isCliMcpBoundarySafe,isCliSecurityShieldOk} from './risk-model';
 
 export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:{activity:ActivityController;blocked:boolean;revision:number;onBusy:(busy:boolean)=>void;onChanged:()=>Promise<void>}){
  const {t}=useI18n();
@@ -25,8 +25,8 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
  const hasHighRiskSelected=selected.some(item=>item.risk!=='safe');
  const envOverrideWarnings=(scan?.warnings??[]).filter(warning=>/ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN/.test(warning));
  const cliSec=scan?.cli_security??null;
- const cliShieldOk=Boolean(cliSec&&cliSec.telemetry_shield_active&&!cliSec.nonessential_traffic_blocked&&cliSec.proxy_env_complete&&!cliSec.socks5_in_cli_env);
- const cliMcpOk=Boolean(cliSec&&cliSec.unpinned_npx_count===0&&cliSec.remote_http_mcp_count===0&&cliSec.windows_bare_npx_count===0&&!cliSec.has_custom_hooks_or_helpers);
+ const cliShieldOk=isCliSecurityShieldOk(cliSec);
+ const cliMcpOk=isCliMcpBoundarySafe(cliSec);
  const bytes=(rows:typeof items)=>rows.reduce((sum,item)=>sum+item.bytes,0);
  const locked=blocked||!!action;
  useEffect(()=>{onBusy(!!action||review);return()=>onBusy(false);},[action,review,onBusy]);

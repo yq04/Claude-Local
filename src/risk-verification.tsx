@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生只读环境快照（risk_inspect_local_env 含 CLI 遥测护盾/MCP 供应链审计）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好与双语文案。
- * [OUTPUT]: 明确所选浏览器范围的六项配置与HTTP出口诊断、CLI 遥测护盾/MCP 边界状态徽章、Mihomo strict-route 闭环修复向导、PayPal/Stripe 区域染色站点数据清理直达助手、过期结果隔离；桥接安全随机源缺失时局部停用。
+ * [OUTPUT]: 明确所选浏览器范围的六项配置与HTTP出口诊断、CLI 遥测护盾/显式代理固定/MCP 边界状态徽章、Mihomo strict-route 闭环修复向导、PayPal/Stripe 区域染色站点数据清理直达助手、过期结果隔离；桥接安全随机源缺失时局部停用。
  * [POS]: 风控验证主页面；零上游凭据读取、零临时口令落盘、严格拦截非 RFC1918 内网暴露，所有修复通过可审计 AI 提示词或用户显式下载完成。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -26,6 +26,8 @@ import {
   DEFAULT_DEDICATED_LISTENER_PORT,
   evaluateRiskChecks,
   compareProbeExits,
+  isCliMcpBoundarySafe,
+  isCliSecurityShieldOk,
   isCurrentRiskProbe,
   generateBridgeCredentials,
   isValidBridgePort,
@@ -279,6 +281,9 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
   );
   const bannerStatus = localAllReady ? 'ok' : overallStatus;
   const comparison = probe ? compareProbeExits(probe) : 'unknown';
+  const cliSec = local?.cli_security ?? null;
+  const cliShieldOk = isCliSecurityShieldOk(cliSec);
+  const cliMcpOk = isCliMcpBoundarySafe(cliSec);
 
   const bridgeArtifact = useMemo(() => {
     if (!creds || !validLanIp || !validPort) return null;
@@ -470,15 +475,16 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                   {t('risk.cliSecurity.telemetryRulesOk')}
                 </span>
               )}
-              {local?.cli_security && (
+              {cliSec && (
                 <>
                   <span
-                    className={`risk-context-pill${local.cli_security.telemetry_shield_active ? ' ok' : ''}`}
-                    data-risk-cli-shield={local.cli_security.telemetry_shield_active ? 'ok' : 'warn'}
+                    className={`risk-context-pill${cliShieldOk ? ' ok' : ' warn'}`}
+                    data-risk-cli-shield={cliShieldOk ? 'ok' : 'warn'}
+                    title={cliShieldOk ? undefined : t('risk.cliSecurity.shieldWarnHint')}
                   >
-                    {t(local.cli_security.telemetry_shield_active ? 'risk.cliSecurity.shieldOk' : 'risk.cliSecurity.shieldWarn')}
+                    {t(cliShieldOk ? 'risk.cliSecurity.shieldOk' : 'risk.cliSecurity.shieldWarn')}
                   </span>
-                  {local.cli_security.nonessential_traffic_blocked && (
+                  {cliSec.nonessential_traffic_blocked && (
                     <span
                       className="risk-context-pill warn"
                       data-risk-cli-nonessential="blocked"
@@ -487,15 +493,32 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                       {t('risk.cliSecurity.nonessentialBlockedWarn')}
                     </span>
                   )}
+                  {cliSec.socks5_in_cli_env ? (
+                    <span
+                      className="risk-context-pill warn"
+                      data-risk-cli-proxy="socks5"
+                      title={t('risk.cliSecurity.socks5Hint')}
+                    >
+                      {t('risk.cliSecurity.socks5Warn')}
+                    </span>
+                  ) : !cliSec.proxy_env_complete ? (
+                    <span
+                      className="risk-context-pill warn"
+                      data-risk-cli-proxy="incomplete"
+                      title={t('risk.cliSecurity.proxyEnvIncompleteHint')}
+                    >
+                      {t('risk.cliSecurity.proxyEnvIncompleteWarn')}
+                    </span>
+                  ) : null}
                   <span
-                    className={`risk-context-pill${local.cli_security.unpinned_npx_count === 0 && local.cli_security.remote_http_mcp_count === 0 && local.cli_security.windows_bare_npx_count === 0 && !local.cli_security.has_custom_hooks_or_helpers ? ' ok' : ''}`}
-                    data-risk-mcp-audit={local.cli_security.unpinned_npx_count === 0 && local.cli_security.remote_http_mcp_count === 0 && local.cli_security.windows_bare_npx_count === 0 && !local.cli_security.has_custom_hooks_or_helpers ? 'ok' : 'warn'}
+                    className={`risk-context-pill${cliMcpOk ? ' ok' : ' warn'}`}
+                    data-risk-mcp-audit={cliMcpOk ? 'ok' : 'warn'}
                   >
-                    {local.cli_security.unpinned_npx_count === 0 && local.cli_security.remote_http_mcp_count === 0 && local.cli_security.windows_bare_npx_count === 0 && !local.cli_security.has_custom_hooks_or_helpers
+                    {cliMcpOk
                       ? t('risk.cliSecurity.mcpOk')
                       : t('risk.cliSecurity.mcpWarn', {
-                          unpinned: Math.max(local.cli_security.unpinned_npx_count, local.cli_security.windows_bare_npx_count),
-                          remote: local.cli_security.remote_http_mcp_count + (local.cli_security.has_custom_hooks_or_helpers ? 1 : 0),
+                          unpinned: Math.max(cliSec.unpinned_npx_count, cliSec.windows_bare_npx_count),
+                          remote: cliSec.remote_http_mcp_count + (cliSec.has_custom_hooks_or_helpers ? 1 : 0),
                         })}
                   </span>
                 </>

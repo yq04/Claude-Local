@@ -15,6 +15,8 @@ import {
   buildStandaloneMobilePrompt,
   evaluateRiskChecks,
   compareProbeExits,
+  isCliMcpBoundarySafe,
+  isCliSecurityShieldOk,
   isCurrentRiskProbe,
   generateBridgeCredentials,
   isValidBridgePort,
@@ -646,4 +648,27 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
   expect(riskyAudit.windows_bare_npx_count).toBe(1);
   expect(riskyAudit.remote_http_mcp_count).toBe(1);
   expect(riskyAudit.pending_failed_telemetry_files).toBe(2);
+  expect(isCliSecurityShieldOk(hardenedAudit)).toBe(true);
+  expect(isCliMcpBoundarySafe(hardenedAudit)).toBe(true);
+  expect(isCliSecurityShieldOk(winUpperAudit)).toBe(true);
+  expect(isCliMcpBoundarySafe(winUpperAudit)).toBe(false);
+  expect(isCliSecurityShieldOk(riskyAudit)).toBe(false);
+  expect(isCliMcpBoundarySafe(riskyAudit)).toBe(false);
+
+  // TUN-only config: telemetry shield active, but missing explicit CLI HTTP proxy vars
+  // must NOT be treated as a full CLI shield pass (vulnerable on sleep/wake or TUN drop).
+  const tunOnlyAudit = auditClaudeCliSecurityBoundary({
+    settingsJson: {
+      env: {
+        DISABLE_TELEMETRY: '1',
+        DISABLE_ERROR_REPORTING: '1',
+        DO_NOT_TRACK: '1',
+      },
+    },
+  });
+  expect(tunOnlyAudit.telemetry_shield_active).toBe(true);
+  expect(tunOnlyAudit.proxy_env_complete).toBe(false);
+  expect(isCliSecurityShieldOk(tunOnlyAudit)).toBe(false);
+  expect(isCliSecurityShieldOk(null)).toBe(false);
+  expect(isCliMcpBoundarySafe(undefined)).toBe(false);
 });

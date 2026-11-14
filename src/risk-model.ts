@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生只读环境快照（浏览器远程 DNS 锁、Mihomo 结构特征、Claude CLI 遥测护盾/MCP 供应链审计、网卡 RFC1918 候选）与三路边缘 trace 一致性实测结果。
- * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属、严格 RFC1918 校验、Mihomo strict-route 覆写片段、桌面/移动端全量 Claude+Datadog+GrowthBook+Persona 防漏分流规则、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段与安全边界纯函数审计、安全随机源缺失即失败的内存桥接凭据与双语提示词。
+ * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属、严格 RFC1918 校验、Mihomo strict-route 覆写片段、桌面/移动端全量 Claude+Datadog+GrowthBook+Persona 防漏分流规则、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段与安全边界纯函数审计（含统一护盾与 MCP 边界判定）、安全随机源缺失即失败的内存桥接凭据与双语提示词。
  * [POS]: 风控验证纯模型层；不持有上游家宽密码、不落盘临时口令、不向公网暴露任何监听配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -1414,4 +1414,29 @@ export function auditClaudeCliSecurityBoundary(input: {
     has_custom_hooks_or_helpers,
     pending_failed_telemetry_files: Math.max(0, Math.floor(input.pendingFailedTelemetryFiles ?? 0)),
   };
+}
+
+/**
+ * True only when CLI telemetry suppression, nonessential-traffic preservation,
+ * and explicit HTTP/NO_PROXY proxy pinning are all intact without socks5 fallback.
+ */
+export function isCliSecurityShieldOk(cliSec: CliSecurityAudit | null | undefined): boolean {
+  return Boolean(
+    cliSec
+    && cliSec.telemetry_shield_active
+    && !cliSec.nonessential_traffic_blocked
+    && cliSec.proxy_env_complete
+    && !cliSec.socks5_in_cli_env,
+  );
+}
+
+/** True when all configured CLI MCP servers use pinned packages and local endpoints without custom helpers. */
+export function isCliMcpBoundarySafe(cliSec: CliSecurityAudit | null | undefined): boolean {
+  return Boolean(
+    cliSec
+    && cliSec.unpinned_npx_count === 0
+    && cliSec.remote_http_mcp_count === 0
+    && cliSec.windows_bare_npx_count === 0
+    && !cliSec.has_custom_hooks_or_helpers,
+  );
 }

@@ -1,6 +1,6 @@
 // [INPUT]: SQLite 目录、用户策略、白名单源、已验收归档代次、认证加密与平台凭据桥。
-// [OUTPUT]: 有界主密钥读取、先暂存后切换、切换置空与删除当前身份同步执行窄账号缓存与残留锁清场、独立养号转正草稿保护与提交后清理、幂等统计边界、持久恢复与真实阶段进度。
-// [POS]: 身份的文件事务；SQLite 与文件系统由恢复日志协调，不能假装是同一原子事务。
+// [OUTPUT]: 有界主密钥读取、先暂存后切换、Windows 文件锁退避、单重故障自动无残留回滚（清除瞬态暂存卡与归档并核验账号 HMAC）、双重故障一键干净恢复（recover_clean）与显式命名恢复检查点（recover）、窄账号缓存与残留锁清场、独立养号转正草稿保护与真实阶段进度。
+// [POS]: 身份的文件事务；SQLite 与文件系统由恢复日志与切换前目录快照协调，优先自动自愈回滚，极端中断保底零丢数据。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
     archive::{walk, Stage},
@@ -26,6 +26,8 @@ pub struct Store {
     pub(super) db: Database,
     pub(super) suppress_browser_draft: bool,
     process_check: std::cell::Cell<std::time::Instant>,
+    #[cfg(test)]
+    pub(super) fail_before_clear: bool,
     #[cfg(test)]
     pub(super) fail_after_clear: bool,
 }
@@ -64,7 +66,7 @@ impl Store {
                 .is_some_and(|s| s.strip_prefix(".stage-").is_some_and(super::valid_id))
             {
                 private::safe(&p)?;
-                fs::remove_dir_all(p).map_err(problem)?;
+                crate::cleaner::file_io::remove_dir_all_retry(&p).map_err(problem)?;
             }
         }
         let records = db.records()?;
@@ -83,10 +85,10 @@ impl Store {
                     }
                     let original = vault.join(&record.archive);
                     if !original.exists() {
-                        fs::rename(&path, original).map_err(problem)?;
+                        crate::cleaner::file_io::rename_retry(&path, &original).map_err(problem)?;
                     }
                 } else {
-                    fs::remove_file(path).map_err(problem)?;
+                    crate::cleaner::file_io::remove_file_retry(&path).map_err(problem)?;
                 }
             }
         }
@@ -97,6 +99,8 @@ impl Store {
             db,
             suppress_browser_draft: false,
             process_check: std::cell::Cell::new(std::time::Instant::now()),
+            #[cfg(test)]
+            fail_before_clear: false,
             #[cfg(test)]
             fail_after_clear: false,
         };
@@ -114,6 +118,18 @@ impl Store {
         }
         self.process_check.set(std::time::Instant::now());
         identity::ensure_stopped()
+    }
+    fn stopped_for_rollback(&self) -> Result<(), String> {
+        for attempt in 0..4 {
+            match self.stopped() {
+                Ok(()) => return Ok(()),
+                Err(_) if attempt < 3 => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
     pub(super) fn during_io(&self) -> Result<(), String> {
         if self.process_check.get().elapsed() >= std::time::Duration::from_millis(250) {
@@ -215,6 +231,22 @@ impl Store {
         reporter: &Reporter,
         phase: &str,
     ) -> Result<(), String> {
+        self.clear_inner(sources, reporter, phase, true)
+    }
+    fn clear_for_rollback(
+        &self,
+        sources: &[(usize, Source)],
+        reporter: &Reporter,
+    ) -> Result<(), String> {
+        self.clear_inner(sources, reporter, "rollback", false)
+    }
+    fn clear_inner(
+        &self,
+        sources: &[(usize, Source)],
+        reporter: &Reporter,
+        phase: &str,
+        strict_process_check: bool,
+    ) -> Result<(), String> {
         reporter.log(
             phase,
             "running",
@@ -223,11 +255,13 @@ impl Store {
             Some(sources.len()),
         );
         for (index, (_, source)) in sources.iter().enumerate() {
-            self.stopped()?;
+            if strict_process_check {
+                self.stopped()?;
+            }
             if !identity::allowed(&self.home, source) {
                 return Err("身份路径超出允许范围。".into());
             }
-            match fs::symlink_metadata(&source.path) {
+            match crate::cleaner::file_io::retry_io(|| fs::symlink_metadata(&source.path)) {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(problem(error)),
                 Ok(_) => {
@@ -236,9 +270,11 @@ impl Store {
                     if !source.keys.is_empty() {
                         identity::apply_config(source, &serde_json::json!({}))?;
                     } else if source.path.is_dir() {
-                        fs::remove_dir_all(&source.path).map_err(problem)?;
+                        crate::cleaner::file_io::remove_dir_all_retry(&source.path)
+                            .map_err(problem)?;
                     } else {
-                        fs::remove_file(&source.path).map_err(problem)?;
+                        crate::cleaner::file_io::remove_file_retry(&source.path)
+                            .map_err(problem)?;
                     }
                 }
             }
@@ -266,6 +302,7 @@ impl Store {
         policy: &Policy,
         reporter: &Reporter,
         phase: &str,
+        allow_overwrite: bool,
     ) -> Result<(), String> {
         reporter.log(
             phase,
@@ -275,14 +312,19 @@ impl Store {
             Some(sources.len()),
         );
         for (index, (n, source)) in sources.iter().enumerate() {
-            self.stopped()?;
+            if phase != "rollback" {
+                self.stopped()?;
+            }
+            if !identity::allowed(&self.home, source) {
+                return Err("身份路径超出允许范围。".into());
+            }
             private::parents(source.path.parent().unwrap())?;
-            if source.path.exists() {
+            if fs::symlink_metadata(&source.path).is_ok() {
                 private::safe(&source.path)?;
             }
             let data = stage.path.join(format!("data/{n}"));
             if !source.keys.is_empty() {
-                let bytes = fs::read(data).map_err(problem)?;
+                let bytes = crate::cleaner::file_io::read_bytes_retry(&data).map_err(problem)?;
                 let saved = if stage.manifest.sources[*n].keys.is_empty() {
                     identity::extract(source, std::str::from_utf8(&bytes).map_err(problem)?)?
                 } else {
@@ -290,28 +332,48 @@ impl Store {
                 };
                 identity::apply_config(source, &saved)?;
             } else {
-                if source.path.exists() {
-                    return Err("身份恢复位置已有数据；请使用恢复操作。".into());
+                if fs::symlink_metadata(&source.path).is_ok() {
+                    if allow_overwrite {
+                        private::safe(&source.path)?;
+                        if source.path.is_dir() {
+                            crate::cleaner::file_io::remove_dir_all_retry(&source.path)
+                                .map_err(problem)?;
+                        } else {
+                            crate::cleaner::file_io::remove_file_retry(&source.path)
+                                .map_err(problem)?;
+                        }
+                    } else {
+                        return Err("身份恢复位置已有数据；请使用恢复操作。".into());
+                    }
                 }
                 if data.is_dir() {
                     walk(&data, &data, &mut |path, relative, directory| {
-                        self.during_io()?;
+                        if phase != "rollback" {
+                            self.during_io()?;
+                        }
                         let target = source.path.join(relative);
                         if directory {
                             private::directory(&target)
                         } else {
                             private::directory(target.parent().unwrap())?;
+                            if allow_overwrite && fs::symlink_metadata(&target).is_ok() {
+                                private::safe(&target)?;
+                                crate::cleaner::file_io::remove_file_retry(&target)
+                                    .map_err(problem)?;
+                            }
                             let mut dest = private::create(&target)?;
-                            io::copy(&mut fs::File::open(path).map_err(problem)?, &mut dest)
-                                .map_err(problem)?;
+                            let mut input =
+                                crate::cleaner::file_io::open_read_retry(path).map_err(problem)?;
+                            io::copy(&mut input, &mut dest).map_err(problem)?;
                             dest.sync_all().map_err(problem)
                         }
                     })?;
                 } else {
                     private::directory(source.path.parent().unwrap())?;
                     let mut output = private::create(&source.path)?;
-                    io::copy(&mut fs::File::open(data).map_err(problem)?, &mut output)
-                        .map_err(problem)?;
+                    let mut input =
+                        crate::cleaner::file_io::open_read_retry(&data).map_err(problem)?;
+                    io::copy(&mut input, &mut output).map_err(problem)?;
                     output.sync_all().map_err(problem)?;
                 }
             }
@@ -323,9 +385,7 @@ impl Store {
                 Some(sources.len()),
             );
         }
-        if phase != "rollback" {
-            self.merge_kept_history(stage, policy)?;
-        }
+        self.merge_kept_history(stage, policy)?;
         reporter.log(
             phase,
             "ok",
@@ -333,7 +393,9 @@ impl Store {
             sources.len(),
             Some(sources.len()),
         );
-        self.stopped()?;
+        if phase != "rollback" {
+            self.stopped()?;
+        }
         let phase = if phase == "rollback" {
             phase
         } else {
@@ -466,14 +528,14 @@ impl Store {
             if trash.exists() {
                 return Err("身份删除事务尚未完成，请重新打开身份面板。".into());
             }
-            fs::rename(&path, &trash).map_err(problem)?;
+            crate::cleaner::file_io::rename_retry(&path, &trash).map_err(problem)?;
             private::sync_parent(&trash);
             if let Err(e) = self.db.forget(id) {
-                let _ = fs::rename(&trash, &path);
+                let _ = crate::cleaner::file_io::rename_retry(&trash, &path);
                 return Err(e);
             }
             // 数据库提交后，这个仅由自身命名的加密文件可安全回收；失败留待下次回收。
-            fs::remove_file(&trash)
+            crate::cleaner::file_io::remove_file_retry(&trash)
                 .map_err(|_| "身份已从目录移除，但暂存文件回收失败；请重新打开面板。")?;
             private::sync_parent(&trash);
         }
@@ -578,8 +640,11 @@ impl Store {
         let outgoing_result = self.save(name, policy, reporter);
         self.suppress_browser_draft = false;
         let (record, outgoing) = outgoing_result?;
-        let previous = self.db.get("active")?.unwrap_or_else(|| "current".into());
-        self.db.pending(&record, target)?;
+        let pre_snap = self.db.snapshot_before_switch(&record.id, target)?;
+        if let Err(error) = self.db.pending(&record, target) {
+            let _ = self.collect_generations();
+            return Err(error);
+        }
         let current = Self::selected(&outgoing, policy);
         let next = incoming
             .as_ref()
@@ -602,7 +667,7 @@ impl Store {
                 .zip(&outgoing.manifest.fingerprints)
                 .enumerate()
             {
-                if identity::fingerprint(&source.path)? != *stamp {
+                if source.category != "cache" && identity::fingerprint(&source.path)? != *stamp {
                     return Err("身份数据发生变化；未切换身份。".into());
                 }
                 reporter.log(
@@ -623,8 +688,22 @@ impl Store {
             // Capture outgoing requests against the verified live HMAC identity before
             // cleanup can rewrite shared project-session attribution markers.
             super::usage::collect_before_switch(&self.vault, &self.home, live_key.as_deref());
+            #[cfg(test)]
+            if self.fail_before_clear {
+                return Err("fixture pre-clear abort".into());
+            }
             mutated = true;
             self.clear(&current, reporter, "clear")?;
+            let next_extra: Vec<_> = next
+                .iter()
+                .filter(|(_, s)| {
+                    s.keys.is_empty() && !current.iter().any(|(_, c)| c.path == s.path)
+                })
+                .cloned()
+                .collect();
+            if !next_extra.is_empty() {
+                self.clear(&next_extra, reporter, "clear")?;
+            }
             identity::clear_stale_locks(&self.home);
             #[cfg(test)]
             if self.fail_after_clear {
@@ -640,7 +719,7 @@ impl Store {
             self.keys(&outgoing.manifest.credentials, false, policy)?;
             reporter.log("credentials", "ok", "当前本地登录凭据已清除。", 1, Some(1));
             if let Some(stage) = incoming.as_ref() {
-                self.restore(stage, &next, policy, reporter, "restore")?;
+                self.restore(stage, &next, policy, reporter, "restore", false)?;
             }
             let _ = identity::maintain_account_caches(&self.home);
             reporter.log(
@@ -689,15 +768,21 @@ impl Store {
                     0,
                     Some(1),
                 );
-                self.db.complete(&previous)?;
+                self.db.abort_pending(&pre_snap, &record.id, target)?;
+                let _ = self.collect_generations();
                 reporter.log("rollback", "ok", "原身份选择已保留。", 1, Some(1));
                 return Err(error);
             }
             reporter.log("rollback", "running", "切换失败，正在恢复原身份。", 0, None);
-            if self.stopped().is_ok() {
-                let rollback = (|| {
-                    self.clear(&current, reporter, "rollback")?;
-                    self.clear(&next, reporter, "rollback")?;
+            #[cfg(windows)]
+            if identity::root().ok().as_ref() == Some(&self.home) {
+                crate::cleaner::wait_claude_workspace_handles_released(&self.home, 400);
+            }
+            if self.stopped_for_rollback().is_ok() {
+                let rollback = (|| -> Result<(), String> {
+                    self.clear_for_rollback(&next, reporter)?;
+                    self.clear_for_rollback(&current, reporter)?;
+                    identity::clear_stale_locks(&self.home);
                     let live = self.snapshot_keys()?;
                     self.keys(&live, false, &outgoing.manifest.policy)?;
                     self.restore(
@@ -706,8 +791,20 @@ impl Store {
                         &outgoing.manifest.policy,
                         reporter,
                         "rollback",
+                        true,
                     )?;
-                    self.db.complete(&record.id)
+                    let _ = identity::maintain_account_caches(&self.home);
+                    if super::catalog::live_key(&self.home, &self.key)? != live_key {
+                        return Err("身份归档读写或验证失败；请保留暂存文件并重试。".into());
+                    }
+                    if pre_snap.prior_record.is_none() {
+                        self.db.abort_pending(&pre_snap, &record.id, target)?;
+                    } else {
+                        self.db.complete(&record.id)?;
+                        let _ = self.db.compact();
+                    }
+                    let _ = self.collect_generations();
+                    Ok(())
                 })();
                 if rollback.is_ok() {
                     reporter.log("rollback", "ok", "已恢复切换前的身份。", 1, Some(1));
@@ -831,6 +928,7 @@ impl Store {
             &outgoing.manifest.policy,
             reporter,
             "restore",
+            true,
         )?;
         let _ = identity::maintain_account_caches(&self.home);
         reporter.log(
@@ -853,6 +951,125 @@ impl Store {
             &self.home,
             record.account_key.as_deref().filter(|key| !key.is_empty()),
         );
+        let _ = self.collect_generations();
+        reporter.log("commit", "ok", "恢复后的身份选择已提交。", 1, Some(1));
+        reporter.log("verify", "ok", "原身份已恢复。", 1, Some(1));
+        Ok(())
+    }
+    pub fn recover_clean(&mut self, reporter: &Reporter) -> Result<(), String> {
+        let id = self.db.get("recovery")?.ok_or("没有需要恢复的身份事务。")?;
+        let was_transient = self.db.get("recovery_transient")?.as_deref() == Some("1");
+        let record = self.record(&id)?;
+        reporter.log(
+            "verify_archive",
+            "running",
+            "正在验收待恢复的身份归档。",
+            0,
+            None,
+        );
+        let outgoing = self.load(&record)?;
+        reporter.log(
+            "verify_archive",
+            "ok",
+            "待恢复的身份归档已验收。",
+            1,
+            Some(1),
+        );
+        let target = self.db.get("target")?.unwrap_or_else(|| "empty".into());
+        let incoming = if target == "empty" {
+            None
+        } else {
+            self.record(&target).ok().and_then(|r| self.load(&r).ok())
+        };
+        self.stopped()?;
+        reporter.log("switch", "running", "正在恢复未完成的身份切换。", 0, None);
+        // 仅当崩溃后工作区实际登录了不同于原身份与目标身份的全新第三账号时才暂存保护，普通半切换工作区不生成多余「恢复前状态」卡片。
+        if let Some(live_key) = super::catalog::live_key(&self.home, &self.key)
+            .ok()
+            .flatten()
+        {
+            let is_outgoing = outgoing.manifest.account_key.as_deref() == Some(live_key.as_str());
+            let is_incoming = incoming
+                .as_ref()
+                .and_then(|s| s.manifest.account_key.as_deref())
+                == Some(live_key.as_str());
+            if !is_outgoing && !is_incoming && self.db.by_account(&live_key)?.is_none() {
+                let (rescued, rescued_stage) =
+                    self.save("恢复前状态", &outgoing.manifest.policy, reporter)?;
+                if !rescued.empty {
+                    self.db.remember(&rescued)?;
+                    let _ = self.db.set_summary(
+                        &rescued.id,
+                        &super::profile::summarize_stage_with_ledger(&rescued_stage, &self.vault),
+                    );
+                }
+            }
+        }
+        let current = Self::selected(&outgoing, &outgoing.manifest.policy);
+        if let Some(stage) = incoming.as_ref() {
+            self.clear(
+                &Self::selected(stage, &outgoing.manifest.policy),
+                reporter,
+                "clear",
+            )?;
+        }
+        self.clear(&current, reporter, "clear")?;
+        identity::clear_stale_locks(&self.home);
+        let live = self.snapshot_keys()?;
+        reporter.log(
+            "credentials",
+            "running",
+            "正在清除待恢复工作区的登录凭据。",
+            0,
+            None,
+        );
+        self.keys(&live, false, &outgoing.manifest.policy)?;
+        reporter.log(
+            "credentials",
+            "ok",
+            "待恢复工作区的登录凭据已清除。",
+            1,
+            Some(1),
+        );
+        self.restore(
+            &outgoing,
+            &current,
+            &outgoing.manifest.policy,
+            reporter,
+            "restore",
+            true,
+        )?;
+        let _ = identity::maintain_account_caches(&self.home);
+        let expected_key = outgoing
+            .manifest
+            .account_key
+            .as_deref()
+            .filter(|k| !k.is_empty());
+        if let Some(expected) = expected_key {
+            if super::catalog::live_key(&self.home, &self.key)?.as_deref() != Some(expected) {
+                return Err("身份归档读写或验证失败；请保留暂存文件并重试。".into());
+            }
+        }
+        reporter.log(
+            "commit",
+            "running",
+            "正在提交恢复后的身份选择。",
+            0,
+            Some(1),
+        );
+        if was_transient {
+            self.db.finish_transient_recovery(&id, record.empty)?;
+        } else {
+            self.db.complete(&record.id)?;
+            if !record.empty {
+                let _ = self.db.set_summary(
+                    &record.id,
+                    &super::profile::summarize_stage_with_ledger(&outgoing, &self.vault),
+                );
+            }
+        }
+        self.db.compact()?;
+        super::usage::commit_switch_boundary(&self.vault, &self.home, expected_key);
         let _ = self.collect_generations();
         reporter.log("commit", "ok", "恢复后的身份选择已提交。", 1, Some(1));
         reporter.log("verify", "ok", "原身份已恢复。", 1, Some(1));

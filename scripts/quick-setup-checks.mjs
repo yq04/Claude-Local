@@ -300,12 +300,15 @@ export async function runQuickSetupChecks({page, context, output, base, errors})
     'quota_setup_status',
     'ui_privacy_read',
     'identities_quota_revision',
+    'identities_live_sessions',
     'identities_quota_batch_state',
     'identities_wakeup_state',
     'identities_backup_location',
     'ui_appearance_read',
     'ui_wallpaper_read',
     'risk_inspect_local_env',
+    'browser_kill_switch_state',
+    'monitor_window_state',
   ]);
   const disallowed = commands.filter(item => !allowedCommands.has(item.command));
   assert.deepEqual(disallowed, [], `All invoked commands must be within read-only allowlist: ${disallowed.map(d => d.command).join(', ')}`);

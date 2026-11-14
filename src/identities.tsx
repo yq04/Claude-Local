@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生身份命令、手动/自动订阅到期与充值日命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、Ultra无上限/Fable专项池/离线刷新凭据到期元数据、智能接力池摘要与悬浮窗穿透态、保留策略、逐窗观测、隐私偏好、顶部横条卡片拖拽排序及本地额度修订轮询。
- * [OUTPUT]: 同风格计数的166×286 CLI身份/养号工牌（支持顶部横条拖拽排序、恢复默认顺序与共享弹簧滚轮）、Ultra无上限展示、跨机防关联环境交接卡一键复制、智能接力池平均余量摘要、未知/过期账号定向批次查询、悬浮窗穿透态恢复及用量详情专项池/重置倒计时/凭据到期提醒。
+ * [INPUT]: 原生身份命令、轻量实时会话存活命令（identities_live_sessions）、手动/自动订阅到期与充值日命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、Ultra无上限/Fable专项池/离线刷新凭据到期元数据、智能接力池摘要与悬浮窗穿透态、保留策略、逐窗观测、隐私偏好、顶部横条卡片拖拽排序及本地额度修订轮询。
+ * [OUTPUT]: 同风格计数的166×286 CLI身份/养号工牌（清晰区分当前使用/CLI运行中/桌面端运行、切换前与聚焦即时会话刷新、一键无残留中断恢复、支持顶部横条拖拽排序、恢复默认顺序与共享弹簧滚轮）、Ultra无上限展示、跨机防关联环境交接卡一键复制、智能接力池平均余量摘要、未知/过期账号定向批次查询、悬浮窗穿透态恢复及用量详情专项池/重置倒计时/凭据到期提醒。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定；后台 revision 触发的读取在原生快照内容未变时保留现有状态对象，避免整页重渲染。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -25,7 +25,7 @@ import {IdentityOperationProgress, recordAuditHistoryItem, useCleanupActivity} f
 import {formatBytes} from './cleaner-model';
 import {ClaudeCliPanel} from './claude-cli-panel';
 import {ClaudeResiduePanel} from './claude-residue-panel';
-import {defaultPolicy, policyRows, type Identity, type IdentityState} from './identity-model';
+import {defaultPolicy, policyRows, type ActiveSession, type Identity, type IdentityState, type LiveSessionsSnapshot} from './identity-model';
 import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
 import {evaluateQuota, formatCompactEta, formatElapsedSinceReset, formatResetClock, type WeeklyPace} from './identity-quota';
 import {usePageRefresh, type IdentityReviewRequest} from './app-events';
@@ -207,6 +207,25 @@ interface ExpiryEditorState {
   error: string;
 }
 
+function sameActiveSessions(a: readonly ActiveSession[], b: readonly ActiveSession[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].pid !== b[i].pid || a[i].entrypoint !== b[i].entrypoint || a[i].workspace !== b[i].workspace) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function canQueryLiveSessions(): boolean {
+  if (typeof window === 'undefined') return false;
+  const win = window as Window & {
+    __TAURI_INTERNALS__?: {metadata?: unknown};
+    identityFixture?: {supportsLiveSessions?: boolean};
+  };
+  return Boolean(win.__TAURI_INTERNALS__?.metadata) || Boolean(win.identityFixture?.supportsLiveSessions);
+}
+
 export function IdentityPanel({onBusy, initialEmpty = false, identityReviewRequest = null, onIdentityReviewConsumed}: {onBusy?: (busy: boolean) => void; initialEmpty?: boolean; identityReviewRequest?: IdentityReviewRequest | null; onIdentityReviewConsumed?: (requestId: number) => void}) {
   const {t, locale} = useI18n();
   const prefs = usePreferences();
@@ -319,6 +338,50 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   tRef.current = t;
   const stateRef = useRef(state);
   stateRef.current = state;
+  const liveSessionsInFlightRef = useRef<Promise<void> | null>(null);
+  const lastLiveSessionsAtRef = useRef(0);
+  async function refreshLiveSessions(force = false): Promise<void> {
+    if (!canQueryLiveSessions() || !mountedRef.current || busyRef.current) return;
+    const isFixtureEnv = typeof window !== 'undefined' && 'identityFixture' in window;
+    const throttleMs = isFixtureEnv ? 0 : 400;
+    const now = Date.now();
+    if (!force && now - lastLiveSessionsAtRef.current < throttleMs) return;
+    if (liveSessionsInFlightRef.current) return liveSessionsInFlightRef.current;
+    const task = (async () => {
+      try {
+        const snap = await invoke<LiveSessionsSnapshot>('identities_live_sessions');
+        lastLiveSessionsAtRef.current = Date.now();
+        if (!mountedRef.current || busyRef.current || !snap || typeof snap.running !== 'boolean') return;
+        const sessions = Array.isArray(snap.sessions) ? snap.sessions : [];
+        const cliRunning = typeof snap.cli_running === 'boolean'
+          ? snap.cli_running
+          : snap.running && sessions.some(s => s.entrypoint !== 'Claude Desktop');
+        setState(previous => {
+          if (!previous) return previous;
+          const prevCli = previous.cli_running ?? (previous.running && (previous.sessions?.some(s => s.entrypoint !== 'Claude Desktop') ?? false));
+          if (
+            previous.running === snap.running &&
+            prevCli === cliRunning &&
+            sameActiveSessions(previous.sessions ?? [], sessions)
+          ) {
+            return previous;
+          }
+          return {
+            ...previous,
+            running: snap.running,
+            cli_running: cliRunning,
+            sessions,
+          };
+        });
+      } catch {
+        /* Preserve existing state when live session probe fails transiently. */
+      } finally {
+        liveSessionsInFlightRef.current = null;
+      }
+    })();
+    liveSessionsInFlightRef.current = task;
+    return task;
+  }
   const batchTargetInfo = useMemo(() => buildBatchTargets(state), [state]);
   const quotaTargets = batchTargetInfo.targets;
   const currentTargetSetKey = useMemo(
@@ -701,9 +764,15 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           if (!cancelled) {
             if (revision === undefined && !isFixture && readSeqRef.current > 0) {
               revision = next;
+              await refreshLiveSessions(false);
             } else if (revision === undefined || next !== revision) {
               // A failed or superseded read must leave the change pending for the next check.
-              if (await read(false)) revision = next;
+              if (await read(false)) {
+                revision = next;
+                lastLiveSessionsAtRef.current = Date.now();
+              }
+            } else {
+              await refreshLiveSessions(false);
             }
           }
         }
@@ -716,6 +785,17 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     void check();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, []);
+
+  const sessionConfirmOpen = review !== null || snapshot || deletion === 'current';
+  useEffect(() => {
+    if (!sessionConfirmOpen || !canQueryLiveSessions()) return;
+    const isFixture = typeof window !== 'undefined' && 'identityFixture' in window;
+    const intervalMs = isFixture ? 600 : 2000;
+    const timer = window.setInterval(() => {
+      if (!document.hidden && !busyRef.current) void refreshLiveSessions(true);
+    }, intervalMs);
+    return () => window.clearInterval(timer);
+  }, [sessionConfirmOpen]);
 
   useEffect(() => {
     const scheduler = new ForegroundQuotaScheduler({
@@ -731,6 +811,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
     const onForegroundChange = () => {
       scheduler.onForegroundChange();
+      if (!document.hidden) void refreshLiveSessions(false);
     };
     document.addEventListener('visibilitychange', onForegroundChange);
     window.addEventListener('focus', onForegroundChange);
@@ -1456,11 +1537,43 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     }
     setReview(target);
     setError('');
+    void refreshLiveSessions(true);
   }
   function openSnapshot() {
     setName((active?.name || currentName).slice(0, 64));
     setSnapshot(true);
     setError('');
+    void refreshLiveSessions(true);
+  }
+  async function recoverNow() {
+    if (!stateRef.current?.recovery || busy) return;
+    const previous = stateRef.current.records.find(row => row.id === stateRef.current?.recovery);
+    const recoveryPolicy = previous ? {...previous.policy} : policy;
+    setReview(null);
+    setWarmingPromotion(null);
+    setBusy(true);
+    setError('');
+    const onProgress = activity.start('identity', '恢复原身份');
+    try {
+      await stop();
+      const next = await invoke<IdentityState>('identities_switch', {
+        targetId: 'empty',
+        currentName: '',
+        policy: recoveryPolicy,
+        recover: true,
+        onProgress,
+      });
+      setState(next);
+      notifyHudIfTelemetryChanged(next, true);
+      setResidueRevision(value => value + 1);
+      activity.finish(true, next.browser_warning || '原身份已恢复。');
+    } catch (e) {
+      setError(String(e));
+      activity.finish(false, String(e));
+      await refreshAfterError();
+    } finally {
+      setBusy(false);
+    }
   }
   async function stop() {
     await invoke('identities_stop', {onProgress: activity.channel()});
@@ -1583,6 +1696,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     setAccepted(false);
     setDeleteBrowser(false);
     setError('');
+    if (target === 'current') void refreshLiveSessions(true);
   }
   async function remove() {
     if (!deletion || !accepted || busy) return;
@@ -2474,7 +2588,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       {state?.recovery && (
         <div className="identity-recovery" role="alert">
           <strong>{t('有一次身份切换尚未完成')}</strong>
-          <Button size="small" variant="secondary" disabled={locked || loading} onClick={() => choose('recovery')}>
+          <Button size="small" variant="secondary" disabled={locked || loading} onClick={() => void recoverNow()}>
             {t('恢复原身份')}
           </Button>
         </div>
@@ -2577,6 +2691,21 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           {identityReorder.orderedItems.map(item => {
             const isDragging = identityReorder.draggingId === item.id;
             if (item.kind === 'current') {
+              const cliSessions = state?.sessions?.filter(s => s.entrypoint !== 'Claude Desktop') ?? [];
+              const cliSessionCount = state?.sessions ? cliSessions.length : (state?.cli_running ? 1 : 0);
+              const isCliRunning = cliSessionCount > 0 || Boolean(state?.cli_running);
+              const currentBadgeLabel = loading
+                ? t('检查中')
+                : cliSessionCount > 1
+                  ? t('identityCard.statusCliRunningCount', {v0: cliSessionCount})
+                  : isCliRunning
+                    ? t('identityCard.statusCliRunning')
+                    : state?.running
+                      ? t('identityCard.statusDesktopRunning')
+                      : t('identityCard.statusActive');
+              const currentBadgeTitle = !loading && cliSessions.length > 0
+                ? cliSessions.map(s => `${s.entrypoint}${s.workspace ? ` · ${s.workspace}` : ''} (PID ${s.pid})`).join('\n')
+                : undefined;
               return (
                 <IdentityCard
                   key={CURRENT_IDENTITY_ORDER_TOKEN}
@@ -2595,7 +2724,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                     <div className="identity-avatar" aria-hidden="true">
                       {active?.name || current?.display_name || current?.email ? Array.from(currentName)[0]?.toUpperCase() : <ShieldCheck size={20} />}
                     </div>
-                    <span className={`identity-live-badge ${state?.running ? 'running' : 'stopped'}`}>{loading ? t('检查中') : state?.running ? t('运行中') : t('进程已停止')}</span>
+                    <span className={`identity-live-badge ${isCliRunning ? 'running' : 'stopped'}`} title={currentBadgeTitle}>{currentBadgeLabel}</span>
                     <DropdownMenu.Root>
                       <DropdownMenu.Trigger asChild>
                         <button
@@ -3182,7 +3311,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           if (!open && !busy) {setReview(null); setWarmingPromotion(null);}
         }}
         title={warmingPromotion ? t('warming.promote') : review === 'recovery' ? t('恢复原身份') : review === 'empty' ? t('切换到空身份') : t('切换身份')}
-        description={t(review === 'recovery' ? 'identitySafety.recoveryHint' : '先压缩暂存当前 Claude Code 与 Desktop 状态，再切换。将结束已识别的 Claude 进程，未保存任务会中断。')}
+        description={t(review === 'recovery' ? 'identitySafety.recoveryHint' : (state?.running || (state?.sessions?.length ?? 0) > 0) ? '先压缩暂存当前 Claude Code 与 Desktop 状态，再切换。将结束已识别的 Claude 进程，未保存任务会中断。' : 'identitySafety.switchIdleHint')}
         footer={
           <>
             <Button variant="secondary" onClick={() => {setReview(null); setWarmingPromotion(null);}}>

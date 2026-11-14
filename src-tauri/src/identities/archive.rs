@@ -1,5 +1,5 @@
 // [INPUT]: 白名单身份源、SQLite 账号目录、Zstandard/旧 gzip 与认证加密流。
-// [OUTPUT]: 不可变归档代次与有界解包区、逐源完成/压缩落盘/完整验收进度；实时工作区快照跳过瞬态 .claude/debug/latest 链接，归档解包与恢复遍历仍严格拒绝链接；首身份或受控养号转正复用浏览器编号，转正时旧 CLI 归档不消费草稿。
+// [OUTPUT]: 不可变归档代次与有界解包区、逐源完成/压缩落盘/完整验收进度；实时工作区快照跳过瞬态 .claude/debug/latest 链接与瞬态锁/临时文件并容忍瞬态缓存文件消失与 Windows 短暂共享冲突，归档解包与恢复遍历仍严格拒绝链接；首身份或受控养号转正复用浏览器编号，转正时旧 CLI 归档不消费草稿。
 // [POS]: 保险库的数据格式与资源边界，与 store 的工作区切换事务分离，旧 gzip 归档保持可读，认证尾部仍完整验收。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -39,7 +39,7 @@ pub(super) struct Stage {
 }
 impl Drop for Stage {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
+        let _ = crate::cleaner::file_io::remove_dir_all_retry(&self.path);
     }
 }
 fn is_transient_claude_debug_latest_link(debug_pointer: Option<&Path>, path: &Path) -> bool {
@@ -69,22 +69,73 @@ fn walk_inner(
     debug_pointer: Option<&Path>,
     visit: &mut impl FnMut(&Path, &Path, bool) -> Result<(), String>,
 ) -> Result<(), String> {
-    // 仅实时工作区快照跳过 Claude Code 生成的固定 .claude/debug/latest 瞬态链接；不跟随目标，通用恢复遍历仍严格拒绝链接。
+    // 仅实时工作区快照跳过 Claude Code 生成的固定 .claude/debug/latest 瞬态链接与锁/临时文件；不跟随目标，通用恢复遍历仍严格拒绝链接。
     if is_transient_claude_debug_latest_link(debug_pointer, path) {
         return Ok(());
     }
-    private::safe(path)?;
-    let meta = fs::symlink_metadata(path).map_err(problem)?;
+    let live_child = debug_pointer.is_some() && path.parent() != Some(base);
+    if live_child
+        && path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(crate::cleaner::targets::is_transient_workspace_name)
+    {
+        return Ok(());
+    }
+    let meta = if debug_pointer.is_some() {
+        match crate::cleaner::file_io::retry_io(|| fs::symlink_metadata(path)) {
+            Ok(meta) => meta,
+            Err(error)
+                if live_child
+                    && error.kind() == io::ErrorKind::NotFound
+                    && crate::cleaner::targets::is_ephemeral_workspace_subpath(path) =>
+            {
+                return Ok(());
+            }
+            Err(error) => return Err(problem(error)),
+        }
+    } else {
+        private::safe(path)?;
+        fs::symlink_metadata(path).map_err(problem)?
+    };
+    if debug_pointer.is_some() {
+        if let Err(error) = private::safe(path) {
+            if live_child
+                && !path.exists()
+                && !crate::cleaner::linked(&meta)
+                && crate::cleaner::targets::is_ephemeral_workspace_subpath(path)
+            {
+                return Ok(());
+            }
+            return Err(error);
+        }
+    }
     visit(
         path,
         path.strip_prefix(base).map_err(problem)?,
         meta.is_dir(),
     )?;
     if meta.is_dir() {
-        let mut entries = fs::read_dir(path)
-            .map_err(problem)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(problem)?;
+        let mut entries = if debug_pointer.is_some() {
+            match crate::cleaner::file_io::retry_io(|| {
+                fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()
+            }) {
+                Ok(entries) => entries,
+                Err(error)
+                    if live_child
+                        && error.kind() == io::ErrorKind::NotFound
+                        && crate::cleaner::targets::is_ephemeral_workspace_subpath(path) =>
+                {
+                    return Ok(());
+                }
+                Err(error) => return Err(problem(error)),
+            }
+        } else {
+            fs::read_dir(path)
+                .map_err(problem)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(problem)?
+        };
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
             walk_inner(&entry.path(), base, debug_pointer, visit)?;
@@ -120,7 +171,7 @@ impl Store {
         let archive = self.vault.join(&record.archive);
         private::parents(&self.vault)?;
         private::safe(&archive)?;
-        let file = fs::File::open(archive).map_err(problem)?;
+        let file = crate::cleaner::file_io::open_read_retry(&archive).map_err(problem)?;
         if file.metadata().map_err(problem)?.len() > limits.stream_bytes {
             return Err(archive_limits::ERROR.into());
         }
@@ -238,7 +289,7 @@ impl Store {
                 manifest,
             }),
             Err(e) => {
-                let _ = fs::remove_dir_all(folder);
+                let _ = crate::cleaner::file_io::remove_dir_all_retry(&folder);
                 Err(e)
             }
         }
@@ -357,7 +408,8 @@ impl Store {
                 self.stopped()?;
                 let archive_path = PathBuf::from(format!("data/{n}"));
                 if !source.keys.is_empty() {
-                    let text = fs::read_to_string(&source.path).map_err(problem)?;
+                    let text = crate::cleaner::file_io::read_to_string_retry(&source.path)
+                        .map_err(problem)?;
                     let bytes =
                         serde_json::to_vec(&identity::extract(source, &text)?).map_err(problem)?;
                     append(&mut tar, &archive_path, &bytes)?;
@@ -377,13 +429,26 @@ impl Store {
                             if directory {
                                 tar.append_dir(target, path).map_err(problem)
                             } else {
-                                let mut file = fs::File::open(path).map_err(problem)?;
-                                tar.append_file(target, &mut file).map_err(problem)
+                                match crate::cleaner::file_io::open_read_retry(path) {
+                                    Ok(mut file) => {
+                                        tar.append_file(target, &mut file).map_err(problem)
+                                    }
+                                    Err(error)
+                                        if error.kind() == io::ErrorKind::NotFound
+                                            && crate::cleaner::targets::is_ephemeral_workspace_subpath(
+                                                path,
+                                            ) =>
+                                    {
+                                        Ok(())
+                                    }
+                                    Err(error) => Err(problem(error)),
+                                }
                             }
                         },
                     )?;
                 } else {
-                    let mut file = fs::File::open(&source.path).map_err(problem)?;
+                    let mut file =
+                        crate::cleaner::file_io::open_read_retry(&source.path).map_err(problem)?;
                     tar.append_file(archive_path, &mut file).map_err(problem)?;
                 }
                 reporter.log(
@@ -433,7 +498,7 @@ impl Store {
                 .zip(&manifest.fingerprints)
                 .enumerate()
             {
-                if identity::fingerprint(&source.path)? != *stamp {
+                if source.category != "cache" && identity::fingerprint(&source.path)? != *stamp {
                     return Err("身份数据发生变化；未切换身份。".into());
                 }
                 reporter.log(
@@ -452,7 +517,7 @@ impl Store {
                 Some(manifest.sources.len()),
             );
             self.stopped()?;
-            fs::rename(&pending, &destination).map_err(problem)?;
+            crate::cleaner::file_io::rename_retry(&pending, &destination).map_err(problem)?;
             private::sync_parent(&destination);
             let record = Record {
                 id,
@@ -487,8 +552,8 @@ impl Store {
             Ok((record, stage))
         })();
         if result.is_err() {
-            let _ = fs::remove_file(pending);
-            let _ = fs::remove_file(destination);
+            let _ = crate::cleaner::file_io::remove_file_retry(&pending);
+            let _ = crate::cleaner::file_io::remove_file_retry(&destination);
         }
         result
     }

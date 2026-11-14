@@ -1,5 +1,5 @@
 // [INPUT]: 身份保险库与临时文件系统样本。
-// [OUTPUT]: SQLite 策略持久化、完整认证归档、原始历史恢复、持久恢复检查点与真实阶段/局部完成计数/回滚事件回归，不读取真实 Claude 凭据。
+// [OUTPUT]: SQLite 策略持久化、完整认证归档、原始历史恢复、未保存身份切换失败无残留自动回滚、一键干净恢复（recover_clean）与显式命名恢复检查点（recover）及局部完成计数/回滚事件回归，不读取真实 Claude 凭据。
 // [POS]: 身份管理的离线验证入口；平台真实登入需用户验收。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -649,6 +649,240 @@ fn switching_from_unauthenticated_workspace_with_cache_or_projects_never_creates
     assert_eq!(visible.len(), 1);
     assert_eq!(visible[0].name, "First");
     assert!(!visible.iter().any(|r| r.name == "当前身份"));
+
+    drop(store);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn unsaved_current_switch_failure_rolls_back_cleanly_without_spawning_transient_card() {
+    let folder = canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("baga-clean-rollback-{}", new_id().unwrap()));
+    let home = folder.join("home");
+    let vault = folder.join("vault");
+    private::directory(&home.join(".claude/projects/demo")).unwrap();
+    private::directory(&home.join(".claude/cache")).unwrap();
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"saved-target-uuid","organizationUuid":"org-target","emailAddress":"target@example.invalid","displayName":"Saved Target"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"target-token"}}"#,
+    )
+    .unwrap();
+
+    let mut store = store::Store::open(&vault, &home).unwrap();
+    let reporter = Reporter::channel(None);
+    store
+        .switch("empty", "Saved Target", &Policy::default(), &reporter)
+        .unwrap();
+    let target_id = store.records().into_iter().find(|r| !r.empty).unwrap().id;
+    let count_bagas = || {
+        std::fs::read_dir(&vault)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "baga"))
+            .count()
+    };
+    assert_eq!(count_bagas(), 1);
+
+    // Log into a brand-new unsaved "current" account in the live workspace.
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"unsaved-live-uuid","organizationUuid":"org-live","emailAddress":"unsaved@example.invalid","displayName":"Unsaved Live"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"unsaved-live-token"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/projects/demo/live.jsonl"),
+        "{\"live\":1}\n",
+    )
+    .unwrap();
+    private::directory(&home.join(".claude/cache")).unwrap();
+    fixture_write(home.join(".claude/cache/live-cache"), "live-cache-entry").unwrap();
+
+    // 1. Pre-clear abort (!mutated) must remove the pending transient card & archive completely.
+    store.fail_before_clear = true;
+    assert!(store
+        .switch(&target_id, "当前身份", &Policy::default(), &reporter)
+        .is_err());
+    store.fail_before_clear = false;
+    assert!(store.db.get("recovery").unwrap().is_none());
+    assert!(store.db.get("recovery_transient").unwrap().is_none());
+    assert_eq!(store.records().len(), 1);
+    assert_eq!(store.records()[0].id, target_id);
+    assert_eq!(count_bagas(), 1);
+    assert_eq!(
+        profile::read(&home).email.as_deref(),
+        Some("unsaved@example.invalid")
+    );
+
+    // 2. Post-clear failure (mutated == true) must restore the unsaved live account AND purge the transient card & archive.
+    store.fail_after_clear = true;
+    let err = store
+        .switch(&target_id, "当前身份", &Policy::default(), &reporter)
+        .unwrap_err();
+    store.fail_after_clear = false;
+    assert!(err.contains("已恢复切换前的身份。"));
+    assert!(store.db.get("recovery").unwrap().is_none());
+    assert!(store.db.get("recovery_transient").unwrap().is_none());
+    assert_eq!(store.records().len(), 1);
+    assert_eq!(store.records()[0].id, target_id);
+    assert!(!store.records().iter().any(|r| r.name == "当前身份"));
+    assert_eq!(count_bagas(), 1);
+    assert_eq!(
+        profile::read(&home).email.as_deref(),
+        Some("unsaved@example.invalid")
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(
+            &std::fs::read(home.join(".claude/.credentials.json")).unwrap()
+        )
+        .unwrap()["claudeAiOauth"]["accessToken"],
+        "unsaved-live-token"
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.join(".claude/projects/demo/live.jsonl")).unwrap(),
+        "{\"live\":1}\n"
+    );
+
+    // 3. Subsequent normal switch succeeds cleanly on the first try without manual cleanup.
+    store
+        .switch(&target_id, "Unsaved Live", &Policy::default(), &reporter)
+        .unwrap();
+    assert_eq!(
+        profile::read(&home).email.as_deref(),
+        Some("target@example.invalid")
+    );
+    assert_eq!(store.records().len(), 2);
+
+    drop(store);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn recover_clean_restores_interrupted_switch_without_spawning_checkpoint_card_and_rescues_distinct_login()
+{
+    let folder = canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("baga-recover-clean-{}", new_id().unwrap()));
+    let home = folder.join("home");
+    let vault = folder.join("vault");
+    private::directory(&home.join(".claude/projects/demo")).unwrap();
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"target-b-uuid","organizationUuid":"org-b","emailAddress":"b@example.invalid","displayName":"Target B"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"token-b"}}"#,
+    )
+    .unwrap();
+
+    let mut store = store::Store::open(&vault, &home).unwrap();
+    let reporter = Reporter::channel(None);
+    let mut policy = Policy::default();
+    policy.history = false;
+    store.switch("empty", "Target B", &policy, &reporter).unwrap();
+    let b_id = store.records()[0].id.clone();
+
+    // Sub-case 1: Crash mid-switch from an unsaved "current" login, with residual kept settings/files.
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"unsaved-a-uuid","organizationUuid":"org-a","emailAddress":"a@example.invalid","displayName":"Unsaved A"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"token-a"}}"#,
+    )
+    .unwrap();
+    fixture_write(home.join(".claude/settings.json"), r#"{"theme":"dark"}"#).unwrap();
+
+    let (transient_record, stage) = store.save("当前身份", &policy, &reporter).unwrap();
+    store.db.pending(&transient_record, &b_id).unwrap();
+    assert_eq!(
+        store.db.get("recovery_transient").unwrap().as_deref(),
+        Some("1")
+    );
+    store
+        .clear(&store::Store::selected(&stage, &policy), &reporter, "clear")
+        .unwrap();
+    drop(stage);
+    drop(store);
+
+    let mut store = store::Store::open(&vault, &home).unwrap();
+    assert!(store.db.get("recovery").unwrap().is_some());
+    store.recover_clean(&reporter).unwrap();
+    assert!(store.db.get("recovery").unwrap().is_none());
+    assert!(store.db.get("recovery_transient").unwrap().is_none());
+    assert_eq!(store.db.get("active").unwrap().as_deref(), Some("current"));
+    assert_eq!(store.records().len(), 1);
+    assert_eq!(store.records()[0].id, b_id);
+    assert!(!store
+        .records()
+        .iter()
+        .any(|r| r.name == "当前身份" || r.name == "恢复前状态"));
+    assert_eq!(
+        profile::read(&home).email.as_deref(),
+        Some("a@example.invalid")
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(
+            &std::fs::read(home.join(".claude/.credentials.json")).unwrap()
+        )
+        .unwrap()["claudeAiOauth"]["accessToken"],
+        "token-a"
+    );
+
+    // Sub-case 2: Crash mid-switch from a saved card, followed by a genuine 3rd account login before recovery.
+    store.save_current("Saved A", &policy, &reporter).unwrap();
+    let a_record = store
+        .records()
+        .into_iter()
+        .find(|r| r.name == "Saved A")
+        .unwrap();
+    let (updated_a, stage_a) = store.save("Saved A", &policy, &reporter).unwrap();
+    store.db.pending(&updated_a, &b_id).unwrap();
+    assert!(store.db.get("recovery_transient").unwrap().is_none());
+    store
+        .clear(
+            &store::Store::selected(&stage_a, &policy),
+            &reporter,
+            "clear",
+        )
+        .unwrap();
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"third-c-uuid","organizationUuid":"org-c","emailAddress":"c@example.invalid","displayName":"Third C"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"token-c"}}"#,
+    )
+    .unwrap();
+    drop(stage_a);
+    store.recover_clean(&reporter).unwrap();
+    assert!(store.db.get("recovery").unwrap().is_none());
+    assert_eq!(
+        store.db.get("active").unwrap().as_deref(),
+        Some(a_record.id.as_str())
+    );
+    assert_eq!(
+        profile::read(&home).email.as_deref(),
+        Some("a@example.invalid")
+    );
+    assert_eq!(store.records().len(), 3);
+    assert!(store.records().iter().any(|r| r.name == "恢复前状态"));
 
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();

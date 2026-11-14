@@ -1062,8 +1062,9 @@ pub async fn monitor_live_telemetry(app: tauri::AppHandle) -> Result<MonitorLive
         let root_path = crate::cleaner::identity::root()?;
         let observed_at_ms = now_ms();
         let now_sec = observed_at_ms / 1000;
-        let running = crate::cleaner::identity::processes_running().unwrap_or(false);
-        let sessions = crate::identities::profile::active_sessions(&root_path);
+        let procs = crate::cleaner::identity::running_processes();
+        let running = !procs.is_empty();
+        let sessions = crate::identities::profile::active_sessions_from_processes(&root_path, &procs);
         let session_count = sessions.len();
         let client_label = sessions.first().map(|s| s.entrypoint.clone());
         let expected_account = crate::identities::usage::live_account_key(&vault_path, &root_path);

@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 当前已筛选的本地用量快照、序列桶、成本/节省折算、活动主题与双语翻译函数。
- * [OUTPUT]: 零外部依赖的高清 2x Retina Token 消耗截图（支持「数据概览」与「趋势全图」双模式，防标题重叠截断与时区安全峰值标签，一键写入剪贴板或下载 PNG）。
+ * [INPUT]: 当前已筛选的本地用量快照、序列桶、成本与单会话均耗折算、活动主题与双语翻译函数。
+ * [OUTPUT]: 零外部依赖的高清 2x Retina Token 消耗截图（支持「数据概览」与「趋势全图」双模式，含顶对齐 2×2 KPI 卡与单次均耗/防截断换行的副标题、对齐占比列与 2×2 微型统计网格的模型分布卡、防标题重叠截断与时区安全峰值标签，一键写入剪贴板或下载 PNG）。
  * [POS]: 用量分析的纯前端视觉导出工具；仅消费现有内存快照，不发起 IPC 请求或访问剪贴板历史。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -8,10 +8,12 @@ import {
   cacheHitRate,
   detectModelFamily,
   estimateTotalsCostUsd,
+  formatTurnsPerSession,
   formatUsdCost,
   formatUsageNumber,
   formatUsagePeakBucketLabel,
   sortUsageModels,
+  summarizeSessionEfficiency,
   summarizeUsageTrend,
   tokenComposition,
   type UsageCostEstimate,
@@ -100,6 +102,90 @@ function truncateText(ctx: CanvasRenderingContext2D, text: string, maxWidth: num
     trimmed = trimmed.slice(0, -1);
   }
   return trimmed + '…';
+}
+
+function packSubItemLines(
+  ctx: CanvasRenderingContext2D,
+  items: readonly string[],
+  maxWidth: number,
+  maxLines = 2,
+): string[] {
+  const lines: string[] = [];
+  for (const rawItem of items) {
+    const item = rawItem.trim();
+    if (!item) continue;
+    if (lines.length === 0) {
+      lines.push(item);
+      continue;
+    }
+    const lastIdx = lines.length - 1;
+    const candidate = `${lines[lastIdx]} · ${item}`;
+    if (ctx.measureText(candidate).width <= maxWidth) {
+      lines[lastIdx] = candidate;
+    } else if (lines.length < maxLines) {
+      lines.push(item);
+    } else {
+      lines[lastIdx] = candidate;
+    }
+  }
+  return lines.map(line => truncateText(ctx, line, maxWidth));
+}
+
+function wrapTextLines(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines = 2,
+): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (ctx.measureText(trimmed).width <= maxWidth) return [trimmed];
+  const tokens = trimmed.match(/[A-Za-z0-9$€£¥.,:%+/×()-]+|\s+|./gu) ?? [trimmed];
+  const lines: string[] = [];
+  let current = '';
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (/^\s+$/.test(tok)) {
+      if (current) current += ' ';
+      continue;
+    }
+    const candidate = current + tok;
+    if (!current || ctx.measureText(candidate).width <= maxWidth) {
+      current = candidate;
+      continue;
+    }
+    if (lines.length + 1 < maxLines) {
+      lines.push(current.trimEnd());
+      current = tok;
+    } else {
+      current = `${current}${tokens.slice(i).join('')}`.trim();
+      break;
+    }
+  }
+  if (current.trim()) lines.push(current.trimEnd());
+  return lines.slice(0, maxLines).map(line => truncateText(ctx, line, maxWidth));
+}
+
+function drawModelStatPair(
+  ctx: CanvasRenderingContext2D,
+  edgeX: number,
+  y: number,
+  align: 'left' | 'right',
+  first: { text: string; font: string; color: string },
+  second: { text: string; font: string; color: string },
+  gap = 3.5,
+) {
+  ctx.font = first.font;
+  const w1 = ctx.measureText(first.text).width;
+  ctx.font = second.font;
+  const w2 = ctx.measureText(second.text).width;
+  const startX = align === 'left' ? edgeX : edgeX - (w1 + gap + w2);
+  ctx.font = first.font;
+  ctx.fillStyle = first.color;
+  ctx.fillText(first.text, startX, y);
+  ctx.font = second.font;
+  ctx.fillStyle = second.color;
+  ctx.fillText(second.text, startX + w1 + gap, y);
 }
 
 export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HTMLCanvasElement {
@@ -194,7 +280,7 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
   // Overview Section (y = 74, h = 262)
   const overviewY = 74;
   const overviewH = 262;
-  const leftW = 472;
+  const leftW = 456;
   const rightX = 20 + leftW + 12;
   const rightW = width - 20 - rightX;
 
@@ -213,7 +299,7 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
     avgTokPerReq ? ` · ${t('usage.avgTokensPerRequest', { avg: avgTokPerReq })}` : ''
   }`;
   ctx.font = `500 11px ${fontSans}`;
-  const reqPillW = Math.min(280, ctx.measureText(reqPillText).width + 18);
+  const reqPillW = Math.min(264, ctx.measureText(reqPillText).width + 18);
   fillStrokeRoundRect(ctx, 20 + leftW - 18 - reqPillW, overviewY + 14, reqPillW, 24, 12, palette.subCard, palette.border);
   ctx.fillStyle = palette.muted;
   ctx.fillText(truncateText(ctx, reqPillText, reqPillW - 16), 20 + leftW - 18 - reqPillW + 9, overviewY + 26);
@@ -348,7 +434,7 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
   const elapsedUnits = hasHourlyIntervals
     ? elapsedBuckets.reduce((sum, d) => sum + (d.end_at! - d.start_at!) / 3600, 0)
     : elapsedBuckets.length;
-  const avgBucketCost = elapsedUnits > 0 ? costBreakdown.costUsd / elapsedUnits : 0;
+  const avgBucketCost = elapsedUnits > 0 ? costBreakdown.costUsd / elapsedUnits : null;
   const trendSummary = summarizeUsageTrend(series);
   const dominantModel = [...(snapshot.models ?? [])].sort(
     (a, b) => b.totals.total_tokens - a.totals.total_tokens,
@@ -369,56 +455,87 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
           maximumFractionDigits: 1,
         }).format(hit);
 
-  const costSubBase = t('usage.costBreakdownSub', {
-    output: formatUsdCost(costBreakdown.outputCostUsd, true),
-    cache: formatUsdCost(costBreakdown.cacheWriteCostUsd + costBreakdown.cacheReadCostUsd, true),
-  });
+  const avgCostPerReq =
+    snapshot.totals.requests > 0 ? costBreakdown.costUsd / snapshot.totals.requests : null;
+  const sessionEff = summarizeSessionEfficiency(
+    snapshot.totals,
+    snapshot.activity,
+    costBreakdown.costUsd,
+  );
 
-  const kpiCards = [
+  const kpiCards: {
+    title: string;
+    value: string;
+    subItems?: string[];
+    fallback: string;
+  }[] = [
     {
       title: t('usage.estimatedCost'),
       value: formatUsdCost(costBreakdown.costUsd, costBreakdown.costUsd >= 10_000),
-      sub: costBreakdown.costUsd > 0 ? costSubBase : t('usage.estimatedCostHint'),
+      subItems:
+        costBreakdown.costUsd > 0
+          ? [
+              t('usage.costOutputSub', { cost: formatUsdCost(costBreakdown.outputCostUsd, true) }),
+              t('usage.costCacheSub', {
+                cost: formatUsdCost(costBreakdown.cacheWriteCostUsd + costBreakdown.cacheReadCostUsd, true),
+              }),
+              ...(avgCostPerReq != null
+                ? [t('usage.avgCostPerRequest', { cost: formatUsdCost(avgCostPerReq) })]
+                : []),
+            ]
+          : undefined,
+      fallback: t('usage.estimatedCostHint'),
     },
     {
-      title: t('usage.cacheSavings'),
-      value: formatUsdCost(costBreakdown.cacheSavingsUsd, true),
-      sub:
-        costBreakdown.savingsRate != null
-          ? t('usage.cacheSavingsRate', {
-              rate: new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {
-                style: 'percent',
-                maximumFractionDigits: 1,
-              }).format(costBreakdown.savingsRate),
-            })
-          : t('usage.cacheSavingsHint'),
+      title: t('usage.sessionCost'),
+      value:
+        sessionEff.avgSessionCostUsd != null
+          ? formatUsdCost(sessionEff.avgSessionCostUsd, sessionEff.avgSessionCostUsd >= 10_000)
+          : '—',
+      subItems:
+        sessionEff.avgTurnsPerSession != null && sessionEff.avgOutputPerSession != null
+          ? [
+              t('usage.sessionTurnsSub', {
+                turns: formatTurnsPerSession(sessionEff.avgTurnsPerSession, locale),
+              }),
+              t('usage.sessionOutputSub', {
+                output: formatUsageNumber(sessionEff.avgOutputPerSession, locale, true),
+              }),
+            ]
+          : undefined,
+      fallback:
+        snapshot.totals.requests > 0
+          ? t('usage.sessionCostUnavailable')
+          : t('usage.sessionCostHint'),
     },
     {
       title: t('usage.cacheHit'),
       value: hitStr,
-      sub:
+      subItems:
         costBreakdown.cacheReuseRatio != null
-          ? t('usage.cacheReuseSub', {
-              ratio: costBreakdown.cacheReuseRatio.toFixed(1),
-              read: formatUsageNumber(snapshot.totals.cache_read_tokens, locale, true),
-            })
-          : t('usage.cacheHitHint'),
+          ? [
+              t('usage.cacheReuseRatioSub', { ratio: costBreakdown.cacheReuseRatio.toFixed(1) }),
+              t('usage.cacheReadSub', {
+                read: formatUsageNumber(snapshot.totals.cache_read_tokens, locale, true),
+              }),
+            ]
+          : undefined,
+      fallback: t('usage.cacheHitHint'),
     },
     {
       title: t(isHourly ? 'usage.hourlyCostPace' : 'usage.dailyCostPace'),
-      value: formatUsdCost(avgBucketCost, avgBucketCost >= 10_000),
-      sub:
+      value: avgBucketCost != null ? formatUsdCost(avgBucketCost, avgBucketCost >= 10_000) : '—',
+      subItems:
         peakBucketCost > 0 && peakLabel
-          ? t('usage.peakCostSub', {
-              cost: formatUsdCost(peakBucketCost, true),
-              label: peakLabel,
-            })
-          : t('usage.paceHint'),
+          ? [t('usage.pacePeakCostSub', { cost: formatUsdCost(peakBucketCost, true) }), peakLabel]
+          : undefined,
+      fallback: t('usage.paceHint'),
     },
   ];
 
   const kpiW = (rightW - 10) / 2;
   const kpiH = (overviewH - 10) / 2;
+  const kpiTextW = kpiW - 28;
   kpiCards.forEach((kpi, idx) => {
     const col = idx % 2;
     const row = Math.floor(idx / 2);
@@ -428,15 +545,20 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
 
     ctx.fillStyle = palette.muted;
     ctx.font = `600 12px ${fontSans}`;
-    ctx.fillText(truncateText(ctx, kpi.title, kpiW - 24), kx + 14, ky + 24);
+    ctx.fillText(truncateText(ctx, kpi.title, kpiTextW), kx + 14, ky + 22);
 
     ctx.fillStyle = palette.fg;
     ctx.font = `700 24px ${fontSans}`;
-    ctx.fillText(truncateText(ctx, kpi.value, kpiW - 24), kx + 14, ky + 62);
+    ctx.fillText(truncateText(ctx, kpi.value, kpiTextW), kx + 14, ky + 55);
 
     ctx.fillStyle = palette.muted;
     ctx.font = `500 10.5px ${fontSans}`;
-    ctx.fillText(truncateText(ctx, kpi.sub, kpiW - 24), kx + 14, ky + 98);
+    const subLines = kpi.subItems?.length
+      ? packSubItemLines(ctx, kpi.subItems, kpiTextW, 2)
+      : wrapTextLines(ctx, kpi.fallback, kpiTextW, 2);
+    subLines.forEach((line, lineIdx) => {
+      ctx.fillText(line, kx + 14, ky + 87 + lineIdx * 16);
+    });
   });
 
   if (mode === 'trend') {
@@ -554,55 +676,110 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
     ctx.fillText(`${t('usage.models')} (${snapshot.models.length})`, modelsX + 28, bottomY + 25);
 
     const topModels = sortUsageModels(snapshot.models).slice(0, 3);
+    const mLeftX = modelsX + 24;
+    const mBarW = modelsW - 48;
+    const mRightX = mLeftX + mBarW;
+    const mCardH = 92;
+    const statLabelFont = `500 10.5px ${fontSans}`;
+    const statValueFont = `600 10.5px ${fontSans}`;
+    const shareFont = `500 10.5px ${fontMono}`;
+    const tokenFont = `700 12px ${fontSans}`;
+
+    ctx.font = shareFont;
+    const shareColW = Math.max(
+      36,
+      ...topModels.map(m => {
+        const mShare = snapshot.totals.total_tokens > 0 ? m.totals.total_tokens / snapshot.totals.total_tokens : 0;
+        return ctx.measureText(formatShareText(m.totals.total_tokens, mShare, locale)).width;
+      }),
+    );
+
     topModels.forEach((model, idx) => {
-      const my = bottomY + 46 + idx * 96;
-      fillStrokeRoundRect(ctx, modelsX + 14, my, modelsW - 28, 86, 10, palette.subCard, palette.border);
+      const my = bottomY + 44 + idx * 100;
+      fillStrokeRoundRect(ctx, modelsX + 14, my, modelsW - 28, mCardH, 10, palette.subCard, palette.border);
 
       const family = detectModelFamily(model.model);
       const modelShare = snapshot.totals.total_tokens > 0 ? model.totals.total_tokens / snapshot.totals.total_tokens : 0;
       const modelCost = estimateTotalsCostUsd(model.totals, model.model);
       const rawName = model.model === 'unknown' ? t('usage.unknownModel') : model.model;
 
+      const shareStr = formatShareText(model.totals.total_tokens, modelShare, locale);
+      ctx.font = shareFont;
+      ctx.fillStyle = palette.muted;
+      ctx.fillText(shareStr, mRightX - ctx.measureText(shareStr).width, my + 17.5);
+
+      const tokStr = formatUsageNumber(model.totals.total_tokens, locale, true);
+      ctx.font = tokenFont;
+      const tokW = ctx.measureText(tokStr).width;
       ctx.fillStyle = palette.fg;
-      ctx.font = `700 12px ${fontSans}`;
+      ctx.fillText(tokStr, mRightX - shareColW - 6 - tokW, my + 17);
+
+      const maxTitleW = Math.max(80, mBarW - tokW - 6 - shareColW - 10);
+      ctx.fillStyle = palette.fg;
+      ctx.font = tokenFont;
       ctx.fillText(
-        truncateText(ctx, family.label ? `[${family.label}] ${rawName}` : rawName, modelsW - 140),
-        modelsX + 24,
-        my + 20,
+        truncateText(ctx, family.label ? `[${family.label}] ${rawName}` : rawName, maxTitleW),
+        mLeftX,
+        my + 17,
       );
 
-      const mRightStr = `${formatUsageNumber(model.totals.total_tokens, locale, true)} (${formatShareText(
-        model.totals.total_tokens,
-        modelShare,
-        locale,
-      )})`;
-      ctx.font = `600 11px ${fontMono}`;
-      ctx.fillStyle = palette.fg;
-      ctx.fillText(mRightStr, modelsX + modelsW - 24 - ctx.measureText(mRightStr).width, my + 20);
-
       // Model share bar
-      const mBarW = modelsW - 48;
-      fillStrokeRoundRect(ctx, modelsX + 24, my + 34, mBarW, 6, 3, palette.panel);
+      fillStrokeRoundRect(ctx, mLeftX, my + 29, mBarW, 5, 2.5, palette.panel);
       if (modelShare > 0) {
-        fillStrokeRoundRect(ctx, modelsX + 24, my + 34, Math.max(4, mBarW * modelShare), 6, 3, palette.accent);
+        fillStrokeRoundRect(ctx, mLeftX, my + 29, Math.max(4, mBarW * modelShare), 5, 2.5, palette.accent);
       }
 
-      // Model cost & cache line
-      const mSubStr = `${t('usage.modelCostCaption', {
-        cost: formatUsdCost(modelCost.costUsd, true),
-        output: formatUsageNumber(model.totals.output_tokens, locale, true),
-      })} · ${t('usage.cacheSavings')} ${formatUsdCost(modelCost.cacheSavingsUsd, true)}`;
-      ctx.fillStyle = palette.muted;
-      ctx.font = `500 10.5px ${fontSans}`;
-      ctx.fillText(truncateText(ctx, mSubStr, mBarW), modelsX + 24, my + 56);
+      // 2x2 micro-stats grid (Est. Cost / Output / Turns / Cache Hit) aligned to mBarW
+      const mHit = cacheHitRate(model.totals);
+      const mHitStr =
+        mHit == null
+          ? '—'
+          : new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {
+              style: 'percent',
+              maximumFractionDigits: 1,
+            }).format(mHit);
+
+      drawModelStatPair(
+        ctx,
+        mLeftX,
+        my + 47,
+        'left',
+        { text: t('usage.modelStatEstLabel'), font: statLabelFont, color: palette.muted },
+        { text: formatUsdCost(modelCost.costUsd, modelCost.costUsd >= 10_000), font: statValueFont, color: palette.fg },
+      );
+      drawModelStatPair(
+        ctx,
+        mRightX,
+        my + 47,
+        'right',
+        { text: t('usage.modelStatOutputLabel'), font: statLabelFont, color: palette.muted },
+        { text: formatUsageNumber(model.totals.output_tokens, locale, true), font: statValueFont, color: palette.fg },
+      );
+      drawModelStatPair(
+        ctx,
+        mLeftX,
+        my + 63,
+        'left',
+        { text: formatUsageNumber(model.totals.requests, locale, true), font: statValueFont, color: palette.fg },
+        { text: t('usage.modelStatTurnsUnit'), font: statLabelFont, color: palette.muted },
+      );
+      drawModelStatPair(
+        ctx,
+        mRightX,
+        my + 63,
+        'right',
+        { text: t('usage.modelStatHitLabel'), font: statLabelFont, color: palette.muted },
+        { text: mHitStr, font: statValueFont, color: palette.fg },
+      );
 
       // 4-color composition track
-      let mx = modelsX + 24;
+      fillStrokeRoundRect(ctx, mLeftX, my + 77, mBarW, 4, 2, palette.panel);
+      let mx = mLeftX;
       for (const seg of tokenComposition(model.totals)) {
         if (seg.share <= 0) continue;
-        const sw = Math.min(Math.max(2, seg.share * mBarW), modelsX + 24 + mBarW - mx);
+        const sw = Math.min(Math.max(2, seg.share * mBarW), mRightX - mx);
         if (sw > 0) {
-          fillStrokeRoundRect(ctx, mx, my + 70, sw, 4, 2, kindColor[seg.kind]);
+          fillStrokeRoundRect(ctx, mx, my + 77, sw, 4, 2, kindColor[seg.kind]);
           mx += sw;
         }
       }

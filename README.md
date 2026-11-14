@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.3.2 five-core-area polish and hardening with quota/usage load performance and redesigned quota details, plus 0.3.1 Cleanroom Activity Log polish, Unified 3-Step/4-Step Identity & Warming Onboarding, Usage Analytics 2.1 with 2x Retina Auto-Screenshot Engine, Equal-Height Trend/Model Layout, Hover Effort Breakdown Popover, Family/Depth Sorting, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.3.3 kernel-handle CLI liveness, transient lock self-healing & zero-residue rollback, unified CLI proxy/telemetry shield, Usage Avg. session cost KPI & aligned KPI/model/poster layout, built on 0.3.2 five-core-area polish/hardening, 0.3.1 Cleanroom Activity Log & Usage Analytics 2.1, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
 [OUTPUT]: Bilingual-linked flagship project presentation foregrounding anti-ban engineering, isolated Fingerprint Chromium, KYC/WebRTC/DNS/IPv6 protection, zero-kill encrypted vault switching, full-lifecycle warming cards, and 2x Usage Analytics.
 [POS]: Primary repository introduction (Simplified Chinese default, linked to README_EN.md).
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -15,7 +15,7 @@
 
 基于开源项目 [CCBaga](https://github.com/liseami/CCBaga)（[@liseami](https://github.com/liseami)）二次开发并独立维护，保留原贡献者版权与 [MIT 许可](LICENSE) · 纯本地单机优先（Local-First） · 零云端凭据托管 · 绝不强杀运行中的 `claude.exe`
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.3.2-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.2)
+[![Latest Release](https://img.shields.io/badge/Release-v0.3.3-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.3)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.2/Claude-Local_0.3.2_x64-setup.exe"><strong>⬇️ 下载 v0.3.2 安装包 (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.3/Claude-Local_0.3.3_x64-setup.exe"><strong>⬇️ 下载 v0.3.3 安装包 (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.2"><strong>✨ v0.3.2 Release 页面</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.3"><strong>✨ v0.3.3 Release 页面</strong></a>
   ·
   <a href="#-为什么选择-claude-local直击多账号风控四大痛点"><strong>🔥 四大防封壁垒</strong></a>
   ·
@@ -186,29 +186,30 @@ Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **W
 
 ## 📦 获取、安装与版本记录
 
-### 1. 下载最新安装包（`v0.3.1`）
+### 1. 下载最新安装包（`v0.3.3`）
 
 | 发行资产 | 适用系统 | 文件大小 | SHA-256 校验和 |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.3.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.2/Claude-Local_0.3.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | 见 Release 资产 | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.2/SHA256SUMS.txt) |
+| **[Claude-Local_0.3.3_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.3/Claude-Local_0.3.3_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | 见 Release 资产 | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.3/SHA256SUMS.txt) |
 
-下载后在 PowerShell 中计算 SHA-256，并与 [v0.3.2 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.2) 公布的校验值比对：
+下载后在 PowerShell 中计算 SHA-256，并与 [v0.3.3 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.3) 公布的校验值比对：
 
 ```powershell
-Get-FileHash .\Claude-Local_0.3.2_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Claude-Local_0.3.3_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. 安装与无损升级说明
 
 1. **安装位置与标识**：采用当前用户模式 NSIS 安装程序，默认安装至 `%LOCALAPPDATA%\Programs\Claude-Local`；主程序为 `claude-local.exe`，应用包标识为 `ai.local.claude-local`，伴侣浏览器注册名为 `Claude-Local-Browser`。
 2. **用户数据目录**：所有加密身份库、主密钥、额度/用量账本、外观壁纸配置与隔离浏览器个人资料均独立保存在 `%APPDATA%\ai.local.claude-local`。
-3. **平滑升级**：从 `0.1.x`、`0.2.x`、`0.3.0` 或 `0.3.1` 升级至 `0.3.2` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
+3. **平滑升级**：从 `0.1.x`、`0.2.x`、`0.3.0`、`0.3.1` 或 `0.3.2` 升级至 `0.3.3` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
 
 ### 3. 发行版本演进记录
 
 | 版本 | 发布日期 | 核心演进内容 | 详细文档 |
 | :--- | :--- | :--- | :--- |
-| **`v0.3.2`** *(Latest)* | 2026-11-12 | **五大核心域全量打磨与加固（身份卡片、账号隔离、风险规避、额度查询、用量分析）**、**额度/用量加载提速（损坏日志游标缓存、零读取快路径、无变更零写入、按内容判断身份变化）**、**额度详情弹窗重设计与主动重置次数真实到期**、**多账号并发网页同步与隔离浏览器并排打开官方用量页** | [发布说明](docs/RELEASE_NOTES_0.3.2.md) |
+| **`v0.3.3`** *(Latest)* | 2026-11-14 | **内核句柄级 CLI 进程存活核验与分级状态徽章（过滤终止滞留僵尸句柄、`identities_live_sessions` 实时同步）**、**瞬态文件锁退避自愈、切号单故障零残留回滚与一键干净恢复**、**CLI 代理/遥测安全边界统一判定与防断流提示增强**、**用量分析 `单会话均耗` / `单次均耗` KPI 升级与 KPI/模型分布/2× 长图海报对齐精修** | [发布说明](docs/RELEASE_NOTES_0.3.3.md) |
+| **`v0.3.2`** | 2026-11-12 | **五大核心域全量打磨与加固（身份卡片、账号隔离、风险规避、额度查询、用量分析）**、**额度/用量加载提速（损坏日志游标缓存、零读取快路径、无变更零写入、按内容判断身份变化）**、**额度详情弹窗重设计与主动重置次数真实到期**、**多账号并发网页同步与隔离浏览器并排打开官方用量页** | [发布说明](docs/RELEASE_NOTES_0.3.2.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.2.md) |
 | **`v0.3.1`** | 2026-11-09 | **智能接力与自动续杯弹窗全链路防卡顿优化（去除全屏 `feTurbulence` 实时滤镜与双重毛玻璃合成、React 40 卡计算缓存与子树按需挂载、`quota_ledger.json`/`quota_web_metadata.json` 单次解析、Python 运行时探针缓存）**、**用量分析 2× 高清长图海报一键复制/保存与模型等高排版**、**净室切号设备指纹连续性（`s13` 保留 `userID`/`cachedGrowthBookFeatures`/`metricsStatusCacheByPrincipal`）** | [发布说明](docs/RELEASE_NOTES_0.3.1.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.1.md) |
 | **`v0.3.0`** | 2026-11-07 | **Claude Code v2.1.309~2.1.318 净室隔离与三锁协议（7 凭据键 + 25 账号缓存键 + `1p_failed_events`/`statsig` 净室隔离 + 8 锁清理）**、**OAuth 授权 URL 零泄露直投伴生浏览器**、**CLI 遥测护盾与 MCP 供应链安全审计**、**智能接力 2.0（动态防乒乓、冷却监狱、单向不回跳、WeekLow 晋升、真实小数百分比）**、**悬浮窗 2.0（接力备选胶囊、时间消耗步调）** 及 **三段式净室切换管线与 5h 续杯锚点核验** | [发布说明](docs/RELEASE_NOTES_0.3.0.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.0.md) |
 | **`v0.2.7`** | 2026-11-03 | CLI 遥测（`datadoghq.com`）与 Codex 协同域名同源家宽路由、同端口双协议（`socks5://` 浏览器 vs `http://` CLI）智能对齐、一键复制 CLI 防漏 `settings.json` 片段及 `GRPC_PROXY` 身份归档支持 | [发布说明](docs/RELEASE_NOTES_0.2.7.md) |

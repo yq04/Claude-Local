@@ -1,5 +1,5 @@
 // [INPUT]: 当前用户目录、Windows 实际 AppData、Claude 清理白名单与可选组织编号。
-// [OUTPUT]: 分类清理目标（不含设备标识、诊断身份、个人偏好、密码密钥或工作区）、目标发现与读取警告、完整元数据统计及受限旧组织文件匹配。
+// [OUTPUT]: 分类清理目标（不含设备标识、诊断身份、个人偏好、密码密钥或工作区）、目标发现与读取警告、跳过瞬态锁/临时文件及 .claude/debug/latest 链接的完整元数据统计及受限旧组织文件匹配。
 // [POS]: 清理发现边界；不跟随链接，不遍历项目仓库，不读取凭据内容。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -456,58 +456,152 @@ fn xdg_dir(root: &Path, variable: &str, fallback: &str) -> PathBuf {
     root.join(fallback)
 }
 
+pub(crate) fn is_transient_workspace_name(name: &str) -> bool {
+    name.contains(".tmp.")
+        || name.starts_with(".rf-cleanup-")
+        || name.starts_with(".baga-")
+        || name.starts_with(".oauth_refresh.lock")
+        || matches!(
+            name,
+            ".claude.lock" | ".claude.json.lock" | ".storage-write.lock"
+        )
+}
+
+pub(crate) fn is_transient_claude_debug_latest(path: &Path, meta: &fs::Metadata) -> bool {
+    (meta.file_type().is_symlink() || linked(meta))
+        && path.file_name().and_then(|n| n.to_str()) == Some("latest")
+        && path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            == Some("debug")
+        && path
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            == Some(".claude")
+}
+
+pub(crate) fn is_ephemeral_workspace_subpath(path: &Path) -> bool {
+    path.components().any(|component| {
+        let Some(name) = component.as_os_str().to_str() else {
+            return false;
+        };
+        matches!(
+            name,
+            "debug"
+                | "cache"
+                | "telemetry"
+                | "todos"
+                | "statsig"
+                | "paste-cache"
+                | "Cache"
+                | "Code Cache"
+                | "GPUCache"
+        )
+    })
+}
+
 // ----- 完整统计；不读取文件正文，不进入链接目标 -----
-pub(super) fn measure(path: &Path) -> Result<(u64, usize, Vec<u8>), String> {
+pub(super) fn measure(root_target: &Path) -> Result<(u64, usize, Vec<u8>), String> {
     use sha2::{Digest, Sha256};
-    let mut pending = vec![path.to_path_buf()];
+    let mut pending = vec![root_target.to_path_buf()];
     let mut hash = Sha256::new();
     let (mut bytes, mut files) = (0u64, 0usize);
     while let Some(path) = pending.pop() {
+        let is_child = path != root_target;
+        if is_child
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(is_transient_workspace_name)
+        {
+            continue;
+        }
         let failure = |error: std::io::Error| {
             format!(
                 "目录无法完整读取：{}：{error}。请检查权限、退出 Claude 后重新扫描。",
                 path.display()
             )
         };
-        let meta = fs::symlink_metadata(&path).map_err(failure)?;
+        let meta = match file_io::retry_io(|| fs::symlink_metadata(&path)) {
+            Ok(meta) => meta,
+            Err(error)
+                if is_child
+                    && error.kind() == std::io::ErrorKind::NotFound
+                    && is_ephemeral_workspace_subpath(&path) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(failure(error)),
+        };
+        if is_child && is_transient_claude_debug_latest(&path, &meta) {
+            continue;
+        }
         hash.update(path.as_os_str().as_encoded_bytes());
         hash.update([0]);
+        let plain_dir = meta.is_dir() && !linked(&meta);
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            for field in [
-                meta.dev(),
-                meta.ino(),
-                meta.mtime() as u64,
-                meta.mtime_nsec() as u64,
-                meta.ctime() as u64,
-                meta.ctime_nsec() as u64,
-                meta.len(),
-            ] {
-                hash.update(field.to_le_bytes());
+            if plain_dir {
+                for field in [meta.dev(), meta.ino()] {
+                    hash.update(field.to_le_bytes());
+                }
+            } else {
+                for field in [
+                    meta.dev(),
+                    meta.ino(),
+                    meta.mtime() as u64,
+                    meta.mtime_nsec() as u64,
+                    meta.ctime() as u64,
+                    meta.ctime_nsec() as u64,
+                    meta.len(),
+                ] {
+                    hash.update(field.to_le_bytes());
+                }
             }
         }
         #[cfg(windows)]
         {
             use std::os::windows::fs::MetadataExt;
-            for field in [
-                meta.file_attributes() as u64,
-                meta.last_write_time(),
-                meta.creation_time(),
-                meta.file_size(),
-            ] {
-                hash.update(field.to_le_bytes());
+            if plain_dir {
+                for field in [meta.file_attributes() as u64, meta.creation_time()] {
+                    hash.update(field.to_le_bytes());
+                }
+            } else {
+                for field in [
+                    meta.file_attributes() as u64,
+                    meta.last_write_time(),
+                    meta.creation_time(),
+                    meta.file_size(),
+                ] {
+                    hash.update(field.to_le_bytes());
+                }
             }
         }
         if meta.is_file() {
             bytes = bytes.saturating_add(meta.len());
             files += 1;
         } else if meta.is_dir() && !linked(&meta) {
-            let entries = fs::read_dir(&path).map_err(failure)?;
-            let mut children = entries
-                .map(|entry| entry.map(|e| e.path()))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(failure)?;
+            let children = match file_io::retry_io(|| {
+                let entries = fs::read_dir(&path)?;
+                entries
+                    .map(|entry| entry.map(|e| e.path()))
+                    .collect::<Result<Vec<_>, _>>()
+            }) {
+                Ok(children) => children,
+                Err(error)
+                    if is_child
+                        && error.kind() == std::io::ErrorKind::NotFound
+                        && is_ephemeral_workspace_subpath(&path) =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(failure(error)),
+            };
+            let mut children = children;
             children.sort();
             pending.extend(children);
         }

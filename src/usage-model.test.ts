@@ -1,5 +1,5 @@
 // [INPUT]: Synthetic token counters and fixed local calendar dates.
-// [OUTPUT]: Four-part composition, cache denominator, USD API cost & cache savings estimation, precise counters, calendar spans and elapsed-only trend summary regressions.
+// [OUTPUT]: Four-part composition, cache denominator, USD API cost & session efficiency estimation, precise counters, calendar spans and elapsed-only trend summary regressions.
 // [POS]: Pure presentation tests; no runtime identities or browser profiles.
 // [PROTOCOL]: Keep tests proportional to the usage presentation contract.
 import {expect, test} from 'bun:test';
@@ -10,12 +10,14 @@ import {
   emptyUsage,
   estimateSnapshotCostUsd,
   estimateTotalsCostUsd,
+  formatTurnsPerSession,
   formatUsageNumber,
   formatUsagePeakBucketLabel,
   formatUsdCost,
   resolveModelPricing,
   sortUsageEfforts,
   sortUsageModels,
+  summarizeSessionEfficiency,
   summarizeUsageTrend,
   tokenComposition,
 } from './usage-model';
@@ -251,4 +253,51 @@ test('formatUsagePeakBucketLabel extracts HH:mm cleanly across named-timezone ho
   expect(formatUsagePeakBucketLabel('2026-04-05T01:30+10:30', true)).toBe('01:30');
   expect(formatUsagePeakBucketLabel('2026-11-10T09:00', true)).toBe('09:00');
   expect(formatUsagePeakBucketLabel('2026-11-10', false)).toBe('11-10');
+});
+
+test('summarizeSessionEfficiency computes avg session cost, turns and output across heavy, zero and legacy states', () => {
+  expect(summarizeSessionEfficiency(null, null, 0)).toEqual({
+    sessions: null,
+    avgSessionCostUsd: null,
+    avgTurnsPerSession: null,
+    avgOutputPerSession: null,
+    avgTokensPerSession: null,
+  });
+
+  const heavy = summarizeSessionEfficiency(
+    {
+      ...emptyUsage(),
+      output_tokens: 62_600_000,
+      total_tokens: 12_000_000_000,
+      requests: 35_800,
+      sessions: 159,
+    },
+    {sessions: 159, active_days: 32},
+    4710.83,
+  );
+  expect(heavy.sessions).toBe(159);
+  expect(formatUsdCost(heavy.avgSessionCostUsd!)).toBe('$29.63');
+  expect(formatTurnsPerSession(heavy.avgTurnsPerSession!, 'zh')).toBe('225');
+  expect(heavy.avgOutputPerSession).toBe(393_711);
+
+  expect(formatTurnsPerSession(4.5, 'en')).toBe('4.5');
+  expect(formatTurnsPerSession(10.0, 'en')).toBe('10');
+
+  const zero = summarizeSessionEfficiency({...emptyUsage(), requests: 0, sessions: 0}, {sessions: 0, active_days: 0}, 0);
+  expect(zero).toEqual({
+    sessions: 0,
+    avgSessionCostUsd: 0,
+    avgTurnsPerSession: null,
+    avgOutputPerSession: null,
+    avgTokensPerSession: null,
+  });
+
+  const legacy = summarizeSessionEfficiency({...emptyUsage(), requests: 50, total_tokens: 5_000}, undefined, 1.25);
+  expect(legacy).toEqual({
+    sessions: null,
+    avgSessionCostUsd: null,
+    avgTurnsPerSession: null,
+    avgOutputPerSession: null,
+    avgTokensPerSession: null,
+  });
 });

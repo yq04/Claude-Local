@@ -2285,8 +2285,10 @@ pub(super) fn summarize_stage_with_ledger(
     apply_ledger_to_summary(vault_dir, &mut summary, 0, now_epoch_sec());
     summary
 }
-pub fn active_sessions(home: &Path) -> Vec<ActiveSession> {
-    let running = crate::cleaner::identity::running_processes();
+pub(crate) fn active_sessions_from_processes(
+    home: &Path,
+    running: &[crate::cleaner::ClaudeProcess],
+) -> Vec<ActiveSession> {
     if running.is_empty() {
         return Vec::new();
     }

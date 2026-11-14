@@ -1,5 +1,5 @@
 // [INPUT]: 身份 SQLite 绑定、独立浏览器根目录、受限配置和用户确认后的切换事务。
-// [OUTPUT]: CLI/养号独占资料与稳定种子、按需具化任意已绑定身份资料槽位、只读槽位查询、普通CLI事务保留养号会话、显式返回/转正/恢复启动阻断。
+// [OUTPUT]: CLI/养号独占资料与稳定种子、按需具化任意已绑定身份资料槽位、只读槽位查询、普通CLI事务保留养号会话、单重故障干净回滚后仅按需恢复原已运行浏览器、双重故障未恢复启动阻断。
 // [POS]: 身份与浏览器的协调边界；资料不压缩、不复制、不合并 Cookie，失败状态如实返回。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -437,10 +437,13 @@ pub(super) fn transition(
     let finish = (|| {
         reporter.log("browser", "running", "正在同步关联浏览器资料。", 0, None);
         refresh_launch_args(app)?;
-        if result.is_ok()
-            && (was_running || launch_on_linked)
-            && database(&root)?.browser_link()?.enabled
-        {
+        let db = database(&root)?;
+        let should_reopen = if result.is_ok() {
+            was_running || launch_on_linked
+        } else {
+            was_running && db.get("recovery")?.is_none()
+        };
+        if should_reopen && db.browser_link()?.enabled {
             launch_locked(app, reporter)?;
         }
         Ok::<_, String>(())

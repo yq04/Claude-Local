@@ -1,5 +1,5 @@
 // [INPUT]: 身份 SQLite 事务、本软件随机身份 ID、浏览器资料槽位及只读有界本地账号显示字段。
-// [OUTPUT]: CLI/养号独占绑定与稳定种子、按需补齐已保存身份独立槽位、CLI事务保留真实养号选择、受控转正草稿及回滚和无凭据身份摘要。
+// [OUTPUT]: CLI/养号独占绑定与稳定种子、按需补齐已保存身份独立槽位、CLI事务保留真实养号选择、受控转正草稿与失败精确回滚撤销及无凭据身份摘要。
 // [POS]: 浏览器联动的持久元数据；不读取 Cookie，不保存网站凭据，不把账号 UUID 暴露给引擎。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -230,6 +230,19 @@ pub(super) fn complete(tx: &Transaction<'_>, active: &str) -> Result<(), String>
 fn clear_promotion(tx: &Transaction<'_>) -> Result<(), String> {
     tx.execute("DELETE FROM state WHERE key IN ('browser.draft','browser.promotion','browser.promotion.previous','browser.promotion.enabled')", [])
         .map_err(error)?;
+    Ok(())
+}
+pub(super) fn abort_promotion(tx: &Transaction<'_>) -> Result<(), String> {
+    if get(tx, "browser.promotion")?.is_some() {
+        if let Some(previous) =
+            get(tx, "browser.promotion.previous")?.filter(|s| valid_slot(s))
+        {
+            set(tx, "browser.active", &previous)?;
+            let enabled = get(tx, "browser.promotion.enabled")?.unwrap_or_else(|| "0".into());
+            set(tx, "browser.enabled", &enabled)?;
+        }
+        clear_promotion(tx)?;
+    }
     Ok(())
 }
 pub(super) fn merge(tx: &Transaction<'_>, old: &str, retained: &str) -> Result<(), String> {

@@ -163,6 +163,7 @@ mockIPC(async (command,args)=>{
   if(command==='claude_cli_check')return {current:cliStatus(),latest_version:'2.1.304',update_available:cliVersion!=='2.1.304'};
   if(command==='claude_cli_manage' && args.action==='update') {if(window.usageFixture.cliRunning)throw Error('cli.error.running');cliVersion='2.1.304';return cliStatus();}
   if(command==='system_read')return structuredClone(window.usageFixture.systemState);
+  if(command==='identities_live_sessions')return {running:identityState.running,cli_running:identityState.running,processes:structuredClone(identityState.processes||[]),sessions:structuredClone(identityState.sessions||[])};
   if(command==='identities_quota_revision')return 1;
   if(command==='identities_quota_batch_state')return null;
   if(command==='identities_set_subscription_expiry'){
@@ -255,7 +256,7 @@ try {
     const box=element=>{const r=element.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom};};
     const typography=[...node.querySelectorAll('.identity-quota-copy > strong,.identity-quota-value,.identity-quota-value > strong,.identity-quota-reset,.identity-reset-time,.identity-quota-countdown')].map(element=>{
       const style=getComputedStyle(element);
-      return {className:element.className,percentage:element.matches('.identity-quota-value > strong'),text:element.textContent,fontFamily:style.fontFamily,fontSize:style.fontSize,lineHeight:style.lineHeight,fontWeight:style.fontWeight,numeric:style.fontVariantNumeric,...box(element)};
+      return {className:element.className,percentage:element.matches('.identity-quota-value > strong'),resetMeta:element.matches('.identity-quota-reset,.identity-reset-time,.identity-quota-countdown'),text:element.textContent,fontFamily:style.fontFamily,fontSize:style.fontSize,lineHeight:style.lineHeight,fontWeight:style.fontWeight,numeric:style.fontVariantNumeric,...box(element)};
     });
     const resets=[...node.querySelectorAll('.identity-quota-reset')].map(element=>({box:box(element),clock:element.querySelector('.identity-reset-time')?box(element.querySelector('.identity-reset-time')):null,countdown:element.querySelector('.identity-quota-countdown')?box(element.querySelector('.identity-quota-countdown')):null}));
     const subscription=node.querySelector('.identity-sub-resets-block');
@@ -274,8 +275,8 @@ try {
       assert.ok(geometry.footer.bottom<=geometry.card.bottom-2,label+': identity actions must remain inside the card');
       assert.ok(geometry.bars.every(bar=>bar.height===6&&bar.width>=130));
       for(const text of geometry.typography){
-        assert.equal(text.fontSize,'12px',label+': quota and reset text must share the readable font size');
-        assert.equal(text.lineHeight,'16px',label+': quota and reset text must share a stable line height');
+        assert.equal(text.fontSize,text.resetMeta?'11px':'12px',label+': quota copy (12px) and reset metadata (11px) must use their readable sizes');
+        assert.equal(text.lineHeight,text.resetMeta?'15px':'16px',label+': quota copy (16px) and reset metadata (15px) must share stable line heights');
         assert.equal(normalizeFamily(text.fontFamily),normalizeFamily(geometry.fontSans),label+': quota and reset text must use the sans font');
         assert.match(text.numeric,/tabular-nums/);
         assert.equal(text.fontWeight,text.percentage?'600':'400',label+': only the quota percentage should be semibold');
@@ -462,7 +463,7 @@ try {
   await page.locator('.quick-page').getByRole('button',{name:'刷新状态',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('.quick-page [role="alert"]')&&!document.querySelector('.quick-header button')?.disabled);
   const readCommands=(await page.evaluate(()=>window.usageFixture.commands)).slice(quickStart);
-  assert.ok(readCommands.every(item=>['identities_read','browser_read','system_read','claude_cli_read'].includes(item.command)));
+  assert.ok(readCommands.every(item=>['identities_read','identities_live_sessions','browser_read','system_read','claude_cli_read'].includes(item.command)));
   await page.screenshot({path:join(output,'quick-setup-zh-light.png'),fullPage:true});
   for(const [destination,title] of [['vps','网络环境'],['risk','风控验证'],['cleaner','身份管理'],['browser','浏览环境'],['system','电脑环境'],['usage','用量分析'],['settings','软件设置']]){
     await page.locator('[data-quick-destination="'+destination+'"]').first().getByRole('button').click();
@@ -721,7 +722,7 @@ try {
   assert.deepEqual(errors, []);
   const commands=await page.evaluate(()=>window.usageFixture.commands);
   assert.equal(commands.some(item=>item.command==='identities_stop'||(item.command==='claude_cli_manage'&&item.args.action!=='update')||/^system_(set|disable|open)/.test(item.command)||['open_permissions','unlock_keychain'].includes(item.command)||/^browser_(launch|rotate|clear|quit|align|save|set)/.test(item.command)),false);
-  const result = {checks: ['navigation', 'period/account filters', '24 hourly slots and future gaps', '81-day complete history', '7/30 day spans and hover reset', 'chart/data switching without IPC reread', 'elapsed-hour table pagination and accessible sorting', 'three-model totals and distribution', '1440-wide and 720-narrow layouts with both sidebar modes', 'English dark long-model-name layout', '30-second polling and hidden pause', 'pending read serialization and unmount cleanup', 'read-only quick setup snapshots and six destinations', 'partial status failure and recovery', 'bilingual quick setup and narrow dark layout', 'refresh error and recovery', 'uniform metric cards', 'fixed publisher URLs and prompt copy', 'legacy URL override ignored', 'manual service diagnostics', 'total-only chart and consistent colors', 'K/M/B labels', 'two quota blocks and independent resets', 'single-line current/saved aliases and preserved summaries', 'long-name card/quota/subscription/footer geometry', 'bilingual 12px sans quota/reset/countdown typography', 'accessible reset dates and compact countdowns', 'known/unknown subscription and quota', 'used/remaining preference and all-card masked tooltips', 'CLI check/update and active-session block', 'natural-height system cards and compact location row', 'system current observations stay separate from unapplied drafts', 'unknown location is not shown as disabled', 'bilingual dark/narrow system layouts and read-only refresh', 'compact sidebar hitboxes', 'English dark compact layout', 'empty state', 'isolated IPC'], geometry, wideGeometry,narrowClassicGeometry,narrowCompactGeometry,longNameClassicGeometry,compactGeometry,cardGeometry,cardGeometryEnglish,quickGeometry,systemGeometry,systemNarrowClassicGeometry,systemNarrowCompactGeometry,systemEnglishGeometry,systemEnglishNarrowCompactGeometry,systemEnglishNarrowClassicGeometry, requests: requests.length, screenshots: output};
+  const result = {checks: ['navigation', 'period/account filters', '24 hourly slots and future gaps', '81-day complete history', '7/30 day spans and hover reset', 'chart/data switching without IPC reread', 'elapsed-hour table pagination and accessible sorting', 'three-model totals and distribution', '1440-wide and 720-narrow layouts with both sidebar modes', 'English dark long-model-name layout', '30-second polling and hidden pause', 'pending read serialization and unmount cleanup', 'read-only quick setup snapshots and six destinations', 'partial status failure and recovery', 'bilingual quick setup and narrow dark layout', 'refresh error and recovery', 'uniform metric cards', 'fixed publisher URLs and prompt copy', 'legacy URL override ignored', 'manual service diagnostics', 'total-only chart and consistent colors', 'K/M/B labels', 'two quota blocks and independent resets', 'single-line current/saved aliases and preserved summaries', 'long-name card/quota/subscription/footer geometry', 'bilingual 12px/11px sans quota/reset/countdown typography', 'accessible reset dates and compact countdowns', 'known/unknown subscription and quota', 'used/remaining preference and all-card masked tooltips', 'CLI check/update and active-session block', 'natural-height system cards and compact location row', 'system current observations stay separate from unapplied drafts', 'unknown location is not shown as disabled', 'bilingual dark/narrow system layouts and read-only refresh', 'compact sidebar hitboxes', 'English dark compact layout', 'empty state', 'isolated IPC'], geometry, wideGeometry,narrowClassicGeometry,narrowCompactGeometry,longNameClassicGeometry,compactGeometry,cardGeometry,cardGeometryEnglish,quickGeometry,systemGeometry,systemNarrowClassicGeometry,systemNarrowCompactGeometry,systemEnglishGeometry,systemEnglishNarrowCompactGeometry,systemEnglishNarrowClassicGeometry, requests: requests.length, screenshots: output};
   await writeFile(join(output, 'usage-ui-results.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
   }
