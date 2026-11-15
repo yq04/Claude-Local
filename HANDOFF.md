@@ -10,7 +10,7 @@
 
 ## 接手先读：30 秒全局速览
 
-1. **当前版本与 Git 基线**：正在准备发布 **`v0.3.5`**（跳过未发布的 `v0.3.4`）；此前 `v0.3.3`（源码 commit `01f7085481e4e7f8a5b60e95a38eea68957b430f` / tag `v0.3.3`，交付核验提交 `c443015dc607295e2db37be7e0e11ddb06be5086`）、`v0.3.2`（`260f80ec78729fbd1f01dbd8d268e873f8ff2209` / `a72a145`）及更早标签与资产保持不可变。
+1. **当前版本与 Git 基线**：`v0.3.5`（跳过未发布的 `v0.3.4`）已于 `2026-11-15T06:14:56Z` 正式提交打标并发布至 GitHub Release `Latest`（源码 commit `966a2e624bbe26ce9190abee17a59dc9e1e712cd` / tag `v0.3.5`，参见 [`docs/RELEASE_VERIFICATION_0.3.5.md`](docs/RELEASE_VERIFICATION_0.3.5.md) 与 [`docs/RELEASE_NOTES_0.3.5.md`](docs/RELEASE_NOTES_0.3.5.md)）；此前 `v0.3.3`（`01f7085481e4e7f8a5b60e95a38eea68957b430f` / `c443015dc607295e2db37be7e0e11ddb06be5086`）、`v0.3.2`（`260f80ec78729fbd1f01dbd8d268e873f8ff2209` / `a72a1455096bfb9e2bf5d954a3f297f4aa874f2c`）及更早标签与资产保持不可变。
 2. **当前工作区与本机安装状态（`v0.3.5` 全量 UI 去 AI 重构、全量回归、NSIS 打包审计与本机原子热更新已全部通过）**：
    - **2.7 节（2026-11-12 晚）**：完成了 **CLI 代理/遥测安全边界统一判定与防断流界面提示增强**；
    - **2.8 节（2026-11-13 晨）**：完成了仓库只读全栈审计，并打通了外置 **Magpie 网关 + Claude Code CLI Gemini 子代理多账号多模型无碰撞并发调度**；
@@ -266,9 +266,10 @@
 
 ## 3. 当前卡在哪
 
-**没有任何代码缺陷、测试失败、运行态故障或本机部署未同步项阻塞。** `v0.3.5` 源码验证、NSIS 打包审计与本机原子热更新已全部闭环，正在完成提交打标与 GitHub Release `v0.3.5` 发布收尾；既往 `v0.3.3`（`01f7085` / `c443015`）及更早标签保持不可变。
+**没有任何代码缺陷、测试失败、发布滞后、运行态故障或本机部署未同步项阻塞。** **`v0.3.5` 已完成全部验证、NSIS 打包审计、GitHub Release `Latest` 发布与本机原子热更新**，工作区除本地开发规则 `AGENTS.md`（未暂存、**严禁提交**）外无任何未提交源码改动；既往 `v0.3.3`（`01f7085` / `c443015`）与 `v0.3.2`（`260f80e` / `a72a145`）标签与资产保持不可变。
 
 1. **已同步上线的状态**：
+   - `v0.3.5`（源码 commit `966a2e624bbe26ce9190abee17a59dc9e1e712cd`，交付核验文档 [`docs/RELEASE_VERIFICATION_0.3.5.md`](docs/RELEASE_VERIFICATION_0.3.5.md)）已于 `2026-11-15T06:14:56Z` 在 GitHub Release 发布为 `Latest`（非草稿、非预发布），`Claude-Local_0.3.5_x64-setup.exe`（`af059a43597a8977fd9ab71d7289b59774908053b86eb2b2030e49f894b0acd1`）与 `SHA256SUMS.txt`（`66ace3f8400ca709896febb43c3dface4f9c6dd7823c276e57f77ddefcc42580`）服务端 `digest` 与本地构建文件 100% 一致；
    - `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 与 `browser-ui/*` 已原子热更新至 **`0.3.5`** Release 构建（`hostSha256` `ccc02c5c2e6c543c36ccebbff40c1b922de78001ac9550f8f6cfcadb4d725d2a`，交互桌面窗口已验证存活，`missingClaudeCount == 0`）；
    - 外置 9 席三池 22 路由组正交溢出网关、本地回环 MCP、动态规则代理端口自愈、WMI `IsProcessInJob = False` 守护、派发器 `3210s` 软超时与 6-Tier 子代理舰队均在线运行且全程零中断（详见 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`）。
 2. **显式验证边界与可选后续动作**：
