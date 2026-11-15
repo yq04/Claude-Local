@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Cromma UI 表单、原生电脑环境快照、经核验的设置命令、本地刷新事件与共享 YAML 文案。
- * [OUTPUT]: 时区/语言并排的紧凑圆角卡片，当前状态与目标选择分层；定位为下方紧凑长条；保留执行记录与任务锁。
+ * [INPUT]: Cromma UI 表单、原生电脑环境快照、经核验的设置命令、本地刷新事件、env-pages.css 与共享 YAML 文案。
+ * [OUTPUT]: 顶部四栏美区基线对齐摘要条、分组三行统一设置卡（时区/语言/定位）、基线参考脚注；保留执行记录与任务锁。
  * [POS]: 系统设置的交互边界；草稿与当前状态分离，不在页面加载时修改电脑；兼容未含 platform 的旧 macOS 快照。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -11,6 +11,7 @@ import {useI18n} from './i18n';
 import {invoke} from '@tauri-apps/api/core';
 import {CleanupActivity, useCleanupActivity} from './cleaner-activity';
 import {usePageRefresh} from './app-events';
+import './env-pages.css';
 
 type SystemState = {
   platform?: string;
@@ -130,6 +131,11 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
   const disabled = busy !== null || !state;
   // The legacy macOS snapshot omits platform; Windows and Linux always provide it.
   const isMacOS = !!state && (!state.platform || state.platform === 'macos');
+  const timezoneAligned = Boolean(state?.timezone && (state.timezone.startsWith('America/') || state.timezone === 'Pacific/Honolulu') && state.automatic_timezone !== true);
+  const languageAligned = Boolean(state && languageChoice(state.languages[0] || '') === 'en');
+  const locationAligned = state?.location_enabled === false;
+  const baselineAligned = Boolean(state) && timezoneAligned && languageAligned && locationAligned;
+  const baselineUnknown = !state || (timezoneAligned && languageAligned && state.location_enabled == null);
   return (
     <section className="system-page system-environment-page">
       <div className="cleanup-title">
@@ -171,73 +177,107 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
         </p>
       )}
 
-      <div className="system-sections system-settings-list">
-        <article className="system-setting-card" data-system-setting="timezone" aria-labelledby="system-timezone-title">
-          <div className="system-setting-header">
-            <span className="settings-icon-badge" aria-hidden="true"><ClockIcon size={20} /></span>
-            <div className="system-setting-copy">
-              <div className="system-heading-line"><h2 id="system-timezone-title">{t('设备时区')}</h2><span className="system-state-label">{!state ? t('等待系统状态') : state.automatic_timezone == null ? t('computer.autoUnknown') : state.automatic_timezone ? t('computer.automatic') : t('computer.manual')}</span></div>
-              <p className="system-current-value"><span>{t('computer.current')}</span><strong>{state?.timezone || t('读取中…')}</strong></p>
-            </div>
+      <div className="system-env-content">
+        <div className="settings-card system-alignment-strip" aria-label={t('目标时区与语言')}>
+          <div className="system-alignment-cell">
+            <span className="system-alignment-label">{t('本机时区')}</span>
+            <strong className="system-alignment-value" title={state?.timezone || ''}>{state?.timezone || t('读取中…')}</strong>
           </div>
-          <div className="system-inline-controls">
-            <div className="system-inline-field system-inline-select">
-              <span className="system-field-label">{t('目标时区')}</span>
-              <Select
-                aria-label={t('目标时区')}
-                size="small"
-                value={zone || undefined}
-                onValueChange={value => {if (value) setZone(value);}}
-                items={Object.entries(zones).map(([value, label]) => ({value, label: t(label)}))}
-                disabled={disabled}
-              />
-            </div>
-            <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('timezone')}>{t('系统设置')}</Button>
-            <Button variant="secondary" size="small" loading={busy === 'timezone'} disabled={disabled || !zone || (zone === state?.timezone && state?.automatic_timezone !== true)} onClick={() => void apply('timezone')}>{t('应用时区')}</Button>
+          <div className="system-alignment-cell">
+            <span className="system-alignment-label">{t('本机语言 / 区域')}</span>
+            <strong className="system-alignment-value" title={state?.languages.join(' → ') || ''}>{state?.languages[0] || t('读取中…')}</strong>
           </div>
-        </article>
+          <div className="system-alignment-cell">
+            <span className="system-alignment-label">{t('本机定位')}</span>
+            <strong className="system-alignment-value">
+              {!state ? t('读取中…') : state.location_enabled == null ? t('尚未核验') : state.location_enabled ? t('开启') : t('已关闭')}
+            </strong>
+          </div>
+          <div className="system-alignment-cell">
+            <span className="system-alignment-label">{t('目标地区')}</span>
+            <span className="system-alignment-status">
+              <span className={`system-alignment-dot ${baselineUnknown ? 'is-unknown' : baselineAligned ? 'is-aligned' : ''}`} aria-hidden="true" />
+              <strong className="system-alignment-badge">
+                {!state ? t('读取中…') : baselineAligned ? t('已对齐') : baselineUnknown ? t('尚未核验') : t('未对齐')}
+              </strong>
+            </span>
+            <span className="system-alignment-meta">US · America/* · en-US</span>
+          </div>
+        </div>
 
-        <article className="system-setting-card" data-system-setting="language" aria-labelledby="system-language-title">
-          <div className="system-setting-header">
-            <span className="settings-icon-badge" aria-hidden="true"><TranslateIcon size={20} /></span>
-            <div className="system-setting-copy">
-              <h2 id="system-language-title">{t('系统语言')}</h2>
-              <p className="system-current-value"><span>{t('computer.current')}</span><strong>{state ? t(languages[languageChoice(state.languages[0] || '') || ''] || state.languages[0] || '未设置') : t('读取中…')}</strong>{state?.languages.length ? <span className="system-language-code" title={state.languages.join(' → ')}>{state.languages.join(' → ')}</span> : null}</p>
-            </div>
-          </div>
-          <div className="system-inline-controls">
-            <div className="system-inline-field system-inline-select">
-              <span className="system-field-label">{t('目标语言')}</span>
-              <Select
-                aria-label={t('目标语言')}
-                size="small"
-                value={language}
-                onValueChange={value => {if (value) setLanguage(value);}}
-                items={Object.entries(languages).map(([value, label]) => ({value, label: t(label)}))}
-                disabled={disabled}
-              />
-            </div>
-            <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('language')}>{t('系统设置')}</Button>
-            <Button variant="secondary" size="small" loading={busy === 'language'} disabled={disabled || language === languageChoice(state?.languages[0] || 'en')} onClick={() => void apply('language')}>{t('应用语言')}</Button>
-          </div>
-          <p className="system-setting-note">{t('应用重启后生效；系统完整切换可能需要注销。')}</p>
-        </article>
-
-        <article className="system-setting-card" data-system-setting="location" aria-labelledby="system-location-title">
-          <div className="system-location-row">
+        <div className="settings-card system-sections system-settings-list">
+          <article className="system-setting-card" data-system-setting="timezone" aria-labelledby="system-timezone-title">
             <div className="system-setting-header">
-              <span className="settings-icon-badge" aria-hidden="true"><MapPinIcon size={20} /></span>
+              <span className="settings-icon-badge" aria-hidden="true"><ClockIcon size={16} /></span>
               <div className="system-setting-copy">
-                <div className="system-heading-line"><h2 id="system-location-title">{t('地理位置')}</h2><span className={'system-state-label' + (state?.location_enabled === false ? ' verified' : '')}>{!state ? t('读取中…') : state.location_enabled == null ? t('尚未核验') : state.location_enabled ? t('开启') : t('已关闭')}</span></div>
-                <p className="system-location-description">{isMacOS && !state?.accessibility ? t('需要辅助功能权限，或在系统设置中手动关闭。') : t('computer.locationHint')}</p>
+                <div className="system-heading-line"><h2 id="system-timezone-title">{t('设备时区')}</h2><span className="system-state-label">{!state ? t('等待系统状态') : state.automatic_timezone == null ? t('computer.autoUnknown') : state.automatic_timezone ? t('computer.automatic') : t('computer.manual')}</span></div>
+                <p className="system-current-value"><span>{t('computer.current')}</span><strong>{state?.timezone || t('读取中…')}</strong></p>
               </div>
             </div>
-            <div className="system-inline-controls system-location-controls">
-              <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('location')}>{t('打开定位设置')}</Button>
-              <Button variant="secondary" size="small" loading={busy === 'location'} disabled={disabled || state?.location_enabled === false} onClick={() => void apply('location')}>{state?.location_enabled === false ? t('已关闭定位') : t('关闭地理位置')}</Button>
+            <div className="system-inline-controls">
+              <div className="system-inline-field system-inline-select">
+                <span className="system-field-label">{t('目标时区')}</span>
+                <Select
+                  aria-label={t('目标时区')}
+                  size="small"
+                  value={zone || undefined}
+                  onValueChange={value => {if (value) setZone(value);}}
+                  items={Object.entries(zones).map(([value, label]) => ({value, label: t(label)}))}
+                  disabled={disabled}
+                />
+              </div>
+              <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('timezone')}>{t('系统设置')}</Button>
+              <Button variant="secondary" size="small" loading={busy === 'timezone'} disabled={disabled || !zone || (zone === state?.timezone && state?.automatic_timezone !== true)} onClick={() => void apply('timezone')}>{t('应用时区')}</Button>
             </div>
-          </div>
-        </article>
+          </article>
+
+          <article className="system-setting-card" data-system-setting="language" aria-labelledby="system-language-title">
+            <div className="system-setting-header">
+              <span className="settings-icon-badge" aria-hidden="true"><TranslateIcon size={16} /></span>
+              <div className="system-setting-copy">
+                <h2 id="system-language-title">{t('系统语言')}</h2>
+                <p className="system-current-value"><span>{t('computer.current')}</span><strong>{state ? t(languages[languageChoice(state.languages[0] || '') || ''] || state.languages[0] || '未设置') : t('读取中…')}</strong>{state?.languages.length ? <span className="system-language-code" title={state.languages.join(' → ')}>{state.languages.join(' → ')}</span> : null}</p>
+              </div>
+            </div>
+            <div className="system-inline-controls">
+              <div className="system-inline-field system-inline-select">
+                <span className="system-field-label">{t('目标语言')}</span>
+                <Select
+                  aria-label={t('目标语言')}
+                  size="small"
+                  value={language}
+                  onValueChange={value => {if (value) setLanguage(value);}}
+                  items={Object.entries(languages).map(([value, label]) => ({value, label: t(label)}))}
+                  disabled={disabled}
+                />
+              </div>
+              <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('language')}>{t('系统设置')}</Button>
+              <Button variant="secondary" size="small" loading={busy === 'language'} disabled={disabled || language === languageChoice(state?.languages[0] || 'en')} onClick={() => void apply('language')}>{t('应用语言')}</Button>
+            </div>
+            <p className="system-setting-note">{t('应用重启后生效；系统完整切换可能需要注销。')}</p>
+          </article>
+
+          <article className="system-setting-card" data-system-setting="location" aria-labelledby="system-location-title">
+            <div className="system-location-row">
+              <div className="system-setting-header">
+                <span className="settings-icon-badge" aria-hidden="true"><MapPinIcon size={16} /></span>
+                <div className="system-setting-copy">
+                  <div className="system-heading-line"><h2 id="system-location-title">{t('地理位置')}</h2><span className={'system-state-label' + (state?.location_enabled === false ? ' verified' : '')}>{!state ? t('读取中…') : state.location_enabled == null ? t('尚未核验') : state.location_enabled ? t('开启') : t('已关闭')}</span></div>
+                  <p className="system-location-description">{isMacOS && !state?.accessibility ? t('需要辅助功能权限，或在系统设置中手动关闭。') : t('computer.locationHint')}</p>
+                </div>
+              </div>
+              <div className="system-inline-controls system-location-controls">
+                <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('location')}>{t('打开定位设置')}</Button>
+                <Button variant="secondary" size="small" loading={busy === 'location'} disabled={disabled || state?.location_enabled === false} onClick={() => void apply('location')}>{state?.location_enabled === false ? t('已关闭定位') : t('关闭地理位置')}</Button>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <footer className="system-baseline-footer">
+          <span><strong>{t('目标时区与语言')}</strong>{t('computer.subtitle')}</span>
+          <span className="system-baseline-targets">America/Los_Angeles · America/New_York · en-US</span>
+        </footer>
       </div>
 
       <CleanupActivity activity={activity.state} />

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Independent identity/browser/system/CLI reads, page icons, locale and local refresh event.
- * [OUTPUT]: Progressive environment overview, scoped failure reasons and eight consistent configuration destinations (including Risk & KYC).
+ * [OUTPUT]: Horizontal telemetry strip, scoped failure feedback and compact 2-column workbench action grid across eight destinations.
  * [POS]: Mounted only on the quick page; actions navigate or refresh guarded reads, never rotate fingerprints, start browsers or change system settings.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -74,23 +74,37 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
     <header className="cleanup-title quick-header"><h1>{t('快速配置')}</h1><Button variant="secondary" size="small" loading={busy} aria-label={t('quick.refresh')} leftIcon={<Refresh size={15} aria-hidden="true" />} onClick={() => setRevision(value => value + 1)}>{t('quick.refresh')}</Button></header>
     <div className="quick-content">
       <section className="settings-card quick-overview" aria-busy={busy}>
-        <div className="quick-overview-heading"><h2>{t('quick.overview')}</h2><span className="settings-meta-pill" role="status">{t(busy ? 'quick.checking' : 'quick.observed')}</span></div>
+        <h2 className="sr-only">{t('quick.overview')}</h2>
         <div className="quick-state-grid">
-          {snapshots.map(({key, label, state, value, detail}) => <div key={key} data-quick-state={key} data-read-state={state.pending ? 'pending' : state.error ? 'failed' : 'ready'} aria-busy={state.pending}>
-            <span>{label}</span><strong>{status(state, value)}</strong><small>{state.pending || state.error ? '—' : detail}</small>
-            {state.error && <small className="quick-read-error">{t(state.error)}</small>}
-          </div>)}
+          {snapshots.map(({key, label, state, value, detail}) => {
+            const readState = state.pending ? 'pending' : state.error ? 'failed' : 'ready';
+            const displayValue = status(state, value);
+            const displayDetail = state.pending || state.error ? '—' : detail;
+            return <div key={key} className="quick-telemetry-cell" data-quick-state={key} data-read-state={readState} aria-busy={state.pending}>
+              <div className="quick-telemetry-head">
+                <span className={`quick-status-dot is-${readState}`} aria-hidden="true" />
+                <span className="quick-telemetry-label">{label}</span>
+              </div>
+              <strong title={displayValue}>{displayValue}</strong>
+              <small title={state.pending || state.error ? '' : detail}>{displayDetail}</small>
+              {state.error && <small className="quick-read-error" title={t(state.error)}>{t(state.error)}</small>}
+            </div>;
+          })}
         </div>
         {failed.length > 0 && <div role="alert" className="system-feedback error quick-feedback"><strong>{t('quick.failedChecks', {sections: failed.map(item => item.label).join(' · ')})}</strong><p>{t('quick.partialFailure')}</p></div>}
       </section>
-      <div className="settings-group-heading"><span className="settings-group-bar" aria-hidden="true" /><h2>{t('推荐设置流程')}</h2></div>
+      <div className="settings-group-heading quick-group-heading"><span className="settings-group-bar" aria-hidden="true" /><h2>{t('推荐设置流程')}</h2></div>
       <div className="quick-setup-grid">
-        {cards.map((card, index) => {
+        {cards.map(card => {
           const Icon = pageIcons[card.page];
           const isResidueTarget = 'target' in card && card.target === 'residue';
           return <section className="settings-card quick-setup-card" key={isResidueTarget ? 'residue' : card.page} data-quick-destination={card.page}>
-          <div className="quick-card-title"><span className="settings-icon-badge" aria-hidden="true"><Icon size={19} /></span><h3>{t(card.title)}</h3></div>
-          <p>{t(card.description)}</p><Button size="small" variant="secondary" onClick={() => {
+          <span className="settings-icon-badge quick-card-icon" aria-hidden="true"><Icon size={16} /></span>
+          <div className="quick-card-copy">
+            <h3>{t(card.title)}</h3>
+            <p title={t(card.description)}>{t(card.description)}</p>
+          </div>
+          <Button size="small" variant="secondary" className="quick-card-action" onClick={() => {
             onNavigate(card.page);
             if (isResidueTarget) {
               window.setTimeout(() => {
@@ -102,7 +116,8 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
               }, 100);
             }
           }}>{t(card.action)}</Button>
-        </section>})}
+        </section>;
+        })}
       </div>
     </div>
   </section>;
