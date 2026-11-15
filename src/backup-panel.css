@@ -1,16 +1,15 @@
 /**
  * [INPUT]: style.css 设计令牌（--landing-line、--muted、--input）与 BackupPanel 导出/恢复表单结构。
- * [OUTPUT]: 单行预览统计与右侧刷新按钮栏、非全宽左对齐操作按钮、>= 820px 双列并排导出与检查恢复网格、窄屏单列回退及受控反馈卡布局。
+ * [OUTPUT]: 单行资料目录操作条、单行预览统计与右侧刷新按钮栏、统一 12px 救援开关文案、非全宽左对齐操作按钮、>= 820px 双列并排导出与检查恢复网格、窄屏单列回退及受控反馈卡布局。
  * [POS]: src/backup-panel.tsx 专属样式表。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .backup-panel .backup-card { display: grid; gap: 12px; padding: 14px 16px; border-radius: 12px; }
 .backup-panel .backup-card > p { margin: 0; color: var(--muted-foreground, #666); font-size: 12px; line-height: 1.5; }
-.backup-location { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 8px 14px; align-items: center; }
-.backup-location strong { font-size: 12px; font-weight: 600; color: var(--foreground); }
+.backup-location { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.backup-location strong { font-size: 12px; font-weight: 600; color: var(--foreground); flex-shrink: 0; }
 .backup-location code, .backup-receipt code { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
-.backup-location > span { grid-column: 2; }
-.backup-location-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; }
+.backup-location-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
 .backup-preview-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
 .backup-preview { display: flex; flex-wrap: wrap; gap: 8px; }
 .backup-preview > span { display: flex; align-items: baseline; gap: 6px; min-width: 112px; padding: 7px 10px; border: 1px solid var(--landing-line, #ddd); border-radius: 8px; font-size: 12px; }
@@ -27,14 +26,13 @@
 .backup-card button,
 .backup-form > button,
 .backup-inspection > button { justify-self: start; width: auto; }
-.backup-rescue-toggle { display: flex !important; align-items: center; gap: 9px !important; }
+.backup-rescue-toggle { display: flex !important; align-items: center; gap: 9px !important; font-size: 12px; line-height: 1.45; color: var(--foreground); }
 .backup-inspection, .backup-receipt { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--landing-line, #ddd); border-radius: 10px; }
 .backup-receipt code { display: block; }
 @media (max-width: 819px) {
   .backup-forms-grid { grid-template-columns: minmax(0, 1fr); }
   .backup-form + .backup-form { padding-top: 12px; border-top: 1px solid var(--landing-line, #ddd); }
 }
-@media (max-width: 560px) {
-  .backup-location { grid-template-columns: minmax(0, 1fr); }
-  .backup-location > span, .backup-location-actions { grid-column: 1; }
+@media (max-width: 680px) {
+  .backup-location-actions { margin-left: 0; flex-basis: 100%; }
 }

@@ -1,23 +1,25 @@
 <!--
-[INPUT]: Final owner decisions, immutable v0.3.3 baseline (01f7085 / tag v0.3.3, verified at c443015) and immutable v0.3.2 baseline (260f80e / tag v0.3.2, verified at a72a145), covering 2.7 CLI proxy/risk-verification UI hardening, 2.9 4-track root-cause fixes, 2.10 workstation Magpie/Mode-A-B/port-healing setup, and 2.11 Usage Analytics KPI/model/poster layout alignment, NSIS package audit, GitHub Release v0.3.3 upload, and local 0.3.3 atomic hot-update.
+[INPUT]: Final owner decisions, immutable v0.3.3 baseline (01f7085 / tag v0.3.3, verified at c443015) and immutable v0.3.2 baseline (260f80e / tag v0.3.2, verified at a72a145), covering 2.7 CLI proxy/risk-verification UI hardening, 2.9 4-track root-cause fixes, 2.10 workstation Magpie/Mode-A-B/port-healing setup, 2.11 Usage Analytics & v0.3.3 release, 2.12 live Magpie Gemini (Argon / Carbon / Hydrogen) security/efficiency audit & zero-downtime hot-fixes, and 2.13 v0.3.5 UI De-AI compact overhaul across all 9 pages, 286-key copy slimming, Step 1 workbench polish, NSIS package audit & local 0.3.5 atomic hot-update.
 [OUTPUT]: Context-free session handoff covering: (1) what task we are doing, (2) what is completed, (3) where we are stuck, (4) next-step plan, and (5) pitfalls never to repeat.
 [POS]: Root maintenance handoff for a zero-context successor session. Real identities, emails, IP/proxy credentials, process IDs, browser seeds, private probe values, workstation paths and screenshots stay out of tracked files.
-[PROTOCOL]: Updated on 2026-11-14 00:51 EST; workstation-specific CLI/proxy/Magpie/binary tooling handoff is kept strictly in the gitignored .local/tasks/20261112-session-handoff/HANDOFF.local.md file.
+[PROTOCOL]: Updated on 2026-11-15 01:10 EST; workstation-specific CLI/proxy/Magpie/binary tooling handoff is kept strictly in the gitignored .local/tasks/20261112-session-handoff/HANDOFF.local.md file.
 -->
 # Claude-Local 会话交接（HANDOFF.md）
 
-更新时间：2026-11-14 00:51，America/New_York（EST）。
+更新时间：2026-11-15 01:10，America/New_York（EST）。
 
 ## 接手先读：30 秒全局速览
 
-1. **当前版本与 Git 基线**：`v0.3.3` 已于 `2026-11-14T05:24:26Z` 正式提交打标并发布至 GitHub Release `Latest`（源码 commit `01f7085481e4e7f8a5b60e95a38eea68957b430f` / tag `v0.3.3`，交付核验文档提交 `c443015dc607295e2db37be7e0e11ddb06be5086`，参见 [`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md) 与 [`docs/RELEASE_NOTES_0.3.3.md`](docs/RELEASE_NOTES_0.3.3.md)）；既往 `v0.3.2`（`260f80ec78729fbd1f01dbd8d268e873f8ff2209` / `a72a145`）及更早标签与资产保持不可变。
-2. **当前工作区与本机安装状态（`v0.3.3` 全量验证、NSIS 打包、GitHub Release 与本机原子热更新已全部闭环）**：
+1. **当前版本与 Git 基线**：正在准备发布 **`v0.3.5`**（跳过未发布的 `v0.3.4`）；此前 `v0.3.3`（源码 commit `01f7085481e4e7f8a5b60e95a38eea68957b430f` / tag `v0.3.3`，交付核验提交 `c443015dc607295e2db37be7e0e11ddb06be5086`）、`v0.3.2`（`260f80ec78729fbd1f01dbd8d268e873f8ff2209` / `a72a145`）及更早标签与资产保持不可变。
+2. **当前工作区与本机安装状态（`v0.3.5` 全量 UI 去 AI 重构、全量回归、NSIS 打包审计与本机原子热更新已全部通过）**：
    - **2.7 节（2026-11-12 晚）**：完成了 **CLI 代理/遥测安全边界统一判定与防断流界面提示增强**；
    - **2.8 节（2026-11-13 晨）**：完成了仓库只读全栈审计，并打通了外置 **Magpie 网关 + Claude Code CLI Gemini 子代理多账号多模型无碰撞并发调度**；
    - **2.9 节（2026-11-13 晚）**：并行完成四条实战改进（CLI 句柄级存活核验与分级徽章、瞬态锁退避自愈 + 未保存切号零残留自动回滚 + 一键干净恢复、用量分析 `单会话均耗` / `单次均耗` KPI 升级，以及外置子代理 `-Resume` / `[AGY-EXECUTION-TRACE]`）；
    - **2.10 节（2026-11-13 深夜）**：完成外置 Magpie 插件审计、9 席三池嵌套溢出路由、`claude.exe v2.1.325.0` 混合编排与 Clash Verge Rev 启动自更新端口自愈；
-   - **2.11 节（2026-11-14，本轮新增并已发布）**：完成 **用量分析顶栏 KPI 对齐（`.usage-metric` `grid-template-rows: auto auto 1fr` + `.usage-metric-sub-item` 防句中折行）、模型分布 2×2 微指标网格与右对齐等宽占比列（`.usage-model-caption` / `.usage-model-share`）与 2× Retina 分享海报对齐精修**；完成 **`0.3.3` 全量升版与回归验证**（`bun test` 195 pass、`cargo test --release --features custom-protocol` 332 passed / 2 ignored、Python 8 套 114/114、Playwright 7 套串行全过）；完成 **中性目录 NSIS 打包审计**（109 文件 0 发现，`Claude-Local_0.3.3_x64-setup.exe` SHA-256 `4af97dc04a099f41b27ca4821af246bbfca1424838aeb54465bd2fa3e7f184d4`）；完成 **本机原子热更新至 `0.3.3`**（`hostSha256` `1f65697954a866f088f440451e8a288885ccc68500e54a1b578930d3cc83ae7b`，27 文件对账一致，交互桌面重拉存活，`missingClaudeCount == 0`）并上传发布 GitHub Release `v0.3.3`（服务端 `digest` 100% 匹配）。
-   - 当前 Git 工作区除本地开发规则文件 `AGENTS.md`（未暂存且**严禁暂存或提交**）外无任何未提交源码改动。
+   - **2.11 节（2026-11-14 凌晨，已发布 `v0.3.3`）**：完成 **用量分析顶栏 KPI 对齐、模型分布 2×2 微指标网格与 2× Retina 分享海报对齐精修**及 `v0.3.3` 打包发布；
+   - **2.12 节（2026-11-14 上午，外置工具链在线生效）**：在不中断任何运行中进程的前提下，对正在 Claude Code CLI 中实时调度的外置 **Magpie 反代 Gemini 三模型（`Argon` / `Carbon` / `Hydrogen`）** 完成跨层安全与效率审计及零中断热修——核实双通道代理物理隔离、内核 `IsProcessInJob = False` 守护、840k 上下文补丁与 `99.90%` 请求成功率 / `96.7%–98.4%` Prompt Cache 命中率；通过 `filememo` 热重载根治 `argon-*-pool` 跨套餐 `pace` 配额倒挂并升级 `hydrogen-*` 为 `Pro -> Ultra` 双层溢出；为外置派发器补齐 Mode B `3210s` 总墙钟软超时与双端 26 份 `agents/*.md` 护栏；
+   - **2.13 节（2026-11-15，`v0.3.5` 发版准备）**：完成 **全 9 个工作区页面去 AI 样板化与高密度紧凑重构**（统一 `44px` 页头 / `12px` 圆角 / `28×28` 中性图标 / 紧凑 `.settings-row`，新增共享 [`src/env-pages.css`](src/env-pages.css)，重构快速配置 4 栏状态条 + 8 入口网格、环境三页、`.risk-grid-3` 3 列风控网格、双列帮助网格、并排 `.backup-forms-grid` 与 286 键双语微文案压缩，完整保留 `166×286` `.identity-card` 与浏览器核验几何）、**6 项细节精修**（轻量药丸面包屑式引导、`claude-residue-panel.tsx` 补齐 `SOCKS5`/不完整 CLI 代理明细与紧密行距、CLI 卡中性 `>_` 终端图标徽章、`settings.tsx`「恢复默认界面设置」归位外观与关于页、`.backup-location` 单行按钮与 12px 救援文字、`smart-relay-model.ts` 简化候选判定）、**`0.3.5` 升版与全量测试通过**（`bun test` 195 pass、`cargo test --release --features custom-protocol` 332 passed / 2 ignored、Python 8 套 114/114、Playwright 9 轮串行 + `0.3.5` 26 张截图审计零错误），以及 **中性目录 NSIS 构建审计**（109 文件 0 发现，`Claude-Local_0.3.5_x64-setup.exe` SHA-256 `af059a43597a8977fd9ab71d7289b59774908053b86eb2b2030e49f894b0acd1`）与 **本机原子热更新至 `0.3.5`**（27 文件对账一致，交互桌面 Session 1 存活，`missingClaudeCount == 0`）。
+   - 当前 Git 工作区除本地开发规则文件 `AGENTS.md`（未暂存且**严禁暂存或提交**）外，仅 `HANDOFF.md` 含本次会话收尾交接更新（无任何其他未提交源码改动；若后续需提交交接文档，仅可显式 `git add HANDOFF.md`，**严禁**执行 `git add .` 或提交 `AGENTS.md` / `.local/`）。
    - 若同时需要接手本机工作站外置 CLI / Magpie / 子代理工具链状态，请另行阅读 Git 忽略文件 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`。
 3. **零上下文新会话必读顺序**：
    - 第 1 步：阅读本文、根目录 `AGENTS.md`（本地规则文件，**严禁 `git add` / `commit`**）与 [`CLAUDE.md`](CLAUDE.md)；
@@ -45,7 +47,9 @@
   3. 对 `Claude-Local` 仓库进行全栈架构审查，并基于 Magpie 网关日志与 Claude Code CLI 运行记录定位 Gemini 子代理用量偏低与并发阻塞根因，改造外置多账号多模型并派配置与派发脚本；
   4. **2026-11-13 晚专项攻坚**：针对用户实测反馈的四类核心体验与可靠性痛点——（a）关闭 CLI 终端后身份页仍残留已退出 PID 且活跃卡片误显“运行中”、（b）未保存当前身份切换偶发锁冲突时生成多余“当前身份 / 恢复前状态”卡片且需手动删除重切、（c）用量分析页“缓存节省”指标对订阅制用户缺乏行动指导意义、（d）外置子代理一次性单轮调用无法追问且返回摘要缺少工具/命令级可观测轨迹——对标开源最佳实践完成全栈根治；
   5. **2026-11-13 深夜多模型协同与基础设施加固**：审计外置 Magpie 网关 Antigravity 插件体系的真实工程价值，激活已完成周重置的多席位高阶配额并构建三池正交分流与嵌套溢出路由；核验 X 平台关于 Claude Code `v2.1.325.0`、`/advisor` 与对抗审阅的最新实践并重构 6-Tier 混合子代理编排；同时根治系统重启更新 Clash Verge Rev 引发的规则代理端口漂移与后台守护进程 Windows Job-Object 连坐回收隐患；
-  6. **2026-11-14 用量排版精修与 `v0.3.3` 正式打包发布**：接手前序交接文档后，针对桌面端截图暴露的「单会话均耗 vs API 等效花费」KPI 基线不齐与「模型分布」小字换行杂乱问题通过 Swarm 并发精修并同步至 2× Retina 长图海报，随后按所有者指令完成 **`0.3.3` 升版、全量回归、本机原子热更新、中性目录 NSIS 打包审计以及 GitHub Release `v0.3.3` 正式上传与交付核验**（详见 [`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md)）。
+  6. **2026-11-14 凌晨用量排版精修与 `v0.3.3` 正式打包发布**：接手前序交接文档后，针对桌面端截图暴露的「单会话均耗 vs API 等效花费」KPI 基线不齐与「模型分布」小字换行杂乱问题通过 Swarm 并发精修并同步至 2× Retina 长图海报，随后按所有者指令完成 **`0.3.3` 升版、全量回归、本机原子热更新、中性目录 NSIS 打包审计以及 GitHub Release `v0.3.3` 正式上传与交付核验**（详见 [`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md)）；
+  7. **2026-11-14 上午外置 Magpie Gemini 三模型实时运行审计与零中断无损加固**：对正在 Claude Code CLI 中实时运行的外置 Magpie 反代 Gemini 三模型（`Argon` / `Carbon` / `Hydrogen`）执行跨层安全与效率审计（涵盖双通道代理物理隔离、9 席三池配额路由、流式子代理派发器与 6-Tier 子代理编排效率），并在全程保持运行中进程零中断的前提下完成三域原子热修与独立复核闭环；
+  8. **2026-11-15 桌面端全 9 页去 AI 重构、`v0.3.5` 细节打磨与打包发布**：针对整体工作台“AI 样板感、冗余文字与留白”问题完成全 9 页高密度排版重构与 286 键双语微文案精简（合并至 `main` `99c9009`），补齐 6 项细节精修并跨过未发布的 `v0.3.4` 直接升版至 **`v0.3.5`**，完成全量回归、中性目录 NSIS 打包审计、本机原子热更新与 GitHub Release `v0.3.5` 正式发布。
 
 ---
 
@@ -214,7 +218,7 @@
 
 ---
 
-### 2.11 本轮新增：用量分析 KPI / 模型分布 / 分享海报对齐与 `v0.3.3` 打包发布与热更新（2026-11-14，已发布 `v0.3.3`）
+### 2.11 用量分析 KPI / 模型分布 / 分享海报对齐与 `v0.3.3` 打包发布与热更新（2026-11-14 凌晨，已发布 `v0.3.3`）
 - **用量分析对齐与模型分布 2×2 排版精修**（[`src/usage-statistics.tsx`](src/usage-statistics.tsx)、[`src/usage-statistics.css`](src/usage-statistics.css)、[`src/usage-screenshot.ts`](src/usage-screenshot.ts)、[`src/locales/zh.yaml`](src/locales/zh.yaml)、[`src/locales/en.yaml`](src/locales/en.yaml)、[`src/CLAUDE.md`](src/CLAUDE.md)）：
   - **顶栏 KPI 对齐与防句中折行**：`.usage-metric` 采用 `grid-template-rows: auto auto 1fr; align-content: start; align-items: start`，使「API 等效花费」与「单会话均耗」的标题与主数值保持上缘基准线一致；`.usage-metric > small.has-items` 配 `.usage-metric-sub-item`（`white-space: nowrap`）保证每项语义子统计作为原子块换行，不再把 `$0.13/次` 等数值与单位拆断；
   - **模型分布 2×2 等高微指标网格与等宽占比列**：将 `.usage-model-caption` 从 `flex-wrap` 散乱换行重构为 `grid-template-columns: minmax(0, 1fr) auto` 的规整 `2×2` 等高微指标网格（`.usage-model-stat` / `.usage-model-stat-label` / `.usage-model-stat-value` 展示等效/输出/响应/命中），并为 `.usage-model-share` 设置 `min-width: 40px` 右对齐等宽数字列（`tabular-nums`）；同步校准 [`src/usage-screenshot.ts`](src/usage-screenshot.ts) 的 2× Retina Canvas 长图海报绘制。
@@ -229,24 +233,57 @@
   - 通过 `.local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1 -ExpectedVersion '0.3.3'` 完成本机原子热更新（27 文件 SHA-256 对账一致，`hostSha256` `1f65697954a866f088f440451e8a288885ccc68500e54a1b578930d3cc83ae7b`，重拉交互桌面 Session 1 存活，`missingClaudeCount == 0`）；
   - 将 51 个核验文件提交至 `main`（[`01f7085`](https://github.com/yq04/Claude-Local/commit/01f7085481e4e7f8a5b60e95a38eea68957b430f) / tag `v0.3.3`），于 `2026-11-14T05:24:26Z` 发布为 GitHub Release `Latest`（服务端两项资产 `digest` 均与本地一致），并跟进提交 [`c443015`](https://github.com/yq04/Claude-Local/commit/c443015dc607295e2db37be7e0e11ddb06be5086) 写入 [`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md)（未移动 `v0.3.3` 标签）。
 
+---
+
+### 2.12 本轮新增：外置 Magpie Gemini（Argon / Carbon / Hydrogen）实时运行安全与效率审计及零中断热修闭环（2026-11-14 上午，外置工具链在线生效）
+- **（a）双通道物理隔离、父子进程代理清洗、内核 Job-Object 脱钩与缓存效率实证**：
+  - 实时套接字与进程环境取证确认：官方主控 `claude.exe`（`v2.1.325.0`）独占绑定于**主 Claude 专属住宅家宽独立 listener 口**（零直连公网、零连本地回环网关端口、零连活跃 Clash 规则 `mixed-port`，主会话 Prompt Cache 命中率达 **`98.62%–98.85%`**）；外置派发器在拉起 Gemini 子代理前对继承自父进程的 **10 项大小写代理环境变量**（`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `GRPC_PROXY` / `NO_PROXY` 及其小写变体）执行全量覆写清洗，统一指向经动态探测并核验 `(?i)mihomo|clash` 监听进程归属的**活跃 Clash 规则 `mixed-port`**（硬性排除主 Claude 专属住宅家宽独立 listener 口与本地回环网关端口，规则代理全灭时 fail-closed `exit 2`），且用户目录与外置隔离工作区的两套 `antigravity-cli/settings.json` 保持严格隔离以保留直连 Google OAuth 回退通道；
+  - 通过内核级 `OpenProcess + IsProcessInJob` 实测确认 WMI `Win32_Process.Create` 拉起的外置网关守护进程与插件宿主进程均为 **`IsProcessInJob = False`**，彻底免疫工具子进程退出时的 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 连坐强杀；
+  - 核实外置 CLI 二进制的 **`840,000` 检查点上下文补丁**（4 处标记完好，单会话实测 `cacheRead` 峰值达 **`838,084` tokens**）与 `AGY_CLI_DISABLE_AUTO_UPDATE="true"` 保护完好；网关热重载后账本（`n = 1,026` 次请求）实测终端成功率达 **`99.90%`（`1,025 / 1,026`）**（零终端 `401/403/429/5xx`、零空 `200` 响应，偶发瞬态上游 `503/504` 自动跨席位无感重试），Prompt Cache 令牌命中率达 **`96.7%–98.4%`**，`affinity: "session"` 会话亲和保持率达 **`99.11%`**。
+- **（b）定位并热重载根治 `argon-*-pool` 跨套餐配额倒挂与 `hydrogen-*` Pro-first 双层分层溢出**：
+  - **跨套餐 `pace` 倒挂根因**：查明此前 `argon-high-pool` / `argon-medium-pool` 未配置席位白名单，导致 3 个 Ultra 席位（其 Argon 合并计入已激活的 5h/7d 统一 `Gemini` 池，实时 `pace` 高达 `53.96–92.62`）与 6 个 Pro 席位（其 Argon 拥有独立 7d `Gemini 4 Argon` 池，首次调用前处于未激活初始态 `resetSecs = 604801s`、`pace = 0.60`）混排竞争，令 `pace` 路由器将 **`100%`（`90/90`）** 的 `argon-high` 调用倒挂路由至活跃 Ultra 席位，6 个 Pro 独立 7d Argon 池使用率恒为 `0.00%`；
+  - **组级 `accounts` 二进制契约定位**：逆向核验网关路由核心（`HeldToGroup` / `ResolveAccount` / `cleanGroupAccounts` / `gateway.groupHeld`）确认：虽然顶层 `accountWindowCaps` 按账号标识字符串匹配，但 `providers.json` 的 **`groups[].accounts` 必须严格填写 `"<provider>/<16-hex-LoginID>"`（如 `"antigravity/<16-hex-LoginID>"`）而非邮箱**，否则 `filememo` 热重载后会导致组内全部席位失配拦截；
+  - **零停机 `filememo` 热重载闭环**：在排他文件锁与原子替换保护下将 `argon-{high,medium}-pool` 显式锁定至 6 个启用态 Pro 席位（耗尽后经外层 `routing: "order"` 无损溢出至 `group/hydrogen-{high,medium}`），并将 `hydrogen-{medium,high,xhigh}` 升级为外层 `routing: "order"` + `affinity: "session"` 串联 `[group/hydrogen-*-pro (6 Pro, pace), group/hydrogen-*-ultra (3 Ultra, pace)]` 的双层结构（优先消耗 6 个 Pro 席位，保留 3 个 Ultra 席位优先承载 `Carbon` 与峰值溢出）；热重载后本地回环 `/v1/models` 实测 `HTTP 200` 暴露 **32 项**（**22 个 `group/*` 路由组 + 10 个 `antigravity/*` 模型**），`app.log` 零错误且在线会话零中断。
+- **（c）外置派发器 Mode B `3210s` 总墙钟软超时优雅收尾、禁轮询护栏、路径剥离与槽位校准**：
+  - **防外层 `Exit 143` 硬杀丢尾**：在流式监控循环中新增 Mode B 总墙钟软上限 `[Math]::Max(120, $MaxWaitSeconds - 90)`（默认 **`3210s`**，早于外层 `3300s` `timeout` 硬杀 `90s`），触发时通过叶子优先 `Stop-AgyProcessTree` 回收子进程树、阻断误触发直连 OAuth 回退，并输出带 `-Resume '<SessionId>' -SessionTag '<slug>'` 续跑指引的 `[AGY-WATCHDOG]` 横幅（由 `Get-CleanArgonMarkdown` 自动剥离以保证 `-OutputFile` 纯净），100% 保住 `Sync-TargetOutputFile`、`Save-AgySessionState`（`turnCount` 准确递增）、`[AGY-EXECUTION-TRACE]` 与 `AGY-RUN-DONE`；
+  - **内层禁轮询护栏与轨迹/配额校准**：在首轮 `QualityGuardrailBody` 与续接 `FollowUpGuardrail` 注入后台命令防轮询硬规则（`run_command` 超 `10s` 转后台后严禁调用 `schedule` 或循环 `manage_task(Action: 'status')` 空转轮询，必须直接结束当前回合等待运行时被动唤醒）；对 `transcript.jsonl` 工具路径参数统一 `.Trim('"')` 剥离内嵌双引号以恢复工作区相对路径显示，兼容 PowerShell 7 `ConvertFrom-Json` `[datetime]` 自动反序列化以保留 ISO-8601 `createdAt`，归一化轨迹输出中的小写 `$safeTag`，并对齐磁盘与 HTTP 兜底双路径的 `accountCaps` / `accountWindowCaps`、启用态席位白名单及 `Carbon -> Hydrogen` 溢出槽位计算（`9` 健康席位 / `18` 并发槽位；保持 `UTF-8 BOM + 纯 LF`，通过 PS 5.1 与 PS 7 双端 AST 零错误与隔离单元测试）。
+- **（d）双端 `.claude/CLAUDE.md` 三池正交分流、26 份 `agents/*.md` 防重复回读与外置启动批处理加固**：
+  - 原子同步主 `~/.claude/CLAUDE.md`（末尾 `# Claude Fable 5.2 Engineering & Ownership Protocol` 章节保持**字节级 100% 不变**）与外置隔离工作区 `.claude/CLAUDE.md`，固化 **Argon / Carbon / Hydrogen 三池正交分流纪律**：多文件只读侦察与代码/Diff/安全审计强制优先派发 `argon-scout` / `argon-reviewer`（零消耗消化 6 个 Pro 独立 7d Argon 池）；回归/单元测试、UI/前端、多文档汇总与常规实现默认强制派发 `gemini-4-carbon-high`（优先激活 3 个 Ultra 席位并自动溢出至 `hydrogen-high`）；`gemini-4-hydrogen-xhigh` 严格聚焦核心架构设计与高难根因推理；
+  - 原子更新双端全部 **26 份 `agents/*.md`**（保持 `UTF-8 no-BOM + 纯 LF`，并将历史遗留 `.bak-*` 文件统一迁出归档至外置备份目录，确保 `agents/` 目录零备份污染）：在首轮与 `-Resume` 模板全面补齐显式 `-SessionTag '<slug>'`，并新增 **`STRICT NO-REREAD RULE`** 严禁外层轻量包装子代理在拿到标准输出预览与 `[AGY-EXECUTION-TRACE]` 后再用 `Get-Content` / `Select-String` 重复回读已落盘的 `-OutputFile`；
+  - 同步加固外置中继启动批处理与隔离沙箱 `.claude/settings.json`：补齐监听端口 `(?i)mihomo|clash` 进程名归属核验、硬性排除主 Claude 专属住宅家宽独立 listener 口与本地回环网关端口（全灭 fail-closed `exit /b 2`）、补齐 `GRPC_PROXY` / `grpc_proxy`、收紧本地回环 `TcpClient.Connected` 握手判定并引入命名互斥锁 + 临时文件原子替换（机器级细节见 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`）。
+
+---
+
+### 2.13 本轮新增：全 9 页去 AI 紧凑重构、6 项细节精修与 `v0.3.5` 打包与本机热更新（2026-11-15）
+- **桌面工作台去 AI 与全 9 页紧凑重构（[`99c9009`](https://github.com/yq04/Claude-Local/commit/99c9009)，见 [`src/CLAUDE.md`](src/CLAUDE.md)）**：
+  - 统一工作区外壳（[`src/style.css`](src/style.css)、[`src/productivity-shell.css`](src/productivity-shell.css)）：`44px` 统一页头 + `18px` 中性 `H1`、`12px` 卡片圆角、`28×28` 中性图标容器与紧凑 `.settings-row`，完整保留 `.identity-card`（`166×286`）与 `.browser-verification-page`/`.browser-start`/`.verification-*` 几何；
+  - 新建共享样式 [`src/env-pages.css`](src/env-pages.css) 协同重构快速配置（4 栏状态条 + 2 列 8 入口动作网格）、浏览环境（双列核验矩阵）、电脑环境（美区基线摘要条 + 分组三行设置卡）、网络环境（三联代理卡 + 精简诊断行）、风控验证（3 列 `.risk-grid-3` 网格 + 统一安全态势条）、使用说明（响应式双列 `.help-topics` 网格）、设置与备份（并排 `.backup-forms-grid`）及 [`src/locales/zh.yaml`](src/locales/zh.yaml) / [`src/locales/en.yaml`](src/locales/en.yaml)（`286` 键精简）；
+- **`v0.3.5` 细节精修与升版核验**：
+  - 修复 `.identity-onboarding-bar` 与 [`scripts/CLAUDE.md`](scripts/CLAUDE.md) / [`src/CLAUDE.md`](src/CLAUDE.md) 残留 `180×286` 标注并重塑为轻量药丸 + 面包屑引导；[`src/claude-residue-panel.tsx`](src/claude-residue-panel.tsx) 补齐 `SOCKS5`/不完整 CLI 代理明细及 `shieldWarnHint` 悬浮提示、按钮改中性 `secondary` 与紧凑行高；[`src/claude-cli-panel.tsx`](src/claude-cli-panel.tsx) / [`src/identity-productivity.css`](src/identity-productivity.css) 改用中性 `>_` 终端图标徽章 `.cli-terminal-badge`；[`src/settings.tsx`](src/settings.tsx) / [`src/backup-panel.css`](src/backup-panel.css) 将「恢复默认界面设置」归位外观与关于页、`.backup-location` 路径与操作按钮单行水平对齐、`.backup-rescue-toggle` 设 `12px` 正文；[`src/smart-relay-model.ts`](src/smart-relay-model.ts) 简化候选推荐判定；
+  - 跨过未发布的 `v0.3.4` 统一升版至 **`0.3.5`**（[`package.json`](package.json)、[`src-tauri/Cargo.toml`](src-tauri/Cargo.toml)、[`src-tauri/Cargo.lock`](src-tauri/Cargo.lock)、[`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json)、[`src-tauri/CLAUDE.md`](src-tauri/CLAUDE.md)、[`docs/RELEASE_POLICY.md`](docs/RELEASE_POLICY.md)、[`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml)、[`README.md`](README.md)、[`README_EN.md`](README_EN.md)、[`docs/RELEASE_NOTES_0.3.5.md`](docs/RELEASE_NOTES_0.3.5.md)）；
+  - 全量验证通过：`bun test` `195 pass / 0 fail`、`bun run build`（`663` 模块）与 `python scripts/browser_ui.py dist` 零错误、`cargo test --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --bin claude-local` `332 passed / 0 failed / 2 ignored`、Python 8 套合成测试共 `114/114 OK`、Playwright 9 轮串行全过及 `0.3.5` 26 张视觉截图核验零错误；
+  - 中性根目录 NSIS 打包与 7 探针隐私审计通过（`109` 文件 `464,853,740` 字节、`0` 发现，`Claude-Local_0.3.5_x64-setup.exe` `140,993,630` 字节，SHA-256 `af059a43597a8977fd9ab71d7289b59774908053b86eb2b2030e49f894b0acd1`）；`.local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1 -ExpectedVersion '0.3.5'` 完成本机原子热更新（`27` 文件核验 / `9` 文件更新，`hostSha256` `ccc02c5c2e6c543c36ccebbff40c1b922de78001ac9550f8f6cfcadb4d725d2a`，交互桌面 Session 1 存活，`missingClaudeCount == 0`）。
+
 ## 3. 当前卡在哪
 
-**没有任何代码缺陷、测试失败、发布滞后或本机部署未同步项阻塞。** **`v0.3.3` 已完成全部验证、NSIS 打包审计、GitHub Release 发布与本机原子热更新**，工作区除本地开发规则 `AGENTS.md`（未暂存、**严禁提交**）外无任何未提交改动；当前仅保留两项客观验证边界与可选后续事项：
+**没有任何代码缺陷、测试失败、运行态故障或本机部署未同步项阻塞。** `v0.3.5` 源码验证、NSIS 打包审计与本机原子热更新已全部闭环，正在完成提交打标与 GitHub Release `v0.3.5` 发布收尾；既往 `v0.3.3`（`01f7085` / `c443015`）及更早标签保持不可变。
 
 1. **已同步上线的状态**：
-   - `v0.3.3`（源码 commit `01f7085481e4e7f8a5b60e95a38eea68957b430f`，交付核验 commit `c443015`）已在 GitHub Release 发布为 `Latest`（非草稿、非预发布），`Claude-Local_0.3.3_x64-setup.exe` 与 `SHA256SUMS.txt` 服务端 SHA-256 与本地构建文件 100% 一致；
-   - `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 与 `browser-ui/*` 已原子热更新至 **`0.3.3`** Release 构建（`hostSha256` `1f65697954a866f088f440451e8a288885ccc68500e54a1b578930d3cc83ae7b`，交互桌面窗口已验证存活，`missingClaudeCount == 0`）；
-   - 外置 9 席三池嵌套路由网关、回环 MCP、动态规则代理端口自愈、WMI Job-Object 守护以及 6-Tier 子代理舰队均已热加载就绪（详见 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`）。
+   - `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 与 `browser-ui/*` 已原子热更新至 **`0.3.5`** Release 构建（`hostSha256` `ccc02c5c2e6c543c36ccebbff40c1b922de78001ac9550f8f6cfcadb4d725d2a`，交互桌面窗口已验证存活，`missingClaudeCount == 0`）；
+   - 外置 9 席三池 22 路由组正交溢出网关、本地回环 MCP、动态规则代理端口自愈、WMI `IsProcessInJob = False` 守护、派发器 `3210s` 软超时与 6-Tier 子代理舰队均在线运行且全程零中断（详见 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`）。
 2. **显式验证边界与可选后续动作**：
    - 全部回归测试均在合成账号与隔离上下文中执行，**未实际执行 NSIS 安装向导安装/卸载或真实账号登录/切号**；
-   - 用户可在退出所有活跃 `claude.exe` 会话后按下方 **场景 E** 可选写入 2 个零遥测 `/advisor` 环境变量以启用 Mode B；或按 **场景 C** 视需要清理 2.8 剩余的 4 项轻量代码整理点。
+   - **严禁**执行 `git add .` 或暂存提交 `AGENTS.md` / `.local/`，且切勿移动 `v0.3.3` 或更早标签；
+   - 用户可在退出所有活跃 `claude.exe` 会话后按下方 **场景 E** 可选写入 2 个零遥测 `/advisor` 环境变量以启用 Mode B；或按 **场景 C** 酌情复核 2.8 剩余条目。
 
 ---
 
 ## 4. 下一步计划是什么（给零上下文新会话的执行手册）
 
-### 场景 A：后续版本（如 `v0.3.4`）迭代与发布规范
-1. **切勿修改或移动已发布的 `v0.3.3`、`v0.3.2` 及更早标签与安装包**；按新版本升版本号（`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.lock`、`src-tauri/CLAUDE.md`、`.github/ISSUE_TEMPLATE/bug_report.yml`）。
+> **前置收尾提示**：严禁执行 `git add .` / `git commit -a`，严禁暂存或提交 `AGENTS.md` 与 `.local/`，且严禁改动已发布的 `v0.3.5` / `v0.3.3` / `v0.3.2` 标签。
+
+### 场景 A：后续版本（如 `v0.3.6`）迭代与发布规范
+1. **切勿修改或移动已发布的 `v0.3.5`、`v0.3.3`、`v0.3.2` 及更早标签与安装包**；按新版本升版本号（`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.lock`、`src-tauri/CLAUDE.md`、`.github/ISSUE_TEMPLATE/bug_report.yml`）。
 2. 编写对应版本 `docs/RELEASE_NOTES_<ver>.md` 与 `docs/RELEASE_VERIFICATION_<ver>.md`，更新 `README.md` / `README_EN.md` / `docs/RELEASE_POLICY.md` 并在 [`CLAUDE.md`](CLAUDE.md) 登记。
 3. 跑齐 `bun test`、`bun run build`、`cargo test --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --bin claude-local`、Python 合成套件与 Playwright 串行回归。
 4. 源码文件清单核对与隐私/行尾预检：
@@ -261,10 +298,10 @@
 2. 读取 [`package.json`](package.json) 当前版本号 `<ver>`，先用 `pwsh -NoProfile -File .local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1 -ExpectedVersion '<ver>' -PlanOnly` 复核变更清单（注意该脚本参数默认值仍为 `0.3.2`，**必须显式传当前版本号**），获得允许后执行去掉 `-PlanOnly` 完成备份、原子替换、交互桌面重拉与 `missingClaudeCount == 0` 对账。
 
 ### 场景 C：用户要求顺带清理 2.8 剩余的 4 项轻量代码整理点
-- 按需补齐 [`src/claude-residue-panel.tsx`](src/claude-residue-panel.tsx) 的 `socks5_in_cli_env` / `!proxy_env_complete` 细项提示胶囊、核对 [`src-tauri/src/browser/oauth_route.rs`](src-tauri/src/browser/oauth_route.rs) 的 `platform.claude.com` 守卫意图、清理 [`src/smart-relay-model.ts`](src/smart-relay-model.ts) 未使用字段及对齐剩余旧注释中的 `166×286` 引用后，再走场景 A 或 B 构建验收。
+- 2.8 中关于 CLI 代理边界明细（`socks5_in_cli_env` / `!proxy_env_complete`）、`smart-relay-model.ts` 候选判定简化与 `166×286` 注释对齐已于 **`v0.3.5`** 合入并随版本核验完成；仍可在走场景 A/B 前酌情复核 [`src-tauri/src/browser/oauth_route.rs`](src-tauri/src/browser/oauth_route.rs) 的 `platform.claude.com` 守卫意图。
 
 ### 场景 D：用户继续处理工作站外置 CLI / Magpie / 子代理工具链
-- 请先阅读 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`，按其中记录的备份、嵌套溢出路由、Pro/Ultra 分池槽位、动态规则代理发现、`-Resume` 多轮机制与进程约束继续操作。
+- 请先阅读 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`，按其中记录的备份清单、22 路由组 `Pro -> Ultra` 双层嵌套溢出契约（`groups[].accounts` 必须使用 `"antigravity/<16-hex-LoginID>"`）、Mode B `3210s` 总墙钟软超时、动态规则代理进程归属校验、`-SessionTag` / `-Resume` 多轮热缓存机制、`STRICT NO-REREAD RULE` 与运行中进程零中断红线继续操作。
 
 ### 场景 E：用户在退出活跃 `claude.exe` 后希望安全解锁零遥测 Mode B `/advisor` 能力
 1. 确认所有活跃 `claude.exe` 会话已由用户正常退出（严禁强杀；无需执行 `claude update`，`v2.1.325.0` 已原生内置 `claude-fable-5-2` 与 `/advisor`）；
@@ -305,6 +342,8 @@
    - **Windows `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 连坐回收与非交互桌面 `MainWindowHandle = 0` 陷阱**：AI 工具子进程退出时会由内核 Job Object 连坐强杀普通 `Start-Process` 派生的后台守护进程，拉起长驻网关/桌面进程必须通过 WMI `Win32_Process.Create`（或计划任务）脱离当前 Job Object 并在独立后续命令中复核存活；同时非交互工具桌面因 WindowStation 隔离读取交互进程 `MainWindowHandle` 恒为 `0`，必须在 `SessionId == 1` 的交互 `WinSta0\Default` 上下文内探测真实 `HWND`；
    - **`/advisor` `$8/MTok` 未缓存全量读取与零遥测 GrowthBook 缓存坑点**：每次 `advisor()` 调用均按高阶单价对完整会话上下文做**未缓存读取**，严禁在 `Fable 5.2` 主控下重复挂载同级 Advisor，且 `Mode B` 必须严守 `Ctx < 150k` 与单任务最多 3 次门禁；在 `DISABLE_TELEMETRY=1` 下必须同时配齐 `CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL="1"` 与 `CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF="1"` 方可零遥测离线启用（Relay 环境禁用）；
    - **PowerShell `` "`f" `` `0x0C` 换页符转义污染、命名 `Mutex` 槽位与文件编码契约**：PowerShell 双引号内书写反引号包裹的 `` `file:line` `` 会将 `` `f `` 转义为 `0x0C`（Form-Feed 控制字节）污染提示词——拼接文本一律使用单引号 Here-String `@' ... '@` 并扫描 `< 0x20` 控制字节；含中文的外置 `.ps1` 必须保持 **`UTF-8 WITH BOM + 纯 LF`** 并通过 PS 5.1/7 双端 AST 零错误校验，而受跟踪文件与 `.claude/*.md` / JSON 必须保持 **`UTF-8 no-BOM + 纯 LF`** 且对 `.claude/agents/*.md` 采用目录外暂存 + `[System.IO.File]::Move($tmp, $dst, $true)` 原子替换；高并发槽位使用支持 `AbandonedMutexException` 恢复的命名 `Mutex` 数组（弃用全局命名 `Semaphore`），且并行 `-PromptFile` 首行须带独立角色头以打散会话亲和哈希。
+   - **Magpie `providers.json` 中 `groups[].accounts` 必须填写 `"antigravity/<16-hex-LoginID>"` 而非邮箱，且严禁把 Ultra 席位混入 `argon-*-pool`**：网关路由期 `gateway.groupHeld` / `HeldToGroup` / `ResolveAccount` 严格校验 `<provider>/<16-hex-LoginID>`（与按账号标识匹配的顶层 `accountWindowCaps` 不同），若向 `groups[].accounts` 写入邮箱字符串，`filememo` 热重载后会导致组内全部席位失配拦截；同时 Pro 席位的独立 7d `Gemini 4 Argon` 池在首次调用前 `resetSecs = 604801s`、`pace` 恒为 `0.60`，一旦把共享活跃统一池的 Ultra 席位（高 `pace`）混入 `argon-*-pool`，会被 Ultra 席位 100% 倒挂抢单——必须将 `argon-*-pool` 显式锁定在启用态 Pro 席位，并对 `hydrogen-*` 采用 `[pro-pool, ultra-pool]` 双层 `order -> pace` 分层溢出；
+   - **流式子代理必须设早于外层 `timeout` 90s 的软墙钟上限（`3210s < 3300s`），严禁内层后台轮询与外层重复回读 `-OutputFile`，且解析轨迹路径须剥离内嵌引号**：外层硬超时触发 `Exit 143` 会直接中断收尾逻辑导致丢失 `turnCount` 与执行轨迹，派发器内部必须提前 `90s` 执行叶子优先进程树回收以保住 `[AGY-EXECUTION-TRACE]`、`turnCount` 与 `AGY-RUN-DONE`；严禁内层子代理对后台 `run_command` 任务使用 `schedule` 定时器或循环调用 `manage_task(status)` 轮询（必须直接结束当前回合等待运行时被动唤醒），严禁外层包装子代理在拿到标准输出预览与 `[AGY-EXECUTION-TRACE]` 后再用 `Get-Content` / `Select-String` 重复回读已落盘 `-OutputFile`；解析 `transcript.jsonl` 工具路径参数时必须先 `.Trim('"')` 剥离内嵌双引号再做工作区相对路径归约。
 
 ### 5.2 防风控、净室清洗与 CLI 协同坑点
 1. **严守 `s13` 设备指纹连续性红线（[`src-tauri/src/cleaner_config.rs`](src-tauri/src/cleaner_config.rs) vs [`src-tauri/src/cleaner_identity.rs`](src-tauri/src/cleaner_identity.rs)）**：

@@ -1265,10 +1265,15 @@ html[data-window-hidden="true"] *::after {
   align-items: center;
 }
 
-.identity-cli .cli-app-icon {
+.identity-cli .cli-terminal-badge {
+  width: 28px;
+  height: 28px;
   border-radius: 7px;
-  border: 1px solid var(--landing-line);
-  box-shadow: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
 }
 
 .identity-cli .cli-app-meta {

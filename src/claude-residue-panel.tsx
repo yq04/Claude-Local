@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 文件残留白名单扫描/快照清理命令、CLI 遥测护盾/MCP 供应链审计摘要、身份页任务锁与刷新信号、共享确认窗与卡片下统一进度通道。
- * [OUTPUT]: 紧凑工具面布局的 Claude 文件路径/规模/影响预览，环境变量覆盖凭据顶层告警横幅，轻量化 CLI 遥测护盾与 MCP 供应链状态条及一键复制防漏 settings.json，默认只选完整缓存，统一中性操作按钮与红色危险确认，确认后直接清理并复查。
+ * [OUTPUT]: 紧凑工具面布局的 Claude 文件路径/规模/影响预览，环境变量覆盖凭据顶层告警横幅，轻量化 CLI 遥测护盾、socks5:// 与不完整代理边界细项提示及 MCP 供应链状态条与一键复制防漏 settings.json，默认只选完整缓存，统一中性次级操作按钮与红色危险确认，确认后直接清理并复查。
  * [POS]: 身份管理的文件维护区域；不访问钥匙串，路径和字段名之外的文件正文不进入界面；与 identity-productivity.css 协同。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -88,8 +88,10 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
    {cliSec&&<div className={`claude-residue-smart-bar ${cliShieldOk&&cliMcpOk?'safe':'warn'}`} data-bar-kind="cli-security" role="status">
     <i className="claude-residue-dot" aria-hidden="true"/>
     <span>
-     {cliShieldOk?t('risk.cliSecurity.shieldOk'):t('risk.cliSecurity.shieldWarn')}
+     <span title={!cliShieldOk?t('risk.cliSecurity.shieldWarnHint'):undefined}>{cliShieldOk?t('risk.cliSecurity.shieldOk'):t('risk.cliSecurity.shieldWarn')}</span>
      {cliSec.nonessential_traffic_blocked&&<>{' · '}<strong title={t('risk.cliSecurity.nonessentialBlockedHint')}>{t('risk.cliSecurity.nonessentialBlockedWarn')}</strong></>}
+     {cliSec.socks5_in_cli_env&&<>{' · '}<strong data-residue-cli-proxy="socks5" title={t('risk.cliSecurity.socks5Hint')}>{t('risk.cliSecurity.socks5Warn')}</strong></>}
+     {!cliSec.socks5_in_cli_env&&!cliSec.proxy_env_complete&&<>{' · '}<strong data-residue-cli-proxy="incomplete" title={t('risk.cliSecurity.proxyEnvIncompleteHint')}>{t('risk.cliSecurity.proxyEnvIncompleteWarn')}</strong></>}
      {' · '}
      {cliMcpOk?t('risk.cliSecurity.mcpOk'):t('risk.cliSecurity.mcpWarn',{unpinned:Math.max(cliSec.unpinned_npx_count,cliSec.windows_bare_npx_count),remote:cliSec.remote_http_mcp_count+(cliSec.has_custom_hooks_or_helpers?1:0)})}
     </span>
@@ -110,7 +112,7 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
      </span>
      <div className="claude-residue-presets">
       <Button variant="secondary" size="small" disabled={locked||available.length===0} onClick={()=>setIds(presetIds(available,'cache'))}>{t('仅选安全缓存（推荐）')}</Button>
-      <Button variant="ghost" size="small" disabled={locked||available.length===0} onClick={()=>setIds(presetIds(available,'reset'))}>{t('选入异常登录项')}</Button>
+      <Button variant="secondary" size="small" disabled={locked||available.length===0} onClick={()=>setIds(presetIds(available,'reset'))}>{t('选入异常登录项')}</Button>
      </div>
     </div>
     <div className="claude-residue-toolbar"><Checkbox label={t('全选可清理项')} checked={available.length>0&&available.every(item=>ids.includes(item.id))} indeterminate={ids.length>0&&!available.every(item=>ids.includes(item.id))} disabled={locked||available.length===0} onCheckedChange={checked=>setIds(checked?available.map(item=>item.id):[])}/><span>{t('已选 {v0} 项',{v0:selected.length})}</span></div>

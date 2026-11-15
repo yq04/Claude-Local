@@ -492,10 +492,7 @@ export function evaluateSmartRelay(
   config: SmartRelayConfig,
   nowSec: number,
 ): RelayEvaluation {
-  const effectiveSpentThreshold: number =
-    config.strategy === 'ordered' && config.spentThresholdPct < 100
-      ? config.spentThresholdPct
-      : config.spentThresholdPct;
+  const effectiveSpentThreshold: number = config.spentThresholdPct;
   const lowThreshold = Math.min(LOW_SHARE_PCT, effectiveSpentThreshold);
 
   const rawCandidates: RelayCandidate[] = accounts.map(acc => {
@@ -790,9 +787,7 @@ export function evaluateSmartRelay(
   if (preferredReadyToReturn && preferredCandidate) {
     recommended = preferredCandidate;
     relayTriggerKind = 'preferred_recovered';
-    shouldRelayNow =
-      config.affinityMode !== 'manual' &&
-      Boolean(recommended && (!currentCandidate || recommended.name !== currentCandidate.name || !recommended.isCurrent));
+    shouldRelayNow = config.affinityMode !== 'manual' && Boolean(recommended && !recommended.isCurrent);
   } else if (topStrategySaved) {
     const currentSpentOrMissing =
       !currentCandidate ||
@@ -804,9 +799,7 @@ export function evaluateSmartRelay(
     if (currentSpentOrMissing) {
       recommended = topStrategySaved;
       relayTriggerKind = 'current_spent';
-      shouldRelayNow =
-        config.affinityMode !== 'manual' &&
-        Boolean(recommended && (!currentCandidate || recommended.name !== currentCandidate.name || !recommended.isCurrent));
+      shouldRelayNow = config.affinityMode !== 'manual' && Boolean(recommended && !recommended.isCurrent);
     } else if (!currentCandidate || meetsDynamicSwitchMargin(topStrategySaved, currentCandidate)) {
       recommended = topStrategySaved;
       relayTriggerKind = 'better_candidate';

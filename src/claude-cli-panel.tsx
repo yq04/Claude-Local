@@ -1,13 +1,12 @@
 /**
  * [INPUT]: 原生 CLI 本地状态、用户手动最新版本检查与更新命令和真实任务日志。
- * [OUTPUT]: 紧凑工具栏样式的 CLI 维护卡片、可恢复的本地状态读取、二进制路径一键复制、当前/最新版本可关闭反馈、未安装时官方安装指引与命令复制、检查更新与一键更新；检查更新仅呈现内联版本状态不弹安装日志，运行中明确阻断更新。
+ * [OUTPUT]: 紧凑工具栏样式与中性终端徽标的 CLI 维护卡片、可恢复的本地状态读取、二进制路径一键复制、当前/最新版本可关闭反馈、未安装时官方安装指引与命令复制、检查更新与一键更新；检查更新仅呈现内联版本状态不弹安装日志，运行中明确阻断更新。
  * [POS]: 身份页 CLI 程序维护区域；首次挂载只读本地状态，不联网、不结束会话、不修改身份或配置；视觉收紧样式与 identity-productivity.css 协同。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect, useRef, useState} from 'react';
 import {Button} from 'cromma-ui';
 import {invoke} from '@tauri-apps/api/core';
-import appLogo from '../assets/claude-local-mark.svg';
 import {useI18n} from './i18n';
 import {usePageRefresh} from './app-events';
 import {CleanupActivity, useCleanupActivity} from './cleaner-activity';
@@ -131,7 +130,7 @@ export function ClaudeCliPanel({blocked, onBusy}: {blocked: boolean; onBusy: (bu
     <section className="identity-cli">
       <div className="identity-section-head">
         <div className="cli-app-row-info">
-          <img src={appLogo} width={30} height={30} alt="" aria-hidden="true" className="cli-app-icon" />
+          <span className="settings-icon-badge cli-terminal-badge" aria-hidden="true">{'>_'}</span>
           <div className="cli-app-meta">
             <div className="cli-title-cluster">
               <h2>{t('Claude Code CLI')}</h2>

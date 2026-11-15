@@ -595,7 +595,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
                 />
                 <span>{t('settings.matchWallpaperAccent')}</span>
               </Button>
-              <Button variant="ghost" size="small" onClick={handleClearWallpaper}>
+              <Button variant="secondary" size="small" onClick={handleClearWallpaper}>
                 {t('settings.clearWallpaper')}
               </Button>
             </>
@@ -784,21 +784,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
           </section>
         )}
 
-        {showBackupForm && (
-          <>
-            <BackupPanel locale={locale} />
-            <section className="settings-group">
-              <GroupHeading>{t('settings.preferenceResetGroup')}</GroupHeading>
-              <div className="settings-card">
-                <SettingsRow title={t('恢复默认界面设置')} detail={t('将主题、强调色、侧边栏布局与动效偏好恢复为初始状态，不影响任何账号与保险库数据')}>
-                  <Button variant="ghost" size="small" onClick={() => resetPreferences()}>
-                    {t('恢复默认')}
-                  </Button>
-                </SettingsRow>
-              </div>
-            </section>
-          </>
-        )}
+        {showBackupForm && <BackupPanel locale={locale} />}
 
         {showGeneral && (
           <>
@@ -841,6 +827,16 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
               <GroupHeading>{t('侧栏与工作区布局')}</GroupHeading>
               <div className="settings-card">{layoutRows}</div>
             </section>
+            <section className="settings-group">
+              <GroupHeading>{t('settings.preferenceResetGroup')}</GroupHeading>
+              <div className="settings-card">
+                <SettingsRow title={t('恢复默认界面设置')} detail={t('将主题、强调色、侧边栏布局与动效偏好恢复为初始状态，不影响任何账号与保险库数据')}>
+                  <Button variant="secondary" size="small" onClick={() => resetPreferences()}>
+                    {t('恢复默认')}
+                  </Button>
+                </SettingsRow>
+              </div>
+            </section>
           </>
         )}
 
@@ -863,7 +859,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
                 </div>
               </div>
               <SettingsRow title={t('恢复默认界面设置')} detail={t('将主题、强调色、侧边栏布局与动效偏好恢复为初始状态，不影响任何账号与保险库数据')}>
-                <Button variant="ghost" size="small" onClick={() => resetPreferences()}>
+                <Button variant="secondary" size="small" onClick={() => resetPreferences()}>
                   {t('恢复默认')}
                 </Button>
               </SettingsRow>

@@ -1955,18 +1955,18 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 }
 .identity-policy-row label { font-size: 12px; line-height: 1.4; }
 
-/* ----- 新账号 3 步引导横幅与紧凑身份工牌（180×286，保留 54:85.6 比例与 #43e484 顶部绿光） ----- */
+/* ----- 新账号 3 步引导横幅与紧凑身份工牌（166×286，保留 54:85.6 比例与 #43e484 顶部绿光） ----- */
 .identity-onboarding-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px 10px;
-  margin: 0 18px 8px;
-  padding: 6px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--landing-line);
-  background: var(--background);
+  margin: 0 18px 6px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--landing-line) 75%, transparent);
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
   font-size: 11px;
   line-height: 1.3;
   color: var(--muted-foreground);
@@ -1990,27 +1990,27 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .identity-onboarding-badge {
   display: inline-flex;
   align-items: center;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 6px;
-  background: var(--local-accent-soft);
-  color: var(--local-accent-ink);
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  color: var(--foreground);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   white-space: nowrap;
   flex-shrink: 0;
 }
 .identity-onboarding-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
-  padding: 3px 9px;
-  border-radius: 6px;
-  background: var(--panel);
-  border: 1px solid var(--landing-line);
-  color: var(--foreground);
+  min-height: 0;
+  padding: 1px 2px;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  color: var(--muted-foreground);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 450;
   white-space: normal;
   overflow-wrap: anywhere;
   flex-shrink: 1;
@@ -2019,9 +2019,10 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 }
 .identity-onboarding-steps i {
   font-style: normal;
-  color: var(--local-accent);
+  color: var(--muted-foreground);
+  opacity: 0.65;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   flex-shrink: 0;
 }
 @container identity-workbench (max-width: 600px) {
@@ -2724,10 +2725,10 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .claude-residue-toolbar label { font-size: 12px; }
 .claude-residue-toolbar > span { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .claude-residue-list { margin: 0 18px; padding: 0; list-style: none; max-height: 310px; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-width: thin; }
-.claude-residue-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 6px; border-top: 1px solid var(--landing-line); transition: background-color 140ms ease; }
+.claude-residue-row { display: flex; align-items: flex-start; gap: 12px; padding: 9px 6px; border-top: 1px solid var(--landing-line); transition: background-color 140ms ease; }
 .claude-residue-row:hover { background: color-mix(in srgb, var(--muted) 45%, transparent); }
 .claude-residue-row > button { flex-shrink: 0; margin-top: 2px; }
-.claude-residue-file { min-width: 0; flex: 1; display: grid; gap: 4px; }
+.claude-residue-file { min-width: 0; flex: 1; display: grid; gap: 2px; }
 .claude-residue-file-title { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 .claude-residue-file-title strong { font-size: 12px; font-weight: 550; }
 .claude-residue-risk { padding: 2px 6px; border: 1px solid var(--landing-line); border-radius: 5px; font-size: 9px; line-height: 1.3; color: var(--muted-foreground); }
