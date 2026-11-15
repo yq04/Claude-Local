@@ -145,10 +145,10 @@ export function BrowserPanel({ onBusy }: {
     const cliIdentityName = state?.cli_identity ? maskDisplayName(state.cli_identity.name, state.cli_identity.email, prefs.privacyMask) : t('browser.identityUnknown');
     function edit<K extends keyof BrowserConfig>(key: K, value: BrowserConfig[K]) { setDraft(old => old ? { ...old, [key]: value } : old); }
     return <section className="system-page browser-page">
-        <div className="cleanup-title">
+        <header className="cleanup-title browser-header">
             <div><h1>{t("浏览环境")}</h1></div>
             <Button size="small" variant="secondary" disabled={!!busy} onClick={() => void act('browser_read')}>{t("刷新状态")}</Button>
-        </div>
+        </header>
         {error && <p role="alert" className="system-feedback error">{t(error)}</p>}
         {killSwitch?.triggered && (
             <div className="identity-recovery browser-kill-switch-banner" role="alert" data-kill-switch-banner>
@@ -175,20 +175,11 @@ export function BrowserPanel({ onBusy }: {
         <div className="browser-sections">
             <div className="network-action-card browser-hero-card">
                 <div className="browser-hero-bar">
-                    <div className="browser-hero-main">
-                        <div className="browser-hero-title-row">
-                            <h2>{t('browser.environmentTitle')}</h2>
-                            <span data-browser-runtime={browserRuntime.status} className={`identity-policy-mode ${browserRuntime.status === 'running' ? 'ok' : ''}`}>
-                                {t(`browser.runtime${browserRuntime.status === 'running' ? 'Running' : browserRuntime.status === 'closed' ? 'Closed' : 'Unknown'}`)}
-                            </span>
-                        </div>
-                        <div className="browser-hero-meta">
-                            <span className="browser-context-pill" data-current-cli-identity>{t('browser.currentCliIdentity', {name: cliIdentityName})}</span>
-                            <span className={`browser-context-pill ${state?.identity?.status === 'warming' ? 'is-warming' : 'is-cli'}`} data-current-browser-identity>
-                                {t(state?.identity?.status === 'warming' ? 'browser.currentWarmingIdentity' : 'browser.currentBrowserIdentity', {name: browserIdentityName})}
-                            </span>
-                        </div>
-                        <p className="browser-scope-note" data-browser-verification-scope>{t('browser.verificationScope')}</p>
+                    <div className="browser-hero-title-row">
+                        <h2>{t('browser.environmentTitle')}</h2>
+                        <span data-browser-runtime={browserRuntime.status} className={`identity-policy-mode ${browserRuntime.status === 'running' ? 'ok' : ''}`}>
+                            {t(`browser.runtime${browserRuntime.status === 'running' ? 'Running' : browserRuntime.status === 'closed' ? 'Closed' : 'Unknown'}`)}
+                        </span>
                     </div>
                     <div className="network-action-buttons browser-hero-actions">
                         <Button variant="secondary" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
@@ -203,6 +194,15 @@ export function BrowserPanel({ onBusy }: {
                             if (state?.cli_expected_identity) setReturnCliBrowser({expectedIdentity: state.cli_expected_identity, name: cliIdentityName});
                         }}>{t('browser.returnToCli')}</Button>
                     </div>
+                </div>
+                <div className="browser-hero-subrow">
+                    <div className="browser-hero-meta">
+                        <span className="browser-context-pill" data-current-cli-identity>{t('browser.currentCliIdentity', {name: cliIdentityName})}</span>
+                        <span className={`browser-context-pill ${state?.identity?.status === 'warming' ? 'is-warming' : 'is-cli'}`} data-current-browser-identity>
+                            {t(state?.identity?.status === 'warming' ? 'browser.currentWarmingIdentity' : 'browser.currentBrowserIdentity', {name: browserIdentityName})}
+                        </span>
+                    </div>
+                    <p className="browser-scope-note" data-browser-verification-scope>{t('browser.verificationScope')}</p>
                 </div>
                 {((!!state && !state.cli_expected_identity) ||
                   (state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status)) ||
@@ -257,19 +257,21 @@ export function BrowserPanel({ onBusy }: {
                         </span>
                     </div>
                 )}
-                <div className="browser-check-grid">
-                    {checks.map(x => (
-                        <div className={`browser-check check-${x.status}`} key={x.id}>
-                            <span aria-label={t(x.status === 'ok' ? "已核验" : x.status === 'mismatch' ? "存在冲突" : "尚未核验")}>
-                                {x.status === 'ok' ? '✓' : x.status === 'mismatch' ? '!' : '—'}
-                            </span>
-                            <div className="browser-check-copy">
-                                <strong>{t(x.title)}</strong>
-                                <p title={t(x.detail)}>{t(x.detail)}</p>
+                {checks.length > 0 && (
+                    <div className="browser-check-grid">
+                        {checks.map(x => (
+                            <div className={`browser-check check-${x.status}`} key={x.id}>
+                                <span aria-label={t(x.status === 'ok' ? "已核验" : x.status === 'mismatch' ? "存在冲突" : "尚未核验")}>
+                                    {x.status === 'ok' ? '✓' : x.status === 'mismatch' ? '!' : '—'}
+                                </span>
+                                <div className="browser-check-copy">
+                                    <strong>{t(x.title)}</strong>
+                                    <p title={t(x.detail)}>{t(x.detail)}</p>
+                                </div>
                             </div>
-                        </div>
-                    ))}
-                </div>
+                        ))}
+                    </div>
+                )}
                 {state?.report?.error && <p className="system-feedback error">{t("浏览器出口检测：")}{t(state.report.error)}</p>}
             </div>
 

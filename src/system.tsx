@@ -138,7 +138,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
   const baselineUnknown = !state || (timezoneAligned && languageAligned && state.location_enabled == null);
   return (
     <section className="system-page system-environment-page">
-      <div className="cleanup-title">
+      <header className="cleanup-title system-header">
         <div>
           <h1>{t('电脑环境')}</h1>
         </div>
@@ -170,7 +170,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
             </Button>
           </div>
         )}
-      </div>
+      </header>
       {error && (
         <p className="system-feedback error" role="alert">
           {t(error)}
@@ -237,6 +237,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
               <div className="system-setting-copy">
                 <h2 id="system-language-title">{t('系统语言')}</h2>
                 <p className="system-current-value"><span>{t('computer.current')}</span><strong>{state ? t(languages[languageChoice(state.languages[0] || '') || ''] || state.languages[0] || '未设置') : t('读取中…')}</strong>{state?.languages.length ? <span className="system-language-code" title={state.languages.join(' → ')}>{state.languages.join(' → ')}</span> : null}</p>
+                <p className="system-setting-note">{t('应用重启后生效；系统完整切换可能需要注销。')}</p>
               </div>
             </div>
             <div className="system-inline-controls">
@@ -254,7 +255,6 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
               <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('language')}>{t('系统设置')}</Button>
               <Button variant="secondary" size="small" loading={busy === 'language'} disabled={disabled || language === languageChoice(state?.languages[0] || 'en')} onClick={() => void apply('language')}>{t('应用语言')}</Button>
             </div>
-            <p className="system-setting-note">{t('应用重启后生效；系统完整切换可能需要注销。')}</p>
           </article>
 
           <article className="system-setting-card" data-system-setting="location" aria-labelledby="system-location-title">
