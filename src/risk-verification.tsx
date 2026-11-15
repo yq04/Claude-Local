@@ -668,9 +668,8 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
         </section>
 
         {/* 第二部分：手机扫码 KYC 同源家宽桥接与多客户端配置 */}
-        <div className="settings-group-heading">
-          <span className="settings-group-bar" aria-hidden="true" />
-          <h2>{t('risk.section.mobileTitle')}</h2>
+        <div className="risk-subhead">
+          <h2 className="risk-subhead-title">{t('risk.section.mobileTitle')}</h2>
         </div>
 
         <section className="settings-card risk-card">
@@ -1119,9 +1118,8 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
         </section>
 
         {/* 第三部分：KYC 实拍前 6 步安全飞行清单 */}
-        <div className="settings-group-heading">
-          <span className="settings-group-bar" aria-hidden="true" />
-          <h2>{t('risk.section.checklistTitle')}</h2>
+        <div className="risk-subhead">
+          <h2 className="risk-subhead-title">{t('risk.section.checklistTitle')}</h2>
         </div>
 
         <section className="settings-card risk-card">
