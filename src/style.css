@@ -1,7 +1,7 @@
 /**
- * [INPUT]: index.css 的系统字体、Cromma UI 控件、Cockpit Tools / CC Switch 座舱卡片与胶囊导航几何、settings-model 主题/强调色/布局/动效属性。
- * [OUTPUT]: 双主题/毛玻璃自适应高对比度告警条与六色强调色、192px经典与72px紧凑自适应侧栏、零 SVG feTurbulence 滤镜开销的单层毛玻璃画布与独立不透明模态浮层、窄身份库内完整换行的账号引导、浏览器未知项整体未完成的中性黄色、统一28px操作按钮、固定身份卡额度排版、按文字自适应的网络复制按钮、并排电脑设置卡与下方定位横条；用量专属样式由 usage-statistics.css 提供。控件皮肤归 Cromma UI 原语，本文件统一应用布局和尺寸。
- * [POS]: 应用布局与视觉渲染层；保持 166×286 紧凑身份工牌几何、顶部可拖拽排序横条、#43e484 顶部绿光与 #ac3025 错误色等自动化测试契约。
+ * [INPUT]: index.css 的系统字体、Cromma UI 控件、座舱卡片与侧栏导航几何、settings-model 主题/强调色/布局/动效属性。
+ * [OUTPUT]: 双主题/毛玻璃自适应高对比度告警条与六色强调色、194px经典与72px紧凑自适应侧栏、统一 44px 桌面工具栏页头与中性 H1 排版、12px 卡片圆角与克制边框阴影、28px 中性图标角标、双列使用说明参考网格、零 SVG feTurbulence 滤镜开销的单层毛玻璃画布与独立不透明模态浮层；用量专属样式由 usage-statistics.css 提供。
+ * [POS]: 应用布局与视觉渲染层；保持 166×286 紧凑身份工牌几何、顶部可拖拽排序横条、#43e484 顶部绿光与 #ac3025 错误色及 browser.html 验证页颜色/横幅高度契约。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 :root {
@@ -33,7 +33,7 @@
   --landing-hatch-line: color-mix(in srgb, var(--foreground) 7.5%, transparent);
   --landing-hatch: repeating-linear-gradient(-45deg, transparent 0 5px, var(--landing-hatch-line) 5px 6px);
   --landing-dots: radial-gradient(color-mix(in srgb, var(--muted-foreground) 20%, transparent) 1px, transparent 1px);
-  --card-shadow: 0 1px 3px rgba(20, 20, 19, 0.04), 0 6px 16px -8px rgba(20, 20, 19, 0.06);
+  --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   --capsule-shadow: 0 4px 18px -4px rgba(20, 20, 19, 0.07), 0 1px 3px rgba(20, 20, 19, 0.04);
   --panel-header-height: 48px;
   --panel-header-title-size: 13px;
@@ -415,6 +415,7 @@ code, input { user-select: text; }
   .settings-card,
   .settings-spec-card,
   .settings-tabs,
+  .backup-card,
   .identity-library,
   .identity-policy,
   .claude-residue,
@@ -431,13 +432,14 @@ code, input { user-select: text; }
   .cleanup-activity,
   .identity-operation,
   .help-scope,
-  .help-topics,
+  .help-row,
   .help-notes
 ),
 :root[data-backdrop="custom"] :is(
   .settings-card,
   .settings-spec-card,
   .settings-tabs,
+  .backup-card,
   .identity-library,
   .identity-policy,
   .claude-residue,
@@ -454,7 +456,7 @@ code, input { user-select: text; }
   .cleanup-activity,
   .identity-operation,
   .help-scope,
-  .help-topics,
+  .help-row,
   .help-notes
 ) {
   border-color: var(--glass-card-border);
@@ -735,13 +737,13 @@ code, input { user-select: text; }
 .cleaner-slot { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .quick-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 
-/* ----- 排版层级与 Cockpit / CC Switch 页头栏 ----- */
+/* ----- 排版层级与统一桌面工具栏页头 ----- */
 h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 650;
-  letter-spacing: -0.5px;
-  line-height: 1.3;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
   color: var(--foreground);
   text-wrap: balance;
 }
@@ -758,14 +760,15 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .page-subtitle-pill {
   display: inline-flex;
   align-items: center;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--local-accent) 10%, var(--panel));
-  border: 1px solid color-mix(in srgb, var(--local-accent) 22%, var(--landing-line));
-  color: var(--local-accent-ink);
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--muted);
+  border: 1px solid var(--landing-line);
+  color: var(--muted-foreground);
   font-size: 11px;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 1;
 }
 
 .cleanup-title {
@@ -774,7 +777,25 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 10px 16px;
-  margin-bottom: 20px;
+  margin-bottom: 14px;
+}
+.cleanup-title h1,
+.quick-header h1,
+.browser-header h1,
+.system-header h1,
+.network-header h1,
+.risk-header h1,
+.identity-header h1,
+.usage-header h1,
+.help-header h1,
+.settings-header h1 {
+  margin: 0;
+  padding: 0;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
 }
 .cleanup-title-actions {
   display: flex;
@@ -785,46 +806,34 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   max-width: 100%;
 }
 
+.quick-header,
+.browser-header,
+.system-header,
+.network-header,
+.risk-header,
+.identity-header,
+.usage-header,
+.help-header,
+.settings-header,
 .system-page > .cleanup-title,
 .cleanup-scroll > .cleanup-title,
 .identity-page > .cleanup-title {
-  position: relative;
-  isolation: isolate;
-  min-height: 54px;
-  padding: 10px 20px;
-  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  min-height: 44px;
+  padding: 0 0 10px;
+  margin: 0 0 14px;
   width: auto;
   max-width: none;
-  justify-content: space-between;
   border-bottom: 1px solid var(--landing-line);
-  background: linear-gradient(180deg, var(--panel) 0%, color-mix(in srgb, var(--panel) 70%, var(--background)) 100%);
+  background: transparent;
 }
-.system-page > .cleanup-title::before,
-.cleanup-scroll > .cleanup-title::before,
-.identity-page > .cleanup-title::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background-image:
-    radial-gradient(ellipse at 12% 50%, color-mix(in srgb, var(--local-accent-bright) 10%, transparent) 0%, transparent 55%),
-    radial-gradient(ellipse at 88% 30%, color-mix(in srgb, var(--local-accent) 7%, transparent) 0%, transparent 50%);
-  opacity: 0.85;
-}
-:root[data-surface="hatched"] .system-page > .cleanup-title::before,
-:root[data-surface="hatched"] .cleanup-scroll > .cleanup-title::before,
-:root[data-surface="hatched"] .identity-page > .cleanup-title::before {
-  background-image:
-    var(--landing-dots),
-    radial-gradient(ellipse at 18% 45%, color-mix(in srgb, var(--local-accent-bright) 14%, transparent) 0 16%, transparent 48%);
-  background-size: 7px 7px, 100% 100%;
-}
-.system-page > .cleanup-title {
-  margin-inline: -20px;
-}
-.cleanup-scroll > .cleanup-title {
-  margin-inline: -20px;
+.identity-page > .cleanup-title,
+.identity-page > .identity-header {
+  margin: 0 20px 14px;
 }
 .landing-section-band {
   height: 1px;
@@ -845,11 +854,10 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 20px 20px;
+  padding: 12px 20px 20px;
   scrollbar-width: thin;
   scrollbar-color: #cfc8bc transparent;
 }
-.quick-page { padding-top: 0; }
 .quick-controls,
 .quick-page > .cleanup-activity,
 .quick-page > .system-feedback {
@@ -871,8 +879,8 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 14px;
-  padding: 15px 18px;
-  border-radius: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
   border: 1px solid var(--landing-line);
   background: var(--panel);
   box-shadow: var(--card-shadow);
@@ -920,12 +928,12 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .quick-buttons button {
   min-height: 72px;
   height: auto;
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid var(--landing-line);
   background: var(--panel);
   box-shadow: var(--card-shadow);
   white-space: normal;
-  padding: 15px 18px;
+  padding: 14px 16px;
   gap: 12px;
   text-align: left;
   justify-content: flex-start;
@@ -984,7 +992,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .system-setting-card:not([data-system-setting="location"]) {
   display: flex;
   flex-direction: column;
-  border-radius: 18px;
+  border-radius: 12px;
 }
 .system-setting-header {
   display: flex;
@@ -998,9 +1006,9 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   min-width: 0;
 }
 .system-setting-card .settings-icon-badge {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
 }
 .system-setting-copy h2 {
   margin: 0;
@@ -1290,7 +1298,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 
 .browser-checks {
   box-shadow: var(--card-shadow);
-  border-radius: 14px;
+  border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--landing-line);
   background: var(--panel);
@@ -1469,7 +1477,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .browser-surface { overflow: auto; user-select: text; }
 .browser-surface #app { height: auto; min-height: 100%; overflow: visible; }
 .cleanup-page { display: flex; flex: 1; min-height: 0; flex-direction: column; }
-.cleanup-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 24px 28px; scrollbar-width: thin; scrollbar-color: #cfc8bc transparent; }
+.cleanup-scroll { flex: 1; min-height: 0; overflow: auto; padding: 12px 24px 28px; scrollbar-width: thin; scrollbar-color: #cfc8bc transparent; }
 .cleanup-activity {
   margin: 16px 0;
   padding: 16px;
@@ -1531,7 +1539,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 @keyframes dialog-fade { from { opacity: 0; } }
 
 /* ----- 网络环境配置与诊断页（按部就班：描述 + 一键操作卡片 + 连通性检测） ----- */
-.network-page { padding: 0 20px 20px; }
+.network-page { padding: 12px 20px 20px; }
 .network-sections {
   display: grid;
   gap: 10px;
@@ -1554,7 +1562,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   gap: 10px;
   padding: 13px 16px;
   border: 1px solid var(--landing-line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--card-shadow);
   transition: border-color 150ms ease;
@@ -1659,7 +1667,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   gap: 8px;
   padding: 14px 18px;
   border: 1px solid var(--landing-line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--card-shadow);
 }
@@ -1742,18 +1750,18 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .domain-badge.checking { background: #fff8df; color: #986400; }
 @media (prefers-reduced-motion: reduce) { .domain-outcome.checking .domain-outcome-symbol { animation: none; } }
 
-/* ----- 使用说明（现代圆角卡片分组与折叠面板） ----- */
-.help-page { padding: 0 20px 20px; }
+/* ----- 使用说明（紧凑双列参考网格与折叠注意事项） ----- */
+.help-page { padding: 12px 20px 20px; }
 .help-scope {
-  padding: 13px 18px;
-  margin-bottom: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
   border: 1px solid var(--landing-line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--card-shadow);
   color: var(--foreground);
-  font-size: 12.5px;
-  line-height: 1.65;
+  font-size: 12px;
+  line-height: 1.6;
   overflow-wrap: anywhere;
   user-select: text;
 }
@@ -1761,44 +1769,52 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   list-style: none;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--landing-line);
-  border-radius: 14px;
-  background: var(--panel);
-  box-shadow: var(--card-shadow);
-  overflow: hidden;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 .help-row {
   display: grid;
-  grid-template-columns: minmax(150px, 24%) minmax(0, 1fr);
-  gap: 18px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--landing-line);
-  transition: background-color 150ms ease;
-}
-.help-row:hover { background: color-mix(in srgb, var(--muted) 40%, transparent); }
-.help-row:last-child { border-bottom: 0; }
-.help-label { display: flex; align-items: center; gap: 10px; align-self: start; padding-top: 2px; }
-.help-label h2 { margin: 0; font-size: 13.5px; font-weight: 600; line-height: 1.5; }
-.help-copy { display: grid; gap: 4px; min-width: 0; font-size: 12px; line-height: 1.65; color: var(--muted-foreground); overflow-wrap: anywhere; user-select: text; }
-.help-notes {
-  padding: 2px 18px;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 15px;
   border: 1px solid var(--landing-line);
-  border-radius: 14px;
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--card-shadow);
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.help-row:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+.help-row:hover {
+  border-color: color-mix(in srgb, var(--muted-foreground) 32%, var(--landing-line));
+  background: var(--card-elevated);
+}
+.help-label { display: flex; align-items: center; gap: 8px; }
+.help-label h2 { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--foreground); }
+.help-copy { display: grid; gap: 4px; min-width: 0; font-size: 12px; line-height: 1.55; color: var(--muted-foreground); overflow-wrap: anywhere; user-select: text; }
+.help-notes {
+  margin-top: 12px;
+  padding: 2px 16px;
+  border: 1px solid var(--landing-line);
+  border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--card-shadow);
 }
 .help-details + .help-details { border-top: 1px solid var(--landing-line); }
-.help-details-trigger { padding: 13px 0; font-size: 12.5px; font-weight: 600; }
+.help-details-trigger { padding: 11px 0; font-size: 12.5px; font-weight: 600; }
 .help-details-trigger:hover { color: var(--local-accent); }
-.help-details .help-copy, .help-appeal { margin: 0; padding-bottom: 14px; }
-.help-appeal { padding-left: 20px; color: var(--muted-foreground); font-size: 12px; line-height: 1.75; user-select: text; }
-.help-appeal li + li { margin-top: 5px; }
+.help-details .help-copy, .help-appeal { margin: 0; padding-bottom: 12px; }
+.help-appeal { padding-left: 20px; color: var(--muted-foreground); font-size: 12px; line-height: 1.7; user-select: text; }
+.help-appeal li + li { margin-top: 4px; }
 
-/* ----- 身份管理页：统一圆角卡片容器 + 180×286 立体工牌与双轨进度条 ----- */
+/* ----- 身份管理页：统一圆角卡片容器 + 166×286 立体工牌与双轨进度条 ----- */
 .identity-page {
   height: 100%;
   overflow-y: auto;
-  padding: 0 0 18px;
+  padding: 12px 0 18px;
   scrollbar-width: thin;
   scrollbar-color: #cfc8bc transparent;
 }
@@ -1808,7 +1824,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .identity-cli {
   margin: 0 20px 10px;
   border: 1px solid var(--landing-line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--card-shadow);
   overflow: hidden;
@@ -2856,43 +2872,34 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   padding-bottom: 24px;
 }
 
-/* 设置页顶栏与 Cockpit Tools 悬浮胶囊分栏 */
+/* 设置页顶栏与紧凑分段标签切换器 */
 .settings-header {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
-  gap: 12px 16px;
-  margin-bottom: 16px;
-}
-.settings-header h1 {
-  color: var(--local-accent);
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
 }
 .settings-tabs {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  gap: 2px;
   width: fit-content;
   max-width: 100%;
-  margin: 0 auto;
-  padding: 5px 6px !important;
-  border-radius: 999px !important;
-  background: var(--panel) !important;
+  margin: 0;
+  padding: 3px !important;
+  border-radius: 9px !important;
+  background: var(--muted) !important;
   border: 1px solid var(--landing-line) !important;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06), 0 2px 6px rgba(15, 23, 42, 0.04);
-}
-:root.dark .settings-tabs {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 .settings-tab-item {
-  height: 32px !important;
-  padding: 0 16px !important;
-  border-radius: 999px !important;
-  font-size: 12.5px !important;
-  font-weight: 600 !important;
+  height: 28px !important;
+  padding: 0 12px !important;
+  border-radius: 6px !important;
+  font-size: 12px !important;
+  font-weight: 550 !important;
   color: var(--muted-foreground) !important;
   transition: background-color 150ms ease, color 150ms ease !important;
 }
@@ -2900,29 +2907,24 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   color: var(--foreground) !important;
 }
 .settings-tab-item[data-state="active"] {
-  background: var(--local-accent-soft) !important;
-  color: var(--local-accent) !important;
-  box-shadow: none !important;
+  background: var(--panel) !important;
+  color: var(--foreground) !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
 }
-@media (max-width: 860px) {
-  .settings-header {
-    grid-template-columns: 1fr;
-    justify-items: start;
-  }
-  .settings-tabs {
-    margin: 0;
-  }
+:root.dark .settings-tab-item[data-state="active"] {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35) !important;
 }
 
 .settings-sections {
   display: grid;
-  gap: 18px;
+  gap: 14px;
   width: 100%;
   margin: 0 auto;
 }
 .settings-group {
   display: grid;
-  gap: 9px;
+  gap: 8px;
 }
 .settings-group-heading {
   display: flex;
@@ -2931,20 +2933,22 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   padding-inline: 2px;
 }
 .settings-group-bar {
-  width: 3.5px;
-  height: 15px;
+  width: 3px;
+  height: 12px;
   border-radius: 2px;
-  background: var(--local-accent);
+  background: var(--muted-foreground);
+  opacity: 0.55;
+  flex-shrink: 0;
 }
 .settings-group-heading h2 {
-  font-size: 13.5px;
-  font-weight: 650;
-  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted-foreground);
 }
 
 .settings-card {
   border: 1px solid var(--landing-line);
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--card-shadow);
   overflow: hidden;
@@ -2954,8 +2958,8 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 14px 18px;
-  padding: 16px 20px;
+  gap: 12px 16px;
+  padding: 12px 16px;
 }
 .settings-directory-actions {
   display: flex;
@@ -2973,35 +2977,36 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .settings-directory-title {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: 11px;
 }
 .settings-directory-title strong {
   display: block;
   font-size: 13.5px;
   font-weight: 600;
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 .settings-directory-title p {
   font-size: 11.5px;
-  line-height: 1.55;
+  line-height: 1.5;
   color: var(--muted-foreground);
 }
 .settings-icon-badge {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: var(--local-accent-soft);
-  color: var(--local-accent);
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--muted);
+  border: 1px solid var(--landing-line);
+  color: var(--muted-foreground);
   flex-shrink: 0;
 }
 .settings-path-code {
   display: inline-block;
   width: fit-content;
   max-width: 100%;
-  padding: 5px 10px;
-  border-radius: 8px;
+  padding: 4px 9px;
+  border-radius: 7px;
   background: var(--background);
   border: 1px solid var(--landing-line);
   font-size: 11.5px;
@@ -3016,10 +3021,12 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .settings-meta-pill {
   display: inline-flex;
   align-items: center;
-  padding: 2.5px 8px;
+  height: 20px;
+  padding: 0 7px;
   border-radius: 6px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 500;
+  line-height: 1;
   background: var(--muted);
   color: var(--muted-foreground);
   border: 1px solid var(--landing-line);
@@ -3035,8 +3042,8 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px 18px;
-  padding: 15px 20px;
+  gap: 10px 16px;
+  padding: 11px 16px;
   transition: background-color 140ms ease;
 }
 .settings-row:hover {
@@ -3047,18 +3054,18 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 }
 .settings-row-copy {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   min-width: 200px;
   flex: 1;
 }
 .settings-row-copy strong {
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--foreground);
 }
 .settings-row-copy > span {
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: 1.45;
   color: var(--muted-foreground);
 }
 .settings-row-control {
@@ -3071,7 +3078,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 }
 .settings-row-control [role="combobox"] {
   min-width: 132px;
-  border-radius: 10px;
+  border-radius: 8px;
 }
 
 
@@ -3088,29 +3095,33 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .settings-about-brand {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
 .settings-about-brand img {
-  border-radius: 11px;
-  box-shadow: 0 3px 8px color-mix(in srgb, var(--local-accent) 24%, transparent);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 .settings-about-title-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 .settings-about-title-row strong {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 650;
 }
 .settings-version-pill {
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
   border-radius: 6px;
-  background: var(--local-accent-soft);
-  color: var(--local-accent-ink);
-  font: 600 11px var(--font-mono);
+  background: var(--muted);
+  border: 1px solid var(--landing-line);
+  color: var(--muted-foreground);
+  font: 600 11px/1 var(--font-mono);
 }
 .settings-about-brand > div > span {
   display: block;
@@ -3422,13 +3433,16 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   .network-topology-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .topology-arrow { display: none; }
   .browser-grid, .system-cards { grid-template-columns: 1fr; }
-  .help-row { grid-template-columns: 1fr; gap: 10px; }
+}
+@media (max-width: 859px) {
+  .help-topics { grid-template-columns: minmax(0, 1fr); }
+  .help-row:last-child:nth-child(odd) { grid-column: auto; }
 }
 @media (max-width: 720px) {
   .cockpit-kpi-grid, .quick-buttons, .browser-check-grid, .network-script-form, .network-topology-flow { grid-template-columns: 1fr; }
 }
 @media (max-height: 760px) {
-  .system-header, .network-header, .help-header, .identity-header { min-height: 48px; padding-block: 8px; margin-bottom: 8px; }
+  .quick-header, .browser-header, .system-header, .network-header, .risk-header, .identity-header, .usage-header, .help-header, .settings-header, .system-page > .cleanup-title, .cleanup-scroll > .cleanup-title, .identity-page > .cleanup-title { min-height: 44px; padding: 0 0 10px; margin-bottom: 10px; }
   .identity-onboarding-bar { margin-bottom: 8px; padding-block: 6px; }
   .identity-library, .identity-policy, .claude-residue, .identity-cli { margin-bottom: 8px; }
   .network-sections, .system-sections { gap: 8px; }

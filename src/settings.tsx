@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 共享界面语言状态、宿主语言写入命令、Tauri 本机应用版本、settings-model 响应式视图偏好与主题预设、smart-relay-model 多账号智能接力与轮换策略、floating-monitor-model 悬浮窗开启/鼠标穿透状态、wallpaper-store 本地自定义壁纸与主色调提取引擎、身份备份组件与 Cromma UI 控件。
- * [OUTPUT]: 对齐 Cockpit Tools 悬浮胶囊分栏且四分页完全正交解耦的「软件设置」页面：通用（目录摘要+语言/默认页/额度口径/隐私打码/目录快捷操作+多账号智能接力与轮换策略+额度监控/穿透恢复/自动续杯/防封守护快捷中心）、外观与布局（一键主题预设/主题/6色强调色/表面玻璃化/艺术与自定义本地壁纸上传+主色调智能提取+五层光学毛玻璃3项无级滑块/减少动画+字体与排版预览+侧栏布局/界面缩放）、数据管理（独立资料目录+加密备份/恢复+界面偏好重置）与关于（只读版本信息与架构规格）。
+ * [OUTPUT]: 统一 44px 工具栏页头与紧凑分段切换器的「软件设置」四分页：通用、外观与布局、数据管理与关于；紧致行距与 28px 中性图标角标，功能边界与选项契约保持完整。
  * [POS]: 独立设置面板；视图偏好与身份备份均由用户手动触发，不联网、不检查或安装更新、不替换当前身份库。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -756,7 +756,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
               <div className="settings-directory-info">
                 <div className="settings-directory-title">
                   <span className="settings-icon-badge" aria-hidden="true">
-                    <FolderDefault size={18} />
+                    <FolderDefault size={15} />
                   </span>
                   <div>
                     <strong>{t('本机独立应用资料根')}</strong>
@@ -872,7 +872,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
             <div className="settings-spec-grid">
               <div className="settings-spec-card">
                 <span className="settings-icon-badge" aria-hidden="true">
-                  <ShieldCheck size={17} />
+                  <ShieldCheck size={15} />
                 </span>
                 <div>
                   <strong>{t('应用标识与保险库协议')}</strong>
@@ -881,7 +881,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
               </div>
               <div className="settings-spec-card">
                 <span className="settings-icon-badge" aria-hidden="true">
-                  <Globe size={17} />
+                  <Globe size={15} />
                 </span>
                 <div>
                   <strong>{t('伴生隔离浏览器')}</strong>
@@ -890,7 +890,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
               </div>
               <div className="settings-spec-card">
                 <span className="settings-icon-badge" aria-hidden="true">
-                  <Settings01 size={17} />
+                  <Settings01 size={15} />
                 </span>
                 <div>
                   <strong>{t('离线额度单写者引擎')}</strong>

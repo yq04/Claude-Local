@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 固定 app_data_dir 预览、用户显式输入的备份文件路径/口令与原生加密备份命令。
- * [OUTPUT]: 身份保险库加密导出（含 CLI 身份归档、养号卡片元数据与手动订阅日期）、备份检查与新私有恢复副本回执及清理待办提示；每次操作结束清除口令输入。
+ * [OUTPUT]: 精简单行范围说明、并排双列（导出/检查恢复）身份保险库加密备份卡片与受控回执；每次操作结束清除口令输入。
  * [POS]: 软件设置的数据管理区；只处理身份索引、主密钥、引用归档与养号/订阅元数据，不自动导出或接管当前身份。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -16,7 +16,7 @@ type Preview = {valid: boolean; rescue_available: boolean; saved_identities: num
 
 const copy = {
   title: {zh: '身份备份与恢复', en: 'Identity backup and recovery'},
-  intro: {zh: '打包身份索引、保险库主密钥、已保存 CLI 身份归档，以及养号卡片元数据（warming_cards.json）与手动订阅日期（manual_subscriptions.json）。不会包含伴生浏览器配置目录（profile/ Cookie 与登录态）、Claude 设置或尚未保存的当前身份内容。备份与恢复均由你手动启动。', en: 'Includes the identity index, vault master key, saved CLI identity archives, warming card metadata (warming_cards.json), and manual subscription dates (manual_subscriptions.json). Companion browser profile directories (profile/ cookies and sessions), Claude settings, and unsaved current identity content remain local. You start each action manually.'},
+  intro: {zh: '手动打包身份索引、主密钥、CLI 归档、warming_cards.json 与 manual_subscriptions.json；不含伴生浏览器 profile/ Cookie 与登录态、Claude 设置及未保存状态。', en: 'Manually packs identity index, master key, CLI archives, warming_cards.json, and manual_subscriptions.json; excludes browser profile/ cookies & sessions, Claude settings, and unsaved state.'},
   location: {zh: '产品资料目录', en: 'Product data folder'},
   copyLocation: {zh: '复制资料目录', en: 'Copy data folder'},
   openLocation: {zh: '在文件资源管理器中打开', en: 'Open in File Explorer'},
@@ -52,7 +52,7 @@ const copy = {
   copied: {zh: '已复制资料目录', en: 'Data folder copied'},
   targetResult: {zh: '新副本位置', en: 'New copy location'},
   evidenceOnly: {zh: '这是隔离的救援证据副本，不是已验证身份库，也不会合并为当前身份。', en: 'This is an isolated rescue evidence copy, not a verified identity vault, and it will not be merged into the active identity.'},
-  scope: {zh: '范围：身份 SQLite 索引、主密钥、CLI 身份归档、养号卡片元数据（warming_cards.json）与手动订阅日期（manual_subscriptions.json）。未保存的当前 Claude CLI 身份状态及伴生浏览器配置目录（profile/ Cookie 与登录态）不会包含在内。', en: 'Scope: identity SQLite index, master key, CLI identity archives, warming card metadata (warming_cards.json), and manual subscription dates (manual_subscriptions.json). Unsaved current Claude CLI state and companion browser profile directories (profile/ cookies and sessions) remain local.'},
+  scope: {zh: '范围：含身份索引、主密钥、CLI 归档、warming_cards.json、manual_subscriptions.json；不含未保存 CLI 状态与 profile/ Cookie/登录态。', en: 'Scope: includes identity index, master key, CLI archives, warming_cards.json, and manual_subscriptions.json; excludes unsaved CLI state and profile/ cookies/sessions.'},
   bytes: {zh: '备份文件大小', en: 'Backup file size'},
   noInspection: {zh: '先完成备份检查，再创建恢复副本。', en: 'Inspect the backup before creating a recovery copy.'},
   confirmed: {zh: '请确认恢复范围。', en: 'Confirm the recovery scope.'},
@@ -173,29 +173,31 @@ export function BackupPanel({locale}: {locale: Locale}) {
         {preview?.recovery_pending && <div className="system-feedback error" role="status">{text('pending')}</div>}
         {preview && !preview.valid && !preview.recovery_pending && <div className="system-feedback error" role="status">{text('invalid')}</div>}
         {preview?.diagnostics.length ? <div className="backup-diagnostics" role="status"><strong>{locale === 'en' ? 'Read-only diagnostic flags' : '只读诊断标记'}</strong><span>{preview.diagnostics.map(flag => flagLabel(flag, locale)).join(' · ')}</span></div> : null}
-        <div className="backup-form">
-          <h3>{text('export')}</h3>
-          <label>{text('exportPath')}<input value={exportPath} onChange={event => setExportPath(event.target.value)} autoComplete="off" spellCheck={false} /></label>
-          <p>{text('pathHelp')}</p>
-          <label>{text('passphrase')}<input type="password" value={exportPass} onChange={event => setExportPass(event.target.value)} autoComplete="new-password" /></label>
-          <label>{text('confirm')}<input type="password" value={confirmPass} onChange={event => setConfirmPass(event.target.value)} autoComplete="new-password" /></label>
-          {preview && <div className="backup-rescue-toggle"><Switch aria-label={text('rescue')} checked={rescueMode} onCheckedChange={setRescueMode} /><span>{text('rescue')}</span></div>}
-          <Button variant="secondary" disabled={busy || !preview || !preview.rescue_available || !exportPath.trim() || exportPass.length < 12 || exportPass !== confirmPass || (!preview.valid && !rescueMode)} onClick={() => void exportBackup()}>{busy ? text('busy') : text('create')}</Button>
-        </div>
-        <div className="backup-form">
-          <h3>{text('restore')}</h3>
-          <label>{text('inputPath')}<input value={inputPath} onChange={event => {inspectionRevision.current++;setInputPath(event.target.value);setInspectPass('');setRestorePass('');setInspection(null);setInspectionPath('');setRestoreConfirmed(false);setReceipt(null);setNotice('');setError('');setBusy(false);}} autoComplete="off" spellCheck={false} /></label>
-          <label>{text('inspectPass')}<input type="password" value={inspectPass} onChange={event => setInspectPass(event.target.value)} autoComplete="current-password" /></label>
-          <Button variant="secondary" disabled={busy || !inputPath.trim() || !inspectPass} onClick={() => void inspectBackup()}>{text('inspect')}</Button>
-          {inspection && (inspection.verified || inspection.rescue_copy) && inspectionPath === inputPath.trim() && <div className="backup-inspection" role="status">
-            <strong>{inspection.rescue_copy ? text('rescueVerified') : text('verified')}</strong>
-            <span>{inspection.saved_identities} {text('identities')} · {inspection.archives} {text('archives')} · {formatBytes(inspection.bytes, locale)}</span>
-            {inspection.recovery_pending && <span>{text('recoveryFlag')}</span>}
-            {inspection.diagnostics.length > 0 && <span>{inspection.diagnostics.map(flag => flagLabel(flag, locale)).join(' · ')}</span>}
-            <label className="backup-rescue-toggle"><Switch aria-label={text(presentation.confirmationKey)} checked={restoreConfirmed} onCheckedChange={setRestoreConfirmed} /><span>{text(presentation.confirmationKey)}</span></label>
-            <label>{text('restorePass')}<input type="password" value={restorePass} onChange={event => setRestorePass(event.target.value)} autoComplete="new-password" /></label>
-            <Button variant="secondary" disabled={busy || !canRestoreInspection(inspection, inspectionPath, inputPath, restoreConfirmed, restorePass)} onClick={() => void restoreCopy()}>{text(presentation.actionKey)}</Button>
-          </div>}
+        <div className="backup-forms-grid">
+          <div className="backup-form">
+            <h3>{text('export')}</h3>
+            <label>{text('exportPath')}<input value={exportPath} onChange={event => setExportPath(event.target.value)} autoComplete="off" spellCheck={false} /></label>
+            <p>{text('pathHelp')}</p>
+            <label>{text('passphrase')}<input type="password" value={exportPass} onChange={event => setExportPass(event.target.value)} autoComplete="new-password" /></label>
+            <label>{text('confirm')}<input type="password" value={confirmPass} onChange={event => setConfirmPass(event.target.value)} autoComplete="new-password" /></label>
+            {preview && <div className="backup-rescue-toggle"><Switch aria-label={text('rescue')} checked={rescueMode} onCheckedChange={setRescueMode} /><span>{text('rescue')}</span></div>}
+            <Button variant="secondary" disabled={busy || !preview || !preview.rescue_available || !exportPath.trim() || exportPass.length < 12 || exportPass !== confirmPass || (!preview.valid && !rescueMode)} onClick={() => void exportBackup()}>{busy ? text('busy') : text('create')}</Button>
+          </div>
+          <div className="backup-form">
+            <h3>{text('restore')}</h3>
+            <label>{text('inputPath')}<input value={inputPath} onChange={event => {inspectionRevision.current++;setInputPath(event.target.value);setInspectPass('');setRestorePass('');setInspection(null);setInspectionPath('');setRestoreConfirmed(false);setReceipt(null);setNotice('');setError('');setBusy(false);}} autoComplete="off" spellCheck={false} /></label>
+            <label>{text('inspectPass')}<input type="password" value={inspectPass} onChange={event => setInspectPass(event.target.value)} autoComplete="current-password" /></label>
+            <Button variant="secondary" disabled={busy || !inputPath.trim() || !inspectPass} onClick={() => void inspectBackup()}>{text('inspect')}</Button>
+            {inspection && (inspection.verified || inspection.rescue_copy) && inspectionPath === inputPath.trim() && <div className="backup-inspection" role="status">
+              <strong>{inspection.rescue_copy ? text('rescueVerified') : text('verified')}</strong>
+              <span>{inspection.saved_identities} {text('identities')} · {inspection.archives} {text('archives')} · {formatBytes(inspection.bytes, locale)}</span>
+              {inspection.recovery_pending && <span>{text('recoveryFlag')}</span>}
+              {inspection.diagnostics.length > 0 && <span>{inspection.diagnostics.map(flag => flagLabel(flag, locale)).join(' · ')}</span>}
+              <label className="backup-rescue-toggle"><Switch aria-label={text(presentation.confirmationKey)} checked={restoreConfirmed} onCheckedChange={setRestoreConfirmed} /><span>{text(presentation.confirmationKey)}</span></label>
+              <label>{text('restorePass')}<input type="password" value={restorePass} onChange={event => setRestorePass(event.target.value)} autoComplete="new-password" /></label>
+              <Button variant="secondary" disabled={busy || !canRestoreInspection(inspection, inspectionPath, inputPath, restoreConfirmed, restorePass)} onClick={() => void restoreCopy()}>{text(presentation.actionKey)}</Button>
+            </div>}
+          </div>
         </div>
         {busy && <p role="status">{text('busy')}</p>}
         {error && <p className="system-feedback error" role="alert">{error}</p>}
