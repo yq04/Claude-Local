@@ -1,15 +1,17 @@
 /**
  * [INPUT]: style.css 设计令牌（--landing-line、--muted、--input）与 BackupPanel 导出/恢复表单结构。
- * [OUTPUT]: 紧凑备份摘要预览、>= 820px 双列并排导出与检查恢复网格、窄屏单列回退及受控反馈卡布局。
+ * [OUTPUT]: 单行预览统计与右侧刷新按钮栏、非全宽左对齐操作按钮、>= 820px 双列并排导出与检查恢复网格、窄屏单列回退及受控反馈卡布局。
  * [POS]: src/backup-panel.tsx 专属样式表。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .backup-panel .backup-card { display: grid; gap: 12px; padding: 14px 16px; border-radius: 12px; }
 .backup-panel .backup-card > p { margin: 0; color: var(--muted-foreground, #666); font-size: 12px; line-height: 1.5; }
 .backup-location { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 8px 14px; align-items: center; }
+.backup-location strong { font-size: 12px; font-weight: 600; color: var(--foreground); }
 .backup-location code, .backup-receipt code { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
 .backup-location > span { grid-column: 2; }
 .backup-location-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; }
+.backup-preview-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
 .backup-preview { display: flex; flex-wrap: wrap; gap: 8px; }
 .backup-preview > span { display: flex; align-items: baseline; gap: 6px; min-width: 112px; padding: 7px 10px; border: 1px solid var(--landing-line, #ddd); border-radius: 8px; font-size: 12px; }
 .backup-preview strong { font-variant-numeric: tabular-nums; }
@@ -22,6 +24,9 @@
 .backup-form label, .backup-inspection label { display: grid; gap: 6px; font-size: 12px; }
 .backup-form input, .backup-inspection input { width: 100%; min-width: 0; min-height: 32px; padding: 5px 9px; border: 1px solid var(--landing-line, #bbb); border-radius: 7px; color: inherit; background: var(--input, #fff); font: inherit; }
 .backup-form > p { margin: -4px 0 0; }
+.backup-card button,
+.backup-form > button,
+.backup-inspection > button { justify-self: start; width: auto; }
 .backup-rescue-toggle { display: flex !important; align-items: center; gap: 9px !important; }
 .backup-inspection, .backup-receipt { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--landing-line, #ddd); border-radius: 10px; }
 .backup-receipt code { display: block; }

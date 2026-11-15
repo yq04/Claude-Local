@@ -16,7 +16,7 @@ type Preview = {valid: boolean; rescue_available: boolean; saved_identities: num
 
 const copy = {
   title: {zh: '身份备份与恢复', en: 'Identity backup and recovery'},
-  intro: {zh: '手动打包身份索引、主密钥、CLI 归档、warming_cards.json 与 manual_subscriptions.json；不含伴生浏览器 profile/ Cookie 与登录态、Claude 设置及未保存状态。', en: 'Manually packs identity index, master key, CLI archives, warming_cards.json, and manual_subscriptions.json; excludes browser profile/ cookies & sessions, Claude settings, and unsaved state.'},
+  intro: {zh: '手动加密导出或检查恢复本机身份保险库，不自动执行，也不会修改当前活动身份。', en: 'Manually encrypt, inspect, or stage copies of your local identity vault without modifying the active identity.'},
   location: {zh: '产品资料目录', en: 'Product data folder'},
   copyLocation: {zh: '复制资料目录', en: 'Copy data folder'},
   openLocation: {zh: '在文件资源管理器中打开', en: 'Open in File Explorer'},
@@ -52,7 +52,7 @@ const copy = {
   copied: {zh: '已复制资料目录', en: 'Data folder copied'},
   targetResult: {zh: '新副本位置', en: 'New copy location'},
   evidenceOnly: {zh: '这是隔离的救援证据副本，不是已验证身份库，也不会合并为当前身份。', en: 'This is an isolated rescue evidence copy, not a verified identity vault, and it will not be merged into the active identity.'},
-  scope: {zh: '范围：含身份索引、主密钥、CLI 归档、warming_cards.json、manual_subscriptions.json；不含未保存 CLI 状态与 profile/ Cookie/登录态。', en: 'Scope: includes identity index, master key, CLI archives, warming_cards.json, and manual_subscriptions.json; excludes unsaved CLI state and profile/ cookies/sessions.'},
+  scope: {zh: '包含：身份索引、主密钥、CLI 归档、warming_cards.json、manual_subscriptions.json；排除：未保存 CLI 状态、Claude 设置与 profile/ Cookie/登录态。', en: 'Includes: identity index, master key, CLI archives, warming_cards.json, and manual_subscriptions.json; excludes unsaved CLI state, Claude settings, and profile/ cookies/sessions.'},
   bytes: {zh: '备份文件大小', en: 'Backup file size'},
   noInspection: {zh: '先完成备份检查，再创建恢复副本。', en: 'Inspect the backup before creating a recovery copy.'},
   confirmed: {zh: '请确认恢复范围。', en: 'Confirm the recovery scope.'},
@@ -165,10 +165,14 @@ export function BackupPanel({locale}: {locale: Locale}) {
           {location?.vault_available ? null : <span>{text('noVault')}</span>}
           {location && <div className="backup-location-actions"><Button size="small" variant="secondary" disabled={busy} onClick={() => void invoke('identities_backup_open_location').catch(cause => setError(translate(String(cause), {}, locale)))}>{text('openLocation')}</Button><Button size="small" variant="secondary" disabled={busy} onClick={() => void invoke('copy_result', {text: location.app_data_dir}).then(() => setNotice(text('copied'))).catch(cause => setError(translate(String(cause), {}, locale)))}>{text('copyLocation')}</Button></div>}
         </div>
-        <Button size="small" variant="secondary" disabled={busy} onClick={() => void refresh()}>{text('preview')}</Button>
-        {preview && <div className="backup-preview" aria-live="polite">
-          <span><strong>{preview.saved_identities}</strong>{text('identities')}</span><span><strong>{preview.archives}</strong>{text('archives')}</span><span><strong>{formatBytes(preview.estimated_bytes, locale)}</strong>{text('size')}</span>
-        </div>}
+        <div className="backup-preview-bar">
+          {preview ? (
+            <div className="backup-preview" aria-live="polite">
+              <span><strong>{preview.saved_identities}</strong>{text('identities')}</span><span><strong>{preview.archives}</strong>{text('archives')}</span><span><strong>{formatBytes(preview.estimated_bytes, locale)}</strong>{text('size')}</span>
+            </div>
+          ) : <span />}
+          <Button size="small" variant="secondary" disabled={busy} onClick={() => void refresh()}>{text('preview')}</Button>
+        </div>
         <div className="backup-note">{text('scope')}</div>
         {preview?.recovery_pending && <div className="system-feedback error" role="status">{text('pending')}</div>}
         {preview && !preview.valid && !preview.recovery_pending && <div className="system-feedback error" role="status">{text('invalid')}</div>}
