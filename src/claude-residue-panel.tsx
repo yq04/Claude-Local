@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 文件残留白名单扫描/快照清理命令、CLI 遥测护盾/MCP 供应链审计摘要、身份页任务锁与刷新信号、共享确认窗与卡片下统一进度通道。
- * [OUTPUT]: 当前 Claude 文件的路径/规模/影响预览，环境变量覆盖凭据顶层告警横幅，CLI 遥测护盾与 MCP 供应链状态条及一键复制防漏 settings.json，默认只选完整缓存，统一中性操作按钮与红色危险确认，确认后直接清理并复查。
- * [POS]: 身份管理的文件维护区域；不访问钥匙串，路径和字段名之外的文件正文不进入界面。
+ * [OUTPUT]: 紧凑工具面布局的 Claude 文件路径/规模/影响预览，环境变量覆盖凭据顶层告警横幅，轻量化 CLI 遥测护盾与 MCP 供应链状态条及一键复制防漏 settings.json，默认只选完整缓存，统一中性操作按钮与红色危险确认，确认后直接清理并复查。
+ * [POS]: 身份管理的文件维护区域；不访问钥匙串，路径和字段名之外的文件正文不进入界面；与 identity-productivity.css 协同。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect,useState} from 'react';
@@ -85,7 +85,8 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
   {error&&<p role="alert" className="cleanup-feedback error">{t(error)}</p>}
   {scan&&<>
    {envOverrideWarnings.length>0&&<div className="claude-residue-env-alert" role="status"><span className="claude-residue-env-badge" aria-hidden="true">!</span><div><strong>{t('residue.envOverrideTitle')}</strong>{envOverrideWarnings.map((warning,i)=><p key={i}>{t(warning)}</p>)}</div></div>}
-   {cliSec&&<div className={`claude-residue-smart-bar ${cliShieldOk&&cliMcpOk?'safe':'warn'}`} role="status">
+   {cliSec&&<div className={`claude-residue-smart-bar ${cliShieldOk&&cliMcpOk?'safe':'warn'}`} data-bar-kind="cli-security" role="status">
+    <i className="claude-residue-dot" aria-hidden="true"/>
     <span>
      {cliShieldOk?t('risk.cliSecurity.shieldOk'):t('risk.cliSecurity.shieldWarn')}
      {cliSec.nonessential_traffic_blocked&&<>{' · '}<strong title={t('risk.cliSecurity.nonessentialBlockedHint')}>{t('risk.cliSecurity.nonessentialBlockedWarn')}</strong></>}
@@ -98,7 +99,8 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
    </div>}
    {scan.warnings.length>0&&<Disclosure className="claude-residue-warnings" triggerClassName="claude-residue-warnings-trigger" summary={t('{v0} 条扫描提示',{v0:scan.warnings.length})}><ul>{scan.warnings.map((warning,i)=><li key={i}>{t(warning)}</li>)}</ul></Disclosure>}
    {items.length===0?<div className="claude-residue-empty" role="status">{t(scan.warnings.length?'部分路径未能检查，请查看扫描提示。':'未发现白名单内的可清理文件。')}</div>:<>
-    <div className={`claude-residue-smart-bar ${safeOnlySelected?'safe':hasHighRiskSelected?'warn':'idle'}`}>
+    <div className={`claude-residue-smart-bar ${safeOnlySelected?'safe':hasHighRiskSelected?'warn':'idle'}`} data-bar-kind="presets">
+     <i className="claude-residue-dot" aria-hidden="true"/>
      <span>
       {safeOnlySelected
        ?t('已智能勾选安全缓存（不影响登录状态与对话历史，可直接点击下方「清理所选」释放空间）')

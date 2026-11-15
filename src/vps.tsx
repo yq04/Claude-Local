@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Claude 四个固定服务域名、用户触发的原生只读诊断、发行者固定的 iKuuu/Kookeey 推广链接与 AI 配置提示词及双语文案。
- * [OUTPUT]: 隐藏URL/邀请码的固定链接复制卡、按文字自适应的统一中性按钮、精简双语Agent提示词与真实复制反馈，以及服务连通性四态诊断。
+ * [INPUT]: Claude 四个固定服务域名、用户触发的原生只读诊断、发行者固定的 iKuuu/Kookeey 推广链接、AI 配置提示词、env-pages.css 与双语文案。
+ * [OUTPUT]: 三列紧凑链式代理配置卡（带角色标签与单复制按钮）、服务连通性头部范围说明及仅在触发后展示的诊断横幅与双列清单。
  * [POS]: 固定链接随软件分享，不接受本机自定义覆盖或外部自动导航；仅在点击检测后发起连通性探测。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -9,6 +9,7 @@ import {Refresh, CheckTickCircle} from 'cromma-ui/pika';
 import {useEffect, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {useI18n, type Locale} from './i18n';
+import './env-pages.css';
 
 export type DomainDiagnosis = {
   domain: string;
@@ -122,79 +123,73 @@ export function VpsPanel() {
         <div className="network-action-list">
           {/* iKuuu 前置专线 */}
           <article className="network-action-card" aria-labelledby="ikuuu-setup-title">
-            <div className="network-action-row">
-              <div className="network-action-main">
-                <div className="network-action-head">
-                  <span className="local-badge" aria-hidden="true">01</span>
-                  <h2 id="ikuuu-setup-title">{t('准备前置专线（iKuuu）')}</h2>
-                </div>
-                <p className="network-action-desc">
-                  {t('network.ikuuuDescription')}
-                </p>
+            <div className="network-action-main">
+              <span className="network-card-role">{t('代理环境')}</span>
+              <div className="network-action-head">
+                <h2 id="ikuuu-setup-title">{t('准备前置专线（iKuuu）')}</h2>
               </div>
-              <div className="network-action-buttons">
-                <Button
-                  variant="secondary"
-                  size="small"
-                  disabled={copyingId !== ''}
-                  leftIcon={copiedId === 'ikuuu-url' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
-                  onClick={() => void copyText('ikuuu-url', IKUUU_REFERRAL_URL)}
-                >
-                  {t('network.copyLink')}
-                </Button>
-              </div>
+              <p className="network-action-desc">
+                {t('network.ikuuuDescription')}
+              </p>
+            </div>
+            <div className="network-action-buttons">
+              <Button
+                variant="secondary"
+                size="small"
+                disabled={copyingId !== ''}
+                leftIcon={copiedId === 'ikuuu-url' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
+                onClick={() => void copyText('ikuuu-url', IKUUU_REFERRAL_URL)}
+              >
+                {t('network.copyLink')}
+              </Button>
             </div>
           </article>
 
           {/* Kookeey 美国静态家宽 */}
           <article className="network-action-card" aria-labelledby="kookeey-setup-title">
-            <div className="network-action-row">
-              <div className="network-action-main">
-                <div className="network-action-head">
-                  <span className="local-badge" aria-hidden="true">02</span>
-                  <h2 id="kookeey-setup-title">{t('准备美国静态家宽（Kookeey）')}</h2>
-                </div>
-                <p className="network-action-desc">
-                  {t('network.kookeeyDescription')}
-                </p>
+            <div className="network-action-main">
+              <span className="network-card-role">{t('原生美区 ISP · SOCKS5')}</span>
+              <div className="network-action-head">
+                <h2 id="kookeey-setup-title">{t('准备美国静态家宽（Kookeey）')}</h2>
               </div>
-              <div className="network-action-buttons">
-                <Button
-                  variant="secondary"
-                  size="small"
-                  disabled={copyingId !== ''}
-                  leftIcon={copiedId === 'kookeey-url' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
-                  onClick={() => void copyText('kookeey-url', KOOKEEY_REFERRAL_URL)}
-                >
-                  {t('network.copyLink')}
-                </Button>
-              </div>
+              <p className="network-action-desc">
+                {t('network.kookeeyDescription')}
+              </p>
+            </div>
+            <div className="network-action-buttons">
+              <Button
+                variant="secondary"
+                size="small"
+                disabled={copyingId !== ''}
+                leftIcon={copiedId === 'kookeey-url' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
+                onClick={() => void copyText('kookeey-url', KOOKEEY_REFERRAL_URL)}
+              >
+                {t('network.copyLink')}
+              </Button>
             </div>
           </article>
 
           {/* 复制提示词交给 AI 自动配置 */}
           <article className="network-action-card" aria-labelledby="ai-setup-title">
-            <div className="network-action-row">
-              <div className="network-action-main">
-                <div className="network-action-head">
-                  <span className="local-badge" aria-hidden="true">03</span>
-                  <h2 id="ai-setup-title">{t('复制提示词交给 AI 自动配置')}</h2>
-                </div>
-                <p className="network-action-desc">
-                  {t('network.promptDescription')}
-                </p>
+            <div className="network-action-main">
+              <span className="network-card-role">{t('Clash Verge 链式分流')}</span>
+              <div className="network-action-head">
+                <h2 id="ai-setup-title">{t('复制提示词交给 AI 自动配置')}</h2>
               </div>
-              <div className="network-action-buttons">
-                <Button
-                  variant="secondary"
-                  size="small"
-                  disabled={copyingId !== ''}
-                  leftIcon={copiedId === 'ai-prompt' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
-                  onClick={() => void copyText('ai-prompt', aiPrompt)}
-                >
-                  {t('network.copyPrompt')}
-                </Button>
-              </div>
+              <p className="network-action-desc">
+                {t('network.promptDescription')}
+              </p>
+            </div>
+            <div className="network-action-buttons">
+              <Button
+                variant="secondary"
+                size="small"
+                disabled={copyingId !== ''}
+                leftIcon={copiedId === 'ai-prompt' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
+                onClick={() => void copyText('ai-prompt', aiPrompt)}
+              >
+                {t('network.copyPrompt')}
+              </Button>
             </div>
           </article>
         </div>
@@ -203,8 +198,9 @@ export function VpsPanel() {
         {/* Claude 服务连通性检测 */}
         <section className="domain-diagnostics" aria-labelledby="diagnostics-title" data-status={phase} aria-busy={diagnosing}>
           <div className="domain-diagnostics-header">
-            <div className="network-action-head">
+            <div className="domain-diagnostics-head">
               <h2 id="diagnostics-title">{t('Claude 服务连通性')}</h2>
+              <p className="domain-diagnostics-subtitle">{t('仅在点击后检测服务连通性；结果不代表账号可用或已验证公网出口。')}</p>
             </div>
             <Button
               variant="secondary"
@@ -216,15 +212,16 @@ export function VpsPanel() {
               {diagnosing ? t('检测中') : phase === 'idle' ? t('开始检测') : t('重新检测')}
             </Button>
           </div>
-          <div className={`domain-outcome ${phase}`} role="status" aria-live="polite">
-            <span className="domain-outcome-symbol" aria-hidden="true">
-              {phase === 'passed' ? '✓' : phase === 'failed' ? '×' : phase === 'checking' ? '◌' : '·'}
-            </span>
-            <strong>{t(statusText)}</strong>
-            {diagnostics && !diagnosticsError && <span>{t('已通过 {v0} / {v1} 项', {v0: passed, v1: claudeDomains.length})}</span>}
-            {phase === 'idle' && <span>{t('network.idleOutcomeHint')}</span>}
-            {diagnosticsError && <p>{t(diagnosticsError)}</p>}
-          </div>
+          {phase !== 'idle' && (
+            <div className={`domain-outcome ${phase}`} role="status" aria-live="polite">
+              <span className="domain-outcome-symbol" aria-hidden="true">
+                {phase === 'passed' ? '✓' : phase === 'failed' ? '×' : '◌'}
+              </span>
+              <strong>{t(statusText)}</strong>
+              {diagnostics && !diagnosticsError && <span>{t('已通过 {v0} / {v1} 项', {v0: passed, v1: claudeDomains.length})}</span>}
+              {diagnosticsError && <p>{t(diagnosticsError)}</p>}
+            </div>
+          )}
           <ul className="domain-diagnostics-list">
             {claudeDomains.map((domain, index) => {
               const item = results[index];

@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生浏览器/CLI归属快照、网络防漏断路器状态与事件、轻量窗口采样、真实观测事件、共享活动日志和双语文案。
- * [OUTPUT]: 明确所选浏览器/CLI与运行状态的环境控制台、关闭浏览器或切页后保留同槽位同配置实测结果、断路器保护关闭横幅与开关、冻结账号确认后的浏览器返回核验、缓存与高级设置。
+ * [INPUT]: 原生浏览器/CLI归属快照、网络防漏断路器状态与事件、轻量窗口采样、真实观测事件、共享活动日志、env-pages.css 与双语文案。
+ * [OUTPUT]: 两栏紧致浏览器概览卡、按状态折叠的头部状态胶囊与两列边线核验矩阵（悬停展示完整细节）、双栏分割数据清理区及高级设置。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -17,6 +17,7 @@ import { usePageRefresh } from './app-events';
 import {maskDisplayName, usePreferences} from './settings-model';
 import {useBrowserRuntime} from './use-browser-runtime';
 import {areCliAndBrowserProxiesAligned, toBrowserSocks5ProxyFromCli} from './risk-model';
+import './env-pages.css';
 
 export function BrowserPanel({ onBusy }: {
     onBusy?: (busy: boolean) => void;
@@ -138,7 +139,8 @@ export function BrowserPanel({ onBusy }: {
     const hasMismatch = checks.some(x => x.status === 'mismatch');
     const isStale = !!state?.report_received_at && (clock - state.report_received_at > 10 * 60 * 1000);
     const hasObservation = Boolean(state?.report_received_at || state?.report);
-    const showSummary = isStale || allChecksOk || hasMismatch || hasObservation;
+    const checksPassed = allChecksOk && !isStale;
+    const showWarnSummary = isStale || hasMismatch || (hasObservation && !allChecksOk);
     const browserIdentityName = state?.identity ? maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask) : t('browser.identityUnknown');
     const cliIdentityName = state?.cli_identity ? maskDisplayName(state.cli_identity.name, state.cli_identity.email, prefs.privacyMask) : t('browser.identityUnknown');
     function edit<K extends keyof BrowserConfig>(key: K, value: BrowserConfig[K]) { setDraft(old => old ? { ...old, [key]: value } : old); }
@@ -172,14 +174,23 @@ export function BrowserPanel({ onBusy }: {
 
         <div className="browser-sections">
             <div className="network-action-card browser-hero-card">
-                <div className="browser-hero-top">
-                    <div className="network-action-head">
-                        <h2>{t('browser.environmentTitle')}</h2>
-                        <span data-browser-runtime={browserRuntime.status} className={`identity-policy-mode ${browserRuntime.status === 'running' ? 'ok' : ''}`}>
-                            {t(`browser.runtime${browserRuntime.status === 'running' ? 'Running' : browserRuntime.status === 'closed' ? 'Closed' : 'Unknown'}`)}
-                        </span>
+                <div className="browser-hero-bar">
+                    <div className="browser-hero-main">
+                        <div className="browser-hero-title-row">
+                            <h2>{t('browser.environmentTitle')}</h2>
+                            <span data-browser-runtime={browserRuntime.status} className={`identity-policy-mode ${browserRuntime.status === 'running' ? 'ok' : ''}`}>
+                                {t(`browser.runtime${browserRuntime.status === 'running' ? 'Running' : browserRuntime.status === 'closed' ? 'Closed' : 'Unknown'}`)}
+                            </span>
+                        </div>
+                        <div className="browser-hero-meta">
+                            <span className="browser-context-pill" data-current-cli-identity>{t('browser.currentCliIdentity', {name: cliIdentityName})}</span>
+                            <span className={`browser-context-pill ${state?.identity?.status === 'warming' ? 'is-warming' : 'is-cli'}`} data-current-browser-identity>
+                                {t(state?.identity?.status === 'warming' ? 'browser.currentWarmingIdentity' : 'browser.currentBrowserIdentity', {name: browserIdentityName})}
+                            </span>
+                        </div>
+                        <p className="browser-scope-note" data-browser-verification-scope>{t('browser.verificationScope')}</p>
                     </div>
-                    <div className="network-action-buttons">
+                    <div className="network-action-buttons browser-hero-actions">
                         <Button variant="secondary" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
                             {browserRuntime.status === 'running' ? t("重新打开实测页") : t("打开浏览器并实测")}
                         </Button>
@@ -193,19 +204,11 @@ export function BrowserPanel({ onBusy }: {
                         }}>{t('browser.returnToCli')}</Button>
                     </div>
                 </div>
-                <div className="browser-hero-body">
-                    <div className="browser-hero-meta">
-                        <span className="browser-context-pill" data-current-cli-identity>{t('browser.currentCliIdentity', {name: cliIdentityName})}</span>
-                        <span className={`browser-context-pill ${state?.identity?.status === 'warming' ? 'is-warming' : 'is-cli'}`} data-current-browser-identity>
-                            {t(state?.identity?.status === 'warming' ? 'browser.currentWarmingIdentity' : 'browser.currentBrowserIdentity', {name: browserIdentityName})}
-                        </span>
-                        <span className="browser-scope-badge" data-browser-verification-scope>{t('browser.verificationScope')}</span>
-                    </div>
-                    {!!state && !state.cli_expected_identity && <p className="identity-policy-hint">{t('browser.cliIdentityUnavailable')}</p>}
-                </div>
-                {((state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status)) ||
+                {((!!state && !state.cli_expected_identity) ||
+                  (state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status)) ||
                   (state?.identity?.cli_proxy && !areCliAndBrowserProxiesAligned(draft?.proxy, state.identity.cli_proxy))) && (
-                    <div className="browser-hero-body">
+                    <div className="browser-hero-alerts">
+                        {!!state && !state.cli_expected_identity && <p className="identity-policy-hint">{t('browser.cliIdentityUnavailable')}</p>}
                         {state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status) && (
                             <p className="identity-policy-hint">
                                 {t(`browserSafety.status_${state.identity.status}`)}
@@ -225,7 +228,10 @@ export function BrowserPanel({ onBusy }: {
                 <div className="browser-checks-head">
                     <div className="network-action-head">
                         <h2>{t('browser.observationTitle', {name: t(state?.region?.label || "自定义环境")})}</h2>
-                        <span className={`identity-policy-mode ${isStale ? 'attention' : ''}`}>
+                        {checksPassed && (
+                            <span className="identity-policy-mode ok">{t("检测通过")}</span>
+                        )}
+                        <span className={`identity-policy-mode ${isStale ? 'attention' : checksPassed ? 'ok' : ''}`}>
                             {state?.report_received_at
                                 ? isStale
                                     ? t("browserSafety.reportStale", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') }) || `检测已过时（>10分钟）· 上次回报 ${new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US')}`
@@ -242,14 +248,12 @@ export function BrowserPanel({ onBusy }: {
                         <Button variant="secondary" size="small" disabled={disabled || state?.running || !!changed} onClick={() => setConfirm('align')}>{t("对齐美国系统环境")}</Button>
                     </div>
                 </div>
-                {showSummary && (
-                    <div className={`browser-check-summary ${allChecksOk && !isStale ? 'ok' : 'warn'}`}>
+                {showWarnSummary && (
+                    <div className="browser-check-summary warn">
                         <span>
                             {isStale
                                 ? t("browserSafety.staleSummary")
-                                : allChecksOk
-                                    ? t("检测通过")
-                                    : t(hasMismatch ? "检测未通过" : "检测未完成")}
+                                : t(hasMismatch ? "检测未通过" : "检测未完成")}
                         </span>
                     </div>
                 )}
@@ -259,9 +263,9 @@ export function BrowserPanel({ onBusy }: {
                             <span aria-label={t(x.status === 'ok' ? "已核验" : x.status === 'mismatch' ? "存在冲突" : "尚未核验")}>
                                 {x.status === 'ok' ? '✓' : x.status === 'mismatch' ? '!' : '—'}
                             </span>
-                            <div>
+                            <div className="browser-check-copy">
                                 <strong>{t(x.title)}</strong>
-                                <p>{t(x.detail)}</p>
+                                <p title={t(x.detail)}>{t(x.detail)}</p>
                             </div>
                         </div>
                     ))}

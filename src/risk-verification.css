@@ -1,6 +1,6 @@
 /**
  * [INPUT]: style.css 主题令牌、毛玻璃表面变量与 Cromma UI 基础控件几何。
- * [OUTPUT]: 风控验证页双栏诊断、未知比较与有界核验来源说明、Mihomo strict-route 闭环修复向导、离线二维码桥接及 KYC 六步清单布局。
+ * [OUTPUT]: 统一安全态势栏与可折叠说明、等高三列静态/动态核验网格、Mihomo strict-route 闭环修复向导、离线二维码桥接及去序号 KYC 检查清单布局。
  * [POS]: 仅作用于 .risk-page 命名空间，保持明暗双主题、六色强调色与紧凑侧栏零横溢。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -183,105 +183,105 @@
 
 .risk-overview-box {
   display: grid;
-  gap: 10px;
-  padding: 11px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--landing-line);
-  background: color-mix(in srgb, var(--background) 60%, var(--panel));
+  gap: 6px;
 }
 
-.risk-why-row {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-}
-
-.risk-why-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 7px;
-  border-radius: 5px;
-  font-size: 11px;
-  font-weight: 600;
-  background: var(--local-accent-soft);
-  color: var(--local-accent-ink);
-  flex-shrink: 0;
-}
-
-.risk-why-row .risk-audit-scope {
-  flex: 1;
-  min-width: 220px;
-  color: var(--foreground);
-}
-
-.risk-workflow-steps {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 8px;
-}
-
-.risk-workflow-step {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 11px;
+.risk-disclosure {
   border-radius: 8px;
-  border: 1px solid var(--landing-line);
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.risk-disclosure-trigger {
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--muted-foreground);
+  line-height: 1.4;
+}
+
+.risk-disclosure-trigger:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--muted) 65%, transparent);
+}
+
+.risk-disclosure-body {
+  padding: 6px 8px 4px;
+}
+
+.risk-mobile-when-disclosure {
+  border-color: var(--landing-line);
   background: color-mix(in srgb, var(--muted) 42%, var(--panel));
 }
 
-.risk-workflow-step.is-done {
-  border-color: color-mix(in srgb, #10b981 32%, var(--landing-line));
-  background: color-mix(in srgb, #10b981 6%, var(--panel));
-}
-
-.risk-workflow-step strong {
+.risk-mobile-when-disclosure .risk-disclosure-trigger {
+  padding: 7px 11px;
   font-size: 12px;
-  font-weight: 600;
   color: var(--foreground);
 }
 
-.risk-workflow-step span {
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--muted-foreground);
+.risk-mobile-when-disclosure .risk-disclosure-body {
+  padding: 0 11px 10px;
 }
 
 .risk-context-bar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 8px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--landing-line);
+  gap: 6px 14px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--landing-line);
+  background: var(--muted);
 }
 
 .risk-context-pill {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 11px;
+  gap: 6px;
+  padding: 0;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  font-size: 11.5px;
   font-weight: 500;
-  background: var(--muted);
-  border: 1px solid var(--landing-line);
-  color: var(--foreground);
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
+
+.risk-context-pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--muted-foreground) 55%, transparent);
 }
 
 .risk-context-pill.ok {
-  background: rgba(16, 185, 129, 0.12);
-  border-color: rgba(16, 185, 129, 0.3);
-  color: #059669;
+  background: transparent;
+  border: 0;
+  color: var(--foreground);
 }
-:root.dark .risk-context-pill.ok {
-  color: #34d399;
+
+.risk-context-pill.ok::before {
+  background: #10b981;
+}
+:root.dark .risk-context-pill.ok::before {
+  background: #34d399;
 }
 
 .risk-context-pill.warn {
+  padding: 1px 7px;
+  border-radius: 5px;
   background: rgba(245, 158, 11, 0.14);
-  border-color: rgba(245, 158, 11, 0.36);
+  border: 1px solid rgba(245, 158, 11, 0.34);
   color: #b45309;
+}
+
+.risk-context-pill.warn::before {
+  background: #f59e0b;
 }
 :root.dark .risk-context-pill.warn {
   color: #fbbf24;
@@ -306,7 +306,8 @@
   gap: 6px 12px;
 }
 
-.risk-check-group-head strong {
+.risk-check-group-head strong,
+.risk-subhead-title {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--foreground);
@@ -315,11 +316,10 @@
 .risk-mobile-when-box {
   display: flex;
   flex-direction: column;
-  gap: 9px;
-  padding: 11px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--landing-line);
-  background: color-mix(in srgb, var(--background) 60%, var(--panel));
+  gap: 8px;
+  padding: 4px 0 0;
+  border: 0;
+  background: transparent;
 }
 
 .risk-mobile-when-copy {
@@ -346,10 +346,29 @@
   gap: 10px;
 }
 
+.risk-grid-3 {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+@media (min-width: 640px) {
+  .risk-grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 920px) {
+  .risk-grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 .risk-check-item {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  min-width: 0;
+  height: 100%;
   padding: 11px 13px;
   border-radius: 10px;
   border: 1px solid var(--landing-line);

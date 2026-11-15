@@ -1,0 +1,915 @@
+/* [INPUT]: Theme surface, border, typography and accent tokens from style.css.
+ * [OUTPUT]: Streamlined layouts for Browser, System and Network pages (compact 2-zone headers, 2-col diagnostic matrix, unified 3-row computer settings, 3-col proxy chain cards).
+ * [POS]: Imported by browser.tsx, system.tsx and vps.tsx; scoped selectors (>= 0,2,0 / 0,3,0) cleanly supersede legacy card rules despite earlier import order in main.tsx.
+ * [PROTOCOL]: Update src/CLAUDE.md with changes. */
+
+/* ==========================================================================
+   1. Shared Page Containers
+   ========================================================================== */
+.browser-page .browser-sections {
+  display: grid;
+  gap: 14px;
+  container: browser-env / inline-size;
+}
+
+.system-environment-page .system-env-content {
+  display: grid;
+  gap: 14px;
+  container: computer-env / inline-size;
+}
+
+.network-page .network-sections {
+  display: grid;
+  gap: 14px;
+  container: network-env / inline-size;
+}
+
+/* ==========================================================================
+   2. Browser Environment (browser.tsx)
+   ========================================================================== */
+.browser-page .browser-sections .browser-hero-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.browser-page .browser-hero-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 18px;
+}
+
+.browser-page .browser-hero-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.browser-page .browser-hero-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.browser-page .browser-hero-title-row h2 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.browser-page .browser-hero-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.browser-page .browser-hero-meta .browser-context-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.browser-page .browser-hero-main .browser-scope-note {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.browser-page .browser-hero-main .browser-scope-note::before {
+  content: none;
+  display: none;
+}
+
+.browser-page .browser-hero-bar .browser-hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.browser-page .browser-hero-alerts {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--landing-line);
+}
+
+.browser-page .browser-hero-alerts .identity-policy-hint {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+/* Verification Matrix */
+.browser-page .browser-sections .browser-checks {
+  padding: 14px 16px;
+  gap: 10px;
+}
+
+.browser-page .browser-checks .browser-checks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 0;
+}
+
+.browser-page .browser-checks .browser-checks-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.browser-page .browser-checks .browser-check-summary {
+  margin: 0;
+  padding: 7px 11px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.browser-page .browser-checks .browser-check-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  border: 1px solid var(--landing-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--background);
+}
+
+:root.dark .browser-page .browser-checks .browser-check-grid {
+  background: rgba(15, 23, 42, 0.24);
+}
+
+:root[data-surface="glass"] .browser-page .browser-checks .browser-check-grid {
+  background: transparent;
+}
+
+.browser-page .browser-check-grid .browser-check {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 10px 12px;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.browser-page .browser-check-grid .browser-check:nth-child(even) {
+  border-left: 1px solid var(--landing-line);
+}
+
+.browser-page .browser-check-grid .browser-check:nth-child(n + 3) {
+  border-top: 1px solid var(--landing-line);
+}
+
+.browser-page .browser-check > span {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border: 1px solid var(--landing-line);
+  flex: 0 0 auto;
+}
+
+.browser-page .browser-check.check-ok > span {
+  background: #eaf7ee;
+  border-color: #bddfc7;
+  color: #16703c;
+}
+
+.browser-page .browser-check.check-mismatch > span {
+  background: #fff0ee;
+  border-color: #efc3bd;
+  color: #b42318;
+}
+
+:root.dark .browser-page .browser-check.check-ok > span {
+  background: rgba(22, 163, 74, 0.16);
+  border-color: rgba(74, 222, 128, 0.28);
+  color: #4ade80;
+}
+
+:root.dark .browser-page .browser-check.check-mismatch > span {
+  background: rgba(220, 38, 38, 0.16);
+  border-color: rgba(248, 113, 113, 0.3);
+  color: #f87171;
+}
+
+.browser-page .browser-check-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.browser-page .browser-check-copy strong {
+  font-size: 12.5px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-page .browser-check-copy p {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--muted-foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Browser Data Split Row */
+.browser-page .browser-sections .browser-data-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.browser-page .browser-data-card .browser-data-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 0;
+}
+
+.browser-page .browser-data-card .browser-data-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.browser-page .browser-data-card .browser-data-scenarios {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border: 1px solid var(--landing-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--background);
+}
+
+:root.dark .browser-page .browser-data-card .browser-data-scenarios {
+  background: rgba(15, 23, 42, 0.24);
+}
+
+:root[data-surface="glass"] .browser-page .browser-data-card .browser-data-scenarios {
+  background: transparent;
+}
+
+.browser-page .browser-data-scenarios .browser-scenario-card {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 12px 14px;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.browser-page .browser-data-scenarios .browser-scenario-card + .browser-scenario-card {
+  border-left: 1px solid var(--landing-line);
+}
+
+.browser-page .browser-scenario-card .browser-scenario-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.browser-page .browser-scenario-card .browser-scenario-desc {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+@container browser-env (max-width: 640px) {
+  .browser-page .browser-hero-bar {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .browser-page .browser-hero-bar .browser-hero-actions {
+    justify-content: flex-start;
+  }
+
+  .browser-page .browser-checks .browser-check-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .browser-page .browser-check-grid .browser-check:nth-child(even) {
+    border-left: 0;
+  }
+
+  .browser-page .browser-check-grid .browser-check + .browser-check {
+    border-top: 1px solid var(--landing-line);
+  }
+
+  .browser-page .browser-data-card .browser-data-scenarios {
+    grid-template-columns: 1fr;
+  }
+
+  .browser-page .browser-data-scenarios .browser-scenario-card + .browser-scenario-card {
+    border-left: 0;
+    border-top: 1px solid var(--landing-line);
+  }
+}
+
+/* ==========================================================================
+   3. Computer Environment (system.tsx)
+   ========================================================================== */
+.system-environment-page .system-alignment-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.system-environment-page .system-alignment-cell {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 11px 14px;
+}
+
+.system-environment-page .system-alignment-cell + .system-alignment-cell {
+  border-left: 1px solid var(--landing-line);
+}
+
+.system-environment-page .system-alignment-label {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--muted-foreground);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-environment-page .system-alignment-value {
+  font-size: 12.5px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-environment-page .system-alignment-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.system-environment-page .system-alignment-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: #d97706;
+}
+
+.system-environment-page .system-alignment-dot.is-aligned {
+  background: #16a34a;
+}
+
+.system-environment-page .system-alignment-dot.is-unknown {
+  background: #94a3b8;
+}
+
+:root.dark .system-environment-page .system-alignment-dot.is-aligned {
+  background: #4ade80;
+}
+
+.system-environment-page .system-alignment-badge {
+  font-size: 12.5px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.system-environment-page .system-alignment-meta {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Unified 3-Row Grouped Settings Card */
+.system-environment-page .system-env-content .system-settings-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.system-environment-page .system-settings-list .system-setting-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 18px;
+  padding: 21px 18px;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+:root[data-surface="glass"] .system-environment-page .system-settings-list .system-setting-card,
+:root.dark[data-surface="glass"] .system-environment-page .system-settings-list .system-setting-card,
+:root[data-surface="hatched"] .system-environment-page .system-settings-list .system-setting-card {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.system-environment-page .system-settings-list .system-setting-card + .system-setting-card {
+  border-top: 1px solid var(--landing-line);
+}
+
+/* Keep Location visibly shorter than Timezone/Language (>= 20px delta required by readSystemGeometry) */
+.system-environment-page .system-settings-list .system-setting-card[data-system-setting="location"] {
+  grid-column: auto;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 10px 18px;
+}
+
+.system-environment-page .system-setting-card .system-setting-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  min-width: 0;
+}
+
+.system-environment-page .system-setting-card .settings-icon-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--muted);
+  border: 1px solid var(--landing-line);
+  color: var(--muted-foreground);
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.system-environment-page .system-setting-card .system-setting-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.system-environment-page .system-setting-card .system-heading-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.system-environment-page .system-setting-card .system-setting-copy h2 {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.system-environment-page .system-setting-card .system-current-value {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.system-environment-page .system-setting-card .system-current-value > span:first-child {
+  color: var(--muted-foreground);
+}
+
+.system-environment-page .system-setting-card .system-current-value strong {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.system-environment-page .system-setting-card .system-setting-note {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  padding-left: 39px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.system-environment-page .system-setting-card:not([data-system-setting="location"]) .system-inline-controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.system-environment-page .system-setting-card .system-inline-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  width: 210px;
+  max-width: 100%;
+}
+
+.system-environment-page .system-setting-card .system-inline-field > button {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.system-environment-page .system-setting-card .system-field-label {
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.system-environment-page .system-setting-card .system-inline-controls > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.system-environment-page .system-setting-card .system-location-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 18px;
+  min-width: 0;
+}
+
+.system-environment-page .system-setting-card .system-location-row .system-setting-header {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.system-environment-page .system-setting-card .system-location-description {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.system-environment-page .system-setting-card .system-inline-controls.system-location-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.system-environment-page .system-baseline-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--landing-line);
+  background: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
+
+:root.dark .system-environment-page .system-baseline-footer {
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.system-environment-page .system-baseline-footer strong {
+  color: var(--foreground);
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.system-environment-page .system-baseline-targets {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+@container computer-env (max-width: 760px) {
+  .system-environment-page .system-alignment-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .system-environment-page .system-alignment-cell + .system-alignment-cell {
+    border-left: 0;
+  }
+
+  .system-environment-page .system-alignment-cell:nth-child(even) {
+    border-left: 1px solid var(--landing-line);
+  }
+
+  .system-environment-page .system-alignment-cell:nth-child(n + 3) {
+    border-top: 1px solid var(--landing-line);
+  }
+
+  .system-environment-page .system-settings-list .system-setting-card {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+
+  .system-environment-page .system-settings-list .system-setting-card[data-system-setting="location"] {
+    padding: 10px 16px;
+  }
+
+  .system-environment-page .system-setting-card .system-setting-note {
+    padding-left: 0;
+  }
+
+  .system-environment-page .system-setting-card:not([data-system-setting="location"]) .system-inline-controls {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .system-environment-page .system-setting-card .system-inline-field {
+    flex: 1 1 180px;
+    width: auto;
+  }
+
+  .system-environment-page .system-setting-card .system-location-row {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .system-environment-page .system-setting-card .system-location-row .system-setting-header {
+    flex-basis: 100%;
+  }
+
+  .system-environment-page .system-setting-card .system-inline-controls.system-location-controls {
+    margin-left: auto;
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@container computer-env (max-width: 420px) {
+  .system-environment-page .system-alignment-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .system-environment-page .system-alignment-cell:nth-child(even) {
+    border-left: 0;
+  }
+
+  .system-environment-page .system-alignment-cell + .system-alignment-cell {
+    border-top: 1px solid var(--landing-line);
+  }
+
+  .system-environment-page .system-setting-card .system-inline-field {
+    flex-basis: 100%;
+  }
+}
+
+/* ==========================================================================
+   4. Network Environment (vps.tsx)
+   ========================================================================== */
+.network-page .network-sections .network-action-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.network-page .network-action-list .network-action-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+.network-page .network-action-card .network-action-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.network-page .network-action-card .network-card-role {
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  letter-spacing: 0.01em;
+}
+
+.network-page .network-action-card .network-action-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.network-page .network-action-card .network-action-head h2 {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.35;
+  font-weight: 650;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.network-page .network-action-card .network-action-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.network-page .network-action-card .network-action-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 2px;
+  border-top: 0;
+}
+
+.network-page .network-sections .domain-diagnostics {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.network-page .domain-diagnostics .domain-diagnostics-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.network-page .domain-diagnostics .domain-diagnostics-head {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 280px;
+}
+
+.network-page .domain-diagnostics .domain-diagnostics-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.network-page .domain-diagnostics .domain-diagnostics-subtitle {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.network-page .domain-diagnostics .domain-outcome {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 8px;
+}
+
+.network-page .domain-diagnostics .domain-diagnostics-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.network-page .domain-diagnostics-list .domain-diagnostics-item {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+}
+
+.network-page .domain-diagnostics-item .domain-name-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+.network-page .domain-diagnostics-item .domain-role {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+
+:root.dark .network-page .domain-diagnostics-item .domain-role {
+  background: transparent;
+  border: 0;
+  color: var(--muted-foreground);
+}
+
+@container network-env (max-width: 720px) {
+  .network-page .network-sections .network-action-list {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .network-page .domain-diagnostics .domain-diagnostics-list {
+    grid-template-columns: 1fr;
+  }
+}
