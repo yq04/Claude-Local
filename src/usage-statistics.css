@@ -1,19 +1,19 @@
 /*
  * [INPUT]: Shared application theme variables and Usage analytics components.
- * [OUTPUT]: Token-first composition overview with per-bucket equivalent cost & share pills, top-aligned 2x2 KPI cards with atomic nowrap sub-items, auto-screenshot toolbar & export menu, full model distribution with aligned 2x2 micro-metric stats, right-aligned tabular share column and multi-column-aware effort popovers, and responsive sortable trend/account tables.
- * [POS]: Usage page styles; respects accent, dark theme, compact sidebar and shared margins.
+ * [OUTPUT]: Token-first composition overview with neutral header chrome, muted metric icon tiles & understated section headings, unified tag pills, top-aligned 2x2 KPI cards with atomic nowrap sub-items, auto-screenshot toolbar & export menu, full model distribution with aligned 2x2 micro-metric stats, right-aligned tabular share column and multi-column-aware effort popovers, and responsive sortable trend/account tables.
+ * [POS]: Usage page styles; respects neutral desktop utility chrome, dark theme, compact sidebar and shared margins while preserving capture layouts.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
 .usage-page { --usage-total: var(--local-accent); --usage-secondary: color-mix(in srgb, var(--foreground) 76%, var(--panel)); --usage-input: #6086cf; --usage-output: #ad7ad4; --usage-write: #d49b4e; --usage-read: #4ba995; }
-.usage-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; flex-shrink: 0; }
+.usage-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 14px; flex-shrink: 0; }
 .usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.usage-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--usage-secondary); min-width: 0; }
+.usage-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--usage-secondary); min-width: 0; }
 .usage-update-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .usage-update-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--muted-foreground); opacity: 0.55; flex-shrink: 0; }
 .usage-update-dot.is-busy { background: var(--local-accent); opacity: 1; animation: usage-pulse 1.2s ease-in-out infinite; }
 @keyframes usage-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 .usage-action-group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.usage-snap-button svg { color: var(--local-accent-ink); opacity: .9; }
+.usage-snap-button svg { color: var(--muted-foreground); opacity: .9; }
 .usage-export-trigger { gap: 4px; }
 .usage-export-menu { min-width: 196px; }
 .usage-export-status { margin: -8px 0 0 auto; color: var(--usage-secondary); font-size: 11px; }
@@ -37,8 +37,8 @@
 .usage-total-value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font: 700 40px/1.06 var(--font-sans); font-variant-numeric: tabular-nums; letter-spacing: -1.3px; overflow-wrap: anywhere; }
 .usage-total-value small { font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--muted-foreground); }
 .usage-total-activity-pills { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.usage-activity-pill { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 60%, transparent); border: 1px solid color-mix(in srgb, var(--landing-line) 85%, transparent); font-size: 11px; font-weight: 500; color: var(--usage-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.usage-total-card .usage-metric-heading > small, .usage-total-badge { margin-left: auto; padding: 2px 9px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 65%, transparent); border: 1px solid color-mix(in srgb, var(--landing-line) 85%, transparent); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--usage-secondary); }
+.usage-activity-pill { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 6px; background: var(--muted); border: 1px solid var(--landing-line); font-size: 11px; font-weight: 500; color: var(--muted-foreground); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-total-card .usage-metric-heading > small, .usage-total-badge { margin-left: auto; padding: 2px 8px; border-radius: 6px; background: var(--muted); border: 1px solid var(--landing-line); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
 .usage-composition { min-width: 0; }
 .usage-composition-track { display: flex; gap: 2px; width: 100%; height: 5px; border-radius: 999px; overflow: hidden; background: var(--muted); }
 .usage-composition-track > span { min-width: 0; height: 100%; }
@@ -61,7 +61,7 @@
 .usage-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .usage-metric { display: grid; grid-template-rows: auto auto 1fr; align-content: start; align-items: start; gap: 8px; padding: 14px 16px; min-width: 0; }
 .usage-metric-heading { display: flex; align-items: center; gap: 8px; min-height: 26px; min-width: 0; color: var(--usage-secondary); font-size: 12.5px; font-weight: 600; line-height: 1.25; }
-.usage-metric-icon { display: grid; place-items: center; width: 26px; height: 26px; flex-shrink: 0; border-radius: 7px; color: var(--local-accent-ink); background: var(--local-accent-soft); }
+.usage-metric-icon { display: grid; place-items: center; width: 25px; height: 25px; flex-shrink: 0; border-radius: 7px; color: var(--muted-foreground); background: var(--muted); border: 1px solid color-mix(in srgb, var(--landing-line) 80%, transparent); }
 .usage-metric > strong { font: 700 28px/1.12 var(--font-sans); font-variant-numeric: tabular-nums; letter-spacing: -.6px; overflow-wrap: anywhere; }
 .usage-metric > small { font-size: 11px; line-height: 1.45; color: var(--usage-secondary); margin-top: 2px; max-width: 100%; min-width: 0; }
 .usage-metric > small.has-items { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; overflow: hidden; padding-block: 1px; }
@@ -69,8 +69,9 @@
 .usage-metric-sub-item::before { content: '·'; content: '·' / ''; position: absolute; left: -8px; color: var(--muted-foreground); pointer-events: none; }
 .usage-metric > small b { color: var(--foreground); font-weight: 600; }
 .usage-group-heading { flex-wrap: wrap; gap: 8px; }
-.usage-group-heading h2 { font-size: 15px; }
-.usage-section-caption { display: inline-grid; place-items: center; padding: 2px 6px; border-radius: 5px; background: var(--muted); font-size: 11px; color: var(--usage-secondary); font-variant-numeric: tabular-nums; }
+.usage-group-heading .settings-group-bar { width: 3px; height: 13px; border-radius: 999px; background: var(--muted-foreground); opacity: 0.45; }
+.usage-group-heading h2 { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; color: var(--foreground); }
+.usage-section-caption { display: inline-grid; place-items: center; padding: 2px 6px; border-radius: 6px; background: var(--muted); border: 1px solid var(--landing-line); font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .usage-analysis-grid { display: grid; gap: 12px; min-width: 0; align-items: start; }
 .usage-chart-card, .usage-model-card, .usage-accounts-card { min-width: 0; }
 .usage-chart-card, .usage-model-card { display: flex; flex-direction: column; }

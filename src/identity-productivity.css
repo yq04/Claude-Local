@@ -1,5 +1,5 @@
-/* [INPUT]: Identity/warming shared count headers, readable saved-profile email, selected-slot/runtime state, short onboarding, expiry, quota, wakeup and smart-relay state.
- * [OUTPUT]: Accessible ⋯ dropdown menu, Pro/Max/Ultra pill + right-hand MM/DD subscription expiry tag, manual recharge/expiry date editor dialog, uniform 28px header action groups, auto-wakeup & smart-relay dialogs, quota estimation track with 7d pace tick, reset urgency & refresh-token warnings, static active-card aura (0% idle paint), and Dark/Glass contrast parity without changing 166×286 card geometry.
+/* [INPUT]: Identity/warming shared count headers, readable saved-profile email, selected-slot/runtime state, short onboarding, expiry, quota, wakeup, smart-relay, Claude CLI and residue sub-panel states.
+ * [OUTPUT]: Accessible ⋯ dropdown menu, Pro/Max/Ultra pill + right-hand MM/DD subscription expiry tag, manual recharge/expiry date editor dialog, uniform 28px header action groups, auto-wakeup & smart-relay dialogs, quota estimation track with 7d pace tick, reset urgency & refresh-token warnings, sleek utility-grade .identity-cli & .claude-residue hierarchy, static active-card aura (0% idle paint), and Dark/Glass contrast parity without changing 166×286 card geometry.
  * [POS]: Identity productivity presentation; the 166×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
  */
@@ -1251,4 +1251,225 @@ html[data-window-hidden="true"] *,
 html[data-window-hidden="true"] *::before,
 html[data-window-hidden="true"] *::after {
   animation-play-state: paused !important;
+}
+
+/* ----- Scoped CLI & Residue sub-panel utility density (never touches 166x286 .identity-card geometry) ----- */
+.identity-cli .identity-section-head,
+.claude-residue .identity-section-head {
+  padding: 10px 16px;
+  gap: 10px 14px;
+}
+
+.identity-cli .cli-app-row-info {
+  gap: 10px;
+  align-items: center;
+}
+
+.identity-cli .cli-app-icon {
+  border-radius: 7px;
+  border: 1px solid var(--landing-line);
+  box-shadow: none;
+}
+
+.identity-cli .cli-app-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.identity-cli .cli-title-cluster {
+  gap: 7px;
+}
+
+.identity-cli .cli-status-pill {
+  gap: 5px;
+  padding: 1.5px 7px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.identity-cli .cli-status-pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+}
+
+.identity-cli .cli-status-pill.installed {
+  background: color-mix(in srgb, #10b981 9%, var(--panel));
+  border-color: color-mix(in srgb, #10b981 26%, var(--landing-line));
+  color: #059669;
+}
+
+.identity-cli .cli-status-pill.installed::before {
+  background: #10b981;
+}
+
+:root.dark .identity-cli .cli-status-pill.installed {
+  color: #34d399;
+}
+
+:root.dark .identity-cli .cli-status-pill.installed::before {
+  background: #34d399;
+}
+
+.identity-cli .cli-path-row {
+  margin-top: 1px;
+  gap: 6px;
+}
+
+.identity-cli .cli-path-code {
+  margin-top: 0;
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.identity-cli > .cleanup-activity,
+.identity-cli > .cleanup-feedback,
+.identity-cli > .cli-install-guide {
+  margin: 0 16px 10px;
+}
+
+.identity-cli .cli-install-guide {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--landing-line);
+  background: color-mix(in srgb, var(--muted) 42%, var(--panel));
+}
+
+.identity-cli .cli-install-guide > .cleanup-feedback {
+  margin: 0 0 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+
+.claude-residue > .cleanup-feedback,
+.claude-residue > .cleanup-activity {
+  margin: 0 16px 10px;
+}
+
+.claude-residue .claude-residue-env-alert {
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  gap: 9px;
+}
+
+.claude-residue .claude-residue-smart-bar {
+  margin: 0 16px 8px;
+  padding: 7px 11px;
+  border-radius: 8px;
+  gap: 6px 12px;
+  border: 1px solid var(--landing-line);
+  background: color-mix(in srgb, var(--muted) 48%, var(--panel));
+  color: var(--foreground);
+}
+
+.claude-residue .claude-residue-smart-bar.safe,
+:root.dark .claude-residue .claude-residue-smart-bar.safe {
+  background: color-mix(in srgb, var(--muted) 48%, var(--panel));
+  border-color: var(--landing-line);
+  color: var(--foreground);
+}
+
+.claude-residue .claude-residue-smart-bar.warn {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.34);
+  color: #92400e;
+}
+
+:root.dark .claude-residue .claude-residue-smart-bar.warn {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(251, 191, 36, 0.34);
+  color: #fde68a;
+}
+
+.claude-residue .claude-residue-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--muted-foreground) 58%, transparent);
+}
+
+.claude-residue .claude-residue-smart-bar.safe .claude-residue-dot {
+  background: #10b981;
+}
+
+:root.dark .claude-residue .claude-residue-smart-bar.safe .claude-residue-dot {
+  background: #34d399;
+}
+
+.claude-residue .claude-residue-smart-bar.warn .claude-residue-dot {
+  background: #f59e0b;
+}
+
+.claude-residue .claude-residue-smart-bar > span {
+  color: var(--muted-foreground);
+}
+
+.claude-residue .claude-residue-smart-bar.warn > span,
+.claude-residue .claude-residue-smart-bar > span strong {
+  color: inherit;
+}
+
+.claude-residue .claude-residue-warnings {
+  margin: 0 16px 8px;
+  padding: 8px 11px;
+  border-radius: 8px;
+}
+
+:root.dark .claude-residue .claude-residue-warnings {
+  border-color: rgba(251, 191, 36, 0.32);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fde68a;
+}
+
+.claude-residue .claude-residue-toolbar,
+.claude-residue .claude-residue-footer {
+  margin: 0 16px;
+  padding: 8px 0;
+}
+
+.claude-residue .claude-residue-list {
+  margin: 0 16px;
+}
+
+.claude-residue .claude-residue-row {
+  padding: 9px 6px;
+  gap: 10px;
+}
+
+.claude-residue .claude-residue-risk {
+  padding: 1.5px 6px;
+  border-radius: 5px;
+  font-size: 9.5px;
+  font-weight: 550;
+  line-height: 1.35;
+}
+
+.claude-residue .claude-residue-risk.login,
+.claude-residue .claude-residue-risk.history,
+.claude-residue .claude-residue-risk.backup {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+:root.dark .claude-residue .claude-residue-risk.login,
+:root.dark .claude-residue .claude-residue-risk.history,
+:root.dark .claude-residue .claude-residue-risk.backup {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(251, 191, 36, 0.32);
+}
+
+.claude-residue .claude-residue-empty {
+  padding: 0 16px 14px;
 }

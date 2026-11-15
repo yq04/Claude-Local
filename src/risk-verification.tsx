@@ -1,10 +1,10 @@
 /**
- * [INPUT]: 原生只读环境快照（risk_inspect_local_env 含 CLI 遥测护盾/MCP 供应链审计）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好与双语文案。
- * [OUTPUT]: 明确所选浏览器范围的六项配置与HTTP出口诊断、CLI 遥测护盾/显式代理固定/MCP 边界状态徽章、Mihomo strict-route 闭环修复向导、PayPal/Stripe 区域染色站点数据清理直达助手、过期结果隔离；桥接安全随机源缺失时局部停用。
+ * [INPUT]: 原生只读环境快照（risk_inspect_local_env 含 CLI 遥测护盾/MCP 供应链审计）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好、Cromma Disclosure 与双语文案。
+ * [OUTPUT]: 紧凑安全态势栏与可折叠原理说明、等高三列静态/动态核验网格、CLI 遥测护盾/显式代理固定/MCP 边界状态徽章、Mihomo strict-route 闭环修复向导、移动端去序号桥接指引与 PayPal/Stripe 站点清理直达助手。
  * [POS]: 风控验证主页面；零上游凭据读取、零临时口令落盘、严格拦截非 RFC1918 内网暴露，所有修复通过可审计 AI 提示词或用户显式下载完成。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {Button, Input} from 'cromma-ui';
+import {Button, Disclosure, Input} from 'cromma-ui';
 import {CheckTickCircle, Refresh} from 'cromma-ui/pika';
 import {useCallback, useEffect, useId, useMemo, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
@@ -58,6 +58,10 @@ function statusSymbol(status: RiskCheckStatus): string {
   if (status === 'warn') return '!';
   if (status === 'fail') return '×';
   return '·';
+}
+
+function stripHeadingIndexPrefix(title: string): string {
+  return title.replace(/^(?:[①②③④⑤⑥]|\d+[.)、])\s*/, '');
 }
 
 function tryBridgeCredentials(): ReturnType<typeof generateBridgeCredentials> | null {
@@ -411,12 +415,6 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
       </header>
 
       <div className="risk-content">
-        {/* 第一部分：电脑 DNS 泄露与 KYC 跨域一致性诊断 */}
-        <div className="settings-group-heading">
-          <span className="settings-group-bar" aria-hidden="true" />
-          <h2>{t('risk.section.auditTitle')}</h2>
-        </div>
-
         <section className="settings-card risk-card" aria-busy={inspecting || probing}>
           <div className="risk-audit-banner" data-status={bannerStatus} role="status" aria-live="polite">
             <div className="risk-banner-main">
@@ -455,10 +453,6 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
           </div>
 
           <div className="risk-overview-box">
-            <div className="risk-why-row">
-              <span className="risk-why-badge">{t('risk.workflow.whyTitle')}</span>
-              <p className="risk-audit-scope">{t('risk.workflow.whyDesc')}</p>
-            </div>
             <div className="risk-context-bar">
               {local?.browser_identity && (
                 <span className="risk-context-pill" data-risk-browser-identity={local.browser_identity.status}>
@@ -525,6 +519,14 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               )}
               <span className="risk-context-note" data-browser-owner-scope>{t('risk.browserOwnerScope')}</span>
             </div>
+            <Disclosure
+              className="risk-disclosure"
+              triggerClassName="risk-disclosure-trigger"
+              contentClassName="risk-disclosure-body"
+              summary={t('risk.workflow.whyTitle')}
+            >
+              <p className="risk-audit-scope">{t('risk.workflow.whyDesc')}</p>
+            </Disclosure>
           </div>
 
           {(inspectError || probeError) && (
@@ -535,12 +537,12 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
 
           <div className="risk-check-group">
             <div className="risk-check-group-head">
-              <strong>{t('risk.group.staticTitle')}</strong>
+              <strong className="risk-subhead-title">{stripHeadingIndexPrefix(t('risk.group.staticTitle'))}</strong>
               <span className={`settings-meta-pill${staticPassed === staticChecks.length ? ' ok' : ''}`}>
                 {t('risk.group.staticProgress', {passed: staticPassed, total: staticChecks.length})}
               </span>
             </div>
-            <div className="risk-checks-grid">
+            <div className="risk-checks-grid risk-grid-3">
               {staticChecks.map(item => (
                 <article key={item.id} className="risk-check-item" data-status={item.status}>
                   <span className="risk-status-dot" data-status={item.status} aria-hidden="true">
@@ -558,12 +560,12 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
 
           <div className="risk-check-group">
             <div className="risk-check-group-head">
-              <strong>{t('risk.group.probeTitle')}</strong>
+              <strong className="risk-subhead-title">{stripHeadingIndexPrefix(t('risk.group.probeTitle'))}</strong>
               <span className={`settings-meta-pill${probe && probePassed === probeChecks.length ? ' ok' : ''}`}>
                 {probe ? t('risk.group.probeProgress', {passed: probePassed, total: probeChecks.length}) : t('risk.group.probeWaiting')}
               </span>
             </div>
-            <div className="risk-checks-grid">
+            <div className="risk-checks-grid risk-grid-3">
               {probeChecks.map(item => (
                 <article key={item.id} className="risk-check-item" data-status={item.status}>
                   <span className="risk-status-dot" data-status={item.status} aria-hidden="true">
@@ -672,19 +674,25 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
         </div>
 
         <section className="settings-card risk-card">
-          <div className="risk-mobile-when-box">
-            <div className="risk-mobile-when-copy">
-              <strong>{t('risk.mobile.whenWhyBadge')}</strong>
-              <span>{t('risk.mobile.whenWhyDesc')}</span>
+          <Disclosure
+            className="risk-disclosure risk-mobile-when-disclosure"
+            triggerClassName="risk-disclosure-trigger"
+            contentClassName="risk-disclosure-body"
+            summary={t('risk.mobile.whenWhyBadge')}
+          >
+            <div className="risk-mobile-when-box">
+              <div className="risk-mobile-when-copy">
+                <span>{t('risk.mobile.whenWhyDesc')}</span>
+              </div>
+              <div className="settings-meta-pills">
+                <span className="settings-meta-pill ok">{t('risk.security.pillRfc1918')}</span>
+                <span className="settings-meta-pill ok">{t('risk.security.pillZeroSecret')}</span>
+                <span className="settings-meta-pill">{t('risk.security.pillMemoryToken')}</span>
+                <span className="settings-meta-pill">{t('risk.security.pillOfflineQr')}</span>
+                <span className="settings-meta-pill">{t('risk.security.pillQuicBlock')}</span>
+              </div>
             </div>
-            <div className="settings-meta-pills">
-              <span className="settings-meta-pill ok">{t('risk.security.pillRfc1918')}</span>
-              <span className="settings-meta-pill ok">{t('risk.security.pillZeroSecret')}</span>
-              <span className="settings-meta-pill">{t('risk.security.pillMemoryToken')}</span>
-              <span className="settings-meta-pill">{t('risk.security.pillOfflineQr')}</span>
-              <span className="settings-meta-pill">{t('risk.security.pillQuicBlock')}</span>
-            </div>
-          </div>
+          </Disclosure>
 
           {publicOrNoLan && (
             <div className="risk-callout" role="note">
@@ -814,7 +822,6 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                 <div className="risk-step-actions">
                   <div className="risk-step-line">
                     <span className="risk-step-label">
-                      <span className="local-badge" aria-hidden="true">01</span>
                       <span>{t('risk.mobile.lanStep1')}</span>
                     </span>
                     <Button
@@ -830,7 +837,6 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
 
                   <div className="risk-step-line">
                     <span className="risk-step-label">
-                      <span className="local-badge" aria-hidden="true">02</span>
                       <span>{t('risk.mobile.lanStep2')}</span>
                     </span>
                     <div className="risk-action-group">
@@ -868,7 +874,6 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
 
                   <div className="risk-step-line">
                     <span className="risk-step-label">
-                      <span className="local-badge" aria-hidden="true">03</span>
                       <span>{t('risk.mobile.lanStep3')}</span>
                     </span>
                     <Button
@@ -915,11 +920,8 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               <div className="risk-standalone-grid">
                 <div className="risk-bridge-form">
                   <ol className="risk-sr-guide-list">
-                    {(['srStep1', 'srStep2', 'srStep3', 'srStep4'] as const).map((key, idx) => (
+                    {(['srStep1', 'srStep2', 'srStep3', 'srStep4'] as const).map(key => (
                       <li key={key} className="risk-sr-guide-step">
-                        <span className="local-badge" aria-hidden="true">
-                          {String(idx + 1).padStart(2, '0')}
-                        </span>
                         <div className="risk-sr-guide-copy">
                           <strong>{t(`risk.mobile.${key}Title`)}</strong>
                           <span>{t(`risk.mobile.${key}Desc`)}</span>
@@ -1164,7 +1166,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
           </div>
 
           <ol className="risk-checklist-list">
-            {CHECKLIST_STEP_IDS.map((stepId, index) => {
+            {CHECKLIST_STEP_IDS.map(stepId => {
               const checked = Boolean(checkedSteps[stepId]);
               return (
                 <li key={stepId} className="risk-checklist-item" data-checked={checked}>
@@ -1177,9 +1179,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                       }
                     />
                     <span className="risk-checklist-copy">
-                      <strong>
-                        {`${String(index + 1).padStart(2, '0')} · ${t(`risk.checklist.${stepId}Title`)}`}
-                      </strong>
+                      <strong>{t(`risk.checklist.${stepId}Title`)}</strong>
                       <span>
                         {t(`risk.checklist.${stepId}Desc`, {
                           timezone: targetTimezone,
