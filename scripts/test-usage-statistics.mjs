@@ -1,5 +1,5 @@
 // [INPUT]: Main React shell, fake IPC aggregates and an isolated local browser context.
-// [OUTPUT]: Isolated usage/identity/system layout previews; --usage-reliability-only verifies complete token totals, recorded activity, all models, concise account scopes, TSV and bilingual responsive layouts without unrelated suites.
+// [OUTPUT]: Isolated usage/identity/system layout previews (including omitting redundant disabled-location button when location_enabled === false); --usage-reliability-only verifies complete token totals, recorded activity, all models, concise account scopes, TSV and bilingual responsive layouts without unrelated suites.
 // [POS]: Synthetic UI verification; no live identities, external requests or native mutations.
 // [PROTOCOL]: Update this header and scripts/CLAUDE.md when changing this harness.
 import assert from 'node:assert/strict';
@@ -244,7 +244,7 @@ try {
         assert.ok(content.y>=card.box.y-1&&content.bottom<=card.box.bottom+1,label+': system text and controls must stay within the card vertically');
       }
     }
-    assert.equal(geometry.locationButtons.length,2);
+    assert.equal(geometry.locationButtons.length,1);
     return geometry;
   };
   const chooseSystemDraft=async(name,value,label=value)=>{
@@ -597,9 +597,13 @@ try {
   await page.evaluate(()=>{window.usageFixture.systemState.location_enabled=null;window.usageFixture.systemState.automatic_timezone=null;window.dispatchEvent(new Event('focus'));});
   await locationCard.locator('.system-state-label').filter({hasText:/未核验|未知/}).waitFor();
   assert.doesNotMatch(await locationCard.locator('.system-state-label').innerText(),/关闭/,'Unknown location status must not be presented as disabled');
+  assert.equal(await locationCard.locator('.system-location-controls > button').count(),2);
+  assert.equal(await locationCard.getByRole('button',{name:'关闭地理位置',exact:true}).count(),1);
   assert.deepEqual([await timezoneCard.locator('.system-current-value').innerText(),await languageCard.locator('.system-current-value').innerText()],currentSystemValues);
   await page.evaluate(()=>{window.usageFixture.systemState.location_enabled=false;window.usageFixture.systemState.automatic_timezone=false;window.dispatchEvent(new Event('focus'));});
   await locationCard.locator('.system-state-label').filter({hasText:/已关闭/}).waitFor();
+  assert.equal(await locationCard.getByRole('button',{name:'已关闭定位',exact:true}).count(),0);
+  assert.equal(await locationCard.locator('.system-location-controls > button').count(),1);
   await chooseSystemDraft('目标时区','America/New_York','America/New York');
   await chooseSystemDraft('目标语言','en','English');
   const systemDraftCommands=(await page.evaluate(()=>window.usageFixture.commands)).slice(beforeSystemDraft);

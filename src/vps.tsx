@@ -1,11 +1,11 @@
 /**
- * [INPUT]: Claude 四个固定服务域名、用户触发的原生只读诊断、发行者固定的 iKuuu/Kookeey 推广链接、AI 配置提示词、env-pages.css 与双语文案。
- * [OUTPUT]: 三列紧凑链式代理配置卡（带角色标签与单复制按钮）、服务连通性头部范围说明及仅在触发后展示的诊断横幅与双列清单。
+ * [INPUT]: Claude 四个固定服务域名、用户触发的原生只读诊断、发行者固定的 iKuuu/Kookeey 推广链接、AI 配置提示词、Pika 图标、env-pages.css 与双语文案。
+ * [OUTPUT]: 顶部内联复制状态胶囊、四栏链式拓扑发丝遥测条、三列紧凑代理配置卡（徽章 + 角色标签 + 步骤脚注与单复制按钮）及 2×2 边线四域名连通性矩阵。
  * [POS]: 固定链接随软件分享，不接受本机自定义覆盖或外部自动导航；仅在点击检测后发起连通性探测。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {Button} from 'cromma-ui';
-import {Refresh, CheckTickCircle} from 'cromma-ui/pika';
+import {Refresh, CheckTickCircle, Share01, Server, Settings01, Globe} from 'cromma-ui/pika';
 import {useEffect, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {useI18n, type Locale} from './i18n';
@@ -71,6 +71,13 @@ export function VpsPanel() {
   const passed = results.filter(item => item?.ok).length;
   const phase = diagnosing ? 'checking' : diagnosticsError ? 'failed' : diagnostics ? (passed === claudeDomains.length ? 'passed' : 'failed') : 'idle';
   const statusText = phase === 'checking' ? '检测中' : phase === 'passed' ? '检测成功' : phase === 'failed' ? '检测失败' : '待检测';
+  const hop4Detail = phase === 'idle'
+    ? t('network.hop4IdleDetail')
+    : diagnostics && !diagnosticsError
+      ? t('已通过 {v0} / {v1} 项', {v0: passed, v1: claudeDomains.length})
+      : diagnosticsError
+        ? t(diagnosticsError)
+        : t('检测中');
 
   const aiPrompt = buildAiProxyPrompt(locale);
 
@@ -115,24 +122,71 @@ export function VpsPanel() {
 
   return (
     <section className="system-page network-page">
-      <header className="cleanup-title">
+      <header className="cleanup-title network-header">
         <h1>{t('网络环境')}</h1>
+        {(copiedId || copyError) && (
+          <p className={`network-copy-status${copyError ? ' error' : ''}`} role={copyError ? 'alert' : 'status'}>
+            {copyError ? t('network.copyFailed') : t(copiedId === 'ai-prompt' ? '已复制提示词' : '已复制')}
+          </p>
+        )}
       </header>
 
       <div className="network-sections">
+        <section className="settings-card env-telemetry-strip network-overview-strip" aria-label={t('network.setupGroupTitle')}>
+          <div className="env-telemetry-cell">
+            <div className="env-telemetry-head">
+              <span className="env-status-dot" aria-hidden="true" />
+              <span className="env-telemetry-label">{t('network.hop1Label')}</span>
+            </div>
+            <strong title={t('network.hop1Value')}>{t('network.hop1Value')}</strong>
+            <small title={t('network.hop1Detail')}>{t('network.hop1Detail')}</small>
+          </div>
+          <div className="env-telemetry-cell">
+            <div className="env-telemetry-head">
+              <span className="env-status-dot" aria-hidden="true" />
+              <span className="env-telemetry-label">{t('network.hop2Label')}</span>
+            </div>
+            <strong title={t('network.hop2Value')}>{t('network.hop2Value')}</strong>
+            <small title={t('network.hop2Detail')}>{t('network.hop2Detail')}</small>
+          </div>
+          <div className="env-telemetry-cell">
+            <div className="env-telemetry-head">
+              <span className="env-status-dot" aria-hidden="true" />
+              <span className="env-telemetry-label">{t('network.hop3Label')}</span>
+            </div>
+            <strong title={t('network.hop3Value')}>{t('network.hop3Value')}</strong>
+            <small title={t('network.hop3Detail')}>{t('network.hop3Detail')}</small>
+          </div>
+          <div className="env-telemetry-cell">
+            <div className="env-telemetry-head">
+              <span className={`env-status-dot ${phase === 'passed' ? 'is-ready' : phase === 'failed' ? 'is-failed' : phase === 'checking' ? 'is-pending' : ''}`} aria-hidden="true" />
+              <span className="env-telemetry-label">{t('network.hop4Label')}</span>
+            </div>
+            <strong title={t(statusText)}>{t(statusText)}</strong>
+            <small title={hop4Detail}>{hop4Detail}</small>
+          </div>
+        </section>
+
+        <div className="settings-group-heading">
+          <span className="settings-group-bar" aria-hidden="true" />
+          <h2>{t('network.setupGroupTitle')}</h2>
+        </div>
+
         <div className="network-action-list">
           {/* iKuuu 前置专线 */}
-          <article className="network-action-card" aria-labelledby="ikuuu-setup-title">
+          <article className="settings-card network-action-card" aria-labelledby="ikuuu-setup-title">
+            <div className="network-card-top">
+              <span className="settings-icon-badge" aria-hidden="true"><Share01 size={16} /></span>
+              <span className="settings-meta-pill network-card-role">{t('代理环境')}</span>
+            </div>
             <div className="network-action-main">
-              <span className="network-card-role">{t('代理环境')}</span>
-              <div className="network-action-head">
-                <h2 id="ikuuu-setup-title">{t('准备前置专线（iKuuu）')}</h2>
-              </div>
+              <h2 id="ikuuu-setup-title">{t('准备前置专线（iKuuu）')}</h2>
               <p className="network-action-desc">
                 {t('network.ikuuuDescription')}
               </p>
             </div>
             <div className="network-action-buttons">
+              <span className="network-step-tag">{t('network.step1Tag')}</span>
               <Button
                 variant="secondary"
                 size="small"
@@ -146,17 +200,19 @@ export function VpsPanel() {
           </article>
 
           {/* Kookeey 美国静态家宽 */}
-          <article className="network-action-card" aria-labelledby="kookeey-setup-title">
+          <article className="settings-card network-action-card" aria-labelledby="kookeey-setup-title">
+            <div className="network-card-top">
+              <span className="settings-icon-badge" aria-hidden="true"><Server size={16} /></span>
+              <span className="settings-meta-pill network-card-role">{t('原生美区 ISP · SOCKS5')}</span>
+            </div>
             <div className="network-action-main">
-              <span className="network-card-role">{t('原生美区 ISP · SOCKS5')}</span>
-              <div className="network-action-head">
-                <h2 id="kookeey-setup-title">{t('准备美国静态家宽（Kookeey）')}</h2>
-              </div>
+              <h2 id="kookeey-setup-title">{t('准备美国静态家宽（Kookeey）')}</h2>
               <p className="network-action-desc">
                 {t('network.kookeeyDescription')}
               </p>
             </div>
             <div className="network-action-buttons">
+              <span className="network-step-tag">{t('network.step2Tag')}</span>
               <Button
                 variant="secondary"
                 size="small"
@@ -170,17 +226,19 @@ export function VpsPanel() {
           </article>
 
           {/* 复制提示词交给 AI 自动配置 */}
-          <article className="network-action-card" aria-labelledby="ai-setup-title">
+          <article className="settings-card network-action-card" aria-labelledby="ai-setup-title">
+            <div className="network-card-top">
+              <span className="settings-icon-badge" aria-hidden="true"><Settings01 size={16} /></span>
+              <span className="settings-meta-pill network-card-role">{t('Clash Verge 链式分流')}</span>
+            </div>
             <div className="network-action-main">
-              <span className="network-card-role">{t('Clash Verge 链式分流')}</span>
-              <div className="network-action-head">
-                <h2 id="ai-setup-title">{t('复制提示词交给 AI 自动配置')}</h2>
-              </div>
+              <h2 id="ai-setup-title">{t('复制提示词交给 AI 自动配置')}</h2>
               <p className="network-action-desc">
                 {t('network.promptDescription')}
               </p>
             </div>
             <div className="network-action-buttons">
+              <span className="network-step-tag">{t('network.step3Tag')}</span>
               <Button
                 variant="secondary"
                 size="small"
@@ -193,14 +251,21 @@ export function VpsPanel() {
             </div>
           </article>
         </div>
-        {(copiedId || copyError) && <p className={`network-copy-status${copyError ? ' error' : ''}`} role={copyError ? 'alert' : 'status'}>{copyError ? t('network.copyFailed') : t(copiedId === 'ai-prompt' ? '已复制提示词' : '已复制')}</p>}
+
+        <div className="settings-group-heading">
+          <span className="settings-group-bar" aria-hidden="true" />
+          <h2>{t('network.probeGroupTitle')}</h2>
+        </div>
 
         {/* Claude 服务连通性检测 */}
-        <section className="domain-diagnostics" aria-labelledby="diagnostics-title" data-status={phase} aria-busy={diagnosing}>
+        <section className="settings-card domain-diagnostics" aria-labelledby="diagnostics-title" data-status={phase} aria-busy={diagnosing}>
           <div className="domain-diagnostics-header">
-            <div className="domain-diagnostics-head">
-              <h2 id="diagnostics-title">{t('Claude 服务连通性')}</h2>
-              <p className="domain-diagnostics-subtitle">{t('仅在点击后检测服务连通性；结果不代表账号可用或已验证公网出口。')}</p>
+            <div className="domain-diagnostics-title-row">
+              <span className="settings-icon-badge" aria-hidden="true"><Globe size={16} /></span>
+              <div className="domain-diagnostics-head">
+                <h2 id="diagnostics-title">{t('Claude 服务连通性')}</h2>
+                <p className="domain-diagnostics-subtitle">{t('仅在点击后检测服务连通性；结果不代表账号可用或已验证公网出口。')}</p>
+              </div>
             </div>
             <Button
               variant="secondary"

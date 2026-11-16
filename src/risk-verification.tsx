@@ -1,10 +1,10 @@
 /**
- * [INPUT]: 原生只读环境快照（risk_inspect_local_env 含 CLI 遥测护盾/MCP 供应链审计）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好、Cromma Disclosure 与双语文案。
- * [OUTPUT]: 紧凑安全态势栏与可折叠原理说明、等高三列静态/动态核验网格、CLI 遥测护盾/显式代理固定/MCP 边界状态徽章、Mihomo strict-route 闭环修复向导、移动端去序号桥接指引与 PayPal/Stripe 站点清理直达助手。
+ * [INPUT]: 原生只读环境快照（risk_inspect_local_env 含 CLI 遥测护盾/MCP 供应链审计）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好与双语文案。
+ * [OUTPUT]: 四模块单层工作台布局：安全态势与四栏紧凑去重遥测条、带分组标头的双层三列静态/动态核验矩阵与 strict-route 闭环修复向导、移动端 3+2 徽章去折叠扫码桥接（含贴边分隔独立提示框）及 6 步前置飞行清单（含 PayPal 站点清理直达助手）。
  * [POS]: 风控验证主页面；零上游凭据读取、零临时口令落盘、严格拦截非 RFC1918 内网暴露，所有修复通过可审计 AI 提示词或用户显式下载完成。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {Button, Disclosure, Input} from 'cromma-ui';
+import {Button, Input} from 'cromma-ui';
 import {CheckTickCircle, Refresh} from 'cromma-ui/pika';
 import {useCallback, useEffect, useId, useMemo, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
@@ -52,6 +52,15 @@ const MOBILE_CLIENTS: readonly {id: MobileClientId; label: string}[] = [
 ];
 
 const CHECKLIST_STEP_IDS = ['step1', 'step2', 'step3', 'step4', 'step5', 'step6'] as const;
+const MATRIX_COPY_IDS = new Set(['desktop-fix', 'desktop-yaml', 'cli-settings-json']);
+const MOBILE_COPY_IDS = new Set([
+  'open-bridge',
+  'socks-uri',
+  'mobile-cfg',
+  'close-bridge',
+  'standalone-mobile',
+  'sr-antileak',
+]);
 
 function statusSymbol(status: RiskCheckStatus): string {
   if (status === 'ok') return '✓';
@@ -62,6 +71,11 @@ function statusSymbol(status: RiskCheckStatus): string {
 
 function stripHeadingIndexPrefix(title: string): string {
   return title.replace(/^(?:[①②③④⑤⑥]|\d+[.)、])\s*/, '');
+}
+
+function stripTelemetryPrefix(text: string): string {
+  const stripped = text.replace(/^[^:：]+[:：]\s*/, '').trim();
+  return stripped ? stripped.charAt(0).toUpperCase() + stripped.slice(1) : text;
 }
 
 function tryBridgeCredentials(): ReturnType<typeof generateBridgeCredentials> | null {
@@ -99,7 +113,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
   const [portTouched, setPortTouched] = useState(false);
   const [creds, setCreds] = useState(tryBridgeCredentials);
 
-  // 独立模式下纯内存小火箭静态家宽离线生码字段（绝不落盘、不发网络、组件卸载即销毁）
+  // In-memory Shadowrocket static residential QR fields (never persisted or transmitted)
   const [srHost, setSrHost] = useState('');
   const [srPort, setSrPort] = useState('');
   const [srUser, setSrUser] = useState('');
@@ -110,6 +124,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
   const [strictRouteGuideOpen, setStrictRouteGuideOpen] = useState(false);
   const [copiedId, setCopiedId] = useState('');
   const [copyingId, setCopyingId] = useState('');
+  const [copyAttemptId, setCopyAttemptId] = useState('');
   const [copyError, setCopyError] = useState(false);
   const copyTimer = useRef<number | undefined>(undefined);
   const live = useRef(false);
@@ -231,6 +246,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
     window.clearTimeout(copyTimer.current);
     setCopiedId('');
     setCopyError(false);
+    setCopyAttemptId(id);
     setCopyingId(id);
     try {
       try {
@@ -396,6 +412,53 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
           ? 'risk.auditStatus.warnDesc'
           : 'risk.auditStatus.pendingDesc';
 
+  const browserDotClass = local?.browser_identity
+    ? local.browser_identity.status === 'warming'
+      ? 'is-warming'
+      : 'is-ready'
+    : '';
+  const browserDisplayName = local?.browser_identity
+    ? maskDisplayName(local.browser_identity.name, local.browser_identity.email, privacyMask) || t('risk.telemetry.uninspected')
+    : t('risk.telemetry.uninspected');
+  const coreDotClass =
+    local?.mihomo.config_source === 'running_core' && local.mihomo.config_source_status === 'confirmed'
+      ? 'is-ready'
+      : local
+        ? 'is-pending'
+        : '';
+  const coreSourceValue = local
+    ? t(
+        local.mihomo.config_source === 'running_core' && local.mihomo.config_source_status === 'confirmed'
+          ? 'risk.audit.runningSource'
+          : local.mihomo.config_source === 'candidate_file'
+            ? 'risk.audit.candidateSource'
+            : 'risk.audit.unknownSource',
+      )
+    : t('risk.telemetry.uninspected');
+  const cliDotClass = !cliSec ? '' : cliShieldOk ? 'is-ready' : 'is-pending';
+  const mcpDotClass = !cliSec ? '' : cliMcpOk ? 'is-ready' : 'is-pending';
+  const cliShieldFull = cliSec
+    ? t(cliShieldOk ? 'risk.cliSecurity.shieldOk' : 'risk.cliSecurity.shieldWarn')
+    : t('risk.telemetry.uninspected');
+  const mcpAuditFull = !cliSec
+    ? t('risk.telemetry.uninspected')
+    : cliMcpOk
+      ? t('risk.cliSecurity.mcpOk')
+      : t('risk.cliSecurity.mcpWarn', {
+          unpinned: Math.max(cliSec.unpinned_npx_count, cliSec.windows_bare_npx_count),
+          remote: cliSec.remote_http_mcp_count + (cliSec.has_custom_hooks_or_helpers ? 1 : 0),
+        });
+
+  const showMatrixFeedback =
+    (copiedId !== '' && MATRIX_COPY_IDS.has(copiedId)) ||
+    (copyError && MATRIX_COPY_IDS.has(copyAttemptId));
+  const showMobileFeedback =
+    (copiedId !== '' && MOBILE_COPY_IDS.has(copiedId)) ||
+    (copyError && MOBILE_COPY_IDS.has(copyAttemptId));
+  const showChecklistError = copyError && copyAttemptId === 'paypal-cookie-url';
+  const showDialogError =
+    copyError && (copyAttemptId === 'strict-route-snippet' || copyAttemptId === 'desktop-fix');
+
   return (
     <section className="system-page risk-page">
       <header className="cleanup-title risk-header">
@@ -415,7 +478,8 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
       </header>
 
       <div className="risk-content">
-        <section className="settings-card risk-card" aria-busy={inspecting || probing}>
+        {/* Module 1: Security Posture & 4-Column Telemetry Card */}
+        <section className="settings-card risk-posture-card" aria-busy={inspecting || probing}>
           <div className="risk-audit-banner" data-status={bannerStatus} role="status" aria-live="polite">
             <div className="risk-banner-main">
               <span className="risk-status-dot" data-status={bannerStatus} aria-hidden="true">
@@ -427,7 +491,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               </div>
             </div>
 
-            {probe && (
+            {probe ? (
               <div className="risk-trace-compare">
                 <span className="risk-trace-chip">
                   <strong>claude.ai</strong>
@@ -441,7 +505,9 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                     ? t('risk.compare.sameIp')
                     : comparison === 'same_country'
                       ? t('risk.compare.sameCountryDiffIp')
-                      : comparison === 'different_country' ? t('risk.compare.splitLeak') : t('risk.compare.unknown')}
+                      : comparison === 'different_country'
+                        ? t('risk.compare.splitLeak')
+                        : t('risk.compare.unknown')}
                 </span>
                 <span className="risk-trace-chip">
                   <strong>withpersona.com</strong>
@@ -449,136 +515,163 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                   <small>{maskIpAddress(probe.persona.ip, privacyMask)}</small>
                 </span>
               </div>
+            ) : (
+              <div className="risk-banner-pills">
+                <span className={`settings-meta-pill${staticPassed === staticChecks.length ? ' ok' : ''}`}>
+                  {t('risk.group.staticProgress', {passed: staticPassed, total: staticChecks.length})}
+                </span>
+                <span className="settings-meta-pill">{t('risk.group.probeWaiting')}</span>
+              </div>
             )}
           </div>
 
-          <div className="risk-overview-box">
-            <div className="risk-context-bar">
-              {local?.browser_identity && (
-                <span className="risk-context-pill" data-risk-browser-identity={local.browser_identity.status}>
-                  {t(local.browser_identity.status === 'warming' ? 'browser.verificationWarmingOwner' : 'browser.verificationOwner', {name: maskDisplayName(local.browser_identity.name, local.browser_identity.email, privacyMask)})}
-                </span>
-              )}
-              {local && (
-                <span className={`risk-context-pill${local.mihomo.config_source === 'running_core' && local.mihomo.config_source_status === 'confirmed' ? ' ok' : ''}`}>
-                  {t(local.mihomo.config_source === 'running_core' && local.mihomo.config_source_status === 'confirmed' ? 'risk.audit.runningSource' : local.mihomo.config_source === 'candidate_file' ? 'risk.audit.candidateSource' : 'risk.audit.unknownSource')}
-                </span>
-              )}
-              {local?.mihomo.has_telemetry_rules && (
-                <span className="risk-context-pill ok" data-risk-telemetry-rules>
-                  {t('risk.cliSecurity.telemetryRulesOk')}
-                </span>
-              )}
-              {cliSec && (
-                <>
-                  <span
-                    className={`risk-context-pill${cliShieldOk ? ' ok' : ' warn'}`}
-                    data-risk-cli-shield={cliShieldOk ? 'ok' : 'warn'}
-                    title={cliShieldOk ? undefined : t('risk.cliSecurity.shieldWarnHint')}
-                  >
-                    {t(cliShieldOk ? 'risk.cliSecurity.shieldOk' : 'risk.cliSecurity.shieldWarn')}
-                  </span>
-                  {cliSec.nonessential_traffic_blocked && (
-                    <span
-                      className="risk-context-pill warn"
-                      data-risk-cli-nonessential="blocked"
-                      title={t('risk.cliSecurity.nonessentialBlockedHint')}
-                    >
-                      {t('risk.cliSecurity.nonessentialBlockedWarn')}
-                    </span>
-                  )}
-                  {cliSec.socks5_in_cli_env ? (
-                    <span
-                      className="risk-context-pill warn"
-                      data-risk-cli-proxy="socks5"
-                      title={t('risk.cliSecurity.socks5Hint')}
-                    >
-                      {t('risk.cliSecurity.socks5Warn')}
-                    </span>
-                  ) : !cliSec.proxy_env_complete ? (
-                    <span
-                      className="risk-context-pill warn"
-                      data-risk-cli-proxy="incomplete"
-                      title={t('risk.cliSecurity.proxyEnvIncompleteHint')}
-                    >
-                      {t('risk.cliSecurity.proxyEnvIncompleteWarn')}
-                    </span>
-                  ) : null}
-                  <span
-                    className={`risk-context-pill${cliMcpOk ? ' ok' : ' warn'}`}
-                    data-risk-mcp-audit={cliMcpOk ? 'ok' : 'warn'}
-                  >
-                    {cliMcpOk
-                      ? t('risk.cliSecurity.mcpOk')
-                      : t('risk.cliSecurity.mcpWarn', {
-                          unpinned: Math.max(cliSec.unpinned_npx_count, cliSec.windows_bare_npx_count),
-                          remote: cliSec.remote_http_mcp_count + (cliSec.has_custom_hooks_or_helpers ? 1 : 0),
-                        })}
-                  </span>
-                </>
-              )}
-              <span className="risk-context-note" data-browser-owner-scope>{t('risk.browserOwnerScope')}</span>
+          <div className="risk-telemetry-strip">
+            <div className="risk-telemetry-cell">
+              <div className="risk-telemetry-head">
+                <span className={`risk-telemetry-dot${browserDotClass ? ` ${browserDotClass}` : ''}`} aria-hidden="true" />
+                <span className="risk-telemetry-label">{t('risk.telemetry.browserLabel')}</span>
+              </div>
+              <strong data-risk-browser-identity={local?.browser_identity?.status} title={browserDisplayName}>
+                {browserDisplayName}
+              </strong>
+              <small data-browser-owner-scope title={t('risk.browserOwnerScope')}>
+                {t('risk.browserOwnerScope')}
+              </small>
             </div>
-            <Disclosure
-              className="risk-disclosure"
-              triggerClassName="risk-disclosure-trigger"
-              contentClassName="risk-disclosure-body"
-              summary={t('risk.workflow.whyTitle')}
-            >
-              <p className="risk-audit-scope">{t('risk.workflow.whyDesc')}</p>
-            </Disclosure>
+
+            <div className="risk-telemetry-cell">
+              <div className="risk-telemetry-head">
+                <span className={`risk-telemetry-dot${coreDotClass ? ` ${coreDotClass}` : ''}`} aria-hidden="true" />
+                <span className="risk-telemetry-label">{t('risk.telemetry.coreLabel')}</span>
+              </div>
+              <strong title={coreSourceValue}>{local ? stripTelemetryPrefix(coreSourceValue) : coreSourceValue}</strong>
+              {local?.mihomo.has_telemetry_rules ? (
+                <small className="is-ok" data-risk-telemetry-rules title={t('risk.cliSecurity.telemetryRulesOk')}>
+                  {t('risk.cliSecurity.telemetryRulesOk')}
+                </small>
+              ) : (
+                <small title={t('risk.telemetry.telemetryPending')}>{t('risk.telemetry.telemetryPending')}</small>
+              )}
+            </div>
+
+            <div className="risk-telemetry-cell">
+              <div className="risk-telemetry-head">
+                <span className={`risk-telemetry-dot${cliDotClass ? ` ${cliDotClass}` : ''}`} aria-hidden="true" />
+                <span className="risk-telemetry-label">{t('risk.telemetry.cliLabel')}</span>
+              </div>
+              <strong
+                data-risk-cli-shield={cliSec ? (cliShieldOk ? 'ok' : 'warn') : undefined}
+                title={cliSec && !cliShieldOk ? `${cliShieldFull} — ${t('risk.cliSecurity.shieldWarnHint')}` : cliShieldFull}
+              >
+                {cliSec ? stripTelemetryPrefix(cliShieldFull) : cliShieldFull}
+              </strong>
+              <div className="risk-cell-tags">
+                {cliSec?.nonessential_traffic_blocked && (
+                  <span
+                    className="risk-inline-warn"
+                    data-risk-cli-nonessential="blocked"
+                    title={t('risk.cliSecurity.nonessentialBlockedHint')}
+                  >
+                    {t('risk.cliSecurity.nonessentialBlockedWarn')}
+                  </span>
+                )}
+                {cliSec?.socks5_in_cli_env ? (
+                  <span
+                    className="risk-inline-warn"
+                    data-risk-cli-proxy="socks5"
+                    title={t('risk.cliSecurity.socks5Hint')}
+                  >
+                    {t('risk.cliSecurity.socks5Warn')}
+                  </span>
+                ) : cliSec && !cliSec.proxy_env_complete ? (
+                  <span
+                    className="risk-inline-warn"
+                    data-risk-cli-proxy="incomplete"
+                    title={t('risk.cliSecurity.proxyEnvIncompleteHint')}
+                  >
+                    {t('risk.cliSecurity.proxyEnvIncompleteWarn')}
+                  </span>
+                ) : cliSec ? (
+                  <small className="is-ok" title={t('risk.telemetry.cliProxyReady')}>{t('risk.telemetry.cliProxyReady')}</small>
+                ) : (
+                  <small>—</small>
+                )}
+              </div>
+            </div>
+
+            <div className="risk-telemetry-cell">
+              <div className="risk-telemetry-head">
+                <span className={`risk-telemetry-dot${mcpDotClass ? ` ${mcpDotClass}` : ''}`} aria-hidden="true" />
+                <span className="risk-telemetry-label">{t('risk.telemetry.mcpLabel')}</span>
+              </div>
+              <strong data-risk-mcp-audit={cliSec ? (cliMcpOk ? 'ok' : 'warn') : undefined} title={mcpAuditFull}>
+                {cliSec ? stripTelemetryPrefix(mcpAuditFull) : mcpAuditFull}
+              </strong>
+              <small title={t('risk.telemetry.mcpDetail')}>{t('risk.telemetry.mcpDetail')}</small>
+            </div>
+          </div>
+
+          <div className="risk-scope-footer">
+            <strong>{t('risk.workflow.whyTitle')}</strong>
+            <span>{t('risk.workflow.whyDesc')}</span>
           </div>
 
           {(inspectError || probeError) && (
-            <div role="alert" className="system-feedback error">
+            <div role="alert" className="system-feedback error risk-inline-alert">
               <p>{t(probeError || inspectError)}</p>
             </div>
           )}
+        </section>
 
-          <div className="risk-check-group">
-            <div className="risk-check-group-head">
-              <strong className="risk-subhead-title">{stripHeadingIndexPrefix(t('risk.group.staticTitle'))}</strong>
-              <span className={`settings-meta-pill${staticPassed === staticChecks.length ? ' ok' : ''}`}>
-                {t('risk.group.staticProgress', {passed: staticPassed, total: staticChecks.length})}
-              </span>
-            </div>
-            <div className="risk-checks-grid risk-grid-3">
-              {staticChecks.map(item => (
-                <article key={item.id} className="risk-check-item" data-status={item.status}>
-                  <span className="risk-status-dot" data-status={item.status} aria-hidden="true">
-                    {statusSymbol(item.status)}
-                  </span>
-                  <div className="risk-check-body">
-                    <strong>{t(item.titleKey)}</strong>
-                    <p>{t(item.summaryKey, item.summaryParams)}</p>
-                    {item.detailKeys?.map(key => <p key={key}>{t(key, item.summaryParams)}</p>)}
-                  </div>
-                </article>
-              ))}
-            </div>
+        {/* Module 2: Unified 2-Tier Edge-to-Edge 3-Column Hairline Matrix */}
+        <div className="settings-group-heading risk-group-heading">
+          <div className="risk-group-title-wrap">
+            <span className="settings-group-bar" aria-hidden="true" />
+            <h2>{t('risk.section.auditTitle')}</h2>
+          </div>
+        </div>
+
+        <section className="settings-card risk-matrix-card">
+          <div className="risk-matrix-head">
+            <strong className="risk-subhead-title">{stripHeadingIndexPrefix(t('risk.group.staticTitle'))}</strong>
+            <span className={`settings-meta-pill${staticPassed === staticChecks.length ? ' ok' : ''}`}>
+              {t('risk.group.staticProgress', {passed: staticPassed, total: staticChecks.length})}
+            </span>
+          </div>
+          <div className="risk-checks-grid risk-grid-3">
+            {staticChecks.map(item => (
+              <article key={item.id} className="risk-check-item" data-status={item.status}>
+                <span className="risk-status-dot" data-status={item.status} aria-hidden="true">
+                  {statusSymbol(item.status)}
+                </span>
+                <div className="risk-check-body">
+                  <strong>{t(item.titleKey)}</strong>
+                  <p>{t(item.summaryKey, item.summaryParams)}</p>
+                  {item.detailKeys?.map(key => <p key={key}>{t(key, item.summaryParams)}</p>)}
+                </div>
+              </article>
+            ))}
           </div>
 
-          <div className="risk-check-group">
-            <div className="risk-check-group-head">
-              <strong className="risk-subhead-title">{stripHeadingIndexPrefix(t('risk.group.probeTitle'))}</strong>
-              <span className={`settings-meta-pill${probe && probePassed === probeChecks.length ? ' ok' : ''}`}>
-                {probe ? t('risk.group.probeProgress', {passed: probePassed, total: probeChecks.length}) : t('risk.group.probeWaiting')}
-              </span>
-            </div>
-            <div className="risk-checks-grid risk-grid-3">
-              {probeChecks.map(item => (
-                <article key={item.id} className="risk-check-item" data-status={item.status}>
-                  <span className="risk-status-dot" data-status={item.status} aria-hidden="true">
-                    {statusSymbol(item.status)}
-                  </span>
-                  <div className="risk-check-body">
-                    <strong>{t(item.titleKey)}</strong>
-                    <p>{t(item.summaryKey, item.summaryParams)}</p>
-                    {item.detailKeys?.map(key => <p key={key}>{t(key, item.summaryParams)}</p>)}
-                  </div>
-                </article>
-              ))}
-            </div>
+          <div className="risk-matrix-head">
+            <strong className="risk-subhead-title">{stripHeadingIndexPrefix(t('risk.group.probeTitle'))}</strong>
+            <span className={`settings-meta-pill${probe && probePassed === probeChecks.length ? ' ok' : ''}`}>
+              {probe ? t('risk.group.probeProgress', {passed: probePassed, total: probeChecks.length}) : t('risk.group.probeWaiting')}
+            </span>
+          </div>
+          <div className="risk-checks-grid risk-grid-3">
+            {probeChecks.map(item => (
+              <article key={item.id} className="risk-check-item" data-status={item.status}>
+                <span className="risk-status-dot" data-status={item.status} aria-hidden="true">
+                  {statusSymbol(item.status)}
+                </span>
+                <div className="risk-check-body">
+                  <strong>{t(item.titleKey)}</strong>
+                  <p>{t(item.summaryKey, item.summaryParams)}</p>
+                  {item.detailKeys?.map(key => <p key={key}>{t(key, item.summaryParams)}</p>)}
+                </div>
+              </article>
+            ))}
           </div>
 
           <div className="risk-remediation-bar">
@@ -625,6 +718,12 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
             </div>
           </div>
 
+          {showMatrixFeedback && (
+            <p className={`risk-copy-feedback${copyError ? ' error' : ''}`} role={copyError ? 'alert' : 'status'}>
+              {copyError ? t('network.copyFailed') : t('risk.feedback.copied')}
+            </p>
+          )}
+
           {showDesktopYamlPreview && (
             <div className="risk-conf-preview-wrap">
               <div className="risk-conf-preview-head">
@@ -642,6 +741,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               <pre className="risk-conf-preview">{desktopYaml.configText}</pre>
             </div>
           )}
+
           {showCliSettingsPreview && (
             <div className="risk-conf-preview-wrap">
               <div className="risk-conf-preview-head">
@@ -660,89 +760,75 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               <pre className="risk-conf-preview">{cliSettingsJson.configText}</pre>
             </div>
           )}
-          {(copiedId === 'desktop-fix' || copiedId === 'desktop-yaml' || copiedId === 'cli-settings-json') && (
-            <p className="risk-copy-feedback" role="status">
-              {t('risk.feedback.copied')}
-            </p>
-          )}
         </section>
 
-        {/* 第二部分：手机扫码 KYC 同源家宽桥接与多客户端配置 */}
-        <div className="risk-subhead">
-          <h2 className="risk-subhead-title">{t('risk.section.mobileTitle')}</h2>
+        {/* Module 3: Mobile KYC Residential Bridge */}
+        <div className="settings-group-heading risk-group-heading">
+          <div className="risk-group-title-wrap">
+            <span className="settings-group-bar" aria-hidden="true" />
+            <h2>{t('risk.section.mobileTitle')}</h2>
+          </div>
+          <div className="settings-meta-pills">
+            <span className="settings-meta-pill ok">{t('risk.security.pillRfc1918')}</span>
+            <span className="settings-meta-pill ok">{t('risk.security.pillZeroSecret')}</span>
+            <span className="settings-meta-pill">{t('risk.security.pillQuicBlock')}</span>
+          </div>
         </div>
 
-        <section className="settings-card risk-card">
-          <Disclosure
-            className="risk-disclosure risk-mobile-when-disclosure"
-            triggerClassName="risk-disclosure-trigger"
-            contentClassName="risk-disclosure-body"
-            summary={t('risk.mobile.whenWhyBadge')}
-          >
-            <div className="risk-mobile-when-box">
-              <div className="risk-mobile-when-copy">
-                <span>{t('risk.mobile.whenWhyDesc')}</span>
+        <section className="settings-card risk-mobile-card">
+          <div className="risk-mobile-head">
+            <p className="risk-mobile-intro">{t('risk.mobile.whenWhyDesc')}</p>
+            <div className="risk-toolbar-row">
+              <div className="risk-pill-tabs" role="tablist" aria-label={t('risk.mobile.modeLabel')}>
+                <button
+                  type="button"
+                  role="tab"
+                  className="risk-pill-tab"
+                  aria-selected={bridgeMode === 'lan'}
+                  onClick={() => {
+                    setModeTouched(true);
+                    setBridgeMode('lan');
+                  }}
+                >
+                  {t('risk.mobile.modeLan')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  className="risk-pill-tab"
+                  aria-selected={bridgeMode === 'standalone'}
+                  onClick={() => {
+                    setModeTouched(true);
+                    setBridgeMode('standalone');
+                  }}
+                >
+                  {t('risk.mobile.modeStandalone')}
+                </button>
               </div>
-              <div className="settings-meta-pills">
-                <span className="settings-meta-pill ok">{t('risk.security.pillRfc1918')}</span>
-                <span className="settings-meta-pill ok">{t('risk.security.pillZeroSecret')}</span>
-                <span className="settings-meta-pill">{t('risk.security.pillMemoryToken')}</span>
-                <span className="settings-meta-pill">{t('risk.security.pillOfflineQr')}</span>
-                <span className="settings-meta-pill">{t('risk.security.pillQuicBlock')}</span>
+
+              <div className="risk-pill-tabs" role="tablist" aria-label={t('risk.mobile.clientLabel')}>
+                {MOBILE_CLIENTS.map(item => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="tab"
+                    className="risk-pill-tab"
+                    aria-selected={client === item.id}
+                    onClick={() => setClient(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
               </div>
             </div>
-          </Disclosure>
+          </div>
 
           {publicOrNoLan && (
-            <div className="risk-callout" role="note">
+            <div className="risk-callout risk-callout-flush" role="note">
               <strong>{t('risk.mobile.publicWanBadge')}</strong>
               <span>{t('risk.mobile.publicWanNotice')}</span>
             </div>
           )}
-
-          <div className="risk-toolbar-row">
-            <div className="risk-pill-tabs" role="tablist" aria-label={t('risk.mobile.modeLabel')}>
-              <button
-                type="button"
-                role="tab"
-                className="risk-pill-tab"
-                aria-selected={bridgeMode === 'lan'}
-                onClick={() => {
-                  setModeTouched(true);
-                  setBridgeMode('lan');
-                }}
-              >
-                {t('risk.mobile.modeLan')}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                className="risk-pill-tab"
-                aria-selected={bridgeMode === 'standalone'}
-                onClick={() => {
-                  setModeTouched(true);
-                  setBridgeMode('standalone');
-                }}
-              >
-                {t('risk.mobile.modeStandalone')}
-              </button>
-            </div>
-
-            <div className="risk-pill-tabs" role="tablist" aria-label={t('risk.mobile.clientLabel')}>
-              {MOBILE_CLIENTS.map(item => (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="tab"
-                  className="risk-pill-tab"
-                  aria-selected={client === item.id}
-                  onClick={() => setClient(item.id)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </div>
 
           {bridgeMode === 'lan' ? (
             <div className="risk-bridge-grid">
@@ -904,6 +990,10 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                 ) : (
                   <div className="risk-qr-empty">{t('risk.mobile.qrNeedValidLan')}</div>
                 )}
+                <div className="settings-meta-pills risk-qr-pills">
+                  <span className="settings-meta-pill">{t('risk.security.pillMemoryToken')}</span>
+                  <span className="settings-meta-pill">{t('risk.security.pillOfflineQr')}</span>
+                </div>
                 <p className="risk-qr-caption">
                   {t(
                     client === 'shadowrocket'
@@ -915,9 +1005,9 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
             </div>
           ) : client === 'shadowrocket' ? (
             <div className="risk-standalone-box">
-              <p>{t('risk.mobile.srChainIntro')}</p>
+              <p className="risk-standalone-intro">{t('risk.mobile.srChainIntro')}</p>
               <div className="risk-standalone-grid">
-                <div className="risk-bridge-form">
+                <div className="risk-standalone-steps">
                   <ol className="risk-sr-guide-list">
                     {(['srStep1', 'srStep2', 'srStep3', 'srStep4'] as const).map(key => (
                       <li key={key} className="risk-sr-guide-step">
@@ -1038,6 +1128,9 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                     ) : (
                       <div className="risk-qr-empty">{t('risk.mobile.srQrPlaceholder')}</div>
                     )}
+                    <div className="settings-meta-pills risk-qr-pills">
+                      <span className="settings-meta-pill">{t('risk.security.pillOfflineQr')}</span>
+                    </div>
                     <p className="risk-qr-caption">{t('risk.mobile.srQrPrivacyHint')}</p>
                   </div>
                 </aside>
@@ -1093,9 +1186,9 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               </div>
             </div>
           ) : (
-            <div className="risk-standalone-box">
+            <div className="risk-standalone-box is-compact">
               <p>{t('risk.mobile.standaloneDesc')}</p>
-              <div className="risk-remediation-bar">
+              <div className="risk-standalone-compact-bar">
                 <p>{t('risk.mobile.standaloneRuleSummary')}</p>
                 <Button
                   variant="secondary"
@@ -1110,46 +1203,50 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
             </div>
           )}
 
-          {(copiedId || copyError) && (
+          {showMobileFeedback && (
             <p className={`risk-copy-feedback${copyError ? ' error' : ''}`} role={copyError ? 'alert' : 'status'}>
               {copyError ? t('network.copyFailed') : t('risk.feedback.copied')}
             </p>
           )}
         </section>
 
-        {/* 第三部分：KYC 实拍前 6 步安全飞行清单 */}
-        <div className="risk-subhead">
-          <h2 className="risk-subhead-title">{t('risk.section.checklistTitle')}</h2>
+        {/* Module 4: 6-Step Pre-KYC Flight Checklist */}
+        <div className="settings-group-heading risk-group-heading">
+          <div className="risk-group-title-wrap">
+            <span className="settings-group-bar" aria-hidden="true" />
+            <h2>{t('risk.section.checklistTitle')}</h2>
+          </div>
+          <div className="risk-action-group">
+            <span className={`settings-meta-pill${completedSteps === CHECKLIST_STEP_IDS.length ? ' ok' : ''}`}>
+              {t('risk.checklist.progress', {done: completedSteps, total: CHECKLIST_STEP_IDS.length})}
+            </span>
+            {completedSteps > 0 && (
+              <Button variant="secondary" size="small" onClick={() => setCheckedSteps({})}>
+                {t('risk.action.resetChecklist')}
+              </Button>
+            )}
+          </div>
         </div>
 
-        <section className="settings-card risk-card">
-          <div className="risk-checklist-head">
-            <div className="risk-callout">
-              <strong>{t('risk.checklist.antiEmulatorBadge')}</strong>
-              <span>{t('risk.checklist.antiEmulatorNote')}</span>
+        <section className="settings-card risk-checklist-card">
+          <div className="risk-checklist-banners">
+            <div className="risk-checklist-banner-cell">
+              <div className="risk-checklist-banner-copy">
+                <strong>{t('risk.checklist.antiEmulatorBadge')}</strong>
+                <span>{t('risk.checklist.antiEmulatorNote')}</span>
+              </div>
             </div>
-            <div className="risk-action-group">
-              <span className={`settings-meta-pill${completedSteps === CHECKLIST_STEP_IDS.length ? ' ok' : ''}`}>
-                {t('risk.checklist.progress', {done: completedSteps, total: CHECKLIST_STEP_IDS.length})}
-              </span>
-              {completedSteps > 0 && (
-                <Button variant="secondary" size="small" onClick={() => setCheckedSteps({})}>
-                  {t('risk.action.resetChecklist')}
-                </Button>
-              )}
-            </div>
-          </div>
 
-          <div className="risk-checklist-head" data-paypal-cookie-helper>
-            <div className="risk-callout">
-              <strong>{t('risk.checklist.paypalCookieBadge')}</strong>
-              <span>{t('risk.checklist.paypalCookieNote')}</span>
-            </div>
-            <div className="risk-action-group">
+            <div className="risk-checklist-banner-cell is-action" data-paypal-cookie-helper>
+              <div className="risk-checklist-banner-copy">
+                <strong>{t('risk.checklist.paypalCookieBadge')}</strong>
+                <span>{t('risk.checklist.paypalCookieNote')}</span>
+              </div>
               <Button
                 variant="secondary"
                 size="small"
                 data-copy-paypal-clear-url
+                disabled={copyingId !== ''}
                 leftIcon={copiedId === 'paypal-cookie-url' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
                 onClick={() =>
                   void copyText(
@@ -1162,6 +1259,12 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               </Button>
             </div>
           </div>
+
+          {showChecklistError && (
+            <p className="risk-copy-feedback error" role="alert">
+              {t('network.copyFailed')}
+            </p>
+          )}
 
           <ol className="risk-checklist-list">
             {CHECKLIST_STEP_IDS.map(stepId => {
@@ -1251,6 +1354,11 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               {t('risk.action.copyDesktopFix')}
             </Button>
           </div>
+          {showDialogError && (
+            <p className="risk-copy-feedback error" role="alert">
+              {t('network.copyFailed')}
+            </p>
+          )}
           <p
             className={`risk-strict-route-status ${local?.mihomo.tun_strict_route === true ? 'ok' : 'warn'}`}
             data-strict-route-live-status={local?.mihomo.tun_strict_route === true ? 'ok' : 'pending'}

@@ -1,29 +1,30 @@
 <!--
-[INPUT]: Final owner decisions, immutable v0.3.3 baseline (01f7085 / tag v0.3.3, verified at c443015) and immutable v0.3.2 baseline (260f80e / tag v0.3.2, verified at a72a145), covering 2.7 CLI proxy/risk-verification UI hardening, 2.9 4-track root-cause fixes, 2.10 workstation Magpie/Mode-A-B/port-healing setup, 2.11 Usage Analytics & v0.3.3 release, 2.12 live Magpie Gemini (Argon / Carbon / Hydrogen) security/efficiency audit & zero-downtime hot-fixes, and 2.13 v0.3.5 UI De-AI compact overhaul across all 9 pages, 286-key copy slimming, Step 1 workbench polish, NSIS package audit & local 0.3.5 atomic hot-update.
+[INPUT]: Final owner decisions, immutable v0.3.5 baseline (966a2e6 / tag v0.3.5, verified at fa8342f), immutable v0.3.3 baseline (01f7085 / c443015) and immutable v0.3.2 baseline (260f80e / a72a145), covering 2.7 CLI proxy/risk-verification UI hardening, 2.9 4-track root-cause fixes, 2.10 workstation Magpie/Mode-A-B/port-healing setup, 2.11 Usage Analytics & v0.3.3 release, 2.12 live Magpie Gemini (Argon / Carbon / Hydrogen) security/efficiency audit & zero-downtime hot-fixes, 2.13 v0.3.5 UI De-AI compact overhaul, and 2.14 v0.3.6 Quick-Setup-aligned workbench overhaul & second-pass polish across Browser, Computer, Network, and Risk & KYC.
 [OUTPUT]: Context-free session handoff covering: (1) what task we are doing, (2) what is completed, (3) where we are stuck, (4) next-step plan, and (5) pitfalls never to repeat.
 [POS]: Root maintenance handoff for a zero-context successor session. Real identities, emails, IP/proxy credentials, process IDs, browser seeds, private probe values, workstation paths and screenshots stay out of tracked files.
-[PROTOCOL]: Updated on 2026-11-15 01:10 EST; workstation-specific CLI/proxy/Magpie/binary tooling handoff is kept strictly in the gitignored .local/tasks/20261112-session-handoff/HANDOFF.local.md file.
+[PROTOCOL]: Updated on 2026-11-15 21:40 EST; workstation-specific CLI/proxy/Magpie/binary tooling handoff is kept strictly in the gitignored .local/tasks/20261112-session-handoff/HANDOFF.local.md file.
 -->
 # Claude-Local 会话交接（HANDOFF.md）
 
-更新时间：2026-11-15 01:10，America/New_York（EST）。
+更新时间：2026-11-15 21:40，America/New_York（EST）。
 
 ## 接手先读：30 秒全局速览
 
-1. **当前版本与 Git 基线**：`v0.3.5`（跳过未发布的 `v0.3.4`）已于 `2026-11-15T06:14:56Z` 正式提交打标并发布至 GitHub Release `Latest`（源码 commit `966a2e624bbe26ce9190abee17a59dc9e1e712cd` / tag `v0.3.5`，参见 [`docs/RELEASE_VERIFICATION_0.3.5.md`](docs/RELEASE_VERIFICATION_0.3.5.md) 与 [`docs/RELEASE_NOTES_0.3.5.md`](docs/RELEASE_NOTES_0.3.5.md)）；此前 `v0.3.3`（`01f7085481e4e7f8a5b60e95a38eea68957b430f` / `c443015dc607295e2db37be7e0e11ddb06be5086`）、`v0.3.2`（`260f80ec78729fbd1f01dbd8d268e873f8ff2209` / `a72a1455096bfb9e2bf5d954a3f297f4aa874f2c`）及更早标签与资产保持不可变。
-2. **当前工作区与本机安装状态（`v0.3.5` 全量 UI 去 AI 重构、全量回归、NSIS 打包审计与本机原子热更新已全部通过）**：
+1. **当前版本与 Git 基线**：正在基于已不可变发布的 `v0.3.5`（commit `966a2e6` / tag `v0.3.5`，核验提交 `fa8342f`）推进 **`v0.3.6`** 源码升版、全量验证、中性目录 NSIS 打包审计、本机原子热更新与 GitHub Release 上传（[`docs/RELEASE_NOTES_0.3.6.md`](docs/RELEASE_NOTES_0.3.6.md)）；此前 `v0.3.5`、`v0.3.3`（`01f7085` / `c443015`）、`v0.3.2`（`260f80e` / `a72a145`）及更早标签与资产保持不可变。
+2. **当前工作区与本机安装状态（正在准备 `v0.3.6` 构建与发布；前序 `v0.3.5` 全量 UI 去 AI 重构与本机热更新已在基线上完成）**：
    - **2.7 节（2026-11-12 晚）**：完成了 **CLI 代理/遥测安全边界统一判定与防断流界面提示增强**；
    - **2.8 节（2026-11-13 晨）**：完成了仓库只读全栈审计，并打通了外置 **Magpie 网关 + Claude Code CLI Gemini 子代理多账号多模型无碰撞并发调度**；
    - **2.9 节（2026-11-13 晚）**：并行完成四条实战改进（CLI 句柄级存活核验与分级徽章、瞬态锁退避自愈 + 未保存切号零残留自动回滚 + 一键干净恢复、用量分析 `单会话均耗` / `单次均耗` KPI 升级，以及外置子代理 `-Resume` / `[AGY-EXECUTION-TRACE]`）；
    - **2.10 节（2026-11-13 深夜）**：完成外置 Magpie 插件审计、9 席三池嵌套溢出路由、`claude.exe v2.1.325.0` 混合编排与 Clash Verge Rev 启动自更新端口自愈；
    - **2.11 节（2026-11-14 凌晨，已发布 `v0.3.3`）**：完成 **用量分析顶栏 KPI 对齐、模型分布 2×2 微指标网格与 2× Retina 分享海报对齐精修**及 `v0.3.3` 打包发布；
-   - **2.12 节（2026-11-14 上午，外置工具链在线生效）**：在不中断任何运行中进程的前提下，对正在 Claude Code CLI 中实时调度的外置 **Magpie 反代 Gemini 三模型（`Argon` / `Carbon` / `Hydrogen`）** 完成跨层安全与效率审计及零中断热修——核实双通道代理物理隔离、内核 `IsProcessInJob = False` 守护、840k 上下文补丁与 `99.90%` 请求成功率 / `96.7%–98.4%` Prompt Cache 命中率；通过 `filememo` 热重载根治 `argon-*-pool` 跨套餐 `pace` 配额倒挂并升级 `hydrogen-*` 为 `Pro -> Ultra` 双层溢出；为外置派发器补齐 Mode B `3210s` 总墙钟软超时与双端 26 份 `agents/*.md` 护栏；
-   - **2.13 节（2026-11-15，`v0.3.5` 发版准备）**：完成 **全 9 个工作区页面去 AI 样板化与高密度紧凑重构**（统一 `44px` 页头 / `12px` 圆角 / `28×28` 中性图标 / 紧凑 `.settings-row`，新增共享 [`src/env-pages.css`](src/env-pages.css)，重构快速配置 4 栏状态条 + 8 入口网格、环境三页、`.risk-grid-3` 3 列风控网格、双列帮助网格、并排 `.backup-forms-grid` 与 286 键双语微文案压缩，完整保留 `166×286` `.identity-card` 与浏览器核验几何）、**6 项细节精修**（轻量药丸面包屑式引导、`claude-residue-panel.tsx` 补齐 `SOCKS5`/不完整 CLI 代理明细与紧密行距、CLI 卡中性 `>_` 终端图标徽章、`settings.tsx`「恢复默认界面设置」归位外观与关于页、`.backup-location` 单行按钮与 12px 救援文字、`smart-relay-model.ts` 简化候选判定）、**`0.3.5` 升版与全量测试通过**（`bun test` 195 pass、`cargo test --release --features custom-protocol` 332 passed / 2 ignored、Python 8 套 114/114、Playwright 9 轮串行 + `0.3.5` 26 张截图审计零错误），以及 **中性目录 NSIS 构建审计**（109 文件 0 发现，`Claude-Local_0.3.5_x64-setup.exe` SHA-256 `af059a43597a8977fd9ab71d7289b59774908053b86eb2b2030e49f894b0acd1`）与 **本机原子热更新至 `0.3.5`**（27 文件对账一致，交互桌面 Session 1 存活，`missingClaudeCount == 0`）。
-   - 当前 Git 工作区除本地开发规则文件 `AGENTS.md`（未暂存且**严禁暂存或提交**）外，仅 `HANDOFF.md` 含本次会话收尾交接更新（无任何其他未提交源码改动；若后续需提交交接文档，仅可显式 `git add HANDOFF.md`，**严禁**执行 `git add .` 或提交 `AGENTS.md` / `.local/`）。
+   - **2.12 节（2026-11-14 上午，外置工具链在线生效）**：在不中断任何运行中进程的前提下，对正在 Claude Code CLI 中实时调度的外置 **Magpie 反代 Gemini 三模型（`Argon` / `Carbon` / `Hydrogen`）** 完成跨层安全与效率审计及零中断热修；
+   - **2.13 节（2026-11-15，已发布 `v0.3.5`）**：完成 **全 9 个工作区页面去 AI 样板化与高密度紧凑重构**（[`99c9009`](https://github.com/yq04/Claude-Local/commit/99c9009)）及 `v0.3.5` 打包热更新发布；
+   - **2.14 节（2026-11-15 晚，准备发布 `v0.3.6`）**：参考「快速配置」工作台秩序，通过 Swarm 并行重构 + 二次像素级审阅打磨彻底重建 **「浏览环境」「电脑环境」「网络环境」与「风控验证」四大页面**（清除错位留白与套娃卡片、去重 4 栏遥测条与定位已关按钮、补充风控 Module 2 标头与 3+2 边界徽章、恢复网络卡片强调色悬停反馈并同步 33 组双语文案，完整保留 `.identity-card` `166×286` 与伴生验证页几何）。
+   - 当前 Git 工作区除本地开发规则文件 `AGENTS.md`（未暂存且**严禁暂存或提交**）外，仅 `HANDOFF.md` 含本次会话结束交接更新（无任何未提交源码改动；若后续需归档交接文档，仅可显式 `git add HANDOFF.md`，**严禁**执行 `git add .` 或提交 `AGENTS.md` / `.local/`）。
    - 若同时需要接手本机工作站外置 CLI / Magpie / 子代理工具链状态，请另行阅读 Git 忽略文件 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`。
 3. **零上下文新会话必读顺序**：
    - 第 1 步：阅读本文、根目录 `AGENTS.md`（本地规则文件，**严禁 `git add` / `commit`**）与 [`CLAUDE.md`](CLAUDE.md)；
-   - 第 2 步：若需确认当前最新 `v0.3.3`（及上一版 `v0.3.2`）已发布基线详情，阅读 [`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md)、[`docs/RELEASE_NOTES_0.3.3.md`](docs/RELEASE_NOTES_0.3.3.md) 与 [`docs/RELEASE_VERIFICATION_0.3.2.md`](docs/RELEASE_VERIFICATION_0.3.2.md)；
+   - 第 2 步：若需确认当前最新 `v0.3.5`（及既有 `v0.3.3` / `v0.3.2`）已发布基线详情，阅读 [`docs/RELEASE_VERIFICATION_0.3.5.md`](docs/RELEASE_VERIFICATION_0.3.5.md)、[`docs/RELEASE_NOTES_0.3.5.md`](docs/RELEASE_NOTES_0.3.5.md)、[`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md) 与 [`docs/RELEASE_VERIFICATION_0.3.2.md`](docs/RELEASE_VERIFICATION_0.3.2.md)；
    - 第 3 步：若需继续修改代码，先读对应目录的 `CLAUDE.md`（[`src/CLAUDE.md`](src/CLAUDE.md)、[`src-tauri/CLAUDE.md`](src-tauri/CLAUDE.md)、[`src-tauri/src/identities/CLAUDE.md`](src-tauri/src/identities/CLAUDE.md)、[`src-tauri/src/browser/CLAUDE.md`](src-tauri/src/browser/CLAUDE.md)、[`src/locales/CLAUDE.md`](src/locales/CLAUDE.md)、[`scripts/CLAUDE.md`](scripts/CLAUDE.md)）及目标文件头部的 `[INPUT]/[OUTPUT]/[POS]` 注释；
    - 第 4 步：若需接手本机工作站外置 CLI 工具链状态，再读 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`。
 
@@ -39,9 +40,9 @@
   - Claude Code CLI 的 `statusLine` 被动采集脚本位于 `~/.local/bin/claude_quota.py`（同目录依赖 `~/.local/bin/quota_archive.py`）；
   - 技术栈：**Tauri 2 (Rust)** + **React 19 / TypeScript / Tailwind 4 / Cromma UI** + **Python 3 单写者跨进程锁额度账本采集器**。
 
-### 1.2 本阶段核心目标（`v0.3.3` 已发布基线，演进自 `v0.3.2`）
+### 1.2 本阶段核心目标（当前最新基线 `v0.3.5`，演进自 `v0.3.3` / `v0.3.2`）
 - **历史基线（`v0.3.2`，`260f80e` / `a72a145`）**：围绕五大核心域（身份卡片管理、账号隔离、风险规避、额度查询、用量分析）完成了开源对标、重构加固、卡顿性能优化、主动重置次数三态修复、额度详情弹窗重设计以及 GitHub Release `v0.3.2`（`Claude-Local_0.3.2_x64-setup.exe`）打包发布（详见 [`docs/RELEASE_VERIFICATION_0.3.2.md`](docs/RELEASE_VERIFICATION_0.3.2.md)）。
-- **本阶段全部目标与当前最新基线（`v0.3.3`，`01f7085` / `c443015`）**：
+- **本阶段全部目标与当前最新基线（`v0.3.5`，`966a2e6` / `fa8342f`）**：
   1. 针对用户分享的 X 平台 Claude 防封实操帖与长文进行逐项核对，甄别真伪（保留「CLI 显式固定本地 HTTP 代理防休眠/切 Wi-Fi TUN 掉线直连」「不轻信 TUN 已连接状态而应核对真实代理连接日志」「官方 Electron 桌面端显式代理边界」等有效工程实践；拒绝其「脏/机房 IP 无所谓」「移除显式代理环境」「推广虚拟卡与邀请码」等与风控原则冲突的做法）；
   2. 对照补齐 `Claude-Local` 风控验证页原先仅检查 `telemetry_shield_active` 而忽略 `proxy_env_complete` / `socks5_in_cli_env` 的显示缺口，并统一多面板安全边界纯函数判定；
   3. 对 `Claude-Local` 仓库进行全栈架构审查，并基于 Magpie 网关日志与 Claude Code CLI 运行记录定位 Gemini 子代理用量偏低与并发阻塞根因，改造外置多账号多模型并派配置与派发脚本；
@@ -49,7 +50,7 @@
   5. **2026-11-13 深夜多模型协同与基础设施加固**：审计外置 Magpie 网关 Antigravity 插件体系的真实工程价值，激活已完成周重置的多席位高阶配额并构建三池正交分流与嵌套溢出路由；核验 X 平台关于 Claude Code `v2.1.325.0`、`/advisor` 与对抗审阅的最新实践并重构 6-Tier 混合子代理编排；同时根治系统重启更新 Clash Verge Rev 引发的规则代理端口漂移与后台守护进程 Windows Job-Object 连坐回收隐患；
   6. **2026-11-14 凌晨用量排版精修与 `v0.3.3` 正式打包发布**：接手前序交接文档后，针对桌面端截图暴露的「单会话均耗 vs API 等效花费」KPI 基线不齐与「模型分布」小字换行杂乱问题通过 Swarm 并发精修并同步至 2× Retina 长图海报，随后按所有者指令完成 **`0.3.3` 升版、全量回归、本机原子热更新、中性目录 NSIS 打包审计以及 GitHub Release `v0.3.3` 正式上传与交付核验**（详见 [`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md)）；
   7. **2026-11-14 上午外置 Magpie Gemini 三模型实时运行审计与零中断无损加固**：对正在 Claude Code CLI 中实时运行的外置 Magpie 反代 Gemini 三模型（`Argon` / `Carbon` / `Hydrogen`）执行跨层安全与效率审计（涵盖双通道代理物理隔离、9 席三池配额路由、流式子代理派发器与 6-Tier 子代理编排效率），并在全程保持运行中进程零中断的前提下完成三域原子热修与独立复核闭环；
-  8. **2026-11-15 桌面端全 9 页去 AI 重构、`v0.3.5` 细节打磨与打包发布**：针对整体工作台“AI 样板感、冗余文字与留白”问题完成全 9 页高密度排版重构与 286 键双语微文案精简（合并至 `main` `99c9009`），补齐 6 项细节精修并跨过未发布的 `v0.3.4` 直接升版至 **`v0.3.5`**，完成全量回归、中性目录 NSIS 打包审计、本机原子热更新与 GitHub Release `v0.3.5` 正式发布。
+  8. **2026-11-15 桌面端全 9 页去 AI 重构、`v0.3.5` 细节打磨与正式打包发布**：参考优质开源桌面工程实践消除工作台“AI 样板感、冗余文字与大块留白”，在保留 `166×286` `.identity-card` 与浏览器核验核心几何及全部安全/格式兼容性约束的前提下，通过 Swarm 完成全 9 页高密度排版重构与 `286` 键双语微文案压缩（[`99c9009`](https://github.com/yq04/Claude-Local/commit/99c9009)），继续完成 6 项细节精修、跨过未发布的 `v0.3.4` 直接升版至 **`v0.3.5`**，在不中断活跃 `claude.exe` 的前提下完成全量回归、中性目录 NSIS 打包审计、本机原子热更新，并将 `v0.3.5`（[`966a2e6`](https://github.com/yq04/Claude-Local/commit/966a2e624bbe26ce9190abee17a59dc9e1e712cd) / 核验提交 [`fa8342f`](https://github.com/yq04/Claude-Local/commit/fa8342fcc8eb35502b24858ca64f70b2199ac607)）正式上传发布为 GitHub Release `Latest`。
 
 ---
 
@@ -164,12 +165,12 @@
   - **未执行项**：本次未修改 `src-tauri/*.rs` 与 `scripts/*.py`，尚未执行 `cargo test`、`cargo build --release --features custom-protocol`、本机热更新及 `bun run build:windows`。
 
 ### 2.8 本轮新增：`Claude-Local` 只读审计与外置 CLI/Magpie 多账号多模型子代理完善（2026-11-13 晨）
-- **`Claude-Local` 仓库只读审计结论（其中第 5 项测试断言漂移与第 6 项 `node.exe`/`bun.exe` 查询已在 2.9 节顺带根治，其余待后续排期决定）**：
-  1. [`src/claude-residue-panel.tsx`](src/claude-residue-panel.tsx) 已与 [`src/risk-verification.tsx`](src/risk-verification.tsx) 共用 `isCliSecurityShieldOk`，但遗漏了后者的 `socks5_in_cli_env` 与 `!proxy_env_complete` 具体原因提示胶囊（仅靠遥测标志亮黄时缺少细项说明）；
-  2. [`src-tauri/src/browser/oauth_route.rs`](src-tauri/src/browser/oauth_route.rs) 的授权路由守卫排除了 `https://platform.claude.com/oauth/authorize`（且有显式反向单测），与早先设计文档存在规格漂移；
+- **`Claude-Local` 仓库只读审计结论（第 1、4 局部、5、6 项已分别在 2.9 节与 `v0.3.5` 2.13 节处理，其余轻项留待场景 C 视需要复核）**：
+  1. *（已在 2.13 节 `v0.3.5` 补齐）* [`src/claude-residue-panel.tsx`](src/claude-residue-panel.tsx) 已补全 `socks5_in_cli_env`（`data-residue-cli-proxy="socks5"`）与 `!proxy_env_complete`（`data-residue-cli-proxy="incomplete"`）细项胶囊及 `shieldWarnHint` 悬浮提示，与 [`src/risk-verification.tsx`](src/risk-verification.tsx) 判定展示完全对齐；
+  2. [`src-tauri/src/browser/oauth_route.rs`](src-tauri/src/browser/oauth_route.rs) 的授权路由守卫排除了 `https://platform.claude.com/oauth/authorize`（且有显式反向单测），与早先设计文档存在规格漂移（留待场景 C 复核）；
   3. CLI 安全边界审计逻辑同时存在于 [`src-tauri/src/risk_check.rs`](src-tauri/src/risk_check.rs) 与 [`src/risk-model.ts`](src/risk-model.ts)（运行时走 Rust、部分单测走 TS）；
-  4. [`src/smart-relay-model.ts`](src/smart-relay-model.ts) 存在未使用的 `autoSwitchWhenIdle`、重复分支三元表达式与重复名称比较，且接力冷却状态仅存 WebView `localStorage`，未与 Rust [`identities/wakeup.rs`](src-tauri/src/identities/wakeup.rs) 打通；
-  5. 文档/样式/测试漂移：[`src/style.css`](src/style.css) 已采用 `166px` 卡片宽，部分旧注释与 [`scripts/CLAUDE.md`](scripts/CLAUDE.md) 仍写 `180×286`；*（注：[`scripts/test-usage-statistics.mjs`](scripts/test-usage-statistics.mjs) 完整模式 `.identity-quota-reset` `12px` vs `11px` 样式断言已在 2.9 节修复并通过全套 38 项校验）*；
+  4. *（候选判定简化已在 2.13 节 `v0.3.5` 合入）* [`src/smart-relay-model.ts`](src/smart-relay-model.ts) 已消除冗余三元表达式与重复名称比较；仍保留未使用的 `autoSwitchWhenIdle` 字段，且接力冷却状态仅存 WebView `localStorage`，尚未与 Rust [`identities/wakeup.rs`](src-tauri/src/identities/wakeup.rs) 打通；
+  5. *（已在 2.9 节与 2.13 节 `v0.3.5` 清理完毕）* [`src/style.css`](src/style.css)、[`scripts/CLAUDE.md`](scripts/CLAUDE.md) 与 [`src/CLAUDE.md`](src/CLAUDE.md) 残留 `180×286` 注释已统一修正为 `166×286`，[`scripts/test-usage-statistics.mjs`](scripts/test-usage-statistics.mjs) 完整模式样式断言亦已修复并通过全套 38 项校验；
   6. *（已在 2.9 节根治）* [`src-tauri/src/windows_process.rs`](src-tauri/src/windows_process.rs) 识别 `node.exe` / `bun.exe` 启动参数现已优先调用 `PROCESS_QUERY_LIMITED_INFORMATION` 下的 `NtQueryInformationProcess(60)`，仅在极端失败时回退 PEB 读取，而原生 `claude.exe` 与伴生 `chrome.exe` 全程零 `PROCESS_VM_READ`。
 - **外置 Magpie + Claude Code CLI 子代理链路诊断与完善（外置脚本/配置，仓库外独立验收通过）**：
   - **诊断结论**：子代理实际执行深度极高（历史 216 次正常退出中仅 1 次合成短烟测；`hydrogen-high` 平均每会话 32–43 轮、`95.5%` Prompt 缓存命中、Brain 中位数 122 步/65 次工具调用），并未偷懒。用量看似偏低且单号倾斜的原因在于：`gemini-4-hydrogen` 刚启用约 7.5h、外置默认配置仍偏向 `argon`、`xhigh` 原被设成单号直连绕过 Magpie、Magpie 本机版本无 `burstSpread` 且 `maxConcurrency` 未限制导致并发全挤到单个最早重置 Pro 账号（其余 5 个高余量 Pro 账号几乎闲置），同时 1 个 ToS-403 账号仍启用、3 个耗尽 Ultra 账号未设 95% 窗口上限，且客户端脚本与 28 份规则文件硬编码了 `MAX 3` 全局信号量。
@@ -254,34 +255,54 @@
 
 ---
 
-### 2.13 本轮新增：全 9 页去 AI 紧凑重构、6 项细节精修与 `v0.3.5` 打包与本机热更新（2026-11-15）
-- **桌面工作台去 AI 与全 9 页紧凑重构（[`99c9009`](https://github.com/yq04/Claude-Local/commit/99c9009)，见 [`src/CLAUDE.md`](src/CLAUDE.md)）**：
-  - 统一工作区外壳（[`src/style.css`](src/style.css)、[`src/productivity-shell.css`](src/productivity-shell.css)）：`44px` 统一页头 + `18px` 中性 `H1`、`12px` 卡片圆角、`28×28` 中性图标容器与紧凑 `.settings-row`，完整保留 `.identity-card`（`166×286`）与 `.browser-verification-page`/`.browser-start`/`.verification-*` 几何；
-  - 新建共享样式 [`src/env-pages.css`](src/env-pages.css) 协同重构快速配置（4 栏状态条 + 2 列 8 入口动作网格）、浏览环境（双列核验矩阵）、电脑环境（美区基线摘要条 + 分组三行设置卡）、网络环境（三联代理卡 + 精简诊断行）、风控验证（3 列 `.risk-grid-3` 网格 + 统一安全态势条）、使用说明（响应式双列 `.help-topics` 网格）、设置与备份（并排 `.backup-forms-grid`）及 [`src/locales/zh.yaml`](src/locales/zh.yaml) / [`src/locales/en.yaml`](src/locales/en.yaml)（`286` 键精简）；
-- **`v0.3.5` 细节精修与升版核验**：
-  - 修复 `.identity-onboarding-bar` 与 [`scripts/CLAUDE.md`](scripts/CLAUDE.md) / [`src/CLAUDE.md`](src/CLAUDE.md) 残留 `180×286` 标注并重塑为轻量药丸 + 面包屑引导；[`src/claude-residue-panel.tsx`](src/claude-residue-panel.tsx) 补齐 `SOCKS5`/不完整 CLI 代理明细及 `shieldWarnHint` 悬浮提示、按钮改中性 `secondary` 与紧凑行高；[`src/claude-cli-panel.tsx`](src/claude-cli-panel.tsx) / [`src/identity-productivity.css`](src/identity-productivity.css) 改用中性 `>_` 终端图标徽章 `.cli-terminal-badge`；[`src/settings.tsx`](src/settings.tsx) / [`src/backup-panel.css`](src/backup-panel.css) 将「恢复默认界面设置」归位外观与关于页、`.backup-location` 路径与操作按钮单行水平对齐、`.backup-rescue-toggle` 设 `12px` 正文；[`src/smart-relay-model.ts`](src/smart-relay-model.ts) 简化候选推荐判定；
-  - 跨过未发布的 `v0.3.4` 统一升版至 **`0.3.5`**（[`package.json`](package.json)、[`src-tauri/Cargo.toml`](src-tauri/Cargo.toml)、[`src-tauri/Cargo.lock`](src-tauri/Cargo.lock)、[`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json)、[`src-tauri/CLAUDE.md`](src-tauri/CLAUDE.md)、[`docs/RELEASE_POLICY.md`](docs/RELEASE_POLICY.md)、[`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml)、[`README.md`](README.md)、[`README_EN.md`](README_EN.md)、[`docs/RELEASE_NOTES_0.3.5.md`](docs/RELEASE_NOTES_0.3.5.md)）；
-  - 全量验证通过：`bun test` `195 pass / 0 fail`、`bun run build`（`663` 模块）与 `python scripts/browser_ui.py dist` 零错误、`cargo test --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --bin claude-local` `332 passed / 0 failed / 2 ignored`、Python 8 套合成测试共 `114/114 OK`、Playwright 9 轮串行全过及 `0.3.5` 26 张视觉截图核验零错误；
-  - 中性根目录 NSIS 打包与 7 探针隐私审计通过（`109` 文件 `464,853,740` 字节、`0` 发现，`Claude-Local_0.3.5_x64-setup.exe` `140,993,630` 字节，SHA-256 `af059a43597a8977fd9ab71d7289b59774908053b86eb2b2030e49f894b0acd1`）；`.local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1 -ExpectedVersion '0.3.5'` 完成本机原子热更新（`27` 文件核验 / `9` 文件更新，`hostSha256` `ccc02c5c2e6c543c36ccebbff40c1b922de78001ac9550f8f6cfcadb4d725d2a`，交互桌面 Session 1 存活，`missingClaudeCount == 0`）。
+### 2.13 本轮新增：全 9 页去 AI 紧凑重构、6 项细节精修与 `v0.3.5` 打包发布与热更新（2026-11-15，已发布 `v0.3.5`）
+- **桌面工作台去 AI 与全 9 页高密度排版重构（Swarm 并发合入 `main` [`99c9009`](https://github.com/yq04/Claude-Local/commit/99c9009)，见 [`src/CLAUDE.md`](src/CLAUDE.md)）**：
+  - **统一外壳与基础组件规范**（[`src/style.css`](src/style.css)、[`src/productivity-shell.css`](src/productivity-shell.css)）：全 9 页统一 `44px` 页头与 `18px` 中性 `H1`、`12px` 卡片圆角、`28×28` 中性图标容器与紧凑 `.settings-row`，完整保留 `.identity-card`（`166×286`）与 `.browser-verification-page` / `.browser-start` / `.verification-*` 关键几何；
+  - **全 9 页与生产力面板协同重构**：
+    - **快速配置**（[`src/quick-actions.tsx`](src/quick-actions.tsx)、[`src/quick-setup.css`](src/quick-setup.css)）：顶部 4 栏横向环境状态条（浏览 / 电脑 / 身份 / Claude Code CLI）+ 下方紧凑 2 列 8 入口工作台动作网格，移除底部重复目标摘要；
+    - **浏览 / 电脑 / 网络三环境共享样式**（新建 [`src/env-pages.css`](src/env-pages.css)，分别导入到 [`src/browser.tsx`](src/browser.tsx)、[`src/system.tsx`](src/system.tsx)、[`src/vps.tsx`](src/vps.tsx)）：浏览环境改用紧凑两区顶栏 + 双列核验矩阵；电脑环境顶部增 4 栏美区基线对齐摘要条，下方合并为分组三行统一设置卡（时区 / 语言 / 定位，当前观测与草稿分离）；网络环境升级为三联代理卡片（iKuuu / Kookeey / 提示词）+ 紧凑 4 域名诊断行；
+    - **风控验证**（[`src/risk-verification.tsx`](src/risk-verification.tsx)、[`src/risk-verification.css`](src/risk-verification.css)）：将 3 项静态防漏体检与 3 项跨域实测升级为响应式 3 列 `.risk-grid-3` 网格，合并顶部噪声徽章为统一安全态势条并去除机械编号列表；
+    - **使用说明 / 设置 / 备份**（[`src/help.tsx`](src/help.tsx)、[`src/settings.tsx`](src/settings.tsx)、[`src/backup-panel.tsx`](src/backup-panel.tsx)、[`src/backup-panel.css`](src/backup-panel.css)）：使用说明转为响应式双列 `.help-topics` 网格（保留置顶 3 步法）；设置页采用左标题 + 居中胶囊 Tabs；备份表单精简范围说明（保留 `warming_cards.json`、`manual_subscriptions.json` 与 `profile/` 排除边界）并重构为并排 `.backup-forms-grid`；
+    - **双语微文案瘦身**（[`src/locales/zh.yaml`](src/locales/zh.yaml)、[`src/locales/en.yaml`](src/locales/en.yaml)）：联合压缩 `286` 个中英键，去除空洞样板句与重复阐述。
+- **`v0.3.5` 细节精修与升版验证（[`966a2e6`](https://github.com/yq04/Claude-Local/commit/966a2e624bbe26ce9190abee17a59dc9e1e712cd)）**：
+  - `.identity-onboarding-bar` 与 [`scripts/CLAUDE.md`](scripts/CLAUDE.md) / [`src/CLAUDE.md`](src/CLAUDE.md) 修复 `180×286` 残留标注，将添加账号/养号引导重塑为轻量药丸徽章 + 面包屑步骤条（窄屏 `680..700px` 自动换行、无横向溢出）；
+  - [`src/claude-residue-panel.tsx`](src/claude-residue-panel.tsx) 与 [`src/style.css`](src/style.css) 补齐 `data-residue-cli-proxy="socks5"` / `"incomplete"` 细项胶囊及 `shieldWarnHint` 悬浮提示、「选入异常登录项」改中性 `secondary` 按钮并收紧行高（`9px 6px`）；
+  - [`src/claude-cli-panel.tsx`](src/claude-cli-panel.tsx) 与 [`src/identity-productivity.css`](src/identity-productivity.css) 将重复橙色图标替换为中性 `>_` 终端图标徽章 `.cli-terminal-badge`；
+  - [`src/settings.tsx`](src/settings.tsx) 与 [`src/backup-panel.css`](src/backup-panel.css) 将「恢复默认界面设置」归位到「外观与布局」底部并保留「关于」页入口、`clearWallpaper` 与重置默认统一中性 `secondary`；`.backup-location` 路径与操作按钮改为单行水平对齐（`< 680px` 自动换行），`.backup-rescue-toggle` 设为 `12px` 正文；
+  - [`src/smart-relay-model.ts`](src/smart-relay-model.ts) 简化推荐候选判定表达式；更新 [`CLAUDE.md`](CLAUDE.md) 与 [`src/CLAUDE.md`](src/CLAUDE.md) 目录映射；
+  - 跨过未发布的 `v0.3.4` 统一升版至 **`0.3.5`**（[`package.json`](package.json)、[`src-tauri/Cargo.toml`](src-tauri/Cargo.toml)、[`src-tauri/Cargo.lock`](src-tauri/Cargo.lock)、[`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json)、[`src-tauri/CLAUDE.md`](src-tauri/CLAUDE.md)、[`docs/RELEASE_POLICY.md`](docs/RELEASE_POLICY.md)、[`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml)、[`README.md`](README.md)、[`README_EN.md`](README_EN.md)，编写双语 [`docs/RELEASE_NOTES_0.3.5.md`](docs/RELEASE_NOTES_0.3.5.md)）；
+  - **全量验证通过（均在 `0.3.5` 定稿后跑通）**：`bun test` `195 pass / 0 fail`（`26` 文件、`14,774` 次 `expect()`）、`bun run build`（`663` 模块）+ `python scripts/browser_ui.py dist` 零错误、`cargo test --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --bin claude-local` `332 passed / 0 failed / 2 ignored`、Python 8 套合成测试共 `114/114 OK`（`38+40+7+2+9+4+3+11`）、Playwright 9 轮串行全过（`test-local-shell.mjs` + `--monitor-only` `12` 模态、`test-usage-statistics.mjs` 全量 `38` / `--quick-only` `16` / `--layout-only` `108` / `--usage-reliability-only` `11` 项 8 布局、`test-identities-ui.ts` 全量 `73` / `--verification-only` `10` / `--warming-only` `29`）以及 `0.3.5` `26` 张无头截图视觉审计（`pageErrors: []`、`consoleErrors: []`、`unexpectedCommands: []`）。
+- **中性目录 NSIS 打包审计、本机原子热更新与 GitHub Release `Latest` 发布**：
+  - [`scripts/build-windows-share.ps1`](scripts/build-windows-share.ps1) 生成并通过 `privacy-audit.json`（`extracted-payload` 模式 `109` 文件 `464,853,740` 字节、`7` 探针、`0` 发现），产出 `Claude-Local_0.3.5_x64-setup.exe`（`140,993,630` 字节 / 约 `134.46 MiB`，SHA-256 `af059a43597a8977fd9ab71d7289b59774908053b86eb2b2030e49f894b0acd1`）与 `SHA256SUMS.txt`（`99` 字节，SHA-256 `66ace3f8400ca709896febb43c3dface4f9c6dd7823c276e57f77ddefcc42580`）；
+  - `.local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1 -ExpectedVersion '0.3.5'` 完成本机原子热更新（`27` 文件核验 / `9` 文件更新，`hostSha256` `ccc02c5c2e6c543c36ccebbff40c1b922de78001ac9550f8f6cfcadb4d725d2a`，`FileVersion` / `ProductVersion = 0.3.5`，交互桌面 Session 1 存活，`missingClaudeCount == 0`）；
+  - 提交 [`966a2e6`](https://github.com/yq04/Claude-Local/commit/966a2e624bbe26ce9190abee17a59dc9e1e712cd)（21 文件）并打标 `v0.3.5` 推送至 `origin`，于 `2026-11-15T06:14:56Z` 发布为 GitHub Release `Latest`（非草稿、非预发布，两项资产服务端 `digest` 与本地 100% 匹配），随后提交 [`fa8342f`](https://github.com/yq04/Claude-Local/commit/fa8342fcc8eb35502b24858ca64f70b2199ac607) 写入 [`docs/RELEASE_VERIFICATION_0.3.5.md`](docs/RELEASE_VERIFICATION_0.3.5.md)（未移动 `v0.3.5` 标签）。
+
+### 2.14 本轮新增：`v0.3.6` 环境与风控四页对齐「快速配置」重构及二次审阅打磨（2026-11-15 晚，升版发布中）
+- **四页布局与样式重建（[`src/env-pages.css`](src/env-pages.css)、[`src/browser.tsx`](src/browser.tsx)、[`src/system.tsx`](src/system.tsx)、[`src/vps.tsx`](src/vps.tsx)、[`src/risk-verification.tsx`](src/risk-verification.tsx)、[`src/risk-verification.css`](src/risk-verification.css)）**：
+  - **浏览环境**：去除顶卡 `network-action-card` 错位导致的右侧 30% 空白，改用双区操作顶栏 + 4 栏去重遥测条（次行展示关联状态与独立资料/内核版本）+ 边到边双列核验矩阵 + 并排缓存/重置场景卡，并将折叠高级面板内距与 `@container browser-env (max-width: 580px)` 统一至 `16px`；
+  - **电脑环境**：清除 `style.css` 残留双重内距并将选择器统一为水平内联基线；顶部 Cell 2 改用 `English / en-US` 层级对照、分组标头移除中文冗词；当 `location_enabled === false` 时省略右侧冗余的禁用「已关闭定位」按钮（同步更新 [`scripts/test-usage-statistics.mjs`](scripts/test-usage-statistics.mjs) 与 [`scripts/CLAUDE.md`](scripts/CLAUDE.md)）；
+  - **网络环境**：补充顶部 4 栏双跳链式代理拓扑遥测条（`iKuuu` → `Kookeey` → `:7899` → 四域名汇总），复制反馈上移页头右侧药丸消除跳动，恢复三列配置卡强调色微混悬停边框与 2×2 边到边域名探测矩阵；
+  - **风控验证**：拆解多层套娃卡片为四大正交模块——（1）态势顶栏 + `13.5px`/`11.5px` 前缀去重 4 栏遥测条 + 允许两行折行的首栏作用域说明；（2）带 `.settings-group-heading` 的统一双层 3 列 `.risk-grid-3` 矩阵与 `@container risk-env` 断点；（3）手机 KYC 桥接卡（标题 3 枚边界徽章 + 二维码下方语义对应徽章、等高二维码列与贴边分隔的独立紧凑栏）；（4）双栏硬件/PayPal 清理提示条 + 2×3 清单网格；
+  - **双语文案与版本同步**：在 [`src/locales/zh.yaml`](src/locales/zh.yaml) 与 [`src/locales/en.yaml`](src/locales/en.yaml) 新增同步 33 组工作台键（全库 `2,867` 键零缺失），并统一升版至 **`0.3.6`**（[`package.json`](package.json)、[`src-tauri/Cargo.toml`](src-tauri/Cargo.toml)、[`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json)、[`src-tauri/Cargo.lock`](src-tauri/Cargo.lock)、[`src-tauri/CLAUDE.md`](src-tauri/CLAUDE.md)、[`.github/ISSUE_TEMPLATE/bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml)、[`docs/RELEASE_POLICY.md`](docs/RELEASE_POLICY.md)、[`README.md`](README.md)、[`README_EN.md`](README_EN.md)、[`docs/RELEASE_NOTES_0.3.6.md`](docs/RELEASE_NOTES_0.3.6.md)）。
 
 ## 3. 当前卡在哪
 
-**没有任何代码缺陷、测试失败、发布滞后、运行态故障或本机部署未同步项阻塞。** **`v0.3.5` 已完成全部验证、NSIS 打包审计、GitHub Release `Latest` 发布与本机原子热更新**，工作区除本地开发规则 `AGENTS.md`（未暂存、**严禁提交**）外无任何未提交源码改动；既往 `v0.3.3`（`01f7085` / `c443015`）与 `v0.3.2`（`260f80e` / `a72a145`）标签与资产保持不可变。
+**没有任何代码缺陷、测试失败、发布滞后、运行态故障或本机部署未同步项阻塞。** **`v0.3.5` 已完成全部验证、NSIS 打包审计、GitHub Release `Latest` 发布与本机原子热更新**；当前 `origin/main` 位于 [`fa8342f`](https://github.com/yq04/Claude-Local/commit/fa8342fcc8eb35502b24858ca64f70b2199ac607)，工作区仅保留未暂存的本地规则文件 `AGENTS.md`（**严禁暂存或提交**）与本次会话结束交接更新后的 `HANDOFF.md`（无任何未提交源码改动）；既往 `v0.3.3`（`01f7085` / `c443015`）与 `v0.3.2`（`260f80e` / `a72a145`）标签与资产保持不可变。
 
 1. **已同步上线的状态**：
-   - `v0.3.5`（源码 commit `966a2e624bbe26ce9190abee17a59dc9e1e712cd`，交付核验文档 [`docs/RELEASE_VERIFICATION_0.3.5.md`](docs/RELEASE_VERIFICATION_0.3.5.md)）已于 `2026-11-15T06:14:56Z` 在 GitHub Release 发布为 `Latest`（非草稿、非预发布），`Claude-Local_0.3.5_x64-setup.exe`（`af059a43597a8977fd9ab71d7289b59774908053b86eb2b2030e49f894b0acd1`）与 `SHA256SUMS.txt`（`66ace3f8400ca709896febb43c3dface4f9c6dd7823c276e57f77ddefcc42580`）服务端 `digest` 与本地构建文件 100% 一致；
+   - `v0.3.5`（源码 commit `966a2e624bbe26ce9190abee17a59dc9e1e712cd`，交付核验提交 `fa8342fcc8eb35502b24858ca64f70b2199ac607`，详见 [`docs/RELEASE_VERIFICATION_0.3.5.md`](docs/RELEASE_VERIFICATION_0.3.5.md)）已于 `2026-11-15T06:14:56Z` 在 GitHub Release 发布为 `Latest`（非草稿、非预发布），`Claude-Local_0.3.5_x64-setup.exe`（`af059a43597a8977fd9ab71d7289b59774908053b86eb2b2030e49f894b0acd1`）与 `SHA256SUMS.txt`（`66ace3f8400ca709896febb43c3dface4f9c6dd7823c276e57f77ddefcc42580`）服务端 `digest` 与本地构建文件 100% 一致；
    - `%LOCALAPPDATA%\Programs\Claude-Local\claude-local.exe` 与 `browser-ui/*` 已原子热更新至 **`0.3.5`** Release 构建（`hostSha256` `ccc02c5c2e6c543c36ccebbff40c1b922de78001ac9550f8f6cfcadb4d725d2a`，交互桌面窗口已验证存活，`missingClaudeCount == 0`）；
    - 外置 9 席三池 22 路由组正交溢出网关、本地回环 MCP、动态规则代理端口自愈、WMI `IsProcessInJob = False` 守护、派发器 `3210s` 软超时与 6-Tier 子代理舰队均在线运行且全程零中断（详见 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`）。
 2. **显式验证边界与可选后续动作**：
    - 全部回归测试均在合成账号与隔离上下文中执行，**未实际执行 NSIS 安装向导安装/卸载或真实账号登录/切号**；
-   - **严禁**执行 `git add .` 或暂存提交 `AGENTS.md` / `.local/`，且切勿移动 `v0.3.3` 或更早标签；
-   - 用户可在退出所有活跃 `claude.exe` 会话后按下方 **场景 E** 可选写入 2 个零遥测 `/advisor` 环境变量以启用 Mode B；或按 **场景 C** 酌情复核 2.8 剩余条目。
+   - 若后续需要将本会话结束后的交接更新归档进 Git 历史，可执行 `git add HANDOFF.md && git commit -m "Docs: update session handoff" && git push origin main`（**严禁** `git add .` 或暂存提交 `AGENTS.md` / `.local/`，且切勿移动 `v0.3.5` / `v0.3.3` / `v0.3.2` 标签）；
+   - 用户可在退出所有活跃 `claude.exe` 会话后按下方 **场景 E** 可选写入 2 个零遥测 `/advisor` 环境变量以启用 Mode B；或按 **场景 C** 酌情复核 2.8 剩余的低优先级技术债条目。
 
 ---
 
 ## 4. 下一步计划是什么（给零上下文新会话的执行手册）
 
-> **前置收尾提示**：严禁执行 `git add .` / `git commit -a`，严禁暂存或提交 `AGENTS.md` 与 `.local/`，且严禁改动已发布的 `v0.3.5` / `v0.3.3` / `v0.3.2` 标签。
+> **前置收尾提示**：接手时先运行 `git status --short && git log -n 3 --oneline` 核对状态（预期工作区仅 `M AGENTS.md` 与 `M HANDOFF.md`，`HEAD` 位于 `fa8342f`）；严禁执行 `git add .` / `git commit -a`，严禁暂存或提交 `AGENTS.md` 与 `.local/`，且严禁改动已发布的 `v0.3.5` / `v0.3.3` / `v0.3.2` 标签。
 
 ### 场景 A：后续版本（如 `v0.3.6`）迭代与发布规范
 1. **切勿修改或移动已发布的 `v0.3.5`、`v0.3.3`、`v0.3.2` 及更早标签与安装包**；按新版本升版本号（`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.lock`、`src-tauri/CLAUDE.md`、`.github/ISSUE_TEMPLATE/bug_report.yml`）。
@@ -298,8 +319,11 @@
 1. 按顺序执行 `bun test` -> `bun run build` -> `cargo test --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --bin claude-local` -> `cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml`（严禁中断任何运行中 `claude.exe`）；
 2. 读取 [`package.json`](package.json) 当前版本号 `<ver>`，先用 `pwsh -NoProfile -File .local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1 -ExpectedVersion '<ver>' -PlanOnly` 复核变更清单（注意该脚本参数默认值仍为 `0.3.2`，**必须显式传当前版本号**），获得允许后执行去掉 `-PlanOnly` 完成备份、原子替换、交互桌面重拉与 `missingClaudeCount == 0` 对账。
 
-### 场景 C：用户要求顺带清理 2.8 剩余的 4 项轻量代码整理点
-- 2.8 中关于 CLI 代理边界明细（`socks5_in_cli_env` / `!proxy_env_complete`）、`smart-relay-model.ts` 候选判定简化与 `166×286` 注释对齐已于 **`v0.3.5`** 合入并随版本核验完成；仍可在走场景 A/B 前酌情复核 [`src-tauri/src/browser/oauth_route.rs`](src-tauri/src/browser/oauth_route.rs) 的 `platform.claude.com` 守卫意图。
+### 场景 C：用户要求清理 2.8 剩余的低优先级技术债
+- CLI 代理明细胶囊、[`src/smart-relay-model.ts`](src/smart-relay-model.ts) 候选判定简化与 `166×286` 注释对齐均已于 **`v0.3.5`** 完成；2.8 仅剩以下 3 项低优先级可选项，可在后续版本迭代前酌情处理：
+  1. 复核 [`src-tauri/src/browser/oauth_route.rs`](src-tauri/src/browser/oauth_route.rs) 中排除 `https://platform.claude.com/oauth/authorize` 的守卫意图是否需要保留或调整文档；
+  2. 核对 [`src-tauri/src/risk_check.rs`](src-tauri/src/risk_check.rs) 与 [`src/risk-model.ts`](src/risk-model.ts) 双端 CLI 安全边界判断逻辑的测试对齐与去重空间；
+  3. 清理 [`src/smart-relay-model.ts`](src/smart-relay-model.ts) 中未使用的 `autoSwitchWhenIdle` 字段，并按需评估是否把接力冷却状态从 WebView `localStorage` 同步到 Rust [`identities/wakeup.rs`](src-tauri/src/identities/wakeup.rs)。
 
 ### 场景 D：用户继续处理工作站外置 CLI / Magpie / 子代理工具链
 - 请先阅读 `.local/tasks/20261112-session-handoff/HANDOFF.local.md`，按其中记录的备份清单、22 路由组 `Pro -> Ultra` 双层嵌套溢出契约（`groups[].accounts` 必须使用 `"antigravity/<16-hex-LoginID>"`）、Mode B `3210s` 总墙钟软超时、动态规则代理进程归属校验、`-SessionTag` / `-Resume` 多轮热缓存机制、`STRICT NO-REREAD RULE` 与运行中进程零中断红线继续操作。
@@ -330,7 +354,7 @@
    - `BAGAID01` 魔数、`.baga` 加密归档结构、SQLite `user_version=3`、账号 HMAC 算法及历史遗留 `CCBaga` 浏览器种子域字符串属于持久化兼容层，严禁在优化或重构中改动。
 
 5. **先查 `git log` / `git tag` 再判断当前发布状态，严禁重写已发布 tag**：
-   - `v0.3.3`（`01f7085` + 交付核验跟进提交）与 `v0.3.2`（`260f80e` + `a72a145`）均已作为不可变资产发布，绝不要覆盖或移动既有发布 tag。任何新会话接手时必须先执行 `git status --short && git log -n 3 --oneline` 核对当前基线，再决定后续版本策略。
+   - `v0.3.5`（`966a2e6` + `fa8342f`）、`v0.3.3`（`01f7085` + `c443015`）与 `v0.3.2`（`260f80e` + `a72a145`）均已作为不可变资产发布（注意 **`v0.3.4` 已被明确跳过、从未发布**，后续版本只能从 `0.3.6+` 递增，切勿回补或占用 `v0.3.4`）。任何新会话接手时必须先执行 `git status --short && git log -n 3 --oneline` 核对当前基线，绝不要覆盖或移动既有发布 tag。
 6. **风控验证页严禁脱离 `isCliSecurityShieldOk` 单字段判绿，也严禁乱改用户既有本机代理**：
    - 检查 CLI 安全护盾时必须通过 `isCliSecurityShieldOk`（`telemetry_shield_active && !nonessential_traffic_blocked && proxy_env_complete && !socks5_in_cli_env`），仅检查 `telemetry_shield_active` 会遗漏 TUN-only 缺显式 HTTP 代理及 `socks5://` 误配；
    - 评估外部“防封攻略”时务必逐条对照现有代码核实——切勿盲从“改用普通/机房 IP 也可以”“删除代理 env 只靠系统 TUN”“填入虚拟卡/邀请码”等反向建议，也严禁擅自调试或覆盖用户本机既有的 `~/.claude/settings.json` 与桌面代理规则。
@@ -385,20 +409,26 @@
    - [`src-tauri/src/cleaner_targets.rs`](src-tauri/src/cleaner_targets.rs) 的 `measure()` 对普通目录（`meta.is_dir() && !linked(&meta)`）切勿哈希父目录 `last_write_time` / `mtime`（否则在 `.claude/debug` 内创建/删除已过滤的 `.oauth_refresh.lock` 或 `*.tmp.*` 仍会改变目录修改时间导致快照比对误判），文件与重解析链接的时间戳和大小哈希保持不变；
    - 新增任何页面挂载期只读 Tauri IPC 命令时，必须同步检查 [`scripts/quick-setup-checks.mjs`](scripts/quick-setup-checks.mjs) 的 `allowedCommands` 与 [`scripts/test-usage-statistics.mjs`](scripts/test-usage-statistics.mjs) 的 `readCommands` 白名单，确保 `--quick-only` 与完整合成套件不误报越权命令。
 
-6. **用量分析对齐与 `0.3.3` 打包/热更新实操坑点（2.11 新增）**：
+6. **用量分析对齐与打包/热更新实操坑点（2.11 新增）**：
    - **KPI 基线与模型分布微指标网格必须与 `usage-screenshot.ts` 同步**：`.usage-metric` 使用 `grid-template-rows: auto auto 1fr; align-content: start; align-items: start` 并配合 `.usage-metric-sub-item`（`white-space: nowrap`）防止折行拆断数值单位；`.usage-model-caption` 需使用 `2×2` 网格与 `.usage-model-share` 右对齐等宽列，任何改动都必须同步更新 [`src/usage-screenshot.ts`](src/usage-screenshot.ts) 的 2× Retina Canvas 绘制，避免网页与导出长图失步；
-   - **`Cargo.lock` 升版严禁全文替换**：多个第三方依赖恰好处于 `0.3.2`，升版时只能精确修改 `[[package]] name = "claude-local"` 条目（[`src-tauri/Cargo.lock`](src-tauri/Cargo.lock#L527-L530) 附近）；
+   - **`Cargo.lock` 升版严禁全文替换**：多个第三方依赖恰好处于 `0.3.x`，升版时只能精确修改 `[[package]] name = "claude-local"` 条目（[`src-tauri/Cargo.lock`](src-tauri/Cargo.lock#L527-L530) 附近）；
    - **`hotupdate.ps1` 默认版本与本机 `7z.exe` / 外置探针约束**：`.local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1` 的 `-ExpectedVersion` 默认值为 `'0.3.2'`，升版后必须显式传入当前版本号；本机系统 `PATH` 无全局 `7z.exe`，执行 `build-windows-share.ps1` 需传入随仓忽略目录 `.local/build-tools/` 下的便携 `7z.exe`（具体路径见 `HANDOFF.local.md`），临时生成的 `-PrivateMarkersFile` 必须在仓库外创建并在审计后删除，且只放完整工作站路径与计算机名等具体特征串（切勿放入会命中系统通用英文词的短串）。
+
+7. **`v0.3.5` UI 去 AI 重构与 GitHub Release 发布新增实操坑点（2.13 新增）**：
+   - **`src/env-pages.css` 特异性契约与自动化测试强约束几何/关键字**：[`src/env-pages.css`](src/env-pages.css) 通过作用域选择器（特异度 `>= (0,2,0)` / `(0,3,0)`，分别挂在 `.browser-page .browser-sections`、`.system-environment-page .system-env-content`、`.network-page .network-sections` 下）压过 [`src/style.css`](src/style.css) 旧卡片样式，改样式时严禁破坏该优先级；此外，[`src/identity-card`](src/style.css)（`166×286`）、窄屏 `.identity-onboarding-steps`（`680..700px` 换行无横向溢出，[`scripts/test-warming-ui.ts`](scripts/test-warming-ui.ts) 检查）、`.browser-verification-page`/`.browser-start`/`.verification-*`、`3` 行 `.system-setting-card` 与 `.identity-cli` 徽章（[`scripts/test-usage-statistics.mjs`](scripts/test-usage-statistics.mjs) 检查）以及备份范围内的 `warming_cards.json` / `manual_subscriptions.json` / `profile/` 文案均受合成测试门禁保护，重构 UI 时切勿删改；
+   - **`docs/*.md` 相对许可链接与 `gh release` CLI 坑点**：根目录许可文件为 [`LICENSE`](LICENSE)（无 `.md` 后缀）与 [`NOTICE.md`](NOTICE.md)（带 `.md` 后缀），发布文档引用时必须写作 `../LICENSE` 与 `../NOTICE.md`；`gh release view --json` **不支持 `isLatest` 字段**（会直接报 `Unknown JSON field` 退出），校验 `Latest` 标签请改用 `gh api repos/yq04/Claude-Local/releases/latest --jq .tag_name`；此外 PowerShell 7 的 `ConvertFrom-Json` 会将 ISO-8601 `publishedAt` 自动反序列化为 `[datetime]` 字符串化，写核验文档或保存回执时务必直接落盘 `gh release view` 原始 JSON 文本以保留精确 UTC 字符串（如 `2026-11-15T06:14:56Z`）；
+   - **两段式提交保持源码 tag 绝对不可变**：先提交源码与 `RELEASE_NOTES_<ver>.md` 并在该提交上创建/推送 `v<ver>` 与 GitHub Release，待拿到精确 `publishedAt`、资产 `size` 与服务端 `digest` 后，再另起提交 [`docs/RELEASE_VERIFICATION_<ver>.md`](docs/RELEASE_VERIFICATION_0.3.5.md) 推送 `origin/main`——严禁将 `RELEASE_VERIFICATION_<ver>.md` 写死未知校验值提前混入 tag 或在发布后移动既有 tag。
 
 ---
 
 ## 6. 核心文件快速导航
 
-- **方案与交接**：[`HANDOFF.md`](HANDOFF.md)、[`CLAUDE.md`](CLAUDE.md)、[`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md)、[`docs/RELEASE_VERIFICATION_0.3.2.md`](docs/RELEASE_VERIFICATION_0.3.2.md)、[`docs/plans/2026-11-10-v0.3.2-polish-and-hardening/00-README.md`](docs/plans/2026-11-10-v0.3.2-polish-and-hardening/00-README.md)
+- **方案与交接**：[`HANDOFF.md`](HANDOFF.md)、[`CLAUDE.md`](CLAUDE.md)、[`docs/RELEASE_VERIFICATION_0.3.5.md`](docs/RELEASE_VERIFICATION_0.3.5.md)、[`docs/RELEASE_NOTES_0.3.5.md`](docs/RELEASE_NOTES_0.3.5.md)、[`docs/RELEASE_VERIFICATION_0.3.3.md`](docs/RELEASE_VERIFICATION_0.3.3.md)、[`docs/RELEASE_VERIFICATION_0.3.2.md`](docs/RELEASE_VERIFICATION_0.3.2.md)、[`docs/plans/2026-11-10-v0.3.2-polish-and-hardening/00-README.md`](docs/plans/2026-11-10-v0.3.2-polish-and-hardening/00-README.md)
 - **本机工作站外置工具链交接（Git 忽略）**：`.local/tasks/20261112-session-handoff/HANDOFF.local.md`
-- **版本与打包审计**：[`package.json`](package.json)、[`src-tauri/Cargo.toml`](src-tauri/Cargo.toml)、[`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json)、[`scripts/build-windows-share.ps1`](scripts/build-windows-share.ps1)、[`scripts/audit-windows-package.py`](scripts/audit-windows-package.py)、[`scripts/runtime-resources.json`](scripts/runtime-resources.json)
+- **版本与打包审计**：[`package.json`](package.json)、[`src-tauri/Cargo.toml`](src-tauri/Cargo.toml)、[`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json)、[`docs/RELEASE_NOTES_0.3.6.md`](docs/RELEASE_NOTES_0.3.6.md)、[`scripts/build-windows-share.ps1`](scripts/build-windows-share.ps1)、[`scripts/audit-windows-package.py`](scripts/audit-windows-package.py)、[`scripts/runtime-resources.json`](scripts/runtime-resources.json)
+- **9 大工作区、去 AI 样式与设置/说明/备份（`v0.3.5` 重构重点）**：[`src/env-pages.css`](src/env-pages.css)、[`src/quick-actions.tsx`](src/quick-actions.tsx)、[`src/quick-setup.css`](src/quick-setup.css)、[`src/browser.tsx`](src/browser.tsx)、[`src/system.tsx`](src/system.tsx)、[`src/vps.tsx`](src/vps.tsx)、[`src/risk-verification.tsx`](src/risk-verification.tsx)、[`src/risk-verification.css`](src/risk-verification.css)、[`src/help.tsx`](src/help.tsx)、[`src/settings.tsx`](src/settings.tsx)、[`src/backup-panel.tsx`](src/backup-panel.tsx)、[`src/backup-panel.css`](src/backup-panel.css)、[`src/claude-cli-panel.tsx`](src/claude-cli-panel.tsx)、[`src/claude-residue-panel.tsx`](src/claude-residue-panel.tsx)
 - **隔离、风控与伴生浏览器**：[`src-tauri/src/identities/store.rs`](src-tauri/src/identities/store.rs)、[`src-tauri/src/identities/browser_link.rs`](src-tauri/src/identities/browser_link.rs)、[`src-tauri/src/identities/archive.rs`](src-tauri/src/identities/archive.rs)、[`src-tauri/src/cleaner_identity.rs`](src-tauri/src/cleaner_identity.rs)、[`src-tauri/src/cleaner_targets.rs`](src-tauri/src/cleaner_targets.rs)、[`src-tauri/src/cleaner_io.rs`](src-tauri/src/cleaner_io.rs)、[`src-tauri/src/cleaner_config.rs`](src-tauri/src/cleaner_config.rs)、[`src-tauri/src/cleaner.rs`](src-tauri/src/cleaner.rs)、[`src-tauri/src/risk_check.rs`](src-tauri/src/risk_check.rs)、[`src-tauri/src/windows_process.rs`](src-tauri/src/windows_process.rs)、[`src-tauri/src/browser/workspaces.rs`](src-tauri/src/browser/workspaces.rs)、[`src-tauri/src/browser/quota_connection.rs`](src-tauri/src/browser/quota_connection.rs)、[`src-tauri/src/browser/quota_existing.rs`](src-tauri/src/browser/quota_existing.rs)、[`src-tauri/src/browser/kill_switch.rs`](src-tauri/src/browser/kill_switch.rs)、[`src-tauri/src/browser/profile.rs`](src-tauri/src/browser/profile.rs)
 - **额度后端与采集脚本**：[`src-tauri/src/identities/mod.rs`](src-tauri/src/identities/mod.rs)、[`src-tauri/src/identities/database.rs`](src-tauri/src/identities/database.rs)、[`src-tauri/src/identities/profile.rs`](src-tauri/src/identities/profile.rs)、[`src-tauri/src/identities/online.rs`](src-tauri/src/identities/online.rs)、[`src-tauri/src/browser/quota_bridge.rs`](src-tauri/src/browser/quota_bridge.rs)、[`src-tauri/src/browser/server.rs`](src-tauri/src/browser/server.rs)、[`browser-runtime/quota-bridge/content.js`](browser-runtime/quota-bridge/content.js)、[`scripts/claude_quota.py`](scripts/claude_quota.py)、[`scripts/claude_quota_online.py`](scripts/claude_quota_online.py)、[`scripts/quota_archive.py`](scripts/quota_archive.py)
 - **用量分析 2.2**：[`src-tauri/src/identities/usage.rs`](src-tauri/src/identities/usage.rs)、[`src/usage-model.ts`](src/usage-model.ts)、[`src/usage-statistics.tsx`](src/usage-statistics.tsx)、[`src/usage-export.ts`](src/usage-export.ts)、[`src/usage-screenshot.ts`](src/usage-screenshot.ts)
 - **身份卡片、智能接力、悬浮小窗与双语样式**：[`src/identities.tsx`](src/identities.tsx)、[`src/identity-model.ts`](src/identity-model.ts)、[`src/warming-cards.tsx`](src/warming-cards.tsx)、[`src/card-order.ts`](src/card-order.ts)、[`src/smart-relay-model.ts`](src/smart-relay-model.ts)、[`src/floating-monitor.tsx`](src/floating-monitor.tsx)、[`src/main.tsx`](src/main.tsx)、[`src/style.css`](src/style.css)、[`src/identity-productivity.css`](src/identity-productivity.css)、[`src/productivity-shell.css`](src/productivity-shell.css)、[`src/locales/zh.yaml`](src/locales/zh.yaml)、[`src/locales/en.yaml`](src/locales/en.yaml)
-- **本机热更新留档（Git 忽略）**：`.local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1`、`.local/tasks/20261113-hotupdate-post-0.3.2/deployment-receipt.json`、`.local/tasks/20261110-hotupdate-0.3.2/hotupdate-0.3.2.ps1`、`.local/tasks/20261110-hotupdate-0.3.2/deployment-receipt.json`
+- **本机热更新与 `v0.3.5` 发布回执（Git 忽略）**：`.local/tasks/20261113-hotupdate-post-0.3.2/hotupdate.ps1`、`.local/tasks/20261113-hotupdate-post-0.3.2/deployment-receipt.json`、`.local/tasks/20261115-release-0.3.5/github-release-receipt.json`、`.local/tasks/20261115-release-0.3.5/source-privacy-scan.json`

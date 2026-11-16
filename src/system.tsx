@@ -1,11 +1,11 @@
 /**
- * [INPUT]: Cromma UI 表单、原生电脑环境快照、经核验的设置命令、本地刷新事件、env-pages.css 与共享 YAML 文案。
- * [OUTPUT]: 顶部四栏美区基线对齐摘要条、分组三行统一设置卡（时区/语言/定位）、基线参考脚注；保留执行记录与任务锁。
+ * [INPUT]: Cromma UI 表单、Pika 图标、原生电脑环境快照、经核验的设置命令、本地刷新事件、env-pages.css 与共享 YAML 文案。
+ * [OUTPUT]: 顶部刷新工具栏、四栏美区基线对齐发丝遥测条、带基线参考摘要的分组标头与三行统一设置卡（时区/语言/定位，确认定位已关闭时省略冗余的关闭按钮）；保留执行记录与任务锁。
  * [POS]: 系统设置的交互边界；草稿与当前状态分离，不在页面加载时修改电脑；兼容未含 platform 的旧 macOS 快照。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {Button, Select} from 'cromma-ui';
-import {ClockDefault as ClockIcon, Translate as TranslateIcon, MapPin as MapPinIcon} from 'cromma-ui/pika';
+import {ClockDefault as ClockIcon, Translate as TranslateIcon, MapPin as MapPinIcon, Refresh} from 'cromma-ui/pika';
 import {useEffect, useRef, useState} from 'react';
 import {useI18n} from './i18n';
 import {invoke} from '@tauri-apps/api/core';
@@ -136,14 +136,19 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
   const locationAligned = state?.location_enabled === false;
   const baselineAligned = Boolean(state) && timezoneAligned && languageAligned && locationAligned;
   const baselineUnknown = !state || (timezoneAligned && languageAligned && state.location_enabled == null);
+  const timezoneModeLabel = !state ? '—' : state.automatic_timezone == null ? t('computer.autoUnknown') : state.automatic_timezone ? t('computer.automatic') : t('computer.manual');
+  const primaryLanguageLabel = state ? t(languages[languageChoice(state.languages[0] || '') || ''] || state.languages[0] || '未设置') : t('读取中…');
+  const languageOrderLabel = state?.languages.length ? state.languages.join(' → ') : '—';
+  const locationStatusLabel = !state ? t('读取中…') : state.location_enabled == null ? t('尚未核验') : state.location_enabled ? t('开启') : t('已关闭');
+  const baselineStatusLabel = !state ? t('读取中…') : baselineAligned ? t('已对齐') : baselineUnknown ? t('尚未核验') : t('未对齐');
   return (
     <section className="system-page system-environment-page">
       <header className="cleanup-title system-header">
         <div>
           <h1>{t('电脑环境')}</h1>
         </div>
-        {isMacOS && (
-          <div className="cleanup-title-actions">
+        <div className="cleanup-title-actions">
+          {isMacOS && (
             <Button
               variant="ghost"
               size="small"
@@ -168,8 +173,22 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
             >
               {t('解锁清理钥匙串')}
             </Button>
-          </div>
-        )}
+          )}
+          <Button
+            variant="secondary"
+            size="small"
+            disabled={busy !== null}
+            leftIcon={<Refresh size={15} aria-hidden="true" />}
+            onClick={() => {
+              if (!busyRef.current) {
+                setError('');
+                void refresh().catch(e => setError(String(e)));
+              }
+            }}
+          >
+            {t('刷新状态')}
+          </Button>
+        </div>
       </header>
       {error && (
         <p className="system-feedback error" role="alert">
@@ -178,31 +197,45 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
       )}
 
       <div className="system-env-content">
-        <div className="settings-card system-alignment-strip" aria-label={t('目标时区与语言')}>
-          <div className="system-alignment-cell">
-            <span className="system-alignment-label">{t('本机时区')}</span>
-            <strong className="system-alignment-value" title={state?.timezone || ''}>{state?.timezone || t('读取中…')}</strong>
+        <section className="settings-card env-telemetry-strip system-alignment-strip" aria-label={t('目标时区与语言')}>
+          <div className="env-telemetry-cell">
+            <div className="env-telemetry-head">
+              <span className={`env-status-dot ${!state ? '' : timezoneAligned ? 'is-ready' : 'is-pending'}`} aria-hidden="true" />
+              <span className="env-telemetry-label">{t('本机时区')}</span>
+            </div>
+            <strong title={state?.timezone || ''}>{state?.timezone || t('读取中…')}</strong>
+            <small title={timezoneModeLabel}>{timezoneModeLabel}</small>
           </div>
-          <div className="system-alignment-cell">
-            <span className="system-alignment-label">{t('本机语言 / 区域')}</span>
-            <strong className="system-alignment-value" title={state?.languages.join(' → ') || ''}>{state?.languages[0] || t('读取中…')}</strong>
+          <div className="env-telemetry-cell">
+            <div className="env-telemetry-head">
+              <span className={`env-status-dot ${!state ? '' : languageAligned ? 'is-ready' : 'is-pending'}`} aria-hidden="true" />
+              <span className="env-telemetry-label">{t('本机语言 / 区域')}</span>
+            </div>
+            <strong title={primaryLanguageLabel}>{primaryLanguageLabel}</strong>
+            <small title={languageOrderLabel}>{languageOrderLabel}</small>
           </div>
-          <div className="system-alignment-cell">
-            <span className="system-alignment-label">{t('本机定位')}</span>
-            <strong className="system-alignment-value">
-              {!state ? t('读取中…') : state.location_enabled == null ? t('尚未核验') : state.location_enabled ? t('开启') : t('已关闭')}
-            </strong>
+          <div className="env-telemetry-cell">
+            <div className="env-telemetry-head">
+              <span className={`env-status-dot ${!state || state.location_enabled == null ? '' : locationAligned ? 'is-ready' : 'is-pending'}`} aria-hidden="true" />
+              <span className="env-telemetry-label">{t('本机定位')}</span>
+            </div>
+            <strong title={locationStatusLabel}>{locationStatusLabel}</strong>
+            <small title={t('computer.locationHint')}>{t('computer.locationHint')}</small>
           </div>
-          <div className="system-alignment-cell">
-            <span className="system-alignment-label">{t('目标地区')}</span>
-            <span className="system-alignment-status">
-              <span className={`system-alignment-dot ${baselineUnknown ? 'is-unknown' : baselineAligned ? 'is-aligned' : ''}`} aria-hidden="true" />
-              <strong className="system-alignment-badge">
-                {!state ? t('读取中…') : baselineAligned ? t('已对齐') : baselineUnknown ? t('尚未核验') : t('未对齐')}
-              </strong>
-            </span>
-            <span className="system-alignment-meta">US · America/* · en-US</span>
+          <div className="env-telemetry-cell">
+            <div className="env-telemetry-head">
+              <span className={`env-status-dot ${baselineUnknown ? '' : baselineAligned ? 'is-ready' : 'is-pending'}`} aria-hidden="true" />
+              <span className="env-telemetry-label">{t('目标地区')}</span>
+            </div>
+            <strong title={baselineStatusLabel}>{baselineStatusLabel}</strong>
+            <small>US · America/* · en-US</small>
           </div>
+        </section>
+
+        <div className="settings-group-heading system-group-heading">
+          <span className="settings-group-bar" aria-hidden="true" />
+          <h2>{t('目标时区与语言')}</h2>
+          <span className="system-group-note">America/Los_Angeles · America/New_York · en-US</span>
         </div>
 
         <div className="settings-card system-sections system-settings-list">
@@ -212,6 +245,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
               <div className="system-setting-copy">
                 <div className="system-heading-line"><h2 id="system-timezone-title">{t('设备时区')}</h2><span className="system-state-label">{!state ? t('等待系统状态') : state.automatic_timezone == null ? t('computer.autoUnknown') : state.automatic_timezone ? t('computer.automatic') : t('computer.manual')}</span></div>
                 <p className="system-current-value"><span>{t('computer.current')}</span><strong>{state?.timezone || t('读取中…')}</strong></p>
+                <p className="system-setting-note">{t('computer.timezoneAuthNote')}</p>
               </div>
             </div>
             <div className="system-inline-controls">
@@ -236,7 +270,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
               <span className="settings-icon-badge" aria-hidden="true"><TranslateIcon size={16} /></span>
               <div className="system-setting-copy">
                 <h2 id="system-language-title">{t('系统语言')}</h2>
-                <p className="system-current-value"><span>{t('computer.current')}</span><strong>{state ? t(languages[languageChoice(state.languages[0] || '') || ''] || state.languages[0] || '未设置') : t('读取中…')}</strong>{state?.languages.length ? <span className="system-language-code" title={state.languages.join(' → ')}>{state.languages.join(' → ')}</span> : null}</p>
+                <p className="system-current-value"><span>{t('computer.current')}</span><strong>{primaryLanguageLabel}</strong>{state?.languages.length ? <span className="system-language-code" title={state.languages.join(' → ')}>{state.languages.join(' → ')}</span> : null}</p>
                 <p className="system-setting-note">{t('应用重启后生效；系统完整切换可能需要注销。')}</p>
               </div>
             </div>
@@ -268,16 +302,13 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
               </div>
               <div className="system-inline-controls system-location-controls">
                 <Button size="small" variant="secondary" disabled={busy !== null} onClick={() => void open('location')}>{t('打开定位设置')}</Button>
-                <Button variant="secondary" size="small" loading={busy === 'location'} disabled={disabled || state?.location_enabled === false} onClick={() => void apply('location')}>{state?.location_enabled === false ? t('已关闭定位') : t('关闭地理位置')}</Button>
+                {state?.location_enabled !== false && (
+                  <Button variant="secondary" size="small" loading={busy === 'location'} disabled={disabled} onClick={() => void apply('location')}>{t('关闭地理位置')}</Button>
+                )}
               </div>
             </div>
           </article>
         </div>
-
-        <footer className="system-baseline-footer">
-          <span><strong>{t('目标时区与语言')}</strong>{t('computer.subtitle')}</span>
-          <span className="system-baseline-targets">America/Los_Angeles · America/New_York · en-US</span>
-        </footer>
       </div>
 
       <CleanupActivity activity={activity.state} />

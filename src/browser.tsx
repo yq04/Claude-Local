@@ -1,10 +1,11 @@
 /**
- * [INPUT]: 原生浏览器/CLI归属快照、网络防漏断路器状态与事件、轻量窗口采样、真实观测事件、共享活动日志、env-pages.css 与双语文案。
- * [OUTPUT]: 两栏紧致浏览器概览卡、按状态折叠的头部状态胶囊与两列边线核验矩阵（悬停展示完整细节）、双栏分割数据清理区及高级设置。
+ * [INPUT]: 原生浏览器/CLI归属快照、网络防漏断路器状态与事件、轻量窗口采样、真实观测事件、共享活动日志、env-pages.css、Pika 图标与双语文案。
+ * [OUTPUT]: 顶部浏览器操作卡（四列去重发丝遥测条 + 状态胶囊）、分组标头、两列边线核验矩阵、双列水平数据清理区、高级设置与安全确认弹窗。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { Button, Input, Select, Checkbox, Disclosure } from 'cromma-ui';
+import { Refresh, WindowBrowser, EraserDefault } from 'cromma-ui/pika';
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from './i18n';
 import { invoke } from '@tauri-apps/api/core';
@@ -143,11 +144,29 @@ export function BrowserPanel({ onBusy }: {
     const showWarnSummary = isStale || hasMismatch || (hasObservation && !allChecksOk);
     const browserIdentityName = state?.identity ? maskDisplayName(state.identity.name, state.identity.email, prefs.privacyMask) : t('browser.identityUnknown');
     const cliIdentityName = state?.cli_identity ? maskDisplayName(state.cli_identity.name, state.cli_identity.email, prefs.privacyMask) : t('browser.identityUnknown');
+    const cliTelemetryMeta = !state
+        ? t('读取中…')
+        : state.cli_expected_identity
+            ? t(state.identity?.status === 'linked' ? 'quick.browserLinked' : 'quick.browserIndependent')
+            : t('browser.identityUnknown');
+    const profileBaseMeta = !state
+        ? t('读取中…')
+        : state.identity?.status === 'warming'
+            ? `${t('warming.verificationOwner')} · ${t('warming.cliUnaffectedShort')}`
+            : t('browserSafety.isolatedProfile');
+    const profileTelemetryMeta = state?.engine_version ? `${profileBaseMeta} · ${state.engine_version}` : profileBaseMeta;
+    const routeLabel = draft?.proxy ? draft.proxy : t('browserSafety.proxyManaged');
+    const showTimestampPill = Boolean(state?.report_received_at || browserRuntime.status === 'running');
+    const showHeroAlerts = Boolean(
+        (!!state && !state.cli_expected_identity) ||
+        (state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status)) ||
+        (state?.identity?.cli_proxy && !areCliAndBrowserProxiesAligned(draft?.proxy, state.identity.cli_proxy)),
+    );
     function edit<K extends keyof BrowserConfig>(key: K, value: BrowserConfig[K]) { setDraft(old => old ? { ...old, [key]: value } : old); }
     return <section className="system-page browser-page">
         <header className="cleanup-title browser-header">
             <div><h1>{t("浏览环境")}</h1></div>
-            <Button size="small" variant="secondary" disabled={!!busy} onClick={() => void act('browser_read')}>{t("刷新状态")}</Button>
+            <Button size="small" variant="secondary" disabled={!!busy} leftIcon={<Refresh size={15} aria-hidden="true" />} onClick={() => void act('browser_read')}>{t("刷新状态")}</Button>
         </header>
         {error && <p role="alert" className="system-feedback error">{t(error)}</p>}
         {killSwitch?.triggered && (
@@ -173,15 +192,16 @@ export function BrowserPanel({ onBusy }: {
         {!!changed && <p className="system-hint">{t("先保存指纹设置，再启动浏览器或对齐机器。")}</p>}
 
         <div className="browser-sections">
-            <div className="network-action-card browser-hero-card">
+            <section className="settings-card browser-hero-card">
                 <div className="browser-hero-bar">
                     <div className="browser-hero-title-row">
+                        <span className="settings-icon-badge" aria-hidden="true"><WindowBrowser size={16} /></span>
                         <h2>{t('browser.environmentTitle')}</h2>
                         <span data-browser-runtime={browserRuntime.status} className={`identity-policy-mode ${browserRuntime.status === 'running' ? 'ok' : ''}`}>
                             {t(`browser.runtime${browserRuntime.status === 'running' ? 'Running' : browserRuntime.status === 'closed' ? 'Closed' : 'Unknown'}`)}
                         </span>
                     </div>
-                    <div className="network-action-buttons browser-hero-actions">
+                    <div className="browser-hero-actions">
                         <Button variant="secondary" size="small" disabled={disabled || !state?.engine_ready || !!changed} loading={busy === 'browser_launch'} onClick={() => void act('browser_launch')}>
                             {browserRuntime.status === 'running' ? t("重新打开实测页") : t("打开浏览器并实测")}
                         </Button>
@@ -195,18 +215,40 @@ export function BrowserPanel({ onBusy }: {
                         }}>{t('browser.returnToCli')}</Button>
                     </div>
                 </div>
-                <div className="browser-hero-subrow">
-                    <div className="browser-hero-meta">
-                        <span className="browser-context-pill" data-current-cli-identity>{t('browser.currentCliIdentity', {name: cliIdentityName})}</span>
-                        <span className={`browser-context-pill ${state?.identity?.status === 'warming' ? 'is-warming' : 'is-cli'}`} data-current-browser-identity>
-                            {t(state?.identity?.status === 'warming' ? 'browser.currentWarmingIdentity' : 'browser.currentBrowserIdentity', {name: browserIdentityName})}
-                        </span>
+                <div className="env-telemetry-strip browser-telemetry-strip">
+                    <div className="env-telemetry-cell" data-current-cli-identity>
+                        <div className="env-telemetry-head">
+                            <span className={`env-status-dot ${state?.cli_expected_identity ? 'is-ready' : state ? 'is-pending' : ''}`} aria-hidden="true" />
+                            <span className="env-telemetry-label">{t('browser.telemetryCliLabel')}</span>
+                        </div>
+                        <strong title={t('browser.currentCliIdentity', {name: cliIdentityName})}>{cliIdentityName}</strong>
+                        <small title={cliTelemetryMeta}>{cliTelemetryMeta}</small>
                     </div>
-                    <p className="browser-scope-note" data-browser-verification-scope>{t('browser.verificationScope')}</p>
+                    <div className="env-telemetry-cell" data-current-browser-identity>
+                        <div className="env-telemetry-head">
+                            <span className={`env-status-dot ${state?.identity?.status === 'warming' ? 'is-warming' : state?.identity?.status === 'linked' ? 'is-ready' : state?.identity?.status === 'mismatch' ? 'is-failed' : state ? 'is-pending' : ''}`} aria-hidden="true" />
+                            <span className="env-telemetry-label">{t('browser.telemetryProfileLabel')}</span>
+                        </div>
+                        <strong title={t(state?.identity?.status === 'warming' ? 'browser.currentWarmingIdentity' : 'browser.currentBrowserIdentity', {name: browserIdentityName})}>{browserIdentityName}</strong>
+                        <small title={profileTelemetryMeta}>{profileTelemetryMeta}</small>
+                    </div>
+                    <div className="env-telemetry-cell">
+                        <div className="env-telemetry-head">
+                            <span className={`env-status-dot ${killSwitch?.triggered ? 'is-failed' : (killSwitch?.enabled ?? true) ? 'is-ready' : 'is-pending'}`} aria-hidden="true" />
+                            <span className="env-telemetry-label">{t('browser.telemetryRouteLabel')}</span>
+                        </div>
+                        <strong title={routeLabel}>{routeLabel}</strong>
+                        <small>{t((killSwitch?.enabled ?? true) ? 'browser.killSwitchActive' : 'browser.killSwitchPaused')}</small>
+                    </div>
+                    <div className="env-telemetry-cell" data-browser-verification-scope>
+                        <div className="env-telemetry-head">
+                            <span className={`env-status-dot ${hasMismatch ? 'is-failed' : checksPassed ? 'is-ready' : isStale ? 'is-pending' : ''}`} aria-hidden="true" />
+                            <span className="env-telemetry-label">{t('browser.telemetryScopeLabel')}</span>
+                        </div>
+                        <p className="env-telemetry-scope browser-scope-note" title={t('browser.verificationScope')}>{t('browser.verificationScope')}</p>
+                    </div>
                 </div>
-                {((!!state && !state.cli_expected_identity) ||
-                  (state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status)) ||
-                  (state?.identity?.cli_proxy && !areCliAndBrowserProxiesAligned(draft?.proxy, state.identity.cli_proxy))) && (
+                {showHeroAlerts && (
                     <div className="browser-hero-alerts">
                         {!!state && !state.cli_expected_identity && <p className="identity-policy-hint">{t('browser.cliIdentityUnavailable')}</p>}
                         {state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status) && (
@@ -222,28 +264,33 @@ export function BrowserPanel({ onBusy }: {
                         )}
                     </div>
                 )}
+            </section>
+
+            <div className="settings-group-heading">
+                <span className="settings-group-bar" aria-hidden="true" />
+                <h2>{t('browser.checksGroupTitle')}</h2>
             </div>
 
-            <div className="browser-checks">
+            <section className="settings-card browser-checks">
                 <div className="browser-checks-head">
-                    <div className="network-action-head">
+                    <div className="browser-checks-title-row">
                         <h2>{t('browser.observationTitle', {name: t(state?.region?.label || "自定义环境")})}</h2>
                         {checksPassed && (
                             <span className="identity-policy-mode ok">{t("检测通过")}</span>
                         )}
-                        <span className={`identity-policy-mode ${isStale ? 'attention' : checksPassed ? 'ok' : ''}`}>
-                            {state?.report_received_at
-                                ? isStale
-                                    ? t("browserSafety.reportStale", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') }) || `检测已过时（>10分钟）· 上次回报 ${new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US')}`
-                                    : (state.running && browserRuntime.status !== 'closed')
-                                        ? t("已连接 · 回报 {v0}", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })
-                                        : t("browserSafety.reportRetained", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })
-                                : browserRuntime.status === 'running'
-                                    ? t("等待浏览器回报")
-                                    : t(browserRuntime.status === 'closed' ? 'browser.runtimeClosed' : 'browser.runtimeUnknown')}
-                        </span>
+                        {showTimestampPill && (
+                            <span className={`identity-policy-mode ${isStale ? 'attention' : checksPassed ? 'ok' : ''}`}>
+                                {state?.report_received_at
+                                    ? isStale
+                                        ? t("browserSafety.reportStale", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') }) || `检测已过时（>10分钟）· 上次回报 ${new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US')}`
+                                        : (state.running && browserRuntime.status !== 'closed')
+                                            ? t("已连接 · 回报 {v0}", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })
+                                            : t("browserSafety.reportRetained", { v0: new Date(state.report_received_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US') })
+                                    : t("等待浏览器回报")}
+                            </span>
+                        )}
                     </div>
-                    <div className="network-action-buttons">
+                    <div className="browser-checks-actions">
                         <Button variant="secondary" size="small" disabled={disabled} loading={busy === 'browser_check'} onClick={() => void act('browser_check')}>{t("检测机器出口")}</Button>
                         <Button variant="secondary" size="small" disabled={disabled || state?.running || !!changed} onClick={() => setConfirm('align')}>{t("对齐美国系统环境")}</Button>
                     </div>
@@ -272,42 +319,48 @@ export function BrowserPanel({ onBusy }: {
                         ))}
                     </div>
                 )}
-                {state?.report?.error && <p className="system-feedback error">{t("浏览器出口检测：")}{t(state.report.error)}</p>}
+                {state?.report?.error && <p className="system-feedback error browser-report-error">{t("浏览器出口检测：")}{t(state.report.error)}</p>}
+            </section>
+
+            <div className="settings-group-heading">
+                <span className="settings-group-bar" aria-hidden="true" />
+                <h2>{t('browser.dataGroupTitle')}</h2>
             </div>
 
-            <div className="network-action-card browser-data-card">
-                <div className="browser-data-header">
-                    <h2>{t("浏览器数据")}</h2>
-                    <span className={`identity-policy-mode ${state?.running ? '' : 'ok'}`}>
-                        {state?.running ? t("browserSafety.closeBeforeClean") : `${t("日常释放缓存")} · ${formatBytes(cache.reduce((sum, x) => sum + x.bytes, 0))}`}
-                    </span>
-                </div>
+            <section className="settings-card browser-data-card">
+                {state?.running && (
+                    <div className="browser-data-notice">
+                        <span>{t("browserSafety.closeBeforeClean")}</span>
+                    </div>
+                )}
                 <div className="browser-data-scenarios">
                     <div className="browser-scenario-card">
-                        <div className="browser-scenario-top">
+                        <span className="settings-icon-badge" aria-hidden="true"><EraserDefault size={16} /></span>
+                        <div className="browser-scenario-copy">
                             <div className="browser-scenario-head">
                                 <strong>{t("日常释放缓存")}</strong>
                                 <span className="identity-policy-mode ok">{formatBytes(cache.reduce((sum, x) => sum + x.bytes, 0))}</span>
                             </div>
-                            <Button variant="secondary" size="small" disabled={disabled || state?.running || !cache.length || !!state?.cache_error} loading={busy === 'browser_clear'} onClick={() => void act('browser_clear', { includeSiteData: false })}>{t("一键清理缓存")}</Button>
+                            <p className="browser-scenario-desc">{t("安全清理网页图片与脚本缓存，保留 Claude 登录状态、书签与密码（需先关闭浏览器）。")}</p>
                         </div>
-                        <p className="browser-scenario-desc">{t("安全清理网页图片与脚本缓存，保留 Claude 登录状态、书签与密码（需先关闭浏览器）。")}</p>
+                        <Button variant="secondary" size="small" disabled={disabled || state?.running || !cache.length || !!state?.cache_error} loading={busy === 'browser_clear'} onClick={() => void act('browser_clear', { includeSiteData: false })}>{t("一键清理缓存")}</Button>
                     </div>
                     <div className="browser-scenario-card">
-                        <div className="browser-scenario-top">
+                        <span className="settings-icon-badge" aria-hidden="true"><Refresh size={16} /></span>
+                        <div className="browser-scenario-copy">
                             <div className="browser-scenario-head">
                                 <strong>{t("深度重置当前浏览器")}</strong>
                             </div>
-                            <Button variant="secondary" size="small" disabled={disabled || state?.running} loading={busy === 'browser_reset'} onClick={() => { setAccepted(false); setConfirm('reset'); }}>{t("全清理")}</Button>
+                            <p className="browser-scenario-desc">{t("仅在当前身份网页出现异常风控时使用；将清空当前身份的 Cookie、登录状态与扩展，不影响其他身份。")}</p>
                         </div>
-                        <p className="browser-scenario-desc">{t("仅在当前身份网页出现异常风控时使用；将清空当前身份的 Cookie、登录状态与扩展，不影响其他身份。")}</p>
+                        <Button variant="secondary" size="small" disabled={disabled || state?.running} loading={busy === 'browser_reset'} onClick={() => { setAccepted(false); setConfirm('reset'); }}>{t("全清理")}</Button>
                     </div>
                 </div>
                 {state?.cache_error && <p role="alert" className="browser-cache-error">{t(state.cache_error)}</p>}
                 <Disclosure className="browser-cache-details" triggerClassName="browser-cache-trigger" summary={`${t("查看底层缓存目录明细")} (${cache.length})`}>
                     <div className="browser-cache">{state?.cache.length ? state.cache.map(x => <div key={x.path}><span>{x.path}</span><small>{x.login ? t("站点数据") : formatBytes(x.bytes)}</small></div>) : <p className="browser-cache-empty">{t("未发现缓存项目。")}</p>}</div>
                 </Disclosure>
-            </div>
+            </section>
 
             <Disclosure className="identity-policy browser-advanced-panel" triggerClassName="identity-policy-trigger" open={advancedOpen || !!changed} onOpenChange={setAdvancedOpen}
                 summary={<strong>{t("browserSafety.settingsTitle")}</strong>}

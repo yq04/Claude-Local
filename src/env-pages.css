@@ -1,10 +1,10 @@
 /* [INPUT]: Theme surface, border, typography and accent tokens from style.css.
- * [OUTPUT]: Streamlined layouts for Browser, System and Network pages (compact 2-zone headers, 2-col diagnostic matrix, unified 3-row computer settings, 3-col proxy chain cards).
+ * [OUTPUT]: Shared 4-column hairline telemetry strip and unified Quick-Setup layouts for Browser, Computer and Network pages.
  * [POS]: Imported by browser.tsx, system.tsx and vps.tsx; scoped selectors (>= 0,2,0 / 0,3,0) cleanly supersede legacy card rules despite earlier import order in main.tsx.
  * [PROTOCOL]: Update src/CLAUDE.md with changes. */
 
 /* ==========================================================================
-   1. Shared Page Containers
+   1. Shared Page Containers & 4-Column Hairline Telemetry Strip
    ========================================================================== */
 .browser-page .browser-sections {
   display: grid;
@@ -24,82 +24,201 @@
   container: network-env / inline-size;
 }
 
-/* ==========================================================================
-   2. Browser Environment (browser.tsx)
-   ========================================================================== */
-.browser-page .browser-sections .browser-hero-card {
-  display: grid;
-  gap: 10px;
-  padding: 14px 16px;
-}
-
-.browser-page .browser-hero-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px 16px;
-}
-
-.browser-page .browser-hero-title-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  min-width: 0;
-}
-
-.browser-page .browser-hero-title-row h2 {
+.system-page .env-telemetry-strip {
+  padding: 0;
   margin: 0;
-  font-size: 14.5px;
-  font-weight: 650;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
 }
 
-.browser-page .browser-hero-subrow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 6px 12px;
+.system-page .env-telemetry-cell {
+  display: grid;
+  align-content: start;
+  gap: 4px;
   min-width: 0;
+  padding: 12px 14px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
-.browser-page .browser-hero-meta {
+.system-page .env-telemetry-cell + .env-telemetry-cell {
+  border-left: 1px solid var(--landing-line);
+}
+
+.system-page .env-telemetry-head {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
 }
 
-.browser-page .browser-hero-meta .browser-context-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  max-width: 100%;
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  line-height: 1.3;
-  overflow-wrap: anywhere;
+.system-page .env-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: #94a3b8;
 }
 
-.browser-page .browser-hero-subrow .browser-scope-note {
+.system-page .env-status-dot.is-ready {
+  background: #16a34a;
+}
+
+.system-page .env-status-dot.is-pending {
+  background: #d97706;
+}
+
+.system-page .env-status-dot.is-failed {
+  background: #dc2626;
+}
+
+.system-page .env-status-dot.is-warming {
+  background: #06b6d4;
+}
+
+:root.dark .system-page .env-status-dot.is-ready {
+  background: #4ade80;
+}
+
+:root.dark .system-page .env-status-dot.is-pending {
+  background: #fbbf24;
+}
+
+:root.dark .system-page .env-status-dot.is-failed {
+  background: #f87171;
+}
+
+:root.dark .system-page .env-status-dot.is-warming {
+  background: #22d3ee;
+}
+
+.system-page .env-telemetry-label {
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--muted-foreground);
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-page .env-telemetry-cell strong {
+  font-size: 13.5px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-page .env-telemetry-cell small {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--muted-foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-page .env-telemetry-cell .env-telemetry-scope {
   margin: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 11.5px;
+  line-height: 1.38;
   color: var(--muted-foreground);
+  min-width: 0;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   overflow-wrap: anywhere;
 }
 
-.browser-page .browser-hero-subrow .browser-scope-note::before {
-  content: none;
-  display: none;
+@container (max-width: 680px) {
+  .system-page .env-telemetry-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .system-page .env-telemetry-cell + .env-telemetry-cell {
+    border-left: 0;
+  }
+
+  .system-page .env-telemetry-cell:nth-child(even) {
+    border-left: 1px solid var(--landing-line);
+  }
+
+  .system-page .env-telemetry-cell:nth-child(n + 3) {
+    border-top: 1px solid var(--landing-line);
+  }
+}
+
+@container (max-width: 390px) {
+  .system-page .env-telemetry-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .system-page .env-telemetry-cell:nth-child(even) {
+    border-left: 0;
+  }
+
+  .system-page .env-telemetry-cell + .env-telemetry-cell {
+    border-top: 1px solid var(--landing-line);
+  }
+}
+
+/* ==========================================================================
+   2. Browser Environment (browser.tsx)
+   ========================================================================== */
+.browser-page .browser-kill-switch-banner {
+  margin: 0 0 12px;
+}
+
+.browser-page .browser-sections .browser-hero-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.browser-page .browser-hero-card .browser-hero-bar {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--landing-line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  background: color-mix(in srgb, var(--muted) 26%, transparent);
+}
+
+.browser-page .browser-hero-bar .browser-hero-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.browser-page .browser-hero-title-row h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
 }
 
 .browser-page .browser-hero-bar .browser-hero-actions {
@@ -109,16 +228,22 @@
   flex-wrap: wrap;
   gap: 8px;
   flex-shrink: 0;
-  margin-top: 0;
-  padding-top: 0;
+  margin: 0;
+  padding: 0;
   border-top: 0;
 }
 
-.browser-page .browser-hero-alerts {
+.browser-page .browser-telemetry-strip .browser-scope-note::before {
+  content: none;
+  display: none;
+}
+
+.browser-page .browser-hero-card .browser-hero-alerts {
   display: grid;
   gap: 6px;
-  padding-top: 8px;
+  padding: 8px 16px;
   border-top: 1px solid var(--landing-line);
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
 }
 
 .browser-page .browser-hero-alerts .identity-policy-hint {
@@ -129,10 +254,13 @@
   gap: 6px 10px;
 }
 
-/* Verification Matrix */
+/* Verification Matrix Card */
 .browser-page .browser-sections .browser-checks {
-  padding: 14px 16px;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
 }
 
 .browser-page .browser-checks .browser-checks-head {
@@ -141,22 +269,67 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px 14px;
-  margin-bottom: 0;
+  margin: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--landing-line);
+  background: color-mix(in srgb, var(--muted) 26%, transparent);
 }
 
-.browser-page .browser-checks .browser-checks-head h2 {
+.browser-page .browser-checks .browser-checks-head:last-child {
+  border-bottom: 0;
+}
+
+.browser-page .browser-checks-head .browser-checks-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.browser-page .browser-checks-head h2 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 13.5px;
+  font-weight: 600;
   line-height: 1.3;
+  color: var(--foreground);
 }
 
-.browser-page .browser-checks .browser-check-summary {
+.browser-page .browser-checks-head .browser-checks-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
   margin: 0;
-  padding: 7px 11px;
-  border-radius: 8px;
+  padding: 0;
+  border-top: 0;
+}
+
+.browser-page .identity-policy-mode.attention {
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  border-color: color-mix(in srgb, #d97706 30%, transparent);
+  color: #986400;
+}
+
+:root.dark .browser-page .identity-policy-mode.attention {
+  background: color-mix(in srgb, #fbbf24 16%, transparent);
+  border-color: color-mix(in srgb, #fbbf24 32%, transparent);
+  color: #fde68a;
+}
+
+.browser-page .browser-checks .browser-check-summary.warn {
+  margin: 0;
+  padding: 8px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--landing-line);
+  border-radius: 0;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.browser-page .browser-checks .browser-check-summary.warn:last-child {
+  border-bottom: 0;
 }
 
 .browser-page .browser-checks .browser-check-grid:empty {
@@ -168,14 +341,15 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
   margin: 0;
-  border: 1px solid var(--landing-line);
-  border-radius: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
-  background: var(--background);
+  background: transparent;
 }
 
 :root.dark .browser-page .browser-checks .browser-check-grid {
-  background: rgba(15, 23, 42, 0.24);
+  background: transparent;
 }
 
 :root[data-surface="glass"] .browser-page .browser-checks .browser-check-grid {
@@ -186,8 +360,8 @@
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   align-items: start;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 9px;
+  padding: 10px 16px;
   min-width: 0;
   border: 0;
   border-radius: 0;
@@ -219,26 +393,26 @@
 }
 
 .browser-page .browser-check.check-ok > span {
-  background: #eaf7ee;
-  border-color: #bddfc7;
+  background: color-mix(in srgb, #16a34a 12%, transparent);
+  border-color: color-mix(in srgb, #16a34a 28%, transparent);
   color: #16703c;
 }
 
 .browser-page .browser-check.check-mismatch > span {
-  background: #fff0ee;
-  border-color: #efc3bd;
+  background: color-mix(in srgb, #dc2626 11%, transparent);
+  border-color: color-mix(in srgb, #dc2626 28%, transparent);
   color: #b42318;
 }
 
 :root.dark .browser-page .browser-check.check-ok > span {
-  background: rgba(22, 163, 74, 0.16);
-  border-color: rgba(74, 222, 128, 0.28);
+  background: color-mix(in srgb, #4ade80 16%, transparent);
+  border-color: color-mix(in srgb, #4ade80 30%, transparent);
   color: #4ade80;
 }
 
 :root.dark .browser-page .browser-check.check-mismatch > span {
-  background: rgba(220, 38, 38, 0.16);
-  border-color: rgba(248, 113, 113, 0.3);
+  background: color-mix(in srgb, #f87171 16%, transparent);
+  border-color: color-mix(in srgb, #f87171 30%, transparent);
   color: #f87171;
 }
 
@@ -261,49 +435,54 @@
 .browser-page .browser-check-copy p {
   margin: 0;
   font-size: 11.5px;
-  line-height: 1.35;
+  line-height: 1.38;
   color: var(--muted-foreground);
   min-width: 0;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
-/* Browser Data Split Row */
+.browser-page .browser-checks .browser-report-error {
+  margin: 0;
+  padding: 8px 16px;
+  border-top: 1px solid var(--landing-line);
+}
+
+/* Browser Data Card */
 .browser-page .browser-sections .browser-data-card {
   display: grid;
-  gap: 10px;
-  padding: 14px 16px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
 }
 
-.browser-page .browser-data-card .browser-data-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  margin-bottom: 0;
-}
-
-.browser-page .browser-data-card .browser-data-header h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 650;
-  line-height: 1.3;
+.browser-page .browser-data-card .browser-data-notice {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--landing-line);
+  background: color-mix(in srgb, var(--muted) 26%, transparent);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
 }
 
 .browser-page .browser-data-card .browser-data-scenarios {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
-  border: 1px solid var(--landing-line);
-  border-radius: 10px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
-  background: var(--background);
+  background: transparent;
 }
 
 :root.dark .browser-page .browser-data-card .browser-data-scenarios {
-  background: rgba(15, 23, 42, 0.24);
+  background: transparent;
 }
 
 :root[data-surface="glass"] .browser-page .browser-data-card .browser-data-scenarios {
@@ -312,9 +491,10 @@
 
 .browser-page .browser-data-scenarios .browser-scenario-card {
   display: grid;
-  align-content: start;
-  gap: 6px;
-  padding: 12px 14px;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 13px 16px;
   min-width: 0;
   border: 0;
   border-radius: 0;
@@ -326,32 +506,74 @@
   border-left: 1px solid var(--landing-line);
 }
 
-.browser-page .browser-scenario-card .browser-scenario-top {
+.browser-page .browser-scenario-card .browser-scenario-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.browser-page .browser-scenario-card .browser-scenario-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.browser-page .browser-scenario-card .browser-scenario-head strong {
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--foreground);
 }
 
 .browser-page .browser-scenario-card .browser-scenario-desc {
   margin: 0;
   font-size: 11.5px;
-  line-height: 1.45;
+  line-height: 1.42;
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
 }
 
-@container browser-env (max-width: 640px) {
-  .browser-page .browser-hero-bar {
-    grid-template-columns: 1fr;
-    gap: 10px;
-  }
+.browser-page .browser-scenario-card > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 
-  .browser-page .browser-hero-bar .browser-hero-actions {
-    justify-content: flex-start;
-  }
+.browser-page .browser-data-card .browser-cache-error {
+  margin: 0;
+  padding: 8px 16px;
+  border: 0;
+  border-top: 1px solid var(--landing-line);
+  border-radius: 0;
+}
 
+.browser-page .browser-data-card .browser-cache-details {
+  margin: 0;
+  padding: 7px 16px;
+  border-top: 1px solid var(--landing-line);
+}
+
+.browser-page .browser-sections .browser-advanced-panel {
+  margin: 0;
+  border-radius: 12px;
+}
+
+.browser-page .browser-advanced-panel .identity-policy-trigger {
+  padding: 11px 16px;
+}
+
+.browser-page .browser-advanced-panel .browser-advanced-body {
+  padding: 12px 16px 14px;
+}
+
+@container browser-env (max-width: 580px) {
+  .browser-page .browser-advanced-panel .browser-advanced-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container browser-env (max-width: 680px) {
   .browser-page .browser-checks .browser-check-grid {
     grid-template-columns: 1fr;
   }
@@ -374,92 +596,36 @@
   }
 }
 
+@container browser-env (max-width: 390px) {
+  .browser-page .browser-data-scenarios .browser-scenario-card {
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .browser-page .browser-scenario-card > button {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+}
+
 /* ==========================================================================
    3. Computer Environment (system.tsx)
    ========================================================================== */
-.system-environment-page .system-alignment-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  padding: 0;
-  margin: 0;
-  overflow: hidden;
-}
-
-.system-environment-page .system-alignment-cell {
-  display: grid;
-  align-content: start;
-  gap: 4px;
-  min-width: 0;
-  padding: 11px 14px;
-}
-
-.system-environment-page .system-alignment-cell + .system-alignment-cell {
-  border-left: 1px solid var(--landing-line);
-}
-
-.system-environment-page .system-alignment-label {
-  font-size: 11px;
-  line-height: 1.3;
-  color: var(--muted-foreground);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.system-environment-page .system-alignment-value {
-  font-size: 12.5px;
-  line-height: 1.35;
-  font-weight: 600;
-  color: var(--foreground);
-  font-family: var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.system-environment-page .system-alignment-status {
-  display: inline-flex;
+.system-environment-page .system-group-heading {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px 8px;
 }
 
-.system-environment-page .system-alignment-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background: #d97706;
-}
-
-.system-environment-page .system-alignment-dot.is-aligned {
-  background: #16a34a;
-}
-
-.system-environment-page .system-alignment-dot.is-unknown {
-  background: #94a3b8;
-}
-
-:root.dark .system-environment-page .system-alignment-dot.is-aligned {
-  background: #4ade80;
-}
-
-.system-environment-page .system-alignment-badge {
-  font-size: 12.5px;
-  line-height: 1.35;
-  font-weight: 600;
-  color: var(--foreground);
-}
-
-.system-environment-page .system-alignment-meta {
-  font-size: 11px;
-  line-height: 1.3;
+.system-environment-page .system-group-note {
+  margin-left: auto;
+  font-size: 11.5px;
+  line-height: 1.4;
   color: var(--muted-foreground);
   font-family: var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* Unified 3-Row Grouped Settings Card */
@@ -477,7 +643,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px 18px;
-  padding: 21px 18px;
+  padding: 15px 16px;
   min-width: 0;
   border: 0;
   border-radius: 0;
@@ -488,6 +654,7 @@
 
 :root[data-surface="glass"] .system-environment-page .system-settings-list .system-setting-card,
 :root.dark[data-surface="glass"] .system-environment-page .system-settings-list .system-setting-card,
+:root[data-backdrop="custom"] .system-environment-page .system-settings-list .system-setting-card,
 :root[data-surface="hatched"] .system-environment-page .system-settings-list .system-setting-card {
   background: transparent;
   border: 0;
@@ -495,7 +662,9 @@
   backdrop-filter: none;
 }
 
-.system-environment-page .system-settings-list .system-setting-card + .system-setting-card {
+.system-environment-page .system-settings-list .system-setting-card + .system-setting-card,
+:root[data-surface="glass"] .system-environment-page .system-settings-list .system-setting-card + .system-setting-card,
+:root[data-backdrop="custom"] .system-environment-page .system-settings-list .system-setting-card + .system-setting-card {
   border-top: 1px solid var(--landing-line);
 }
 
@@ -503,14 +672,16 @@
 .system-environment-page .system-settings-list .system-setting-card[data-system-setting="location"] {
   grid-column: auto;
   grid-template-columns: minmax(0, 1fr);
-  padding: 10px 18px;
+  padding: 9px 16px;
 }
 
 .system-environment-page .system-setting-card .system-setting-header {
   display: flex;
   align-items: flex-start;
-  gap: 11px;
+  flex-wrap: nowrap;
+  gap: 12px;
   min-width: 0;
+  padding: 0;
 }
 
 .system-environment-page .system-setting-card .settings-icon-badge {
@@ -572,21 +743,21 @@
 
 .system-environment-page .system-setting-card .system-setting-note {
   margin: 1px 0 0;
-  padding-left: 0;
+  padding: 0;
   font-size: 11px;
   line-height: 1.4;
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
 }
 
-.system-environment-page .system-setting-card:not([data-system-setting="location"]) .system-inline-controls {
+.system-environment-page .system-settings-list .system-setting-card:not([data-system-setting="location"]) .system-inline-controls {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
-  margin-top: 0;
+  margin: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -595,24 +766,28 @@
 }
 
 .system-environment-page .system-setting-card .system-inline-field {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
   min-width: 0;
-  width: 210px;
   max-width: 100%;
 }
 
 .system-environment-page .system-setting-card .system-inline-field > button {
-  width: 100%;
-  min-width: 0;
+  flex: 0 1 168px;
+  width: 168px;
+  min-width: 132px;
   max-width: 100%;
 }
 
 .system-environment-page .system-setting-card .system-field-label {
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.2;
   color: var(--muted-foreground);
   font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .system-environment-page .system-setting-card .system-inline-controls > button {
@@ -626,11 +801,13 @@
   justify-content: space-between;
   gap: 10px 18px;
   min-width: 0;
+  padding: 0;
 }
 
 .system-environment-page .system-setting-card .system-location-row .system-setting-header {
   flex: 1 1 auto;
   min-width: 0;
+  padding: 0;
 }
 
 .system-environment-page .system-setting-card .system-location-description {
@@ -648,7 +825,7 @@
   flex-wrap: wrap;
   gap: 8px;
   flex-shrink: 0;
-  margin-top: 0;
+  margin: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -656,52 +833,17 @@
   box-shadow: none;
 }
 
-.system-environment-page .system-baseline-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  padding: 9px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--landing-line);
-  background: var(--muted);
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--muted-foreground);
-}
-
-:root.dark .system-environment-page .system-baseline-footer {
-  background: rgba(15, 23, 42, 0.28);
-}
-
-.system-environment-page .system-baseline-footer strong {
-  color: var(--foreground);
-  font-weight: 600;
-  margin-right: 6px;
-}
-
-.system-environment-page .system-baseline-targets {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--muted-foreground);
+.system-environment-page .system-setting-card .system-inline-controls.system-location-controls > button {
+  width: auto;
+  max-width: 196px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 @container computer-env (max-width: 760px) {
-  .system-environment-page .system-alignment-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .system-environment-page .system-alignment-cell + .system-alignment-cell {
-    border-left: 0;
-  }
-
-  .system-environment-page .system-alignment-cell:nth-child(even) {
-    border-left: 1px solid var(--landing-line);
-  }
-
-  .system-environment-page .system-alignment-cell:nth-child(n + 3) {
-    border-top: 1px solid var(--landing-line);
+  .system-environment-page .system-group-note {
+    margin-left: 0;
+    flex-basis: 100%;
   }
 
   .system-environment-page .system-settings-list .system-setting-card {
@@ -711,21 +853,23 @@
   }
 
   .system-environment-page .system-settings-list .system-setting-card[data-system-setting="location"] {
-    padding: 10px 16px;
+    padding: 9px 16px;
   }
 
-  .system-environment-page .system-setting-card .system-setting-note {
-    padding-left: 0;
-  }
-
-  .system-environment-page .system-setting-card:not([data-system-setting="location"]) .system-inline-controls {
+  .system-environment-page .system-settings-list .system-setting-card:not([data-system-setting="location"]) .system-inline-controls {
     width: 100%;
     justify-content: flex-end;
   }
 
   .system-environment-page .system-setting-card .system-inline-field {
-    flex: 1 1 180px;
+    flex: 1 1 200px;
     width: auto;
+  }
+
+  .system-environment-page .system-setting-card .system-inline-field > button {
+    flex: 1 1 120px;
+    width: auto;
+    min-width: 0;
   }
 
   .system-environment-page .system-setting-card .system-location-row {
@@ -745,18 +889,6 @@
 }
 
 @container computer-env (max-width: 420px) {
-  .system-environment-page .system-alignment-strip {
-    grid-template-columns: 1fr;
-  }
-
-  .system-environment-page .system-alignment-cell:nth-child(even) {
-    border-left: 0;
-  }
-
-  .system-environment-page .system-alignment-cell + .system-alignment-cell {
-    border-top: 1px solid var(--landing-line);
-  }
-
   .system-environment-page .system-setting-card .system-inline-field {
     flex-basis: 100%;
   }
@@ -765,6 +897,39 @@
 /* ==========================================================================
    4. Network Environment (vps.tsx)
    ========================================================================== */
+.network-page .network-header .network-copy-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 9px;
+  margin: 0;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  background: color-mix(in srgb, #16a34a 12%, transparent);
+  border: 1px solid color-mix(in srgb, #16a34a 28%, transparent);
+  color: #16703c;
+}
+
+.network-page .network-header .network-copy-status.error {
+  background: color-mix(in srgb, #dc2626 11%, transparent);
+  border-color: color-mix(in srgb, #dc2626 28%, transparent);
+  color: #b42318;
+}
+
+:root.dark .network-page .network-header .network-copy-status {
+  background: color-mix(in srgb, #4ade80 16%, transparent);
+  border-color: color-mix(in srgb, #4ade80 32%, transparent);
+  color: #86efac;
+}
+
+:root.dark .network-page .network-header .network-copy-status.error {
+  background: color-mix(in srgb, #f87171 16%, transparent);
+  border-color: color-mix(in srgb, #f87171 32%, transparent);
+  color: #fca5a5;
+}
+
 .network-page .network-sections .network-action-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -780,32 +945,33 @@
   min-width: 0;
 }
 
+.network-page .network-action-list .network-action-card:hover {
+  border-color: color-mix(in srgb, var(--local-accent) 32%, var(--landing-line));
+}
+
+:root[data-surface="glass"] .network-page .network-action-list .network-action-card:hover,
+:root[data-backdrop="custom"] .network-page .network-action-list .network-action-card:hover {
+  border-color: color-mix(in srgb, var(--local-accent) 34%, var(--glass-card-border));
+}
+
+.network-page .network-action-card .network-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .network-page .network-action-card .network-action-main {
   display: grid;
   gap: 5px;
   min-width: 0;
 }
 
-.network-page .network-action-card .network-card-role {
-  font-size: 11px;
-  line-height: 1.3;
-  font-weight: 500;
-  color: var(--muted-foreground);
-  letter-spacing: 0.01em;
-}
-
-.network-page .network-action-card .network-action-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.network-page .network-action-card .network-action-head h2 {
+.network-page .network-action-card .network-action-main h2 {
   margin: 0;
   font-size: 13.5px;
   line-height: 1.35;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--foreground);
   overflow-wrap: anywhere;
 }
@@ -813,7 +979,7 @@
 .network-page .network-action-card .network-action-desc {
   margin: 0;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.48;
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
 }
@@ -821,67 +987,169 @@
 .network-page .network-action-card .network-action-buttons {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  padding-top: 2px;
-  border-top: 0;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--landing-line);
 }
 
+.network-page .network-action-card .network-step-tag {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--muted-foreground);
+}
+
+/* Edge-to-Edge 2x2 Hairline Domain Matrix */
 .network-page .network-sections .domain-diagnostics {
   display: grid;
-  gap: 12px;
-  padding: 14px 16px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
 }
 
 .network-page .domain-diagnostics .domain-diagnostics-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 10px 16px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--landing-line);
+  background: color-mix(in srgb, var(--muted) 26%, transparent);
 }
 
-.network-page .domain-diagnostics .domain-diagnostics-head {
-  display: grid;
-  gap: 3px;
+.network-page .domain-diagnostics-header .domain-diagnostics-title-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
   min-width: 0;
   flex: 1 1 280px;
 }
 
+.network-page .domain-diagnostics .domain-diagnostics-head {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
 .network-page .domain-diagnostics .domain-diagnostics-head h2 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 13.5px;
+  font-weight: 600;
   line-height: 1.3;
   letter-spacing: -0.01em;
+  color: var(--foreground);
 }
 
 .network-page .domain-diagnostics .domain-diagnostics-subtitle {
   margin: 0;
   font-size: 11.5px;
-  line-height: 1.45;
+  line-height: 1.42;
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
 }
 
 .network-page .domain-diagnostics .domain-outcome {
   margin: 0;
-  padding: 9px 12px;
-  border-radius: 8px;
+  padding: 9px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--landing-line);
+  border-radius: 0;
+}
+
+.network-page .domain-diagnostics .domain-outcome.passed {
+  background: color-mix(in srgb, #16a34a 9%, var(--panel));
+  color: #16703c;
+}
+
+.network-page .domain-diagnostics .domain-outcome.passed strong {
+  color: #16703c;
+}
+
+.network-page .domain-diagnostics .domain-outcome.failed {
+  background: color-mix(in srgb, #dc2626 8%, var(--panel));
+  color: #b42318;
+}
+
+.network-page .domain-diagnostics .domain-outcome.failed strong {
+  color: #b42318;
+}
+
+.network-page .domain-diagnostics .domain-outcome.checking {
+  background: color-mix(in srgb, #d97706 9%, var(--panel));
+  color: #986400;
+}
+
+.network-page .domain-diagnostics .domain-outcome.checking strong {
+  color: #986400;
+}
+
+:root.dark .network-page .domain-diagnostics .domain-outcome.passed {
+  background: color-mix(in srgb, #4ade80 12%, var(--panel));
+  color: #86efac;
+}
+
+:root.dark .network-page .domain-diagnostics .domain-outcome.passed strong {
+  color: #bbf7d0;
+}
+
+:root.dark .network-page .domain-diagnostics .domain-outcome.failed {
+  background: color-mix(in srgb, #f87171 13%, var(--panel));
+  color: #fca5a5;
+}
+
+:root.dark .network-page .domain-diagnostics .domain-outcome.failed strong {
+  color: #fecaca;
+}
+
+:root.dark .network-page .domain-diagnostics .domain-outcome.checking {
+  background: color-mix(in srgb, #fbbf24 12%, var(--panel));
+  color: #fde68a;
+}
+
+:root.dark .network-page .domain-diagnostics .domain-outcome.checking strong {
+  color: #fef3c7;
 }
 
 .network-page .domain-diagnostics .domain-diagnostics-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 12px;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
+  background: transparent;
 }
 
 .network-page .domain-diagnostics-list .domain-diagnostics-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   min-width: 0;
-  padding: 10px 12px;
-  border-radius: 9px;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.network-page .domain-diagnostics-list .domain-diagnostics-item:hover {
+  background: color-mix(in srgb, var(--muted) 25%, transparent);
+  border-color: var(--landing-line);
+}
+
+.network-page .domain-diagnostics-list .domain-diagnostics-item:nth-child(even) {
+  border-left: 1px solid var(--landing-line);
+}
+
+.network-page .domain-diagnostics-list .domain-diagnostics-item:nth-child(n + 3) {
+  border-top: 1px solid var(--landing-line);
 }
 
 .network-page .domain-diagnostics-item .domain-name-row {
@@ -910,6 +1178,52 @@
   color: var(--muted-foreground);
 }
 
+:root.dark .network-page .domain-diagnostics-item.failed .domain-detail {
+  color: #fca5a5;
+}
+
+.network-page .domain-diagnostics-item .domain-badge {
+  border: 1px solid var(--landing-line);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.network-page .domain-diagnostics-item .domain-badge.passed {
+  background: color-mix(in srgb, #16a34a 12%, transparent);
+  border-color: color-mix(in srgb, #16a34a 28%, transparent);
+  color: #16703c;
+}
+
+.network-page .domain-diagnostics-item .domain-badge.failed {
+  background: color-mix(in srgb, #dc2626 11%, transparent);
+  border-color: color-mix(in srgb, #dc2626 28%, transparent);
+  color: #b42318;
+}
+
+.network-page .domain-diagnostics-item .domain-badge.checking {
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  border-color: color-mix(in srgb, #d97706 28%, transparent);
+  color: #986400;
+}
+
+:root.dark .network-page .domain-diagnostics-item .domain-badge.passed {
+  background: color-mix(in srgb, #4ade80 16%, transparent);
+  border-color: color-mix(in srgb, #4ade80 32%, transparent);
+  color: #86efac;
+}
+
+:root.dark .network-page .domain-diagnostics-item .domain-badge.failed {
+  background: color-mix(in srgb, #f87171 16%, transparent);
+  border-color: color-mix(in srgb, #f87171 32%, transparent);
+  color: #fca5a5;
+}
+
+:root.dark .network-page .domain-diagnostics-item .domain-badge.checking {
+  background: color-mix(in srgb, #fbbf24 16%, transparent);
+  border-color: color-mix(in srgb, #fbbf24 32%, transparent);
+  color: #fde68a;
+}
+
 @container network-env (max-width: 720px) {
   .network-page .network-sections .network-action-list {
     grid-template-columns: 1fr;
@@ -918,5 +1232,13 @@
 
   .network-page .domain-diagnostics .domain-diagnostics-list {
     grid-template-columns: 1fr;
+  }
+
+  .network-page .domain-diagnostics-list .domain-diagnostics-item:nth-child(even) {
+    border-left: 0;
+  }
+
+  .network-page .domain-diagnostics-list .domain-diagnostics-item + .domain-diagnostics-item {
+    border-top: 1px solid var(--landing-line);
   }
 }
