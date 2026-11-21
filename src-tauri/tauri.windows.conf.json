@@ -17,6 +17,7 @@
       },
       {
         "label": "monitor",
+        "create": false,
         "title": "Claude-Local Monitor",
         "url": "index.html?window=monitor",
         "width": 340,

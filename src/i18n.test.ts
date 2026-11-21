@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 中英文 YAML、共享翻译入口与 TypeScript 源码目录。
- * [OUTPUT]: 双语键/插槽一致性、全部界面源文案覆盖、原生结果翻译及切换后保留原始数据的回归。
+ * [INPUT]: 中英文 YAML、共享翻译入口、TypeScript 源码目录与 src-tauri/src 递归 Rust 源码目录（含 identities/orchestrator/*.rs）。
+ * [OUTPUT]: 双语键/插槽一致性、全部界面源文案覆盖、原生错误键（quotaOnline.* / relay.error.* / browser.error.*）双语覆盖及切换后保留原始数据的回归。
  * [POS]: 本地化的离线验证；不启动图形界面，不修改系统语言或用户设置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -12,6 +12,17 @@ import {translate,setLocale} from './i18n';
 const zh:Record<string,string>=parse(readFileSync(new URL('./locales/zh.yaml',import.meta.url),'utf8'));
 const en:Record<string,string>=parse(readFileSync(new URL('./locales/en.yaml',import.meta.url),'utf8'));
 const slots=(value:string)=>[...value.matchAll(/\{(\w+)\}/g)].map(match=>match[1]).sort();
+function collectRustFiles(dir:URL):URL[]{
+  const out:URL[]=[];
+  for(const entry of readdirSync(dir,{withFileTypes:true})){
+    if(entry.isDirectory()){
+      out.push(...collectRustFiles(new URL(`${entry.name}/`,dir)));
+    }else if(entry.isFile()&&entry.name.endsWith('.rs')){
+      out.push(new URL(entry.name,dir));
+    }
+  }
+  return out;
+}
 test('双语目录完整且命名插槽一致',()=>{
   expect(Object.keys(en).sort()).toEqual(Object.keys(zh).sort());
   for(const key of Object.keys(zh)){
@@ -72,19 +83,23 @@ test('YAML 目录中无重复顶级键',()=>{
   }
 });
 
-test('原生额度命令错误也能在两种语言中显示人类可读文案',()=>{
-  const nativeFiles=[
-    '../src-tauri/src/identities/online.rs',
-    '../src-tauri/src/browser/quota_bridge.rs',
-    '../src-tauri/src/browser/quota_connection.rs',
-    '../src-tauri/src/browser/quota_existing.rs',
-  ];
-  const nativeKeys=new Set(nativeFiles.flatMap(path=>
-    [...readFileSync(new URL(path,import.meta.url),'utf8').matchAll(/"(quotaOnline\.[A-Za-z0-9_.]+)"/g)].map(match=>match[1])));
+test('原生额度与智能接力编排错误键均能在两种语言中显示人类可读文案',()=>{
+  const orchestratorFiles=collectRustFiles(new URL('../src-tauri/src/identities/orchestrator/',import.meta.url));
+  expect(orchestratorFiles.length).toBeGreaterThanOrEqual(4);
+  const nativeFiles=collectRustFiles(new URL('../src-tauri/src/',import.meta.url));
+  const nativeKeys=new Set(nativeFiles.flatMap(fileUrl=>
+    [...readFileSync(fileUrl,'utf8').matchAll(/"((?:quotaOnline|relay\.error|browser\.error)\.[A-Za-z0-9_.]+)"/g)].map(match=>match[1])));
   expect(nativeKeys.has('quotaOnline.unavailable')).toBe(true);
   expect(nativeKeys.has('quotaOnline.busy')).toBe(true);
+  expect(nativeKeys.has('relay.error.invalidStrategy')).toBe(true);
+  expect(nativeKeys.has('relay.error.slotConcurrencyCapped')).toBe(true);
+  expect(nativeKeys.has('relay.error.launchTerminalFailed')).toBe(true);
+  expect(nativeKeys.has('relay.error.invalidLaunchCwd')).toBe(true);
+  expect(nativeKeys.has('relay.error.recoveryPending')).toBe(true);
   for(const language of ['zh','en'] as const){
+    const catalog=language==='zh'?zh:en;
     for(const key of nativeKeys){
+      expect(Object.hasOwn(catalog,key)).toBe(true);
       const message=translate(key,{},language);
       expect(message).not.toBe(key);
       expect(message).not.toMatch(/\{\w+\}/);

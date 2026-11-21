@@ -1,11 +1,12 @@
 /**
- * [INPUT]: 当前已筛选的本地用量快照、序列桶、成本与单会话均耗折算、活动主题与双语翻译函数。
- * [OUTPUT]: 零外部依赖的高清 2x Retina Token 消耗截图（支持「数据概览」与「趋势全图」双模式，含顶对齐 2×2 KPI 卡与单次均耗/防截断换行的副标题、对齐占比列与 2×2 微型统计网格的模型分布卡、防标题重叠截断与时区安全峰值标签，一键写入剪贴板或下载 PNG）。
+ * [INPUT]: 当前已筛选的本地用量快照、序列桶、成本与单会话均耗折算、套餐回本倍率与子代理槽位状态、活动主题与双语翻译函数。
+ * [OUTPUT]: 零外部依赖的高清 2x Retina Token 消耗截图（支持「数据概览」与「趋势全图」双模式，含单账号套餐层级/子代理活跃标记、订阅回本倍率、顶对齐 2×2 KPI 卡与单次均耗/防截断换行的副标题、对齐占比列与 2×2 微型统计网格的模型分布卡、防标题重叠截断与时区安全峰值标签，一键写入剪贴板或下载 PNG）。
  * [POS]: 用量分析的纯前端视觉导出工具；仅消费现有内存快照，不发起 IPC 请求或访问剪贴板历史。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {
   cacheHitRate,
+  computeSubscriptionRoi,
   detectModelFamily,
   estimateTotalsCostUsd,
   formatTurnsPerSession,
@@ -34,7 +35,9 @@ export type UsageScreenshotOptions = {
   period: UsagePeriod;
   periodLabel: string;
   rangeLabel: string | null;
+  accountId?: string | null;
   accountLabel: string;
+  roiPeriodDays?: number;
   locale: 'zh' | 'en';
   t: (key: string, params?: Record<string, string | number>) => string;
 };
@@ -263,8 +266,32 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
   ctx.fillText(titleText, 48, 40);
   const titleRight = 48 + ctx.measureText(titleText).width + 20;
 
+  const matchedAccount =
+    options.accountId && options.accountId !== 'all'
+      ? snapshot.accounts.find(item => item.id === options.accountId) ?? null
+      : null;
+  const effectiveRoiDays = (() => {
+    if (typeof options.roiPeriodDays === 'number' && Number.isFinite(options.roiPeriodDays) && options.roiPeriodDays > 0) {
+      return options.roiPeriodDays;
+    }
+    if (options.period === 'today' || options.period === 'yesterday') return 1;
+    if (options.period === 'week') return 7;
+    if (options.period === 'month') return 30;
+    const spanFromTracking =
+      snapshot.tracking_since != null && snapshot.generated_at > snapshot.tracking_since
+        ? Math.ceil((snapshot.generated_at - snapshot.tracking_since) / 86_400)
+        : 0;
+    return Math.max(30, options.series.filter(d => !d.future).length, spanFromTracking);
+  })();
+  const singleAccountRoi =
+    matchedAccount && costBreakdown.costUsd > 0
+      ? computeSubscriptionRoi(matchedAccount.plan, costBreakdown.costUsd, effectiveRoiDays)
+      : null;
+
   const scopeMeta = [
     `${t('usage.accountFilter')}: ${accountLabel}`,
+    matchedAccount?.plan || null,
+    matchedAccount?.slot_active ? t('usage.slotActiveBadge') : null,
     periodLabel,
     rangeLabel,
     snapshot.timezone || null,
@@ -475,6 +502,9 @@ export function renderUsageScreenshotCanvas(options: UsageScreenshotOptions): HT
       subItems:
         costBreakdown.costUsd > 0
           ? [
+              ...(singleAccountRoi
+                ? [t('usage.roiBadge', { multiplier: singleAccountRoi.multiplier.toFixed(1) })]
+                : []),
               t('usage.costOutputSub', { cost: formatUsdCost(costBreakdown.outputCostUsd, true) }),
               t('usage.costCacheSub', {
                 cost: formatUsdCost(costBreakdown.cacheWriteCostUsd + costBreakdown.cacheReadCostUsd, true),

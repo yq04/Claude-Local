@@ -1,10 +1,10 @@
 /**
  * [INPUT]: 在线额度状态/原因白名单、持久批次结果契约、前台轮询设置与订阅重置元数据（含浏览器自动同步与手动充值/到期日历）。
- * [OUTPUT]: 批次/额度纯模型（含未知/过期目标过滤 buildStaleOrUnknownBatchTargets 与零计数子句过滤）、重置卡到期紧急度分级（<=1h/<=24h，仅按真实到期）与重置次数新鲜/待同步/已到期三态、订阅到期短标签（MM/DD）与 +1 自然月推算、独立浏览器失败与原生调度门禁倒计时、严格新5h确认、单例快照订阅、受限迁移和显式设置IPC。
+ * [OUTPUT]: 批次/额度纯模型（含未知/过期目标过滤 buildStaleOrUnknownBatchTargets 与零计数子句过滤）、重置卡到期紧急度分级（<=1h/<=24h，仅按逐份 grant 的真实未过期到期）与重置次数新鲜/待核对双态（正余额不凭本地时钟隐藏）、订阅到期短标签（MM/DD）与 +1 自然月推算、独立浏览器失败与原生调度门禁倒计时、严格新5h确认、单例快照订阅、受限迁移和显式设置IPC。
  * [POS]: 仅原生owner调度唤醒；前端桥不设唤醒timer、不读取凭据或发HTTP，不写额度账本。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import type { IdentitySubscriptionMetadata } from './identity-model';
+import type { IdentitySubscriptionMetadata, ManualResetGrant } from './identity-model';
 import { evaluateQuota, type QuotaInput } from './identity-quota';
 
 export type OnlineQuotaStatus =
@@ -22,7 +22,7 @@ export type OnlineQuotaStatus =
   | 'not_run'
   | 'deadline_exceeded';
 
-export type OnlineQuotaReason = 'unsupported_proxy' | 'route_changed' | 'auth_required' | 'rate_limited'
+export type OnlineQuotaReason = 'unsupported_proxy' | 'route_changed' | 'route_required' | 'auth_required' | 'rate_limited'
   | 'outcome_unknown' | 'cli_active' | 'low_7d_quota' | 'disabled_by_user' | 'capability_blocked'
   | 'not_expired' | 'already_woken' | 'scheduler_busy' | 'scheduler_unavailable' | 'backoff_cooldown';
 export type OnlineQuotaStage = 'route' | 'commit' | 'profile' | 'usage' | 'messages' | 'exit_check' | 'scheduler';
@@ -154,13 +154,13 @@ export interface SubscriptionResetDisplay {
     label: string;
     observedAtMs?: number | null;
     validUntil?: number | null;
-    /** Best known real expiry (seconds): synced grant end, or a sub-24h valid_until. */
+    /** Best known real expiry (seconds): next expiring grant end (null if unbounded), or legacy sub-24h valid_until. */
     realExpiresAt?: number | null;
     stale: boolean;
     usable: boolean;
-    /** The resets are known to have ended (real expiry passed); nothing left to show. */
+    /** Kept for compatibility; positive synced resets are never silently hidden locally. */
     ended: boolean;
-    /** Older than the 24h freshness window but not known to have ended: re-sync to confirm. */
+    /** Stale freshness window or elapsed local expiry: re-sync on claude.ai to confirm. */
     needsResync: boolean;
     expiresInSec?: number | null;
     urgency: 'critical' | 'soon' | 'normal';
@@ -215,23 +215,50 @@ export function formatSubscriptionAndResets(
 
   let manualResets: SubscriptionResetDisplay['manualResets'] | undefined;
   if (hasResets) {
+    const remaining = meta.manual_resets_remaining!;
     const observedAtMs = meta.manual_resets_observed_at_ms ?? meta.metadata_observed_at_ms ?? null;
     const validUntil = meta.manual_resets_valid_until ?? null;
-    const stale = !observedAtMs || nowMs - observedAtMs > 24 * 60 * 60 * 1000 ||
-      !validUntil || validUntil * 1000 <= nowMs;
-    // valid_until is capped at observation + 24h as a freshness bound. A value clearly
-    // below that cap is a real grant end; newer syncs also carry the uncapped grant end.
+    // valid_until is capped at observation + 24h as a freshness bound. Older syncs without
+    // per-grant slices fall back to manual_resets_grant_ends_at or a sub-24h valid_until.
     const grantEndsAt = typeof meta.manual_resets_grant_ends_at === 'number' && Number.isFinite(meta.manual_resets_grant_ends_at) && meta.manual_resets_grant_ends_at > 0
       ? meta.manual_resets_grant_ends_at
       : null;
     const cappedBound = observedAtMs ? Math.floor(observedAtMs / 1000) + 24 * 60 * 60 - 60 : null;
-    const realExpiresAt = grantEndsAt ?? (validUntil !== null && cappedBound !== null && validUntil < cappedBound ? validUntil : null);
-    // Only a positive balance can "end"; a stale zero simply needs re-verification.
-    const ended = meta.manual_resets_remaining! > 0 && realExpiresAt !== null && realExpiresAt * 1000 <= nowMs;
-    const usable = !stale && !ended && (meta.manual_resets_remaining === 0 || validUntil !== null);
-    const needsResync = stale && !ended;
+    const legacyExpiresAt = grantEndsAt ?? (validUntil !== null && cappedBound !== null && validUntil < cappedBound ? validUntil : null);
+    const validGrants = remaining > 0 && Array.isArray(meta.manual_resets_grants)
+      ? meta.manual_resets_grants.filter((g): g is ManualResetGrant =>
+          Boolean(g) && typeof g.resets_left === 'number' && Number.isInteger(g.resets_left) && g.resets_left > 0
+        )
+      : [];
+    let realExpiresAt: number | null;
+    if (validGrants.length > 0) {
+      const finiteEnds = validGrants
+        .map(g => g.ends_at)
+        .filter((end): end is number => typeof end === 'number' && Number.isFinite(end) && end > 0);
+      const futureEnds = finiteEnds.filter(end => end * 1000 > nowMs);
+      const hasUnbounded = validGrants.some(g => g.ends_at == null);
+      if (futureEnds.length > 0) {
+        realExpiresAt = Math.min(...futureEnds);
+      } else if (hasUnbounded) {
+        realExpiresAt = null;
+      } else if (finiteEnds.length > 0) {
+        realExpiresAt = Math.max(...finiteEnds);
+      } else {
+        realExpiresAt = null;
+      }
+    } else {
+      realExpiresAt = remaining > 0 ? legacyExpiresAt : null;
+    }
+    const baseStale = !observedAtMs || nowMs - observedAtMs > 24 * 60 * 60 * 1000 ||
+      !validUntil || validUntil * 1000 <= nowMs;
+    const localExpiryElapsed = remaining > 0 && realExpiresAt !== null && realExpiresAt * 1000 <= nowMs;
+    const stale = baseStale || localExpiryElapsed;
+    // Never silently hide a previously synced positive reset balance based on local clock passage.
+    const ended = false;
+    const usable = !stale && (remaining === 0 || validUntil !== null);
+    const needsResync = stale;
     const expiresInSec =
-      usable && meta.manual_resets_remaining! > 0 && realExpiresAt !== null && realExpiresAt * 1000 > nowMs
+      usable && remaining > 0 && realExpiresAt !== null && realExpiresAt * 1000 > nowMs
         ? Math.max(1, Math.floor((realExpiresAt * 1000 - nowMs) / 1000))
         : null;
     const urgency: 'critical' | 'soon' | 'normal' =
@@ -243,7 +270,7 @@ export function formatSubscriptionAndResets(
             ? 'soon'
             : 'normal';
     manualResets = {
-      remaining: meta.manual_resets_remaining!,
+      remaining,
       label: t('identityCard.manualResetsRemaining'),
       observedAtMs,
       validUntil,

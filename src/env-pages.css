@@ -165,7 +165,7 @@
 
 @container (max-width: 390px) {
   .system-page .env-telemetry-strip {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .system-page .env-telemetry-cell:nth-child(even) {
@@ -575,7 +575,7 @@
 
 @container browser-env (max-width: 680px) {
   .browser-page .browser-checks .browser-check-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .browser-page .browser-check-grid .browser-check:nth-child(even) {
@@ -587,7 +587,7 @@
   }
 
   .browser-page .browser-data-card .browser-data-scenarios {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .browser-page .browser-data-scenarios .browser-scenario-card + .browser-scenario-card {
@@ -847,7 +847,7 @@
   }
 
   .system-environment-page .system-settings-list .system-setting-card {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 10px;
     padding: 14px 16px;
   }
@@ -1226,12 +1226,12 @@
 
 @container network-env (max-width: 720px) {
   .network-page .network-sections .network-action-list {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 10px;
   }
 
   .network-page .domain-diagnostics .domain-diagnostics-list {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .network-page .domain-diagnostics-list .domain-diagnostics-item:nth-child(even) {

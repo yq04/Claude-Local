@@ -158,7 +158,7 @@ class Audit:
                     visit(child, relative / child.name)
             elif path.is_file():
                 if not engine and not extracted and destination == "browser-ui/" and path.suffix.lower() not in {
-                    ".html", ".js", ".css", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico", ".woff", ".woff2", ".ttf"
+                    ".html", ".js", ".css", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".avif", ".ico", ".woff", ".woff2", ".ttf"
                 }:
                     self.fail("unexpected-frontend-entry", label)
                     return

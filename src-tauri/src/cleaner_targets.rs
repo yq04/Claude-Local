@@ -57,6 +57,10 @@ pub(super) fn desktop_storage(root: &Path, desktop: &Path) -> Vec<Target> {
         "Network Persistent State",
         "BrowsingTopicsState",
         "blob_storage",
+        "cowork-enabled-cli-ops.json",
+        "spaces-present",
+        "local-agent-mode-sessions",
+        "claude-code-sessions",
     ]
     .into_iter()
     .map(|name| Target {
@@ -144,7 +148,6 @@ pub(super) fn definitions_with_warnings(root: &Path) -> (Vec<Target>, Vec<String
         ("usage.with-fix.jsonl", "用量修正记录"),
         ("paste-cache", "粘贴缓存"),
         ("statsig", "实验特性与遥测缓存"),
-        ("todos", "待办缓存"),
         ("ide", "IDE 连接状态缓存"),
         ("daemon", "后台守护进程状态"),
         ("daemon.lock", "后台守护进程锁"),
@@ -155,6 +158,7 @@ pub(super) fn definitions_with_warnings(root: &Path) -> (Vec<Target>, Vec<String
         (".last-update-result.json", "更新结果记录"),
         (".oauth_refresh.lock", "Code 缓存"),
         (".oauth_refresh.lock.owner", "Code 缓存"),
+        ("remote-settings.json", "远端组织设置缓存"),
     ] {
         result.push(target(
             root,
@@ -192,6 +196,30 @@ pub(super) fn definitions_with_warnings(root: &Path) -> (Vec<Target>, Vec<String
         (
             "Library/Application Support/Claude/GPUCache",
             "Desktop 图形缓存",
+        ),
+        (
+            "Library/Application Support/Claude/fcache",
+            "Desktop 特性缓存",
+        ),
+        (
+            "Library/Application Support/Claude/model-catalog",
+            "Desktop 模型目录缓存",
+        ),
+        (
+            "Library/Application Support/Claude-3p/fcache",
+            "Desktop 特性缓存",
+        ),
+        (
+            "Library/Application Support/Claude-3p/model-catalog",
+            "Desktop 模型目录缓存",
+        ),
+        (
+            "Library/Application Support/com.anthropic.claudefordesktop/fcache",
+            "Desktop 特性缓存",
+        ),
+        (
+            "Library/Application Support/com.anthropic.claudefordesktop/model-catalog",
+            "Desktop 模型目录缓存",
         ),
     ] {
         result.push(target(
@@ -249,6 +277,8 @@ pub(super) fn definitions_with_warnings(root: &Path) -> (Vec<Target>, Vec<String
         ("feedback/drafts", "Code 反馈草稿"),
         ("dev-mods", "Code 会话扩展"),
         ("jobs", "Code 后台作业记录"),
+        ("todos", "待办缓存"),
+        ("teams", "Code 智能体团队状态"),
     ] {
         result.push(target(
             root,
@@ -403,6 +433,8 @@ pub(super) fn definitions_with_warnings(root: &Path) -> (Vec<Target>, Vec<String
                 ("Service Worker/ScriptCache", "Desktop 脚本缓存"),
                 ("logs", "Desktop 日志"),
                 ("Crashpad", "Desktop 崩溃报告"),
+                ("fcache", "Desktop 特性缓存"),
+                ("model-catalog", "Desktop 模型目录缓存"),
             ] {
                 result.push(Target {
                     path: desktop.join(name),

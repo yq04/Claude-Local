@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # [INPUT]: Minimal authenticated account/settings projection, explicit selector, profile/usage or bound browser snapshots with independent clocks.
-# [OUTPUT]: Sanitized status plus explicit wakeup-effect/5h-reset/7d-reset, Ultra five_hour=null, model-scoped weekly pools and plan_tier evidence; opt-in two-phase commit; Python-owned atomic quota ledger and bounded manual-reset validity plus optional uncapped grant end.
+# [OUTPUT]: Sanitized status plus explicit wakeup-effect/5h-reset/7d-reset, Ultra five_hour=null, model-scoped weekly pools and plan_tier evidence; opt-in two-phase commit; Python-owned atomic quota ledger and bounded manual-reset validity plus optional uncapped grant end and per-grant slices.
 # [POS]: Network outside native identity door; grant before writer lock; never refreshes credentials or edits Claude configuration.
 # [PROTOCOL]: Update scripts/CLAUDE.md when changing identity binding or persistence boundaries.
 """Fetch OAuth usage without refreshing or modifying local credentials."""
@@ -102,26 +102,25 @@ class IdentityMismatch(LookupError):
 
 class RouteUnavailable(ValueError):
     """An explicitly configured route cannot be used safely by this transport."""
+    def __init__(self, reason: str = "unsupported_proxy"):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _route(cj):
     fields = cj.get("_online_route", {})
     if not isinstance(fields, dict):
-        raise RouteUnavailable()
-    # Resolve the effective HTTPS route, including settings.local overrides.
-    # A configured unsupported value fails closed; never retry direct.
+        raise RouteUnavailable("unsupported_proxy")
+    # Resolve the effective HTTPS route, including slotProxies and settings(.local).json fallbacks.
+    # Never inspect OS WinINET getproxies(); fail closed when unset unless CLAUDE_LOCAL_ALLOW_DIRECT=1.
     unset = object()
     value = next((fields[key] for key in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy",
                                           "HTTP_PROXY", "http_proxy")
                   if key in fields and fields[key] != ""), unset)
     if value is unset:
-        # Freeze the actual host/system route, including no_proxy, once per run.
-        proxies = urllib.request.getproxies()
-        if urllib.request.proxy_bypass("api.anthropic.com"):
-            proxies = {}
-        if proxies.get("https"):
-            _supported_proxy(proxies["https"] if "://" in proxies["https"] else "http://" + proxies["https"])
-        return "host_system", tuple(sorted(proxies.items()))
+        if os.environ.get("CLAUDE_LOCAL_ALLOW_DIRECT") != "1":
+            raise RouteUnavailable("route_required")
+        return "host_system", ()
     _supported_proxy(value)
     return "account_proxy", (("https", value),)
 
@@ -322,12 +321,85 @@ def _saved_account(app_data: Path, account_id: str):
     return cj, cred, acc, oauth, identity
 
 
+def _resolve_active_record_id(app_data: Path) -> str | None:
+    db_path = app_data / "identity-vault" / "identities.sqlite"
+    if not _safe_regular_file(db_path):
+        return None
+    try:
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=1.5)
+        try:
+            row = conn.execute("SELECT value FROM state WHERE key='active'").fetchone()
+        finally:
+            conn.close()
+        if row and isinstance(row[0], str) and ACCOUNT_ID_RE.fullmatch(row[0].strip()):
+            return row[0].strip()
+    except (OSError, ValueError, sqlite3.Error):
+        return None
+    return None
+
+
+def _load_smart_relay_slot_proxy(app_data: Path, account_id: str) -> str | None:
+    lookup_id = _resolve_active_record_id(app_data) if account_id == "current" else account_id
+    if not lookup_id or not ACCOUNT_ID_RE.fullmatch(lookup_id):
+        return None
+    relay_path = app_data / "smart_relay_v1.json"
+    try:
+        relay_path.lstat()
+    except OSError:
+        return None
+    try:
+        doc = json.loads(_bounded_read(relay_path).decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    slot_proxies = doc.get("slotProxies") or doc.get("slot_proxies")
+    if not isinstance(slot_proxies, dict):
+        return None
+    raw = slot_proxies.get(lookup_id)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def _apply_route_fallback(cj: dict, app_data: Path, claude_home: Path, account_id: str) -> None:
+    fields = cj.get("_online_route")
+    if not isinstance(fields, dict):
+        return
+    # Match evaluator.rs::resolve_slot_proxy priority: slotProxies[id] -> account settings -> host settings.
+    slot_proxy = _load_smart_relay_slot_proxy(app_data, account_id)
+    if slot_proxy is not None:
+        merged = {
+            k: v
+            for k, v in fields.items()
+            if k not in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy")
+        }
+        merged["HTTPS_PROXY"] = slot_proxy
+        cj["_online_route"] = merged
+        return
+    if any(k in fields and fields[k] != "" for k in (
+            "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy")):
+        return
+    host_fields = {}
+    host_fields.update(proxy_fields(_load_settings(claude_home / ".claude" / "settings.json")))
+    host_fields.update(proxy_fields(_load_settings(claude_home / ".claude" / "settings.local.json")))
+    if host_fields:
+        merged = dict(fields)
+        merged.update(host_fields)
+        cj["_online_route"] = merged
+
+
 def resolve_account(app_data: Path, claude_home: Path, account_id: str):
     if account_id == "current":
-        return _read_live(claude_home)
+        cj, cred, acc, oauth, identity = _read_live(claude_home)
+        _apply_route_fallback(cj, app_data, claude_home, account_id)
+        return cj, cred, acc, oauth, identity
     if not ACCOUNT_ID_RE.fullmatch(account_id):
         raise LookupError("saved account unavailable")
     archived = _saved_account(app_data, account_id)
+    archived_cj = dict(archived[0])
+    _apply_route_fallback(archived_cj, app_data, claude_home, account_id)
+    archived = (archived_cj, *archived[1:])
     try:
         live = _read_live(claude_home)
     except (OSError, ValueError, PermissionError):
@@ -373,10 +445,18 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class _FrozenProxy(urllib.request.ProxyHandler):
-    """Use the frozen HTTPS proxy without urllib's implicit host bypass lookup."""
+    """Use the frozen HTTPS proxy without urllib's implicit host bypass lookup; block unproxied direct calls unless opted in."""
     def __init__(self, proxies, *, account_route):
-        super().__init__({"https": proxies["https"]} if proxies.get("https") else {})
+        self._has_https_proxy = bool(proxies.get("https"))
+        super().__init__({"https": proxies["https"]} if self._has_https_proxy else {})
         self.account_route = account_route
+
+    def https_open(self, req):
+        if not self._has_https_proxy:
+            if os.environ.get("CLAUDE_LOCAL_ALLOW_DIRECT") != "1":
+                raise RouteUnavailable("explicit HTTP proxy required")
+            return None
+        return self.proxy_open(req, self.proxies["https"], "https")
 
     def proxy_open(self, req, proxy, protocol):
         value = proxy if "://" in proxy else "http://" + proxy
@@ -426,8 +506,10 @@ def _verify_exit_country(route, allowed_countries=DEFAULT_ALLOWED_EXIT_COUNTRIES
     return (country in allowed), country
 
 
-def _device_id(cj: dict, identity: str) -> str:
-    """Resolve the account's 64-hex .claude.json userID or derive a deterministic per-account device_id."""
+def _device_id(cj: dict, identity: str, account_id: str = "current") -> str:
+    """Resolve the active CLI 64-hex userID for 'current', or derive an isolated deterministic device_id per saved account."""
+    if account_id != "current":
+        return hashlib.sha256(f"claude-local-wakeup-dev:v1:{account_id}:{identity}".encode("utf-8")).hexdigest()
     raw = cj.get("userID") if isinstance(cj, dict) else None
     if isinstance(raw, str):
         cleaned = raw.strip().lower()
@@ -855,17 +937,45 @@ def _finish_state(app_data: Path, identity: str, lease: str, now_ms: int, status
         return retry, entry.get("last_observed_at_ms")
 
 
-def _ledger_item(cj, cred, anchor, plan_tier: str | None = None):
+CANONICAL_BROWSER_PLANS = {
+    "free": "Free",
+    "pro": "Pro",
+    "max": "Max",
+    "max 5x": "Max 5x",
+    "max 20x": "Max 20x",
+    "ultra": "Ultra",
+    "team": "Team",
+    "enterprise": "Enterprise",
+}
+
+
+def _normalize_browser_plan(raw) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    cleaned = " ".join(raw.strip().lower().split())
+    return CANONICAL_BROWSER_PLANS.get(cleaned)
+
+
+def _ledger_item(cj, cred, anchor, plan_tier: str | None = None, *,
+                 profile_verified: bool = False, browser_plan: str | None = None):
     now = dt.datetime.now(dt.timezone.utc)
     cj = dict(cj)
     cj["cachedUsageUtilization"] = anchor
     info = quota.format_account(cj, cred, [], None, now)
-    if plan_tier == "Ultra":
+    if browser_plan in CANONICAL_BROWSER_PLANS.values():
+        info["plan"] = browser_plan
+        if browser_plan != "Ultra":
+            info["plan_tier_cleared"] = True
+    elif plan_tier == "Ultra":
         info["plan"] = "Ultra"
     elif plan_tier in ("Team", "Enterprise") and info.get("plan") in (None, "", "Pro", "Pro / Max"):
         info["plan"] = plan_tier
+    elif profile_verified and plan_tier is None:
+        info["plan_tier_cleared"] = True
     if plan_tier in ("Ultra", "Team", "Enterprise"):
         info["plan_tier"] = plan_tier
+    elif browser_plan in ("Ultra", "Team", "Enterprise"):
+        info["plan_tier"] = browser_plan
     info.update({"role": "current", "name": info.get("display"), "server_anchor": anchor,
                  "server_anchor_observed_windows": list(anchor["utilization"]),
                  "server_anchor_base_fetched_at_ms": 0})
@@ -873,9 +983,26 @@ def _ledger_item(cj, cred, anchor, plan_tier: str | None = None):
 
 
 def _persist_plan_tier_metadata(app_data: Path, identity: str, plan_tier: str | None) -> None:
-    if plan_tier not in ("Ultra", "Team", "Enterprise"):
-        return
     meta_path = app_data / "identity-vault" / "quota_web_metadata.json"
+    if plan_tier not in ("Ultra", "Team", "Enterprise"):
+        if not meta_path.exists():
+            return
+        try:
+            if not _safe_regular_file(meta_path):
+                raise OSError("unsafe web metadata file")
+            doc = json.loads(_bounded_read(meta_path).decode("utf-8"))
+        except (OSError, ValueError):
+            return
+        if not isinstance(doc, dict) or doc.get("version") != 1 or not isinstance(doc.get("accounts"), dict):
+            return
+        prev = doc["accounts"].get(identity)
+        if not isinstance(prev, dict) or "plan_tier" not in prev:
+            return
+        entry = dict(prev)
+        entry.pop("plan_tier", None)
+        doc["accounts"][identity] = entry
+        _atomic_json(meta_path, doc)
+        return
     try:
         if meta_path.exists() and not _safe_regular_file(meta_path):
             raise OSError("unsafe web metadata file")
@@ -897,7 +1024,7 @@ def _commit_success(app_data: Path, claude_home: Path, account_id: str,
                     expected_identity: str | None, initial_token: str,
                     identity: str, lease: str, now_ms: int,
                     cj: dict, cred: dict, anchor: dict, initial_route=None,
-                    plan_tier: str | None = None) -> tuple[str, int | None]:
+                    plan_tier: str | None = None, profile_verified: bool = False) -> tuple[str, int | None]:
     """Verify lease, write ledger and finish cooldown under one Python writer lock."""
     path = _state_path(app_data)
     with quota.ledger_writer_lock(str(app_data)):
@@ -939,9 +1066,9 @@ def _commit_success(app_data: Path, claude_home: Path, account_id: str,
             return "account_mismatch", retry
         if int(entry.get("lease_until_ms") or 0) <= int(time.time() * 1000):
             return "cooldown", None
-        if plan_tier in ("Ultra", "Team", "Enterprise"):
+        if profile_verified or plan_tier in ("Ultra", "Team", "Enterprise"):
             _persist_plan_tier_metadata(app_data, identity, plan_tier)
-        info, now_utc = _ledger_item(cj, cred, anchor, plan_tier=plan_tier)
+        info, now_utc = _ledger_item(cj, cred, anchor, plan_tier=plan_tier, profile_verified=profile_verified)
         quota._save_ledger_and_sync_sqlite(str(app_data), str(app_data / "identity-vault"), [info], now_utc)
         retry = _complete_entry(entry, lease, now_ms, "updated")
         if retry is None:
@@ -958,8 +1085,8 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
         return _result("unavailable", metadata_updated=False)
     base_fields = {"account_uuid", "organization_uuid", "billing_date_kind", "billing_date",
                    "manual_resets_remaining", "manual_resets_valid_until", "metadata_observed_at_ms"}
-    # Optional: uncapped earliest active grant end (valid_until stays a 24h freshness bound).
-    optional_fields = {"usage", "manual_resets_grant_ends_at"}
+    # Optional: uncapped latest finite grant end, per-grant slices, and optional browser plan tier.
+    optional_fields = {"usage", "manual_resets_grant_ends_at", "manual_resets_grants", "plan_tier", "plan"}
     try:
         if (not isinstance(snapshot, dict) or not base_fields.issubset(snapshot)
                 or set(snapshot) - base_fields - optional_fields):
@@ -971,6 +1098,14 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
         return _result("unavailable", metadata_updated=False)
     except (OSError, ValueError, PermissionError, sqlite3.Error, RuntimeError):
         return _result("unavailable", metadata_updated=False)
+    browser_plan = None
+    for plan_key in ("plan_tier", "plan"):
+        if plan_key in snapshot and snapshot[plan_key] is not None:
+            normalized_bp = _normalize_browser_plan(snapshot[plan_key])
+            if normalized_bp is None:
+                return _result("invalid_response", metadata_updated=False)
+            if browser_plan is None:
+                browser_plan = normalized_bp
     if snapshot.get("account_uuid") != account.get("accountUuid"):
         return _result("account_mismatch", metadata_updated=False)
     org_uuid = account.get("organizationUuid")
@@ -1001,6 +1136,42 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
                 or type(observed_s) is not int
                 or not observed_s // 1000 < grant_ends_at <= 253402300799
                 or grant_ends_at < resets_valid_until):
+            return _result("invalid_response", metadata_updated=False)
+    validated_grants = None
+    raw_grants = snapshot.get("manual_resets_grants")
+    if raw_grants is not None:
+        observed_s = snapshot.get("metadata_observed_at_ms")
+        if (not isinstance(raw_grants, list) or not (1 <= len(raw_grants) <= 100)
+                or type(resets) is not int or resets <= 0 or not resets_valid
+                or type(observed_s) is not int):
+            return _result("invalid_response", metadata_updated=False)
+        grant_sum = 0
+        validated_grants = []
+        has_unbounded = False
+        finite_ends = []
+        for item in raw_grants:
+            if (not isinstance(item, dict) or not set(item).issubset({"resets_left", "ends_at"})
+                    or "resets_left" not in item):
+                return _result("invalid_response", metadata_updated=False)
+            left = item.get("resets_left")
+            end = item.get("ends_at")
+            if type(left) is not int or not 1 <= left <= 0xFFFFFFFF:
+                return _result("invalid_response", metadata_updated=False)
+            if end is not None and (type(end) is not int or not observed_s // 1000 < end <= 253402300799):
+                return _result("invalid_response", metadata_updated=False)
+            grant_sum += left
+            if end is None:
+                has_unbounded = True
+                validated_grants.append({"resets_left": left})
+            else:
+                finite_ends.append(end)
+                validated_grants.append({"resets_left": left, "ends_at": end})
+        if grant_sum != resets:
+            return _result("invalid_response", metadata_updated=False)
+        if finite_ends and min(finite_ends) < resets_valid_until:
+            return _result("invalid_response", metadata_updated=False)
+        expected_grant_end = None if has_unbounded else max(finite_ends)
+        if grant_ends_at != expected_grant_end:
             return _result("invalid_response", metadata_updated=False)
     observed = snapshot.get("metadata_observed_at_ms")
     now_ms = int(time.time() * 1000)
@@ -1092,7 +1263,10 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
                 return _result("account_mismatch", metadata_updated=False)
 
             if usage_anchor is not None:
-                info, now_utc = _ledger_item(current_cj, current_cred, usage_anchor)
+                eff_browser_plan = browser_plan
+                if eff_browser_plan is None and usage_anchor.get("no_five_hour") is True:
+                    eff_browser_plan = "Ultra"
+                info, now_utc = _ledger_item(current_cj, current_cred, usage_anchor, browser_plan=eff_browser_plan)
                 quota._save_ledger_and_sync_sqlite(
                     str(app_data), str(app_data / "identity-vault"), [info], now_utc)
                 outcome["updated"] = True
@@ -1149,12 +1323,28 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
                 entry.update({"manual_resets_remaining": resets,
                               "manual_resets_valid_until": resets_valid_until,
                               "manual_resets_observed_at_ms": observed})
-                # The grant end belongs to this exact observation; never keep an older one.
+                # The grant end and slices belong to this exact observation; never keep older ones.
                 if grant_ends_at is not None:
                     entry["manual_resets_grant_ends_at"] = grant_ends_at
                 else:
                     entry.pop("manual_resets_grant_ends_at", None)
+                if validated_grants is not None:
+                    entry["manual_resets_grants"] = validated_grants
+                else:
+                    entry.pop("manual_resets_grants", None)
                 updated = True
+            if browser_plan is not None:
+                if browser_plan in ("Ultra", "Team", "Enterprise"):
+                    if entry.get("plan_tier") != browser_plan:
+                        entry["plan_tier"] = browser_plan
+                        updated = True
+                elif "plan_tier" in entry:
+                    entry.pop("plan_tier", None)
+                    updated = True
+            elif usage_anchor is not None and usage_anchor.get("no_five_hour") is True:
+                if entry.get("plan_tier") != "Ultra":
+                    entry["plan_tier"] = "Ultra"
+                    updated = True
             # Preserve the legacy aggregate timestamp as the maximum field clock.
             field_times = [int(entry.get("billing_observed_at_ms") or 0),
                            int(entry.get("manual_resets_observed_at_ms") or 0)]
@@ -1203,8 +1393,8 @@ def run(app_data: Path, claude_home: Path, account_id: str,
     try:
         cj, cred, acc, oauth, identity = _resolve_expected(app_data, claude_home, account_id, expected_identity)
         route = _route(cj)
-    except RouteUnavailable:
-        return _result("route_unavailable", reason="unsupported_proxy", stage="route")
+    except RouteUnavailable as exc:
+        return _result("route_unavailable", reason=getattr(exc, "reason", None) or "unsupported_proxy", stage="route")
     except IdentityMismatch:
         return _result("account_mismatch")
     except PermissionError:
@@ -1274,7 +1464,8 @@ def run(app_data: Path, claude_home: Path, account_id: str,
                         return _result("cancelled")
                     status, retry_at = _commit_success(
                         app_data, claude_home, account_id, expected_identity, token,
-                        identity, lease, observed_ms, cj, cred, anchor, route, plan_tier=plan_tier)
+                        identity, lease, observed_ms, cj, cred, anchor, route,
+                        plan_tier=plan_tier, profile_verified=True)
                     if status == "updated":
                         return _result("updated", observed_at_ms=observed_ms, retry_at_ms=retry_at,
                                        last_observed_at_ms=observed_ms, updated_windows=updated,
@@ -1306,8 +1497,8 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
     try:
         cj, cred, acc, oauth, identity = _resolve_expected(app_data, claude_home, account_id, expected_identity)
         route = _route(cj)
-    except RouteUnavailable:
-        return _result("route_unavailable", reason="unsupported_proxy", stage="route")
+    except RouteUnavailable as exc:
+        return _result("route_unavailable", reason=getattr(exc, "reason", None) or "unsupported_proxy", stage="route")
     except IdentityMismatch:
         return _result("account_mismatch")
     except PermissionError:
@@ -1360,7 +1551,7 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
             status, retry = "invalid_response", None
     if status is None:
         stage = "messages"
-        device_id = _device_id(cj, identity)
+        device_id = _device_id(cj, identity, account_id)
         msg_code, msg_raw, msg_headers = None, None, None
         for model in WAKEUP_MODELS:
             msg_code, msg_raw, msg_headers = _post_wakeup(token, model, device_id, acc["accountUuid"], route)
@@ -1406,7 +1597,8 @@ def run_wakeup(app_data: Path, claude_home: Path, account_id: str,
                         return _result("cancelled")
                     status, retry_at = _commit_success(
                         app_data, claude_home, account_id, expected_identity, token,
-                        identity, lease, observed_ms, cj, cred, anchor, route, plan_tier=plan_tier)
+                        identity, lease, observed_ms, cj, cred, anchor, route,
+                        plan_tier=plan_tier, profile_verified=True)
                     if status == "updated":
                         effect = "new_5h_confirmed" if confirmed_5h else "quota_observed"
                         return _result("updated", observed_at_ms=observed_ms, retry_at_ms=retry_at,

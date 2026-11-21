@@ -159,16 +159,20 @@ pub fn directory(path: &Path) -> Result<(), String> {
                 .map_err(|_| "无法创建身份目录。")?;
         }
         #[cfg(windows)]
-        windows_create(path, |wide, attributes| {
-            if unsafe {
-                windows_sys::Win32::Storage::FileSystem::CreateDirectoryW(wide, attributes)
-            } == 0
-            {
-                Err("无法创建身份目录。".into())
-            } else {
-                Ok(())
-            }
-        })?;
+        {
+            windows_create(path, |wide, attributes| {
+                if unsafe {
+                    windows_sys::Win32::Storage::FileSystem::CreateDirectoryW(wide, attributes)
+                } == 0
+                {
+                    Err("无法创建身份目录。".into())
+                } else {
+                    Ok(())
+                }
+            })?;
+            return Ok(());
+        }
+        #[cfg(not(windows))]
         return protect(path);
     }
     safe(path)
@@ -242,6 +246,7 @@ pub fn create(path: &Path) -> Result<fs::File, String> {
             Ok(unsafe { fs::File::from_raw_handle(handle) })
         }
     })?;
+    #[cfg(not(windows))]
     if let Err(e) = protect(path) {
         drop(file);
         let _ = fs::remove_file(path);

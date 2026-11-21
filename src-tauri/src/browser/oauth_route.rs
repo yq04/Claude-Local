@@ -164,17 +164,22 @@ fn launch_authorization_locked(
     let config = config::load(&target.scope)?;
     let machine = config::machine()?;
     config.validate(&machine)?;
+    let running = profile::running(&target.profile)?;
+    config::preflight_browser_launch_policy(&config, &machine, !running)?;
     let engine = prepare_engine(app)?;
     let mut args = config::arguments(&config, &machine, &target.profile, "", &version(&engine));
     args.pop();
     args.push(url.0.clone());
-    // Revalidate immediately before spawn; do not write preferences/launch.args
+    // Revalidate immediately before spawn; do not write global launch.args
     // or create missing profiles. The active warming session is never replaced.
     if current_target(app)? != target
         || serde_json::to_value(config::load(&target.scope)?).ok()
             != serde_json::to_value(&config).ok()
     {
         return Err(FAILED.into());
+    }
+    if !running {
+        profile::preferences(&target.profile, &config, &machine)?;
     }
     let mut child = Command::new(binary(&engine))
         .args(args)

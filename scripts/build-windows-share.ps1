@@ -147,7 +147,16 @@ if ($env:USERPROFILE) { $remaps[[IO.Path]::GetFullPath($env:USERPROFILE)] = '/bu
 $remaps[$root] = '/build/claude-local'
 $remaps[$BuildRoot] = '/build/neutral'
 foreach ($prefix in $remaps.Keys) {
-    foreach ($variant in @($prefix.Replace('\', '/'), $prefix.Replace('/', '\')) | Select-Object -Unique) {
+    $driveAlternates = @($prefix)
+    if ($prefix -match '^[A-Za-z]:') {
+        $driveAlternates += ($prefix.Substring(0, 1).ToUpperInvariant() + $prefix.Substring(1))
+        $driveAlternates += ($prefix.Substring(0, 1).ToLowerInvariant() + $prefix.Substring(1))
+    }
+    $slashVariants = foreach ($alt in $driveAlternates) {
+        $alt.Replace('\', '/')
+        $alt.Replace('/', '\')
+    }
+    foreach ($variant in ($slashVariants | Select-Object -Unique)) {
         $flags.Add('--remap-path-prefix=' + $variant + '=' + $remaps[$prefix])
     }
 }

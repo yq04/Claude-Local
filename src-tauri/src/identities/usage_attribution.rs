@@ -1,5 +1,5 @@
 // [INPUT]: Existing live account HMAC, bounded allowlisted display metadata, explicit empty-switch receipts and hashed JSONL session evidence.
-// [OUTPUT]: Usage-only identity registry, conservative observed login windows and a frozen historical fallback cutoff.
+// [OUTPUT]: Usage-only identity registry (single-parse `.claude.json` HMAC + display projection), conservative observed login windows and a frozen historical fallback cutoff.
 // [POS]: Private child of usage; no archive creation, process control, source writes or credential reads. Registry UPSERTs are change-gated (display projection or hourly last_seen) so routine scans stay write-free.
 // [PROTOCOL]: Managed empty receipts are distinct from legacy/externally detected unknown gaps. Existing event ownership is immutable.
 use super::*;
@@ -75,37 +75,72 @@ fn display(value: &Value, name: &str, max: usize) -> Option<String> {
         .then(|| raw.to_string())
 }
 
+struct LiveProjection {
+    account_key: String,
+    name: Option<String>,
+    email: Option<String>,
+}
+
+/// Bounded, single-parse read of `~/.claude.json` plus HMAC computation against `vault/key.bin`.
+/// Computing `account_key` and display metadata from the same parsed `Value` eliminates
+/// multiple file opens/parses and any TOCTOU window between HMAC verification and display read.
+fn read_live_projection(vault: &Path, home: &Path) -> Option<LiveProjection> {
+    let key_path = vault.join("key.bin");
+    private::parents(vault).ok()?;
+    if private::safe(&key_path).is_err() {
+        return None;
+    }
+    let mut key = zeroize::Zeroizing::new(Vec::with_capacity(33));
+    File::open(&key_path)
+        .ok()?
+        .take(33)
+        .read_to_end(&mut key)
+        .ok()?;
+    if key.len() != 32 {
+        return None;
+    }
+    let path = home.join(".claude.json");
+    let meta = fs::symlink_metadata(&path).ok()?;
+    private::parents(home).ok()?;
+    private::safe(&path).ok()?;
+    if !meta.is_file() || meta.len() > 8 * 1024 * 1024 {
+        return None;
+    }
+    let mut bytes = zeroize::Zeroizing::new(Vec::new());
+    File::open(&path)
+        .ok()?
+        .take(8 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        return None;
+    }
+    let value = serde_json::from_slice::<Value>(&bytes).ok()?;
+    let account_key = catalog::account_key(&value, &key)?;
+    let name = display(&value["oauthAccount"], "displayName", 80);
+    let email = display(&value["oauthAccount"], "emailAddress", 254);
+    Some(LiveProjection {
+        account_key,
+        name,
+        email,
+    })
+}
+
 pub(super) fn observe(conn: &Connection, vault: &Path, home: &Path, clock: u64) -> Option<String> {
-    let account = live_account_key(vault, home);
-    if let Some(key) = account.as_ref() {
-        let path = home.join(".claude.json");
-        let mut name = None;
-        let mut email = None;
-        if private::safe(&path).is_ok() {
-            let mut bytes = zeroize::Zeroizing::new(Vec::new());
-            if File::open(&path)
-                .and_then(|f| f.take(8 * 1024 * 1024 + 1).read_to_end(&mut bytes))
-                .is_ok()
-                && bytes.len() <= 8 * 1024 * 1024
-            {
-                if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
-                    // Read only display allowlist; recheck HMAC before committing this projection.
-                    name = display(&value["oauthAccount"], "displayName", 80);
-                    email = display(&value["oauthAccount"], "emailAddress", 254);
-                }
-            }
-        }
-        if live_account_key(vault, home).as_ref() != Some(key) {
-            return None;
-        }
-        let id = hex_hash(format!("usage-identity-v1\0{key}").as_bytes())[..32].to_string();
-        let name = name
-            .or_else(|| email.clone())
+    let projection = read_live_projection(vault, home);
+    if let Some(ref proj) = projection {
+        let id = hex_hash(format!("usage-identity-v1\0{}", proj.account_key).as_bytes())[..32]
+            .to_string();
+        let name = proj
+            .name
+            .clone()
+            .or_else(|| proj.email.clone())
             .unwrap_or_else(|| "Local account".into());
         // Rewrite only when the display projection changes or last_seen is an hour stale, so
         // routine scans do not force a durable commit; an unchanged UPSERT dirties no pages.
-        conn.execute("INSERT INTO usage_identities(account_key,id,name,email,first_seen,last_seen) VALUES(?1,?2,?3,?4,?5,?5) ON CONFLICT(account_key) DO UPDATE SET name=excluded.name,email=excluded.email,last_seen=excluded.last_seen WHERE usage_identities.name IS NOT excluded.name OR usage_identities.email IS NOT excluded.email OR usage_identities.last_seen < excluded.last_seen - 3600", params![key,id,name,email,clock as i64]).ok()?;
+        conn.execute("INSERT INTO usage_identities(account_key,id,name,email,first_seen,last_seen) VALUES(?1,?2,?3,?4,?5,?5) ON CONFLICT(account_key) DO UPDATE SET name=excluded.name,email=excluded.email,last_seen=excluded.last_seen WHERE usage_identities.name IS NOT excluded.name OR usage_identities.email IS NOT excluded.email OR usage_identities.last_seen < excluded.last_seen - 3600", params![proj.account_key,id,name,proj.email,clock as i64]).ok()?;
     }
+    let account = projection.map(|proj| proj.account_key);
     let latest: Option<Option<String>> = conn
         .query_row(
             "SELECT account_key FROM live_windows ORDER BY seq DESC LIMIT 1",

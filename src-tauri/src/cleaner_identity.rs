@@ -1,5 +1,5 @@
 // [INPUT]: Cleaner 白名单、共享 Code 登录键常量、完整目录快照、用户保留策略与 JSON 配置。
-// [OUTPUT]: 账号凭据/归属与必要缓存的受限身份目标；写回前主动清理残留互斥锁并在删除过期锁前复核 mtime、投影保护设备和 UI/实验状态；显式切换或置空后的窄账号缓存维护（活跃切换刷新 oauthAccount.profileFetchedAt、双向清理 .claude/cache/model-catalog 与 .claude/statsig、动态裁剪 fable*/mythos*OrgPickMove 键与跨号 1p_failed_events 遥测死信箱）不改诊断或历史正文。
+// [OUTPUT]: 账号凭据/归属与必要缓存的受限身份目标（保持 settings.json 本地代理环境变量与 `.claude/daemon*` 后台守护态跨切号常驻，不随旧快照擦除或覆盖）；默认工作区进程停止校验（过滤已验证归属 `cli-slots/<id>/sessions/<pid>.json` 的子代理槽位 PID，使其不阻塞 `~/.claude` 净室切号）；写回前主动清理残留互斥锁并在删除过期锁前复核 mtime（`BackgroundDaemon` 存活时严禁按 60s 误删 `daemon.lock` / `daemon.status.json`）、投影保护设备和 UI/实验状态；显式切换或置空后的窄账号缓存维护不改诊断或历史正文。
 // [POS]: 身份保险库复用原有路径边界；不扫描项目源码、Shell 或系统代理配置。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -10,6 +10,9 @@ pub(crate) struct Source {
     pub path: PathBuf,
     pub category: String,
     pub keys: Vec<String>,
+}
+pub(crate) fn base_credential_keys() -> &'static [&'static str] {
+    config::CREDENTIAL_KEYS
 }
 pub(crate) fn credential_keys(policy: &Policy) -> Vec<String> {
     let mut keys = config::CREDENTIAL_KEYS
@@ -36,6 +39,9 @@ pub(crate) const SETTINGS_IDENTITY_KEYS: &[&str] = &[
     "env.CLAUDE_CODE_OAUTH_TOKEN",
     "env.ANTHROPIC_API_KEY",
     "env.ANTHROPIC_AUTH_TOKEN",
+    "apiKeyHelper",
+];
+pub(crate) const LEGACY_SETTINGS_ARCHIVE_KEYS: &[&str] = &[
     "env.HTTP_PROXY",
     "env.HTTPS_PROXY",
     "env.ALL_PROXY",
@@ -46,8 +52,20 @@ pub(crate) const SETTINGS_IDENTITY_KEYS: &[&str] = &[
     "env.all_proxy",
     "env.grpc_proxy",
     "env.no_proxy",
-    "apiKeyHelper",
 ];
+fn allowed_settings_key(key: &str) -> bool {
+    SETTINGS_IDENTITY_KEYS.contains(&key) || LEGACY_SETTINGS_ARCHIVE_KEYS.contains(&key)
+}
+pub(crate) fn runtime_daemon_path(root: &Path, path: &Path) -> bool {
+    [
+        ".claude/daemon",
+        ".claude/daemon.lock",
+        ".claude/daemon.log",
+        ".claude/daemon.status.json",
+    ]
+    .iter()
+    .any(|rel| path == root.join(rel))
+}
 fn definitions(root: &Path, policy: &Policy) -> Vec<Source> {
     let mut result: Vec<_> = targets::definitions(root)
         .into_iter()
@@ -58,6 +76,7 @@ fn definitions(root: &Path, policy: &Policy) -> Vec<Source> {
                         || t.path.file_name().is_some_and(|n| {
                             n.to_string_lossy().starts_with(".claude.json.backup")
                         }))))
+                && !runtime_daemon_path(root, &t.path)
                 && !(t.group == "history" && policy.history)
                 && !(t.group == "cache" && policy.cache)
         })
@@ -88,6 +107,16 @@ fn definitions(root: &Path, policy: &Policy) -> Vec<Source> {
         .find(|s| s.path == root.join(".claude/.credentials.json"))
     {
         source.keys = credential_keys(policy);
+    }
+    for desktop in targets::desktop_roots(root) {
+        result.push(Source {
+            path: desktop.join("config.json"),
+            category: "desktop".into(),
+            keys: config::DESKTOP_CONFIG_KEYS
+                .iter()
+                .map(|k| (*k).to_string())
+                .collect(),
+        });
     }
     if !policy.mcp {
         let roots: std::collections::BTreeSet<_> = result
@@ -139,8 +168,11 @@ fn definitions(root: &Path, policy: &Policy) -> Vec<Source> {
     result.dedup_by(|a, b| a.path == b.path);
     result
 }
-pub(crate) fn sources(root: &Path, policy: &Policy) -> Result<Vec<Source>, String> {
-    let mut result = Vec::new();
+pub(crate) fn sources_with_fingerprints(
+    root: &Path,
+    policy: &Policy,
+) -> Result<(Vec<Source>, Vec<Vec<u8>>), String> {
+    let mut entries: Vec<(Source, Vec<u8>)> = Vec::new();
     for source in definitions(root, policy) {
         let meta = match fs::symlink_metadata(&source.path) {
             Ok(m) => m,
@@ -161,7 +193,7 @@ pub(crate) fn sources(root: &Path, policy: &Policy) -> Result<Vec<Source>, Strin
             return Err("身份路径包含链接或特殊文件。".into());
         }
         crate::identities::private::safe(&source.path)?;
-        targets::measure(&source.path)?;
+        let (_, _, fp) = targets::measure(&source.path)?;
         if !source.keys.is_empty() {
             let text = fs::read_to_string(&source.path).map_err(|_| "身份配置无法读取。")?;
             if extract(&source, &text)?
@@ -171,14 +203,18 @@ pub(crate) fn sources(root: &Path, policy: &Policy) -> Result<Vec<Source>, Strin
                 continue;
             }
         }
-        result.push(source);
+        entries.push((source, fp));
     }
-    let all = result.clone();
-    result.retain(|s| {
+    let all: Vec<Source> = entries.iter().map(|(s, _)| s.clone()).collect();
+    entries.retain(|(s, _)| {
         !all.iter()
             .any(|p| p.path != s.path && p.keys.is_empty() && s.path.starts_with(&p.path))
     });
-    Ok(result)
+    let (sources, fingerprints) = entries.into_iter().unzip();
+    Ok((sources, fingerprints))
+}
+pub(crate) fn sources(root: &Path, policy: &Policy) -> Result<Vec<Source>, String> {
+    Ok(sources_with_fingerprints(root, policy)?.0)
 }
 fn preserved_client_path(root: &Path, path: &Path) -> bool {
     [".claude/.user-id", ".claude/.machine-id"]
@@ -213,7 +249,7 @@ fn writable_account_key(key: &str) -> bool {
 /// Reading a legacy manifest is distinct from authorizing its current write set.
 /// Old broad account snapshots remain verifiable; device/UI state never moves back.
 pub(crate) fn writable_source(root: &Path, source: &Source) -> Option<Source> {
-    if preserved_client_path(root, &source.path) {
+    if preserved_client_path(root, &source.path) || runtime_daemon_path(root, &source.path) {
         return None;
     }
     let mut projected = source.clone();
@@ -232,6 +268,14 @@ pub(crate) fn writable_source(root: &Path, source: &Source) -> Option<Source> {
             return None;
         }
     }
+    if source.category == "settings" && !projected.keys.is_empty() {
+        projected
+            .keys
+            .retain(|key| SETTINGS_IDENTITY_KEYS.contains(&key.as_str()));
+        if projected.keys.is_empty() {
+            return None;
+        }
+    }
     Some(projected)
 }
 pub(crate) fn allowed(root: &Path, source: &Source) -> bool {
@@ -246,12 +290,17 @@ pub(crate) fn allowed(root: &Path, source: &Source) -> bool {
                     .keys
                     .iter()
                     .all(|k| !k.contains('.') && !k.contains('/')))
-                || source.keys.iter().all(|k| t.keys.contains(k))
+                || source.keys.iter().all(|k| {
+                    t.keys.contains(k)
+                        || (!k.contains('.')
+                            && !k.contains('/')
+                            && t.keys.iter().any(|tk| {
+                                tk.strip_suffix('*')
+                                    .is_some_and(|prefix| !prefix.is_empty() && k.starts_with(prefix))
+                            }))
+                })
                 || (source.category == "settings"
-                    && source
-                        .keys
-                        .iter()
-                        .all(|k| SETTINGS_IDENTITY_KEYS.contains(&k.as_str()))))
+                    && source.keys.iter().all(|k| allowed_settings_key(k))))
     });
     let special = source.keys.is_empty()
         && [
@@ -277,7 +326,10 @@ pub(crate) fn allowed(root: &Path, source: &Source) -> bool {
     let legacy_preserved = source.keys.is_empty()
         && matches!(source.category.as_str(), "account" | "desktop")
         && preserved_client_path(root, &source.path);
-    known || special || legacy_preserved
+    let legacy_daemon = source.keys.is_empty()
+        && source.category == "cache"
+        && runtime_daemon_path(root, &source.path);
+    known || special || legacy_preserved || legacy_daemon
 }
 pub(crate) fn fingerprint(path: &Path) -> Result<Vec<u8>, String> {
     Ok(targets::measure(path)?.2)
@@ -288,30 +340,48 @@ fn pointer(key: &str) -> String {
 pub(crate) fn extract(source: &Source, text: &str) -> Result<serde_json::Value, String> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|_| "身份配置不是有效 JSON。")?;
-    if !value.is_object() {
+    let Some(root_obj) = value.as_object() else {
         return Err("身份配置不是对象。".into());
-    }
-    Ok(serde_json::Value::Object(
-        source
-            .keys
-            .iter()
-            .filter_map(|k| value.pointer(&pointer(k)).cloned().map(|v| (k.clone(), v)))
-            .collect(),
-    ))
-}
-pub(crate) fn apply_config(source: &Source, saved: &serde_json::Value) -> Result<(), String> {
-    if let Some(root_dir) = if source.path.file_name().is_some_and(|n| n == ".claude.json") {
-        source.path.parent()
-    } else {
-        source.path.parent().and_then(|p| {
-            if p.file_name().is_some_and(|n| n == ".claude") {
-                p.parent()
-            } else {
-                None
+    };
+    let mut out = serde_json::Map::new();
+    for k in &source.keys {
+        if let Some(prefix) = k.strip_suffix('*') {
+            if !prefix.is_empty() && !prefix.contains('.') && !prefix.contains('/') {
+                for (ok, ov) in root_obj {
+                    if ok.starts_with(prefix) {
+                        out.insert(ok.clone(), ov.clone());
+                    }
+                }
             }
-        })
-    } {
-        clear_stale_locks(root_dir);
+        } else if let Some(v) = value.pointer(&pointer(k)) {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    Ok(serde_json::Value::Object(out))
+}
+#[allow(dead_code)]
+pub(crate) fn apply_config(source: &Source, saved: &serde_json::Value) -> Result<(), String> {
+    apply_config_with_lock_clear(source, saved, true)
+}
+pub(crate) fn apply_config_with_lock_clear(
+    source: &Source,
+    saved: &serde_json::Value,
+    clear_locks: bool,
+) -> Result<(), String> {
+    if clear_locks {
+        if let Some(root_dir) = if source.path.file_name().is_some_and(|n| n == ".claude.json") {
+            source.path.parent()
+        } else {
+            source.path.parent().and_then(|p| {
+                if p.file_name().is_some_and(|n| n == ".claude") {
+                    p.parent()
+                } else {
+                    None
+                }
+            })
+        } {
+            clear_stale_locks(root_dir);
+        }
     }
     if source.path.exists() {
         crate::identities::private::protect(&source.path)?;
@@ -334,6 +404,20 @@ pub(crate) fn apply_config(source: &Source, saved: &serde_json::Value) -> Result
                 .is_some_and(|name| name == ".claude.json")
             && !writable_account_key(key)
         {
+            continue;
+        }
+        if let Some(prefix) = key.strip_suffix('*') {
+            if !prefix.is_empty() && !prefix.contains('.') && !prefix.contains('/') {
+                let obj = current.as_object_mut().unwrap();
+                obj.retain(|existing, _| !existing.starts_with(prefix));
+                if let Some(saved_obj) = saved.as_object() {
+                    for (sk, sv) in saved_obj {
+                        if sk.starts_with(prefix) {
+                            obj.insert(sk.clone(), sv.clone());
+                        }
+                    }
+                }
+            }
             continue;
         }
         let mut parts = key.split('.');
@@ -364,6 +448,9 @@ pub(crate) fn apply_config(source: &Source, saved: &serde_json::Value) -> Result
     if source.path.exists() {
         file_io::atomic_write(&source.path, &bytes, 0o600)
     } else {
+        if let Some(parent) = source.path.parent() {
+            crate::identities::private::directory(parent)?;
+        }
         crate::identities::private::write(&source.path, &bytes)
     }
 }
@@ -410,12 +497,62 @@ pub(crate) fn merge_kept_projects(
 pub(crate) fn root() -> Result<PathBuf, String> {
     home()
 }
-pub(crate) fn ensure_stopped() -> Result<(), String> {
-    if running()? {
+pub(crate) fn app_data_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .map(|p| p.join("ai.local.claude-local"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        home()
+            .ok()
+            .map(|h| h.join("Library/Application Support/ai.local.claude-local"))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| home().ok().map(|h| h.join(".local/share")))
+            .map(|p| p.join("ai.local.claude-local"))
+    }
+}
+pub(crate) fn filter_non_slot_processes(
+    app_data_dir: Option<&Path>,
+    procs: Vec<ClaudeProcess>,
+) -> Vec<ClaudeProcess> {
+    if procs.is_empty() {
+        return procs;
+    }
+    let Some(app_dir) = app_data_dir else {
+        return procs;
+    };
+    let by_record = crate::identities::orchestrator::slot_pids_by_record(app_dir, &procs);
+    if by_record.is_empty() {
+        return procs;
+    }
+    let slot_pids: std::collections::HashSet<i32> = by_record
+        .values()
+        .flat_map(|pids| pids.iter().copied())
+        .collect();
+    procs
+        .into_iter()
+        .filter(|proc| !slot_pids.contains(&proc.pid))
+        .collect()
+}
+pub(crate) fn ensure_stopped_in(app_data_dir: Option<&Path>) -> Result<(), String> {
+    let procs = super::processes()?;
+    if !filter_non_slot_processes(app_data_dir, procs).is_empty() {
         Err("请先结束 Claude 进程，再切换身份。".into())
     } else {
         Ok(())
     }
+}
+pub(crate) fn ensure_stopped() -> Result<(), String> {
+    ensure_stopped_in(app_data_dir().as_deref())
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -437,30 +574,43 @@ pub(crate) fn desktop_present(root: &Path) -> bool {
         .into_iter()
         .filter(|s| s.category == "desktop")
         .any(|s| {
-            crate::identities::private::parents(s.path.parent().unwrap()).is_ok()
-                && crate::identities::private::safe(&s.path).is_ok()
+            let safe_ok = crate::identities::private::parents(s.path.parent().unwrap()).is_ok()
+                && crate::identities::private::safe(&s.path).is_ok();
+            if !safe_ok {
+                return false;
+            }
+            if s.keys.is_empty() {
+                return true;
+            }
+            fs::read_to_string(&s.path)
+                .ok()
+                .and_then(|text| extract(&s, &text).ok())
+                .and_then(|val| val.as_object().map(|o| !o.is_empty()))
+                .unwrap_or(false)
         })
 }
 
-fn remove_safe_entry(path: &Path) {
+fn remove_safe_entry(path: &Path) -> bool {
     let Ok(meta) = fs::symlink_metadata(path) else {
-        return;
+        return false;
     };
     if linked(&meta) || canonicalize(path).ok().as_deref() != Some(path) {
-        return;
+        return false;
     }
     let Some(parent) = path.parent() else {
-        return;
+        return false;
     };
     if crate::identities::private::parents(parent).is_err()
         || crate::identities::private::safe(path).is_err()
     {
-        return;
+        return false;
     }
     if meta.is_dir() {
-        let _ = fs::remove_dir_all(path);
+        file_io::remove_dir_all_retry(path).is_ok()
     } else if meta.is_file() {
-        let _ = fs::remove_file(path);
+        file_io::remove_file_retry(path).is_ok()
+    } else {
+        false
     }
 }
 
@@ -470,7 +620,7 @@ fn root_has_running_claude(root: &Path) -> bool {
         return false;
     }
     let _ = root;
-    running().unwrap_or(true)
+    ensure_stopped_in(app_data_dir().as_deref()).is_err()
 }
 
 fn removable_lock_mtime(
@@ -488,41 +638,60 @@ fn removable_lock_mtime(
     (age.as_secs() >= stale_secs).then_some(Some(mtime))
 }
 
-fn remove_safe_lock_if_mtime_unchanged(path: &Path, seen_mtime: Option<std::time::SystemTime>) {
+fn remove_safe_lock_if_mtime_unchanged(
+    path: &Path,
+    seen_mtime: Option<std::time::SystemTime>,
+) -> bool {
     let Ok(meta) = fs::symlink_metadata(path) else {
-        return;
+        return false;
     };
     if linked(&meta) || canonicalize(path).ok().as_deref() != Some(path) {
-        return;
+        return false;
     }
     let Some(parent) = path.parent() else {
-        return;
+        return false;
     };
     if crate::identities::private::parents(parent).is_err()
         || crate::identities::private::safe(path).is_err()
     {
-        return;
+        return false;
     }
     // 删除前再次核验 mtime 未发生变化，防止与刚重新获取锁的新进程发生竞态。
     if fs::symlink_metadata(path).and_then(|m| m.modified()).ok() != seen_mtime {
-        return;
+        return false;
     }
     if meta.is_dir() {
-        let _ = fs::remove_dir_all(path);
+        file_io::remove_dir_all_retry(path).is_ok()
     } else if meta.is_file() {
-        let _ = fs::remove_file(path);
+        file_io::remove_file_retry(path).is_ok()
+    } else {
+        false
     }
 }
 
 /// 清理 Claude Code 在异常退出、进程强杀或切换账号后遗留的 OAuth / 配置互斥锁文件及已退出进程的孤儿会话描述文件，防止下次启动阻塞或报锁冲突。
 /// 借鉴 `realiti4/claude-swap` (`claude_locks.py`) 与 `cc-switch` 锁协议：当无 Claude 进程运行时立即清理全部残留锁；若仍有进程运行，则严格遵循 Claude Code 锁过期阈值（凭据锁 60s、存储写锁 15s、配置锁 10s），并在删除前复核 `seen_mtime`。
 pub(crate) fn clear_stale_locks(root: &Path) {
+    let _ = clear_stale_locks_count(root);
+}
+
+pub(crate) fn clear_stale_locks_count(root: &Path) -> usize {
+    let mut cleared = 0usize;
     let is_running = root_has_running_claude(root);
+    let procs = running_processes();
+    #[cfg(test)]
+    let has_bg_daemon = crate::cleaner::identity::root().ok().as_deref() == Some(root)
+        && procs
+            .iter()
+            .any(|p| p.role() == crate::cleaner::ClaudeProcessRole::BackgroundDaemon);
+    #[cfg(not(test))]
+    let has_bg_daemon = procs
+        .iter()
+        .any(|p| p.role() == crate::cleaner::ClaudeProcessRole::BackgroundDaemon);
     for (rel, stale_secs) in [
         (".claude/.oauth_refresh.lock", 60u64),
         (".claude/.oauth_refresh.lock.owner", 60u64),
         (".claude/.storage-write.lock", 15u64),
-        (".claude/daemon.lock", 60u64),
         (".claude.lock", 60u64),
         (".claude.json.lock", 10u64),
         (".claude/settings.json.lock", 10u64),
@@ -530,22 +699,34 @@ pub(crate) fn clear_stale_locks(root: &Path) {
     ] {
         let p = root.join(rel);
         if let Some(seen_mtime) = removable_lock_mtime(&p, is_running, stale_secs) {
-            remove_safe_lock_if_mtime_unchanged(&p, seen_mtime);
+            if remove_safe_lock_if_mtime_unchanged(&p, seen_mtime) {
+                cleared += 1;
+            }
         }
     }
-    let live_pids: std::collections::BTreeSet<i32> =
-        running_processes().into_iter().map(|p| p.pid).collect();
+    if !is_running && !has_bg_daemon {
+        for rel in [".claude/daemon.lock", ".claude/daemon.status.json"] {
+            let p = root.join(rel);
+            if let Some(seen_mtime) = removable_lock_mtime(&p, false, 60) {
+                if remove_safe_lock_if_mtime_unchanged(&p, seen_mtime) {
+                    cleared += 1;
+                }
+            }
+        }
+    }
+    let live_pids: std::collections::BTreeSet<i32> = procs.into_iter().map(|p| p.pid).collect();
     if let Ok(entries) = fs::read_dir(root.join(".claude/sessions")) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let pid_part = name.split('.').next().unwrap_or("");
             if let Ok(pid) = pid_part.parse::<i32>() {
-                if !live_pids.contains(&pid) {
-                    remove_safe_entry(&entry.path());
+                if !live_pids.contains(&pid) && remove_safe_entry(&entry.path()) {
+                    cleared += 1;
                 }
             }
         }
     }
+    cleared
 }
 
 const EMAIL_REMINDER_PREFIX: &str = "The user's email address is ";
@@ -648,28 +829,46 @@ fn file_has_foreign_session_markers(
             }
         }
     }
-    if text.contains("\"bridge-session\"") {
+    if text.contains("\"bridge-session\"") || text.contains("\"session-owner\"") {
         for line in text.lines() {
-            if !line.contains("\"bridge-session\"") {
+            if !line.contains("\"bridge-session\"") && !line.contains("\"session-owner\"") {
                 continue;
             }
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                if val.get("type").and_then(|t| t.as_str()) == Some("bridge-session") {
-                    let foreign_owner_acct = active_acct.is_some_and(|act| {
-                        val.get("ownerAccountUuid")
-                            .or_else(|| val.get("bridgeOwnerAccountUuid"))
-                            .and_then(|u| u.as_str())
-                            .is_some_and(|u| !u.is_empty() && u != act)
-                    });
-                    let foreign_owner_org = active_org.is_some_and(|org| {
-                        val.get("ownerOrganizationUuid")
-                            .or_else(|| val.get("bridgeOwnerOrganizationUuid"))
-                            .and_then(|u| u.as_str())
-                            .is_some_and(|u| !u.is_empty() && u != org)
-                    });
-                    if foreign_owner_acct || foreign_owner_org {
-                        return true;
+                match val.get("type").and_then(|t| t.as_str()) {
+                    Some("bridge-session") => {
+                        let foreign_owner_acct = active_acct.is_some_and(|act| {
+                            val.get("ownerAccountUuid")
+                                .or_else(|| val.get("bridgeOwnerAccountUuid"))
+                                .and_then(|u| u.as_str())
+                                .is_some_and(|u| !u.is_empty() && u != act)
+                        });
+                        let foreign_owner_org = active_org.is_some_and(|org| {
+                            val.get("ownerOrganizationUuid")
+                                .or_else(|| val.get("bridgeOwnerOrganizationUuid"))
+                                .and_then(|u| u.as_str())
+                                .is_some_and(|u| !u.is_empty() && u != org)
+                        });
+                        if foreign_owner_acct || foreign_owner_org {
+                            return true;
+                        }
                     }
+                    Some("session-owner") => {
+                        let foreign_acct = active_acct.is_some_and(|act| {
+                            val.get("accountUuid")
+                                .and_then(|u| u.as_str())
+                                .is_some_and(|u| !u.is_empty() && u != act)
+                        });
+                        let foreign_org = active_org.is_some_and(|org| {
+                            val.get("organizationUuid")
+                                .and_then(|u| u.as_str())
+                                .is_some_and(|u| !u.is_empty() && u != org)
+                        });
+                        if foreign_acct || foreign_org {
+                            return true;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -876,6 +1075,7 @@ fn sanitize_jsonl_session_file(
     if !strip_thinking
         && !repair_tools
         && !text.contains("\"credential_org\"")
+        && !text.contains("\"session-owner\"")
         && !text.contains(EMAIL_REMINDER_PREFIX)
     {
         return;
@@ -885,13 +1085,19 @@ fn sanitize_jsonl_session_file(
     for line in text.lines() {
         let mut current: std::borrow::Cow<'_, str> = std::borrow::Cow::Borrowed(line);
         if strip_thinking
-            && (current.contains("\"api-request") || current.contains("\"bridge-session\""))
+            && (current.contains("\"api-request")
+                || current.contains("\"bridge-session\"")
+                || current.contains("\"session-owner\""))
         {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&current) {
                 if matches!(
                     val.get("type").and_then(|t| t.as_str()),
                     Some(
-                        "api-request" | "api-request-shape" | "api-request-blob" | "bridge-session"
+                        "api-request"
+                            | "api-request-shape"
+                            | "api-request-blob"
+                            | "bridge-session"
+                            | "session-owner"
                     )
                 ) {
                     file_modified = true;
@@ -1099,9 +1305,26 @@ fn sanitize_project_sessions(
 }
 
 /// 在明确的身份切换或恢复完成后，只维护账号绑定的缓存白名单与跨号遥测死信箱。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CleanroomReport {
+    pub locks_cleared: usize,
+    pub caches_removed: usize,
+    pub telemetry_batches_removed: usize,
+    pub proxy_aligned: bool,
+}
+
+/// 切换后仅维护 `.claude.json` 账号缓存与明确跨号缓存/未发送遥测批次；
 /// 不扫描或改写会话、项目遥测、凭据及其他用户工作区内容。
 pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
-    clear_stale_locks(root);
+    let _ = maintain_account_caches_report(root)?;
+    Ok(())
+}
+
+pub(crate) fn maintain_account_caches_report(root: &Path) -> Result<CleanroomReport, String> {
+    let mut report = CleanroomReport {
+        locks_cleared: clear_stale_locks_count(root),
+        ..Default::default()
+    };
     crate::identities::private::parents(root)?;
     let claude_json = root.join(".claude.json");
     let mut acct: Option<String> = None;
@@ -1114,7 +1337,7 @@ pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
             && canonicalize(&claude_json).ok().as_deref() == Some(claude_json.as_path())
         {
             crate::identities::private::safe(&claude_json)?;
-            let bytes = fs::read(&claude_json).map_err(|_| "身份配置无法读取。")?;
+            let bytes = file_io::read_bytes_retry(&claude_json).map_err(|_| "身份配置无法读取。")?;
             let mut value: serde_json::Value =
                 serde_json::from_slice(&bytes).map_err(|_| "身份配置不是有效 JSON。")?;
             acct = value["oauthAccount"]["accountUuid"]
@@ -1130,6 +1353,17 @@ pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
 
             let mut modified = false;
             if let Some(obj) = value.as_object_mut() {
+                for stale_key in [
+                    "cachedGrowthBookFeatures",
+                    "cachedGrowthBookFeaturesTimestamp",
+                    "cachedStatsigGates",
+                    "cachedDynamicConfigs",
+                    "summonSidKey",
+                ] {
+                    if obj.remove(stale_key).is_some() {
+                        modified = true;
+                    }
+                }
                 if let Some(ref active_acct) = acct {
                     let active_org = org.as_deref();
                     if let Some(oauth_obj) =
@@ -1306,23 +1540,29 @@ pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
         }
     }
 
-    if let Ok(entries) = fs::read_dir(root.join(".claude/plugins/synced")) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let candidate = name.contains('-');
-            let matches_active = acct.as_deref().is_some_and(|a| name.contains(a))
-                || org.as_deref().is_some_and(|o| name.contains(o));
-            if candidate && !matches_active {
-                remove_safe_entry(&entry.path());
+    for synced_rel in [".claude/plugins/synced", ".claude/skills/synced"] {
+        if let Ok(entries) = fs::read_dir(root.join(synced_rel)) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let candidate = name.contains('-');
+                let matches_active = acct.as_deref().is_some_and(|a| name.contains(a))
+                    || org.as_deref().is_some_and(|o| name.contains(o));
+                if candidate && !matches_active && remove_safe_entry(&entry.path()) {
+                    report.caches_removed += 1;
+                }
             }
         }
     }
 
-    remove_safe_entry(&root.join(".claude/cache/model-catalog"));
-    remove_safe_entry(&root.join(".claude/statsig"));
+    if remove_safe_entry(&root.join(".claude/cache/model-catalog")) {
+        report.caches_removed += 1;
+    }
+    if remove_safe_entry(&root.join(".claude/statsig")) {
+        report.caches_removed += 1;
+    }
 
-    // 清理 `.claude/telemetry/1p_failed_events.*.json` 中属于旧账号的未发送遥测批次，
-    // 阻断 `claude.exe` 启动时 `retryPreviousBatches()` 用新账号 Token 重发旧账号 `account_uuid` 的跨号投毒。
+    // 切号时无条件清理所有 `.claude/telemetry/1p_failed_events.*.json` 未发送遥测批次（与 slots.rs 对齐），
+    // 彻底阻断 `claude.exe` 启动时 `retryPreviousBatches()` 携带旧设备/旧会话批次引发跨号关联。
     if let Ok(entries) = fs::read_dir(root.join(".claude/telemetry")) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -1336,31 +1576,12 @@ pub(crate) fn maintain_account_caches(root: &Path) -> Result<(), String> {
             if linked(&meta) || !meta.is_file() {
                 continue;
             }
-            if meta.len() > 4 * 1024 * 1024 {
-                remove_safe_entry(&path);
-                continue;
-            }
-            let Some(ref active_acct) = acct else {
-                remove_safe_entry(&path);
-                continue;
-            };
-            let should_remove = match fs::read_to_string(&path) {
-                Ok(text) => {
-                    let missing_acct = !text.contains(active_acct.as_str());
-                    let foreign_org = org.as_deref().is_some_and(|active_org| {
-                        (text.contains("organizationUuid") || text.contains("organization_uuid"))
-                            && !text.contains(active_org)
-                    });
-                    missing_acct || foreign_org
-                }
-                Err(_) => true,
-            };
-            if should_remove {
-                remove_safe_entry(&path);
+            if remove_safe_entry(&path) {
+                report.telemetry_batches_removed += 1;
             }
         }
     }
-    Ok(())
+    Ok(report)
 }
 
 /// 清理与当前活跃 `.claude.json` 账号 UUID 不一致的旧跨账号残留。

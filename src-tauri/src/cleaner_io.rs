@@ -132,7 +132,7 @@ pub(crate) fn remove_dir_all_retry(path: &Path) -> std::io::Result<()> {
     }
 }
 
-pub(super) fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<(), String> {
     let temporary = path.with_file_name(format!(".rf-cleanup-{}", generation()));
     let result = (|| {
         let mut options = fs::OpenOptions::new();

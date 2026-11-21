@@ -1,5 +1,12 @@
 import {expect, test} from 'bun:test';
-import {clampActiveIndex, commandPaletteShortcutAction, filterCommandItems} from './command-model';
+import {
+  clampActiveIndex,
+  commandPaletteShortcutAction,
+  filterCommandItems,
+  firstEnabledCommandIndex,
+  lastEnabledCommandIndex,
+  stepEnabledCommandIndex,
+} from './command-model';
 
 const items = [
   {id: 'quick', label: '快速配置'},
@@ -13,10 +20,23 @@ test('command search is case-insensitive and includes explicit keywords', () => 
   expect(filterCommandItems(items, '').map(item => item.id)).toEqual(['quick', 'cleaner', 'handoff']);
 });
 
-test('active command selection stays within available results', () => {
+test('active command selection stays within available results and skips disabled items', () => {
   expect(clampActiveIndex(-1, 3)).toBe(0);
   expect(clampActiveIndex(4, 3)).toBe(2);
   expect(clampActiveIndex(0, 0)).toBe(-1);
+
+  const mixed = [
+    {id: 'active-id', disabled: true},
+    {id: 'standby-1', disabled: false},
+    {id: 'busy-id', disabled: true},
+    {id: 'standby-2'},
+  ];
+  expect(firstEnabledCommandIndex(mixed)).toBe(1);
+  expect(lastEnabledCommandIndex(mixed)).toBe(3);
+  expect(stepEnabledCommandIndex(mixed, 1, 1)).toBe(3);
+  expect(stepEnabledCommandIndex(mixed, 3, -1)).toBe(1);
+  expect(stepEnabledCommandIndex(mixed, 1, -1)).toBe(1);
+  expect(firstEnabledCommandIndex([{id: 'only-disabled', disabled: true}])).toBe(-1);
 });
 
 test('palette shortcut respects modal, task, editable and IME gates while allowing close', () => {

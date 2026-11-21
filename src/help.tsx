@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 共享 YAML 中英文目录与各页面的操作边界。
- * [OUTPUT]: 统一 44px 页头、独立本地产品说明、双列紧凑参考网格及 Cromma Disclosure 注意事项，保留全部帮助词条与账号边界。
+ * [INPUT]: 共享 YAML 中英文目录与各页面的操作边界（含后台 Shell 无损切号与智能接力流程）。
+ * [OUTPUT]: 统一 44px 页头、独立本地产品说明、双列紧凑参考网格（含「运行到一半没额度、且有后台 Shell 任务时如何无损切号？」FAQ 指引）及 Cromma Disclosure 注意事项，保留全部帮助词条与账号边界。
  * [POS]: 帮助与安全边界说明；采用双列参考卡片网格与 Cromma Disclosure，不自动读取用户资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -18,8 +18,19 @@ export function HelpPanel() {
         ] },
         { title: t('身份管理'), lines: [
             t('暂存和切换会结束 Claude 进程，请先保存任务。'),
+            t('help.identityRelayNote'),
             t('登录随身份保存，其他资料由你选择保留或暂存。'),
             t('空身份留出新的本地工作区；永久删除无法恢复。')
+        ] },
+        { title: t('help.relayTitle'), lines: [
+            t('help.relayLine1'),
+            t('help.relayLine2'),
+            t('help.relayLine3')
+        ] },
+        { title: t('help.bgShellSwitchTitle'), lines: [
+            t('help.bgShellSwitchLine1'),
+            t('help.bgShellSwitchLine2'),
+            t('help.bgShellSwitchLine3')
         ] },
         { title: t('浏览环境'), lines: [
             t('先保存设置，再打开实测页。'),
@@ -29,6 +40,10 @@ export function HelpPanel() {
         { title: t('离线额度'), lines: [
             t('额度来自本地记录与最近一次服务端快照，可能延迟。'),
             t('identityCard.localQuotaGuide')
+        ] },
+        { title: t('usage.title'), lines: [
+            t('help.usageLine1'),
+            t('help.usageLine2')
         ] },
         { title: t('网络诊断'), lines: [
             t('点击开始检测后，检查四个 Claude 服务域名的连通性。'),

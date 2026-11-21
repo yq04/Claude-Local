@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Card rail item keys, localStorage persistence key, wheel scroll events, and pointer/keyboard drag events on `.identity-card-drag-handle`.
- * [OUTPUT]: Persisted custom card ordering (`orderItemsByIds`, `moveOrderId`, `clearStoredCardOrder`), `useHorizontalRailWheelScroll` spring wheel hook, and `useCardRailReorder` with cursor-locked drag offset, FLIP sibling transitions, and `resetCardOrder`.
+ * [OUTPUT]: Persisted custom card ordering (`orderItemsByIds`, `moveOrderId`, `findPointerReorderTargetId`, `clearStoredCardOrder`), `useHorizontalRailWheelScroll` spring wheel hook, and filter/grid-safe `useCardRailReorder` with cursor-locked drag offset, FLIP sibling transitions, and `resetCardOrder`.
  * [POS]: Shared card rail reordering and horizontal wheel-scroll controller for both CLI identity cards and browser warming cards.
  * [PROTOCOL]: Update this header and src/CLAUDE.md when changing card reordering behavior.
  */
@@ -135,6 +135,44 @@ export function orderItemsByIds<T>(
 
   known.sort((a, b) => a.rank - b.rank);
   return [...pinnedFirst, ...known.map(entry => entry.item), ...unknown];
+}
+
+export type ReorderCardBox = {
+  id: string;
+  left: number;
+  width: number;
+  top: number;
+  height: number;
+};
+
+export function findPointerReorderTargetId(
+  visibleBoxes: readonly ReorderCardBox[],
+  activeId: string,
+): string | null {
+  const dragged = visibleBoxes.find(box => box.id === activeId);
+  if (!dragged) return null;
+  const dragCenterX = dragged.left + dragged.width / 2;
+  const dragCenterY = dragged.top + dragged.height / 2;
+  const sameRowBoxes = visibleBoxes.filter(box => {
+    if (box.id === activeId) return true;
+    const refHeight = Math.max(1, Math.min(dragged.height || 1, box.height || 1));
+    const centerY = box.top + box.height / 2;
+    return Math.abs(dragCenterY - centerY) <= refHeight * 0.55;
+  });
+  const activeRowIndex = sameRowBoxes.findIndex(box => box.id === activeId);
+  if (activeRowIndex < 0) return null;
+  let targetRowIndex = activeRowIndex;
+  for (let i = 0; i < sameRowBoxes.length; i++) {
+    if (i === activeRowIndex) continue;
+    const sibling = sameRowBoxes[i];
+    const center = sibling.left + sibling.width / 2;
+    if (i < activeRowIndex && dragCenterX < center - 4) {
+      targetRowIndex = Math.min(targetRowIndex, i);
+    } else if (i > activeRowIndex && dragCenterX > center + 4) {
+      targetRowIndex = Math.max(targetRowIndex, i);
+    }
+  }
+  return targetRowIndex !== activeRowIndex ? (sameRowBoxes[targetRowIndex]?.id ?? null) : null;
 }
 
 export function moveOrderId(ids: readonly string[], fromId: string, toId: string): string[] {
@@ -318,40 +356,28 @@ export function useCardRailReorder<T>({
         active.anchorClientX += step;
       }
 
-      // Check if dragged card's visual center crossed a neighbor card's midpoint
+      // Check if dragged card's visual center crossed a same-row visible neighbor card's midpoint
       const currentIds = orderedIdsRef.current;
-      const currentIndex = currentIds.indexOf(active.id);
-      if (currentIndex < 0) return;
+      if (!currentIds.includes(active.id)) return;
 
       const cardNodes = Array.from(rail.querySelectorAll<HTMLElement>('[data-reorder-card-id]'));
-      const draggedNode = cardNodes.find(
-        n => n.getAttribute('data-reorder-card-id') === active.id,
-      );
-      if (!draggedNode) return;
-      const draggedRect = draggedNode.getBoundingClientRect();
-      const draggedCenter = draggedRect.left + draggedRect.width / 2;
-
-      let targetIndex = currentIndex;
-      for (let i = 0; i < cardNodes.length; i++) {
-        if (i === currentIndex) continue;
-        const siblingNode = cardNodes[i];
-        const siblingId = siblingNode.getAttribute('data-reorder-card-id');
-        if (!siblingId) continue;
-        const rect = siblingNode.getBoundingClientRect();
-        const center = rect.left + rect.width / 2;
-        if (i < currentIndex && draggedCenter < center - 4) {
-          targetIndex = Math.min(targetIndex, i);
-        } else if (i > currentIndex && draggedCenter > center + 4) {
-          targetIndex = Math.max(targetIndex, i);
-        }
+      const visibleBoxes: ReorderCardBox[] = [];
+      for (const node of cardNodes) {
+        const id = node.getAttribute('data-reorder-card-id');
+        if (!id) continue;
+        const rect = node.getBoundingClientRect();
+        visibleBoxes.push({
+          id,
+          left: rect.left,
+          width: rect.width,
+          top: rect.top,
+          height: rect.height,
+        });
       }
-
-      if (targetIndex !== currentIndex) {
-        const targetId = currentIds[targetIndex];
-        if (targetId) {
-          const nextOrder = moveOrderId(currentIds, active.id, targetId);
-          commitOrder(nextOrder);
-        }
+      const targetId = findPointerReorderTargetId(visibleBoxes, active.id);
+      if (targetId && targetId !== active.id) {
+        const nextOrder = moveOrderId(currentIds, active.id, targetId);
+        commitOrder(nextOrder);
       }
     };
 
@@ -408,11 +434,16 @@ export function useCardRailReorder<T>({
       event.preventDefault();
       event.stopPropagation();
       const currentIds = orderedIdsRef.current;
-      const idx = currentIds.indexOf(id);
-      if (idx < 0) return;
-      const nextIdx = event.key === 'ArrowLeft' ? idx - 1 : idx + 1;
-      if (nextIdx < 0 || nextIdx >= currentIds.length) return;
-      const targetId = currentIds[nextIdx];
+      const visibleIds = railRef.current
+        ? Array.from(railRef.current.querySelectorAll<HTMLElement>('[data-reorder-card-id]'))
+            .map(node => node.getAttribute('data-reorder-card-id'))
+            .filter((val): val is string => Boolean(val))
+        : currentIds;
+      const visIdx = visibleIds.indexOf(id);
+      if (visIdx < 0) return;
+      const nextVisIdx = event.key === 'ArrowLeft' ? visIdx - 1 : visIdx + 1;
+      if (nextVisIdx < 0 || nextVisIdx >= visibleIds.length) return;
+      const targetId = visibleIds[nextVisIdx];
       if (!targetId) return;
       commitOrder(moveOrderId(currentIds, id, targetId));
     },

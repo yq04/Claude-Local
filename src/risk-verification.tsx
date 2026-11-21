@@ -34,7 +34,7 @@ import {
   isValidRfc1918Ipv4,
   maskIpAddress,
   parsePortInput,
-  summarizeRiskChecks,
+  resolveRiskBanner,
   type ConsistencyProbeReport,
   type LocalRiskSnapshot,
   type MobileBridgeMode,
@@ -295,11 +295,8 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
   );
   const staticPassed = staticChecks.filter(item => item.status === 'ok').length;
   const probePassed = probeChecks.filter(item => item.status === 'ok').length;
-  const overallStatus = useMemo(() => summarizeRiskChecks(checks), [checks]);
-  const localAllReady = Boolean(
-    local && !probe && staticChecks.length === 3 && staticChecks.every(item => item.status === 'ok'),
-  );
-  const bannerStatus = localAllReady ? 'ok' : overallStatus;
+  const banner = useMemo(() => resolveRiskBanner(local, probe, checks), [local, probe, checks]);
+  const bannerStatus = banner.status;
   const comparison = probe ? compareProbeExits(probe) : 'unknown';
   const cliSec = local?.cli_security ?? null;
   const cliShieldOk = isCliSecurityShieldOk(cliSec);
@@ -392,25 +389,8 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
     local && (local.system.public_wan_detected || local.system.lan_ipv4_candidates.length === 0),
   );
 
-  const auditTitleKey = localAllReady
-    ? 'risk.auditStatus.localReadyTitle'
-    : overallStatus === 'ok'
-      ? 'risk.auditStatus.okTitle'
-      : overallStatus === 'fail'
-        ? 'risk.auditStatus.failTitle'
-        : overallStatus === 'warn'
-          ? 'risk.auditStatus.warnTitle'
-          : 'risk.auditStatus.pendingTitle';
-
-  const auditDescKey = localAllReady
-    ? 'risk.auditStatus.localReadyDesc'
-    : overallStatus === 'ok'
-      ? 'risk.auditStatus.okDesc'
-      : overallStatus === 'fail'
-        ? 'risk.auditStatus.failDesc'
-        : overallStatus === 'warn'
-          ? 'risk.auditStatus.warnDesc'
-          : 'risk.auditStatus.pendingDesc';
+  const auditTitleKey = banner.titleKey;
+  const auditDescKey = banner.descKey;
 
   const browserDotClass = local?.browser_identity
     ? local.browser_identity.status === 'warming'
@@ -440,14 +420,18 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
   const cliShieldFull = cliSec
     ? t(cliShieldOk ? 'risk.cliSecurity.shieldOk' : 'risk.cliSecurity.shieldWarn')
     : t('risk.telemetry.uninspected');
+  const unpinnedMcpCount = cliSec ? Math.max(cliSec.unpinned_npx_count, cliSec.windows_bare_npx_count) : 0;
+  const remoteMcpCount = cliSec ? cliSec.remote_http_mcp_count : 0;
   const mcpAuditFull = !cliSec
     ? t('risk.telemetry.uninspected')
     : cliMcpOk
       ? t('risk.cliSecurity.mcpOk')
-      : t('risk.cliSecurity.mcpWarn', {
-          unpinned: Math.max(cliSec.unpinned_npx_count, cliSec.windows_bare_npx_count),
-          remote: cliSec.remote_http_mcp_count + (cliSec.has_custom_hooks_or_helpers ? 1 : 0),
-        });
+      : unpinnedMcpCount === 0 && remoteMcpCount === 0 && cliSec.has_custom_hooks_or_helpers
+        ? t('risk.cliSecurity.mcpCustomHooks')
+        : t('risk.cliSecurity.mcpWarn', {
+            unpinned: unpinnedMcpCount,
+            remote: remoteMcpCount,
+          });
 
   const showMatrixFeedback =
     (copiedId !== '' && MATRIX_COPY_IDS.has(copiedId)) ||
@@ -480,7 +464,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
       <div className="risk-content">
         {/* Module 1: Security Posture & 4-Column Telemetry Card */}
         <section className="settings-card risk-posture-card" aria-busy={inspecting || probing}>
-          <div className="risk-audit-banner" data-status={bannerStatus} role="status" aria-live="polite">
+          <div className="risk-audit-banner" data-audit-banner={bannerStatus} data-status={bannerStatus} role="status" aria-live="polite">
             <div className="risk-banner-main">
               <span className="risk-status-dot" data-status={bannerStatus} aria-hidden="true">
                 {statusSymbol(bannerStatus)}
@@ -597,6 +581,11 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                   <small>—</small>
                 )}
               </div>
+              {cliSec?.non_english_language && (
+                <small data-risk-cli-language="non-english" title={t('risk.cliSecurity.languageWarnHint')}>
+                  {t('risk.cliSecurity.languageWarnHint')}
+                </small>
+              )}
             </div>
 
             <div className="risk-telemetry-cell">
@@ -632,7 +621,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
         </div>
 
         <section className="settings-card risk-matrix-card">
-          <div className="risk-matrix-head">
+          <div className="risk-matrix-head" data-audit-group="static">
             <strong className="risk-subhead-title">{stripHeadingIndexPrefix(t('risk.group.staticTitle'))}</strong>
             <span className={`settings-meta-pill${staticPassed === staticChecks.length ? ' ok' : ''}`}>
               {t('risk.group.staticProgress', {passed: staticPassed, total: staticChecks.length})}
@@ -653,7 +642,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
             ))}
           </div>
 
-          <div className="risk-matrix-head">
+          <div className="risk-matrix-head" data-audit-group="probe">
             <strong className="risk-subhead-title">{stripHeadingIndexPrefix(t('risk.group.probeTitle'))}</strong>
             <span className={`settings-meta-pill${probe && probePassed === probeChecks.length ? ' ok' : ''}`}>
               {probe ? t('risk.group.probeProgress', {passed: probePassed, total: probeChecks.length}) : t('risk.group.probeWaiting')}

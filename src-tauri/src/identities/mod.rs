@@ -1,6 +1,6 @@
-// [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务门与显式身份写入代次、Tauri 进度通道。
-// [OUTPUT]: 有界归档加载、单次解析共享额度账本的身份/网页摘要（含 Ultra/Team/Enterprise 套餐消歧）、轻量实时会话快照（identities_live_sessions）、一键无残留恢复接线（recover_clean 与句柄排空等待）、浏览器独立养号卡及受控转正、手动订阅到期管理命令、轻量usage身份观察登记与唯一进程级唤醒owner。
-// [POS]: GUI 身份管理的原生入口；在线子模块仅允许固定额度端点和白名单回执，不提供凭据读取或任意文件/网络接口。
+// [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务门与显式身份写入代次、Tauri 进度通道、SmartRelay 配置与 cli-slots 运行会话。
+// [OUTPUT]: 有界归档加载、单次解析共享额度账本的身份/网页摘要（含 Ultra/Team/Enterprise 套餐消歧）、轻量实时会话快照（identities_live_sessions，分离主配置 sessions、子代理 slot_sessions、纯后台守护态 background_only 与后台待接管作业 active_adopt_jobs）、防封交接检查点（handoff 子模块与 identities_latest_handoff / identities_dismiss_handoff 命令）、一键无残留恢复接线（recover_clean 与句柄排空等待）、浏览器独立养号卡及受控转正、手动订阅到期管理命令、原生 SmartRelay 接力与子代理隔离槽位编排（orchestrator）、轻量usage身份观察登记与唯一进程级唤醒owner。
+// [POS]: GUI 身份管理与原生多路编排入口；在线子模块仅允许固定额度端点和白名单回执，不提供凭据读取或任意文件/网络接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 mod archive;
 mod archive_limits;
@@ -15,9 +15,12 @@ mod credentials;
 pub(crate) mod database;
 #[cfg(test)]
 mod database_tests;
+pub(crate) mod handoff;
 pub(crate) mod online;
 #[cfg(test)]
 mod optimization_tests;
+pub(crate) mod orchestrator;
+pub(crate) use orchestrator::config::read_claude_dir_http_proxy;
 pub(crate) mod private;
 pub(crate) mod profile;
 mod store;
@@ -88,20 +91,33 @@ pub struct State {
     pub browser_warning: Option<String>,
     pub records: Vec<database::Record>,
     pub summaries: std::collections::BTreeMap<String, profile::Summary>,
-    pub sessions: Vec<profile::ActiveSession>,
+    pub sessions: Vec<profile::LiveSession>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub slot_sessions: std::collections::BTreeMap<String, Vec<profile::ActiveSession>>,
     pub active: String,
     pub recovery: Option<String>,
     pub running: bool,
     pub cli_running: bool,
+    #[serde(default)]
+    pub background_only: bool,
+    #[serde(default)]
+    pub active_adopt_jobs: Vec<String>,
     pub current: profile::Current,
 }
 #[derive(Serialize)]
 pub struct LiveSessionsSnapshot {
     pub running: bool,
     pub cli_running: bool,
-    pub sessions: Vec<profile::ActiveSession>,
+    #[serde(default)]
+    pub background_only: bool,
+    #[serde(default)]
+    pub active_adopt_jobs: Vec<String>,
+    pub sessions: Vec<profile::LiveSession>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub slot_sessions: std::collections::BTreeMap<String, Vec<profile::ActiveSession>>,
 }
 fn live_sessions_snapshot(
+    app_data_dir: Option<&std::path::Path>,
     root_path: &std::path::Path,
     include_sessions: bool,
 ) -> Result<LiveSessionsSnapshot, String> {
@@ -113,9 +129,21 @@ fn live_sessions_snapshot(
     } else {
         Vec::new()
     };
-    let running = !procs.is_empty();
+    let slot_sessions = app_data_dir
+        .map(|dir| orchestrator::slot_sessions_by_record(dir, &procs))
+        .unwrap_or_default();
+    let default_procs =
+        crate::cleaner::identity::filter_non_slot_processes(app_data_dir, procs);
+    let running = !default_procs.is_empty();
+    let background_only =
+        running && default_procs.iter().all(|p| p.role().is_background());
+    let active_adopt_jobs = if include_sessions {
+        profile::active_adopt_jobs(root_path)
+    } else {
+        Vec::new()
+    };
     let sessions = if include_sessions || running {
-        profile::active_sessions_from_processes(root_path, &procs)
+        profile::active_sessions_from_processes(root_path, &default_procs)
     } else {
         Vec::new()
     };
@@ -123,10 +151,17 @@ fn live_sessions_snapshot(
     Ok(LiveSessionsSnapshot {
         running,
         cli_running,
+        background_only,
+        active_adopt_jobs,
         sessions: if include_sessions {
             sessions
         } else {
             Vec::new()
+        },
+        slot_sessions: if include_sessions {
+            slot_sessions
+        } else {
+            std::collections::BTreeMap::new()
         },
     })
 }
@@ -189,7 +224,11 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
     if !repair_signature.is_empty() && !already_attempted {
         let cleaner = app.state::<crate::cleaner::Cleaner>();
         if cleaner.enter().is_ok() {
+            let _orch_lock = vault_path
+                .parent()
+                .and_then(|app_dir| orchestrator::acquire_orchestrate_lock(app_dir).ok());
             let _ = store::Store::open(&vault_path, &root_path);
+            drop(_orch_lock);
             cleaner.leave();
             if let Ok(mut last) = REPAIR_ATTEMPTED.lock() {
                 *last = Some(repair_signature);
@@ -216,25 +255,53 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
     if include_sessions {
         usage::observe_current(&vault_path, &root_path);
     }
-    online::apply_parsed_metadata(
-        web_metadata_root.as_ref(),
-        current.quota_identity.as_deref(),
-        &mut current.web,
-    );
-    profile::apply_web_plan_tier(&mut current.plan, &current.web);
-    if current.present {
-        if active != "current" && records.iter().any(|r| r.id == active) {
-            let live_sum = profile::Summary::from_current(&current);
+    if current.present && active != "current" && records.iter().any(|r| r.id == active) {
+        let live_has_verified_quota = matches!(
+            current.quota_source,
+            Some(
+                crate::quota_core::QuotaSource::ServerAnchor
+                    | crate::quota_core::QuotaSource::ResetInferred
+            )
+        ) || matches!(
+            current.quota_5h_source,
+            Some(
+                crate::quota_core::QuotaSource::ServerAnchor
+                    | crate::quota_core::QuotaSource::ResetInferred
+            )
+        ) || matches!(
+            current.quota_7d_source,
+            Some(
+                crate::quota_core::QuotaSource::ServerAnchor
+                    | crate::quota_core::QuotaSource::ResetInferred
+            )
+        ) || current.quota_no_5h_limit
+            || current.quota_5h_rested;
+        if live_has_verified_quota || !summaries.contains_key(&active) {
+            let mut live_sum = profile::Summary::from_current(&current);
+            if live_sum.proxy.is_none() {
+                if let Some(prev) = summaries.get(&active) {
+                    live_sum.proxy = prev.proxy.clone();
+                }
+            }
             if summaries.get(&active) != Some(&live_sum) {
                 let _ = db.set_summary(&active, &live_sum);
                 summaries.insert(active.clone(), live_sum);
             }
         }
     }
-    subscription::apply_manual(
+    online::apply_parsed_metadata(
+        web_metadata_root.as_ref(),
+        current.quota_identity.as_deref(),
+        &mut current.web,
+    );
+    profile::apply_web_plan_tier(&mut current.plan, &current.web);
+    profile::enforce_plan_quota_limits(current.plan.as_deref(), &mut current.quota_no_5h_limit);
+    subscription::apply_manual_with_plan(
         &manual_subs,
         current.quota_identity.as_deref(),
         (active != "current").then_some(active.as_str()),
+        &mut current.plan,
+        &mut current.quota_no_5h_limit,
         &mut current.web,
         &mut current.subscription_expires_at,
     );
@@ -250,11 +317,17 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
             &mut summary.web,
         );
         profile::apply_web_plan_tier(&mut summary.plan, &summary.web);
+        profile::enforce_plan_quota_limits(
+            summary.plan.as_deref(),
+            &mut summary.quota_no_5h_limit,
+        );
         summary.subscription_expires_at = None;
-        subscription::apply_manual(
+        subscription::apply_manual_with_plan(
             &manual_subs,
             summary.quota_identity.as_deref(),
             Some(id.as_str()),
+            &mut summary.plan,
+            &mut summary.quota_no_5h_limit,
             &mut summary.web,
             &mut summary.subscription_expires_at,
         );
@@ -267,7 +340,7 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
         cleaner.leave();
         cleanup?;
     }
-    let live_sessions = live_sessions_snapshot(&root_path, include_sessions)?;
+    let live_sessions = live_sessions_snapshot(vault_path.parent(), &root_path, include_sessions)?;
     Ok(State {
         warming_cards: warming::views(&vault_path, &db)?,
         active_browser_slot: db.browser_slot()?,
@@ -281,10 +354,13 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
         records,
         summaries,
         sessions: live_sessions.sessions,
+        slot_sessions: live_sessions.slot_sessions,
         active,
         recovery: db.get("recovery")?,
         running: live_sessions.running,
         cli_running: live_sessions.cli_running,
+        background_only: live_sessions.background_only,
+        active_adopt_jobs: live_sessions.active_adopt_jobs,
         current,
     })
 }
@@ -295,10 +371,11 @@ pub async fn identities_read(app: tauri::AppHandle) -> Result<State, String> {
         .map_err(|_| "身份列表读取被中断。".to_string())?
 }
 #[tauri::command]
-pub async fn identities_live_sessions() -> Result<LiveSessionsSnapshot, String> {
-    tauri::async_runtime::spawn_blocking(|| {
+pub async fn identities_live_sessions(app: tauri::AppHandle) -> Result<LiveSessionsSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_dir = app.path().app_data_dir().ok();
         let root_path = crate::cleaner::identity::root()?;
-        live_sessions_snapshot(&root_path, true)
+        live_sessions_snapshot(app_dir.as_deref(), &root_path, true)
     })
     .await
     .map_err(|_| "实时会话读取被中断。".to_string())?
@@ -313,10 +390,12 @@ pub async fn identities_stop(
     let on_progress = on_progress.map(|id| id.channel_on(webview));
     let cleaner = app.state::<crate::cleaner::Cleaner>();
     cleaner.enter()?;
+    let worker = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(on_progress);
         reporter.log("stop", "running", "正在结束已识别的 Claude 进程。", 0, None);
-        let result = crate::cleaner::stop_processes();
+        let app_dir = worker.path().app_data_dir().ok();
+        let result = crate::cleaner::stop_processes_in(app_dir.as_deref());
         match &result {
             Ok(count) => reporter.log("stop", "ok", "Claude 进程已结束。", *count, Some(*count)),
             Err(error) => reporter.log("stop", "error", error, 0, None),
@@ -345,9 +424,14 @@ pub async fn identities_save(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(Some(on_progress));
         let result = (|| {
+            let app_dir = worker
+                .path()
+                .app_data_dir()
+                .map_err(|_| "身份保险库无法定位。".to_string())?;
+            let _orch_lock = orchestrator::acquire_orchestrate_lock(&app_dir)?;
             let root = crate::cleaner::identity::root()?;
             crate::cleaner::wait_claude_workspace_handles_released(&root, 600);
-            let mut store = store::Store::open(&vault(&worker)?, &root)?;
+            let mut store = store::Store::open(&app_dir.join("identity-vault"), &root)?;
             store.save_current(&current_name, &policy, &reporter)?;
             crate::browser::sync_current_launch_args(&worker);
             state(&worker)
@@ -388,9 +472,14 @@ pub async fn identities_switch(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(Some(on_progress));
         let result = crate::browser::switch_identity(&worker, &reporter, || {
+            let app_dir = worker
+                .path()
+                .app_data_dir()
+                .map_err(|_| "身份保险库无法定位。".to_string())?;
+            let _orch_lock = orchestrator::acquire_orchestrate_lock(&app_dir)?;
             let root = crate::cleaner::identity::root()?;
             crate::cleaner::wait_claude_workspace_handles_released(&root, 600);
-            let mut store = store::Store::open(&vault(&worker)?, &root)?;
+            let mut store = store::Store::open(&app_dir.join("identity-vault"), &root)?;
             if clean_recover {
                 store.recover_clean(&reporter)?;
             } else if recover {
@@ -459,7 +548,12 @@ pub async fn identities_delete(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let reporter = Reporter::channel(Some(on_progress));
         let action = || {
-            let vault_path = vault(&worker)?;
+            let app_dir = worker
+                .path()
+                .app_data_dir()
+                .map_err(|_| "身份保险库无法定位。".to_string())?;
+            let _orch_lock = orchestrator::acquire_orchestrate_lock(&app_dir)?;
+            let vault_path = app_dir.join("identity-vault");
             let root = crate::cleaner::identity::root()?;
             if id == "current" {
                 crate::cleaner::wait_claude_workspace_handles_released(&root, 600);

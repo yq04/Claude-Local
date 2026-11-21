@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.3.6 Quick-Setup-aligned workbench overhaul & polish across Browser, Computer, Network, and Risk & KYC, built on 0.3.5 UI De-AI unification across all 9 pages, 0.3.3 kernel-handle CLI liveness & zero-residue rollback, 0.3.2 five-core-area polish, 0.3.1 Smart Relay/Usage Analytics 2.1, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.3.7 Strategy A1 reset-card accounting & reset_harvest, modular --orchestrate CLI relay/subagent hardening & clean_handoff, Supported Countries Policy anti-ban & Scenario G guard, background silent resource optimization, and 5 UI refinements, built on 0.3.6 Quick-Setup-aligned workbench overhaul, 0.3.5 UI De-AI unification across all 9 pages, 0.3.3 kernel-handle CLI liveness & zero-residue rollback, 0.3.2 five-core-area polish, 0.3.1 Smart Relay/Usage Analytics 2.1, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
 [OUTPUT]: Full English flagship project presentation foregrounding anti-ban & multi-identity isolation engineering, architectural lineage, feature matrix, visual tour, installation workflow and runtime boundaries.
 [POS]: English repository introduction linked bidirectionally with README.md.
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -15,7 +15,7 @@
 
 Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://github.com/liseami)) and independently maintained, retaining the original contributors' copyright and [MIT license](LICENSE) · 100% Local-First · Zero Cloud Credential Hosting · Never Force-Kills Running `claude.exe` Sessions
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.3.6-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.6)
+[![Latest Release](https://img.shields.io/badge/Release-v0.3.7-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.7)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@ Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://git
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.6/Claude-Local_0.3.6_x64-setup.exe"><strong>⬇️ Download v0.3.6 Installer (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.7/Claude-Local_0.3.7_x64-setup.exe"><strong>⬇️ Download v0.3.7 Installer (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.6"><strong>✨ v0.3.6 Release Notes</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.7"><strong>✨ v0.3.7 Release Notes</strong></a>
   ·
   <a href="#-why-claude-local-solving-the-4-multi-account-anti-ban-pain-points"><strong>🔥 Anti-Ban Core Architecture</strong></a>
   ·
@@ -187,29 +187,30 @@ While preserving 100% compatibility with existing `.baga` vaults and browser see
 
 ## 📦 Download, Installation & Release History
 
-### 1. Latest Windows x64 Installer (`v0.3.6`)
+### 1. Latest Windows x64 Installer (`v0.3.7`)
 
 | Asset | Platform | File Size | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.3.6_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.6/Claude-Local_0.3.6_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | See Release assets | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.6/SHA256SUMS.txt) |
+| **[Claude-Local_0.3.7_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.7/Claude-Local_0.3.7_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | See Release assets | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.7/SHA256SUMS.txt) |
 
-Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.3.6 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.6):
+Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.3.7 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.7):
 
 ```powershell
-Get-FileHash .\Claude-Local_0.3.6_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Claude-Local_0.3.7_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. Installation & Non-Disruptive Upgrade Notes
 
 1. **Install Location & Identifiers**: Per-user NSIS installer defaulting to `%LOCALAPPDATA%\Programs\Claude-Local`; main executable `claude-local.exe`, bundle identifier `ai.local.claude-local`, companion browser registration `Claude-Local-Browser`.
 2. **User Data Root**: All encrypted vaults, master keys, quota/usage ledgers, appearance settings, and browser profiles live under `%APPDATA%\ai.local.claude-local`.
-3. **Seamless Upgrades**: Upgrading from `0.1.x`, `0.2.x`, `0.3.0`, `0.3.1`, `0.3.2`, `0.3.3`, or `0.3.5` to `0.3.6` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
+3. **Seamless Upgrades**: Upgrading from `0.1.x`, `0.2.x`, `0.3.0`, `0.3.1`, `0.3.2`, `0.3.3`, `0.3.5`, or `0.3.6` to `0.3.7` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
 
-### 3. Public Release Series (`0.1.0` – `0.3.6`)
+### 3. Public Release Series (`0.1.0` – `0.3.7`)
 
 | Version | Date | Highlights | Documentation |
 | :--- | :--- | :--- | :--- |
-| **`v0.3.6`** *(Latest)* | 2026-11-15 | **Quick-Setup-aligned layout overhaul & second-pass polish across Browser, Computer, Network, and Risk & KYC**: shared `env-pages.css` 4-cell de-duplicated telemetry strips, `.settings-group-heading` bars, edge-to-edge hairline matrices & `@container` breakpoints; eliminates hero right-side dead space and nested risk borders, hides redundant `Location disabled` button when off, rebuilds the 4-module Risk workbench with `3+2` security pills, and synchronizes 33 workbench i18n keys | [Release notes](docs/RELEASE_NOTES_0.3.6.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.6.md) |
+| **`v0.3.7`** *(Latest)* | 2026-11-20 | **Strategy A1 reset-card accounting & `reset_harvest`, modular `--orchestrate` CLI relay/subagent hardening & `clean_handoff`, Supported Countries Policy anti-ban & Scenario G guard, background silent resource optimization, and 5 UI refinements**: per-grant slicing with non-expiring balance preservation, [`orchestrator/`](src-tauri/src/identities/orchestrator/mod.rs) 6-submodule refactor + `claude-relay`/`claude-subagent` (`Opus 5.5 + max`, `daemon stop --any`, scrubbed `handoff.rs` checkpoint, `api-request-blob`/raw-mode fixes), sticky proxy/per-identity device IDs/pre-launch browser exit gate/Scenario G ledger guard, bounded Tokio + tray WebView2 suspension, and removal of sidebar search/CLI callouts/Smart Relay library banner alongside a 5-column zero-overflow Usage table & label-fit account filter | [Release notes](docs/RELEASE_NOTES_0.3.7.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.7.md) |
+| **`v0.3.6`** | 2026-11-15 | **Quick-Setup-aligned layout overhaul & second-pass polish across Browser, Computer, Network, and Risk & KYC**: shared `env-pages.css` 4-cell de-duplicated telemetry strips, `.settings-group-heading` bars, edge-to-edge hairline matrices & `@container` breakpoints; eliminates hero right-side dead space and nested risk borders, hides redundant `Location disabled` button when off, rebuilds the 4-module Risk workbench with `3+2` security pills, and synchronizes 33 workbench i18n keys | [Release notes](docs/RELEASE_NOTES_0.3.6.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.6.md) |
 | **`v0.3.5`** | 2026-11-15 | **End-to-end UI De-AI unification & 9-page compact layout overhaul (`44px` headers, `12px` card radius, `28×28` icon containers, tight `.settings-row`, preserving `166×286` cards and verification geometry)**, **4-cell Quick Setup telemetry + 8-action grid, shared `env-pages.css` (2-col matrix / 3-row settings / 3-col proxy chain), `.risk-grid-3` & 2-col Help topics**, **Appearance/About `Reset defaults` placement, single-row `.backup-location`, neutral `>_` CLI badge, CLI proxy boundary parity on Residue panel, and 286-key bilingual microcopy compression** | [Release notes](docs/RELEASE_NOTES_0.3.5.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.5.md) |
 | **`v0.3.3`** | 2026-11-14 | **Kernel handle-level CLI liveness filtering stale child handles & `identities_live_sessions` graded active badges**, **transient file-lock backoff self-healing, zero-residue switch rollback & one-click clean recovery**, **unified CLI proxy/telemetry shield checks**, **Usage Analytics `Avg. session cost` / `Avg. turn cost` KPI upgrade & aligned KPI/model/2× Retina poster layout** | [Release notes](docs/RELEASE_NOTES_0.3.3.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.3.md) |
 | **`v0.3.2`** | 2026-11-12 | **Full polish and hardening across the five core areas (identity cards, account isolation, risk avoidance, quota query, usage analytics)**, **faster quota/usage loading (damaged-log cursor caching, zero-read fast path, write-free idle scans, content-based identity change detection)**, **redesigned quota details dialog with real manual-reset expiry**, **concurrent multi-account web sync and side-by-side isolated usage pages** | [Release notes](docs/RELEASE_NOTES_0.3.2.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.2.md) |

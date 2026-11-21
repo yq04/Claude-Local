@@ -526,7 +526,7 @@ dependencies = [
 
 [[package]]
 name = "claude-local"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "base64 0.22.1",
  "cc",
@@ -545,6 +545,8 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "tokio",
+ "webview2-com",
+ "windows-core",
  "windows-sys 0.59.0",
  "zeroize",
  "zstd",

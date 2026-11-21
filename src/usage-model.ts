@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Redacted native usage aggregates and the current local calendar/locale.
- * [OUTPUT]: Typed accounting/activity contract (including optional per-account models), four-part token composition, family-first model & thinking-depth effort sorting, official API USD cost estimation (including Mythos preview/5.2/5.1), per-session cost/depth efficiency summary, peak bucket label formatting, cache-rate/K-M-B formatting, calendar series and elapsed-period averages/peaks.
+ * [OUTPUT]: Typed accounting/activity contract (including optional per-account models, plan tier & live slot activity), period-aware Subscription ROI calculator (computeSubscriptionRoi), four-part token composition, family-first model & thinking-depth effort sorting, official API USD cost estimation (including Mythos preview/5.2/5.1), per-session cost/depth efficiency summary, peak bucket label formatting, cache-rate/K-M-B formatting, calendar series and elapsed-period averages/peaks.
  * [POS]: Pure usage presentation helpers; no identity files, credentials or network access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -16,7 +16,64 @@ export type UsageTotals = {
   /** Distinct recorded session IDs; absent in older snapshots. */
   sessions?: number;
 };
-export type UsageAccount = {id: string; name: string; email: string | null; current: boolean; totals: UsageTotals; models?: UsageModel[]};
+export type UsageAccount = {
+  id: string;
+  name: string;
+  email: string | null;
+  current: boolean;
+  totals: UsageTotals;
+  models?: UsageModel[];
+  plan?: string | null;
+  slot_active?: boolean;
+};
+export type SubscriptionRoi = {
+  monthlyPriceUsd: number;
+  multiplier: number;
+};
+
+export function computeSubscriptionRoi(
+  plan: string | null | undefined,
+  apiCostUsd: number,
+  periodDays = 30,
+): SubscriptionRoi | null {
+  if (!plan || typeof plan !== 'string' || !Number.isFinite(apiCostUsd) || apiCostUsd < 0) {
+    return null;
+  }
+  const norm = plan.trim().toLowerCase();
+  if (!norm || norm === 'free' || norm.startsWith('free ')) {
+    return null;
+  }
+  let monthlyPriceUsd: number | null = null;
+  if (norm === 'ultra' || norm.includes('ultra') || norm.includes('20x')) {
+    monthlyPriceUsd = 200;
+  } else if (norm === 'max' || norm.startsWith('max')) {
+    monthlyPriceUsd = 100;
+  } else if (
+    norm === 'team' ||
+    norm === 'enterprise' ||
+    norm.startsWith('team ') ||
+    norm.startsWith('enterprise')
+  ) {
+    monthlyPriceUsd = 30;
+  } else if (norm === 'pro' || norm === 'pro / max' || norm.startsWith('pro ')) {
+    monthlyPriceUsd = 20;
+  }
+  if (monthlyPriceUsd === null || monthlyPriceUsd <= 0) {
+    return null;
+  }
+  const effectiveDays =
+    typeof periodDays === 'number' && Number.isFinite(periodDays) && periodDays > 0
+      ? periodDays
+      : 30;
+  const baselineUsd = monthlyPriceUsd * (effectiveDays / 30);
+  if (baselineUsd <= 0) {
+    return null;
+  }
+  return {
+    monthlyPriceUsd,
+    multiplier: Math.round((apiCostUsd / baselineUsd) * 100) / 100,
+  };
+}
 export type UsageDay = {day: string; totals: UsageTotals; future?: boolean; start_at?: number; end_at?: number};
 export type UsageAttributionConfig = {
   fallback_account_id: string | null;

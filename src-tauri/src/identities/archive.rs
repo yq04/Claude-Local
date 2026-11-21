@@ -1,5 +1,5 @@
 // [INPUT]: 白名单身份源、SQLite 账号目录、Zstandard/旧 gzip 与认证加密流。
-// [OUTPUT]: 不可变归档代次与有界解包区、逐源完成/压缩落盘/完整验收进度；实时工作区快照跳过瞬态 .claude/debug/latest 链接与瞬态锁/临时文件并容忍瞬态缓存文件消失与 Windows 短暂共享冲突，归档解包与恢复遍历仍严格拒绝链接；首身份或受控养号转正复用浏览器编号，转正时旧 CLI 归档不消费草稿。
+// [OUTPUT]: 不可变归档代次、零磁盘解包流式认证校验（`verify_archive_stream` `Zeroizing` + 64 MiB `top_data_files` 内存上限 / `save_verified`）与有界解包区、`pending_device_id` 复用、单次扫描指纹复用、逐源脱敏暂存进度与压缩落盘进度；实时工作区快照跳过瞬态 .claude/debug/latest 链接与瞬态锁/临时文件并容忍瞬态缓存文件消失与 Windows 短暂共享冲突，归档解包与恢复遍历仍严格拒绝链接；首身份或受控养号转正复用浏览器编号，转正时旧 CLI 归档不消费草稿。
 // [POS]: 保险库的数据格式与资源边界，与 store 的工作区切换事务分离，旧 gzip 归档保持可读，认证尾部仍完整验收。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -20,6 +20,7 @@ use std::{
     io::{self, BufWriter, Write},
     path::{Component, Path, PathBuf},
 };
+use zeroize::Zeroizing;
 #[derive(Serialize, Deserialize)]
 pub(super) struct Manifest {
     pub(super) version: u32,
@@ -294,13 +295,209 @@ impl Store {
             }
         }
     }
+}
+
+pub(super) struct VerifiedOutgoing {
+    pub record: Record,
+    pub manifest: Manifest,
+}
+
+fn source_archive_label(source: &Source) -> String {
+    if let Some(name) = source.path.file_name().and_then(|n| n.to_str()) {
+        if matches!(
+            name,
+            ".claude.json"
+                | ".credentials.json"
+                | "settings.json"
+                | "settings.local.json"
+                | "CLAUDE.md"
+                | "remote-settings.json"
+                | "history.jsonl"
+                | "stats-cache.json"
+                | "projects"
+                | "sessions"
+                | "jobs"
+                | "todos"
+                | "plugins"
+                | "skills"
+                | "commands"
+                | "agents"
+                | "rules"
+                | "hooks"
+                | "telemetry"
+                | "cache"
+                | "statsig"
+                | "ide"
+                | "downloads"
+                | "debug"
+        ) {
+            return name.to_string();
+        }
+    }
+    source.category.clone()
+}
+
+impl Store {
+    pub(super) fn verify_archive_stream(
+        &self,
+        record: &Record,
+        limits: Limits,
+    ) -> Result<Manifest, String> {
+        if !super::valid_id(&record.id) || !super::catalog::archive_name(&record.archive) {
+            return Err("身份归档编号无效。".into());
+        }
+        let archive = self.vault.join(&record.archive);
+        private::parents(&self.vault)?;
+        private::safe(&archive)?;
+        let file = crate::cleaner::file_io::open_read_retry(&archive).map_err(problem)?;
+        if file.metadata().map_err(problem)?.len() > limits.stream_bytes {
+            return Err(archive_limits::ERROR.into());
+        }
+        let input = compression::decode(codec::Open::new(file, &self.key).map_err(problem)?)
+            .map_err(problem)?;
+        let mut input = archive_limits::TarRead::new(input, limits);
+        let mut files = std::collections::HashSet::new();
+        let mut manifest_bytes: Option<Zeroizing<Vec<u8>>> = None;
+        let mut top_data_files: std::collections::HashMap<PathBuf, Zeroizing<Vec<u8>>> =
+            std::collections::HashMap::new();
+        const TOP_DATA_RAM_CAP: u64 = 64 * 1024 * 1024;
+        let mut top_data_ram_used: u64 = 0;
+        {
+            let mut tar = tar::Archive::new(&mut input);
+            for entry in tar.entries().map_err(archive_limits::problem)? {
+                let mut entry = entry.map_err(archive_limits::problem)?;
+                if files.len() >= limits.members
+                    || entry.path_bytes().len() > limits.path_bytes
+                    || entry.size() > limits.member_bytes
+                {
+                    return Err(archive_limits::ERROR.into());
+                }
+                let path = entry.path().map_err(problem)?.into_owned();
+                if path == Path::new("manifest.json") && entry.size() > limits.manifest_bytes {
+                    return Err(archive_limits::ERROR.into());
+                }
+                if path.as_os_str().is_empty()
+                    || path
+                        .components()
+                        .any(|c| !matches!(c, Component::Normal(_)))
+                    || !files.insert(path.clone())
+                {
+                    return Err("身份归档成员无效。".into());
+                }
+                let kind = entry.header().entry_type();
+                if !kind.is_file() && !kind.is_dir() {
+                    return Err("身份归档包含链接或特殊文件。".into());
+                }
+                if kind.is_file() {
+                    if path == Path::new("manifest.json") {
+                        let mut buf = Zeroizing::new(Vec::with_capacity(
+                            entry.size().min(limits.manifest_bytes) as usize,
+                        ));
+                        io::copy(&mut entry, &mut *buf).map_err(archive_limits::problem)?;
+                        if buf.len() as u64 > limits.manifest_bytes {
+                            return Err(archive_limits::ERROR.into());
+                        }
+                        manifest_bytes = Some(buf);
+                    } else if path.components().count() == 2
+                        && path.starts_with("data")
+                        && entry.size() <= limits.config_bytes
+                        && top_data_ram_used.saturating_add(entry.size()) <= TOP_DATA_RAM_CAP
+                    {
+                        let mut buf = Zeroizing::new(Vec::with_capacity(entry.size() as usize));
+                        io::copy(&mut entry, &mut *buf).map_err(archive_limits::problem)?;
+                        if buf.len() as u64 > limits.config_bytes
+                            || top_data_ram_used.saturating_add(buf.len() as u64) > TOP_DATA_RAM_CAP
+                        {
+                            return Err(archive_limits::ERROR.into());
+                        }
+                        top_data_ram_used = top_data_ram_used.saturating_add(buf.len() as u64);
+                        top_data_files.insert(path, buf);
+                    } else {
+                        io::copy(&mut entry, &mut io::sink()).map_err(archive_limits::problem)?;
+                    }
+                }
+            }
+        }
+        // tar 结束不能替代认证结尾；排空压缩和加密流，拒绝截断或附加内容。
+        io::copy(&mut input, &mut io::sink()).map_err(archive_limits::problem)?;
+        let raw_manifest = manifest_bytes.ok_or("身份归档不完整。")?;
+        let manifest: Manifest = serde_json::from_slice(&raw_manifest).map_err(problem)?;
+        if manifest.sources.len() > limits.members
+            || manifest.fingerprints.len() > limits.members
+        {
+            return Err(archive_limits::ERROR.into());
+        }
+        if manifest.version != 1
+            || manifest.id != record.id
+            || manifest.home != self.home
+            || manifest.platform != std::env::consts::OS
+            || manifest.sources.len() != manifest.fingerprints.len()
+        {
+            return Err("身份不属于当前电脑或归档版本无效。".into());
+        }
+        if manifest
+            .sources
+            .iter()
+            .any(|s| !identity::allowed(&self.home, s))
+        {
+            return Err("身份路径超出允许范围。".into());
+        }
+        let expected: std::collections::HashSet<_> = manifest
+            .sources
+            .iter()
+            .enumerate()
+            .map(|(n, _)| format!("data/{n}"))
+            .collect();
+        let mut present_top: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for path in &files {
+            if path == Path::new("manifest.json") {
+                continue;
+            }
+            let mut parts = path.components();
+            if parts.next() != Some(Component::Normal("data".as_ref())) {
+                return Err("身份归档成员无效。".into());
+            }
+            let second = parts.next().ok_or("身份归档成员无效。")?;
+            let key = format!("data/{}", second.as_os_str().to_string_lossy());
+            if !expected.contains(&key) {
+                return Err("身份归档成员无效。".into());
+            }
+            present_top.insert(key);
+        }
+        for (n, source) in manifest.sources.iter().enumerate() {
+            let key = format!("data/{n}");
+            if !present_top.contains(&key) {
+                return Err("身份归档不完整。".into());
+            }
+            if !source.keys.is_empty() {
+                let bytes = top_data_files
+                    .get(&PathBuf::from(&key))
+                    .ok_or(archive_limits::ERROR)?;
+                let value: serde_json::Value = serde_json::from_slice(bytes).map_err(problem)?;
+                if !value.is_object() {
+                    return Err("身份配置不是对象。".into());
+                }
+            }
+        }
+        Ok(manifest)
+    }
     pub(super) fn save(
         &self,
         name: &str,
         policy: &Policy,
         reporter: &Reporter,
     ) -> Result<(Record, Stage), String> {
-        self.save_inner(name, policy, reporter, true)
+        let verified = self.save_inner_verified(name, policy, reporter, true)?;
+        let stage = self.load(&verified.record)?;
+        Ok((verified.record, stage))
+    }
+    pub(super) fn save_verified(
+        &self,
+        name: &str,
+        policy: &Policy,
+        reporter: &Reporter,
+    ) -> Result<VerifiedOutgoing, String> {
+        self.save_inner_verified(name, policy, reporter, true)
     }
     pub(super) fn save_checkpoint(
         &self,
@@ -308,29 +505,20 @@ impl Store {
         policy: &Policy,
         reporter: &Reporter,
     ) -> Result<(Record, Stage), String> {
-        self.save_inner(name, policy, reporter, false)
+        let verified = self.save_inner_verified(name, policy, reporter, false)?;
+        let stage = self.load(&verified.record)?;
+        Ok((verified.record, stage))
     }
-    fn save_inner(
+    fn save_inner_verified(
         &self,
         name: &str,
         policy: &Policy,
         reporter: &Reporter,
         reuse: bool,
-    ) -> Result<(Record, Stage), String> {
+    ) -> Result<VerifiedOutgoing, String> {
         self.stopped()?;
         reporter.log("validate", "running", "正在检查当前身份文件。", 0, None);
-        let sources = identity::sources(&self.home, policy)?;
-        let mut fingerprints = Vec::with_capacity(sources.len());
-        for (index, source) in sources.iter().enumerate() {
-            fingerprints.push(identity::fingerprint(&source.path)?);
-            reporter.log(
-                "validate",
-                "running",
-                "已检查身份文件快照。",
-                index + 1,
-                Some(sources.len()),
-            );
-        }
+        let (sources, fingerprints) = identity::sources_with_fingerprints(&self.home, policy)?;
         reporter.log(
             "validate",
             "ok",
@@ -338,22 +526,26 @@ impl Store {
             sources.len(),
             Some(sources.len()),
         );
-        reporter.log(
-            "credentials",
-            "running",
-            "正在保存所选本地登录凭据。",
-            0,
-            None,
-        );
         let credentials = self.snapshot_keys()?;
-        super::credentials::clear(&credentials, policy)?;
-        reporter.log(
-            "credentials",
-            "ok",
-            "本地登录凭据已读取并核验。",
-            1,
-            Some(1),
-        );
+        if cfg!(target_os = "macos") || !credentials.is_empty() {
+            reporter.log(
+                "credentials",
+                "running",
+                "正在保存所选本地登录凭据。",
+                0,
+                None,
+            );
+            super::credentials::clear(&credentials, policy)?;
+            reporter.log(
+                "credentials",
+                "ok",
+                "本地登录凭据已读取并核验。",
+                1,
+                Some(1),
+            );
+        } else {
+            super::credentials::clear(&credentials, policy)?;
+        }
         let account_key = if reuse {
             super::catalog::live_key(&self.home, &self.key)?
         } else {
@@ -373,10 +565,24 @@ impl Store {
         } else {
             None
         };
+        let pending_device_id = if reuse && has_live_identity && previous.is_none() && draft.is_none()
+        {
+            self.db.get("pending_device_id")?.filter(|pid| {
+                super::valid_id(pid)
+                    && self
+                        .db
+                        .records()
+                        .ok()
+                        .is_none_or(|rs| rs.iter().all(|r| r.id != *pid))
+            })
+        } else {
+            None
+        };
         let id = previous
             .as_ref()
             .map(|r| r.id.clone())
             .or(draft)
+            .or(pending_device_id)
             .unwrap_or(super::new_id()?);
         let generation = super::new_id()?;
         let manifest = Manifest {
@@ -405,7 +611,7 @@ impl Store {
                 Some(manifest.sources.len()),
             );
             for (n, source) in manifest.sources.iter().enumerate() {
-                self.stopped()?;
+                self.during_io()?;
                 let archive_path = PathBuf::from(format!("data/{n}"));
                 if !source.keys.is_empty() {
                     let text = crate::cleaner::file_io::read_to_string_retry(&source.path)
@@ -451,10 +657,11 @@ impl Store {
                         crate::cleaner::file_io::open_read_retry(&source.path).map_err(problem)?;
                     tar.append_file(archive_path, &mut file).map_err(problem)?;
                 }
+                let label = source_archive_label(source);
                 reporter.log(
                     "archive",
                     "running",
-                    "已写入身份归档文件。",
+                    &format!("已暂存 {label}。"),
                     n + 1,
                     Some(manifest.sources.len()),
                 );
@@ -484,41 +691,22 @@ impl Store {
             let file = seal.finish().map_err(problem)?;
             file.sync_all().map_err(problem)?;
             drop(file);
-            reporter.log("compress", "ok", "压缩归档已完整落盘。", 1, Some(1));
-            reporter.log(
-                "validate",
-                "running",
-                "正在复核身份源文件。",
-                0,
-                Some(manifest.sources.len()),
-            );
-            for (index, (source, stamp)) in manifest
-                .sources
-                .iter()
-                .zip(&manifest.fingerprints)
-                .enumerate()
-            {
+            for (source, stamp) in manifest.sources.iter().zip(&manifest.fingerprints) {
                 if source.category != "cache" && identity::fingerprint(&source.path)? != *stamp {
                     return Err("身份数据发生变化；未切换身份。".into());
                 }
-                reporter.log(
-                    "validate",
-                    "running",
-                    "已复核身份源文件。",
-                    index + 1,
-                    Some(manifest.sources.len()),
-                );
             }
             reporter.log(
-                "validate",
-                "ok",
-                "身份源文件已完整复核。",
-                manifest.sources.len(),
-                Some(manifest.sources.len()),
+                "compress",
+                "running",
+                "身份源文件已完整复核，正在落盘归档。",
+                0,
+                None,
             );
             self.stopped()?;
             crate::cleaner::file_io::rename_retry(&pending, &destination).map_err(problem)?;
             private::sync_parent(&destination);
+            reporter.log("compress", "ok", "压缩归档已完整落盘。", 1, Some(1));
             let record = Record {
                 id,
                 name: previous
@@ -543,13 +731,99 @@ impl Store {
             reporter.log(
                 "verify_archive",
                 "running",
-                "正在解包并验收认证归档。",
+                "正在流式校验已加密身份归档。",
                 0,
                 None,
             );
-            let stage = self.load(&record)?;
-            reporter.log("verify_archive", "ok", "认证归档已完整验收。", 1, Some(1));
-            Ok((record, stage))
+            let verified_manifest = self.verify_archive_stream(&record, Limits::default())?;
+            reporter.log(
+                "verify_archive",
+                "ok",
+                "已通过流式校验，身份归档完整可用。",
+                1,
+                Some(1),
+            );
+            Ok(VerifiedOutgoing {
+                record,
+                manifest: verified_manifest,
+            })
+        })();
+        if result.is_err() {
+            let _ = crate::cleaner::file_io::remove_file_retry(&pending);
+            let _ = crate::cleaner::file_io::remove_file_retry(&destination);
+        }
+        result
+    }
+    pub(super) fn repack_stage(
+        &self,
+        stage: &Stage,
+        record: &Record,
+    ) -> Result<(Record, Stage), String> {
+        let generation = super::new_id()?;
+        let pending = self.vault.join(format!(".pending-{generation}"));
+        let destination = self.vault.join(format!("{generation}.baga"));
+        let result = (|| {
+            let output =
+                codec::Seal::new(private::create(&pending)?, &self.key).map_err(problem)?;
+            let buffered = BufWriter::with_capacity(64 * 1024, output);
+            let mut tar = tar::Builder::new(compression::encode(buffered).map_err(problem)?);
+            for (n, _source) in stage.manifest.sources.iter().enumerate() {
+                let data_path = stage.path.join(format!("data/{n}"));
+                let archive_path = PathBuf::from(format!("data/{n}"));
+                private::safe(&data_path)?;
+                if data_path.is_dir() {
+                    walk(&data_path, &data_path, &mut |path, relative, directory| {
+                        let target = if relative.as_os_str().is_empty() {
+                            archive_path.clone()
+                        } else {
+                            archive_path.join(relative)
+                        };
+                        if directory {
+                            tar.append_dir(target, path).map_err(problem)
+                        } else {
+                            let mut file =
+                                crate::cleaner::file_io::open_read_retry(path).map_err(problem)?;
+                            tar.append_file(target, &mut file).map_err(problem)
+                        }
+                    })?;
+                } else {
+                    let mut file =
+                        crate::cleaner::file_io::open_read_retry(&data_path).map_err(problem)?;
+                    tar.append_file(archive_path, &mut file).map_err(problem)?;
+                }
+            }
+            append(
+                &mut tar,
+                Path::new("manifest.json"),
+                &serde_json::to_vec(&stage.manifest).map_err(problem)?,
+            )?;
+            let encoder = tar.into_inner().map_err(problem)?;
+            let buffered = encoder.finish().map_err(problem)?;
+            let seal = buffered.into_inner().map_err(problem)?;
+            let file = seal.finish().map_err(problem)?;
+            file.sync_all().map_err(problem)?;
+            drop(file);
+            crate::cleaner::file_io::rename_retry(&pending, &destination).map_err(problem)?;
+            private::sync_parent(&destination);
+            let updated_record = Record {
+                id: record.id.clone(),
+                name: record.name.clone(),
+                archive: destination
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                saved_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(problem)?
+                    .as_millis() as u64,
+                bytes: fs::metadata(&destination).map_err(problem)?.len(),
+                policy: stage.manifest.policy.clone(),
+                empty: record.empty,
+                account_key: record.account_key.clone(),
+            };
+            let reloaded = self.load(&updated_record)?;
+            Ok((updated_record, reloaded))
         })();
         if result.is_err() {
             let _ = crate::cleaner::file_io::remove_file_retry(&pending);

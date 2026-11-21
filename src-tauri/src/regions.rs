@@ -1,6 +1,6 @@
-// [INPUT]: 用户选定的国家地区编号。
-// [OUTPUT]: 地区预设、有效区域解析与目标地区匹配；机器语言/脚本不作为国家的替代。
-// [POS]: 快捷操作的唯一地区真相源；选择地区不代表实际网络出口已改变。
+// [INPUT]: 用户选定的国家地区编号与标准 IANA 时区/ISO 国家码。
+// [OUTPUT]: 地区预设、有效区域解析、扩展北美/受限地区 IANA 时区国家映射与不受支持出口国家判定；机器语言/脚本不作为国家的替代。
+// [POS]: 快捷操作与出口国家风控策略的地区真相源；选择地区不代表实际网络出口已改变。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::Serialize;
 #[derive(Serialize)]
@@ -190,6 +190,21 @@ mod tests {
         assert!(matching("en-US", "US/Pacific").is_none());
         assert!(matching("de", "Europe/Paris").is_none());
         assert!(matching_country("DE", "Europe/Paris").is_none());
+        for us_tz in [
+            "America/Chicago",
+            "America/Denver",
+            "America/Phoenix",
+            "America/Anchorage",
+            "Pacific/Honolulu",
+            "America/Detroit",
+            "America/Boise",
+            "America/Indiana/Indianapolis",
+        ] {
+            assert_eq!(timezone_country(us_tz), Some("US"));
+        }
+        assert!(is_unsupported_exit_country("CN"));
+        assert!(is_unsupported_exit_country("hk"));
+        assert!(!is_unsupported_exit_country("US"));
     }
 }
 
@@ -289,4 +304,48 @@ pub fn matching_country(country: &str, timezone: &str) -> Option<&'static Region
     REGIONS
         .iter()
         .find(|r| r.country == country && r.timezone == timezone)
+}
+
+pub const UNSUPPORTED_EXIT_COUNTRIES: &[&str] = &[
+    "CN", "HK", "MO", "RU", "BY", "KP", "IR", "SY", "CU",
+];
+
+pub fn is_unsupported_exit_country(country: &str) -> bool {
+    let code = country.trim();
+    code.len() == 2
+        && UNSUPPORTED_EXIT_COUNTRIES
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(code))
+}
+
+/// Map standard IANA timezones (including multi-zone US regions not in the 13 quick presets)
+/// to an ISO 3166-1 alpha-2 country for anti-ban policy and kill-switch drift checks.
+pub fn timezone_country(timezone: &str) -> Option<&'static str> {
+    let tz = timezone.trim();
+    if let Some(region) = REGIONS.iter().find(|r| r.timezone == tz) {
+        return Some(region.country);
+    }
+    match tz {
+        "America/Chicago"
+        | "America/Denver"
+        | "America/Phoenix"
+        | "America/Anchorage"
+        | "Pacific/Honolulu"
+        | "America/Detroit"
+        | "America/Boise"
+        | "America/Indiana/Indianapolis"
+        | "US/Pacific"
+        | "US/Mountain"
+        | "US/Central"
+        | "US/Eastern" => Some("US"),
+        "Asia/Chongqing" | "Asia/Harbin" | "Asia/Urumqi" | "PRC" => Some("CN"),
+        "Asia/Macau" | "Asia/Macao" => Some("MO"),
+        "Europe/Moscow" | "Europe/Kaliningrad" => Some("RU"),
+        "Europe/Minsk" => Some("BY"),
+        "Asia/Pyongyang" => Some("KP"),
+        "Asia/Tehran" => Some("IR"),
+        "Asia/Damascus" => Some("SY"),
+        "America/Havana" => Some("CU"),
+        _ => None,
+    }
 }

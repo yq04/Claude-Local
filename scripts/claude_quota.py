@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# [INPUT]: Passive statusLine data, isolated account evidence, strict quota_archive frames and bounded sibling Rust quota protocol.
-# [OUTPUT]: Serialized atomic quota summaries with validated observed percentages, Ultra five_hour=null, model-scoped weekly pools, speed/Mythos pricing, trusted-reset inference and original observations.
+# [INPUT]: Passive statusLine data (default ~/.claude, CLAUDE_LOCAL_RELAY_ACTIVE/THRESHOLD env, smart_relay_v1.json, and symlink-safe managed cli-slots), isolated account evidence, strict quota_archive frames and bounded sibling Rust quota protocol.
+# [OUTPUT]: Serialized atomic quota summaries with validated observed percentages, Free/Pro/Max/Ultra downgrade-safe plan resolution, Ultra five_hour=null (cleared on numeric 5h or Free/Pro downgrade), model-scoped weekly pools, speed/Mythos pricing, trusted-reset inference, SmartRelay statusLine hints, and original observations.
 # [POS]: Sole quota-ledger writer; standalone legacy rules mirror Rust without polling or editing Claude configuration.
 # [PROTOCOL]: Update scripts/CLAUDE.md when changing window evidence or persistence behavior.
 """
@@ -16,6 +16,8 @@ claude-quota v6: passive quota collector with the bundled Rust window-state core
 """
 import sys
 import os
+import re
+import stat
 import json
 import math
 import hashlib
@@ -974,6 +976,47 @@ def render_bar(remain_pct: int, width: int = 16) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+def resolve_account_plan(oa: dict | None, acc: dict | None, fallback: str | None = None) -> str:
+    oa = oa if isinstance(oa, dict) else {}
+    acc = acc if isinstance(acc, dict) else {}
+    raw_sub = str(oa.get("subscriptionType") or "").strip()
+    sub_low = raw_sub.lower()
+    rate_low = str(oa.get("rateLimitTier") or "").strip().lower()
+    billing_low = str(acc.get("billingType") or "").strip().lower()
+    if sub_low == "ultra":
+        return "Ultra"
+    if sub_low in ("max", "") and "20x" in rate_low:
+        return "Max 20x"
+    if sub_low in ("max", "") and "5x" in rate_low:
+        return "Max 5x"
+    if sub_low == "max":
+        return "Max"
+    if sub_low == "free":
+        return "Free"
+    if sub_low == "team":
+        return "Team"
+    if sub_low == "enterprise":
+        return "Enterprise"
+    if sub_low == "pro":
+        return "Pro"
+    if raw_sub:
+        return raw_sub.capitalize()
+    if billing_low == "free":
+        return "Free"
+    if "subscription" in billing_low:
+        if fallback in ("Pro", "Max", "Max 5x", "Max 20x", "Ultra", "Team", "Enterprise"):
+            return fallback
+        return "Pro"
+    return fallback if fallback else "Pro"
+
+
+def _plan_disallows_no_5h(plan_val) -> bool:
+    if not isinstance(plan_val, str):
+        return False
+    low = plan_val.strip().lower()
+    return low in ("free", "pro", "team", "enterprise") or low.startswith("max")
+
+
 def format_account(
     cj: dict,
     cred: dict,
@@ -988,18 +1031,7 @@ def format_account(
     email = acc.get("emailAddress") or "未知邮箱"
     display = acc.get("displayName") or "未命名"
     org = acc.get("organizationName")
-    sub_type = str(oa.get("subscriptionType") or acc.get("billingType") or "pro")
-    rate_tier = str(oa.get("rateLimitTier") or "")
-    if "20x" in rate_tier.lower():
-        plan = "Max 20x"
-    elif "5x" in rate_tier.lower():
-        plan = "Max 5x"
-    elif sub_type.lower() == "max":
-        plan = "Max"
-    elif sub_type.lower() == "pro" or "subscription" in sub_type.lower():
-        plan = "Pro"
-    else:
-        plan = sub_type.capitalize()
+    plan = resolve_account_plan(oa, acc, fallback="Pro")
 
     exp_ms = oa.get("expiresAt", 0)
     has_refresh = bool(oa.get("refreshToken"))
@@ -1177,9 +1209,12 @@ def apply_ledger_fallback_to_account(info: dict, ledger_accounts: dict, saved_at
     # merged copy so an unobserved window is not lost on the next write.
     if entry.get("server_anchor"):
         info["server_anchor"] = entry["server_anchor"]
+    if entry.get("plan") == "Ultra" and not info.get("plan_tier_cleared") and info.get("plan") in (None, "Max", "Pro / Max"):
+        info["plan"] = "Ultra"
     eff_anchor = info.get("server_anchor") if isinstance(info.get("server_anchor"), dict) else {}
     no_5h_limit = bool(
-        (eff_anchor.get("no_five_hour") is True or entry.get("quota_no_5h_limit") is True)
+        not _plan_disallows_no_5h(info.get("plan"))
+        and (eff_anchor.get("no_five_hour") is True or entry.get("quota_no_5h_limit") is True)
         and merged["5h"][0] is None
     )
     info["quota_no_5h_limit"] = no_5h_limit
@@ -1191,8 +1226,6 @@ def apply_ledger_fallback_to_account(info: dict, ledger_accounts: dict, saved_at
         if sf_pct is not None:
             info["quota_7d_fable_used"] = sf_pct
             info["quota_7d_fable_reset_at"] = sf["resetsAt"]
-    if entry.get("plan") == "Ultra" and info.get("plan") in (None, "Max", "Pro", "Pro / Max"):
-        info["plan"] = "Ultra"
     if all(merged[s][0] is not None for s in ("5h", "7d")):
         info["effective_rem"] = min(info["rem_5h"], info["rem_7d"])
         if info["effective_rem"] == 0:
@@ -1236,7 +1269,7 @@ def ledger_writer_lock(app_dir: str):
             lock.write(b"0")
             lock.flush()
         acquired = False
-        for _ in range(50):
+        for _ in range(250):
             lock.seek(0)
             try:
                 if os.name == "nt":
@@ -1318,6 +1351,11 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
         item = dict(item)
         observed = item.get("server_anchor_observed_windows")
         explicit_no_5h = isinstance(incoming_anchor, dict) and incoming_anchor.get("no_five_hour") is True
+        if explicit_no_5h:
+            item["plan"] = "Ultra"
+        elif prev_entry.get("plan") == "Ultra" and not item.get("plan_tier_cleared") and item.get("plan") in (None, "Max", "Pro / Max"):
+            item["plan"] = "Ultra"
+        plan_blocks_no_5h = (not explicit_no_5h) and _plan_disallows_no_5h(item.get("plan"))
         if (isinstance(incoming_anchor, dict) and isinstance(prev_anchor, dict)
                 and incoming_anchor.get("accountUuid")
                 and incoming_anchor.get("accountUuid") == prev_anchor.get("accountUuid")
@@ -1345,13 +1383,19 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                     item[f"quota_{suffix}_observed_at_ms"] = old_observed
             merged_anchor_ms = max(anchor_fetched_at_ms(incoming_anchor), anchor_fetched_at_ms(prev_anchor))
             if not isinstance(observed, list) and anchor_fetched_at_ms(prev_anchor) > anchor_fetched_at_ms(incoming_anchor):
-                incoming_anchor = prev_anchor
+                incoming_anchor = dict(prev_anchor)
+                if plan_blocks_no_5h:
+                    incoming_anchor.pop("no_five_hour", None)
             else:
                 incoming_anchor = {**incoming_anchor, "fetchedAtMs": merged_anchor_ms, "utilization": utilization}
-                if "five_hour" in utilization:
+                if "five_hour" in utilization or plan_blocks_no_5h:
                     incoming_anchor.pop("no_five_hour", None)
-                elif explicit_no_5h or prev_anchor.get("no_five_hour") is True:
+                elif explicit_no_5h:
                     incoming_anchor["no_five_hour"] = True
+                elif prev_anchor.get("no_five_hour") is True and item.get("plan") == "Ultra" and not item.get("plan_tier_cleared"):
+                    incoming_anchor["no_five_hour"] = True
+                else:
+                    incoming_anchor.pop("no_five_hour", None)
                 prev_sf = prev_anchor.get("scoped_fable_7d")
                 inc_sf = incoming_anchor.get("scoped_fable_7d")
                 if inc_sf is None and isinstance(prev_sf, dict) and int(prev_sf.get("resetsAt") or 0) > now_sec:
@@ -1359,20 +1403,38 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 elif isinstance(inc_sf, dict) and isinstance(prev_sf, dict):
                     if int(prev_sf.get("fetchedAtMs") or 0) > int(inc_sf.get("fetchedAtMs") or 0) and int(prev_sf.get("resetsAt") or 0) > now_sec:
                         incoming_anchor["scoped_fable_7d"] = dict(prev_sf)
+        elif isinstance(incoming_anchor, dict) and plan_blocks_no_5h:
+            incoming_anchor = dict(incoming_anchor)
+            incoming_anchor.pop("no_five_hour", None)
         current_states = [entry_window_state(prev_entry, suffix, window, now_sec) for suffix, window in QUOTA_WINDOWS]
         if isinstance(incoming_anchor, dict) and incoming_anchor.get("no_five_hour") is True and "five_hour" not in (incoming_anchor.get("utilization") or {}):
             current_states[0] = (None, None, "unknown", None)
         incoming_states = [info_window_state(item, suffix, window, now_sec) for suffix, window in QUOTA_WINDOWS]
         merged_values = merge_window_states(current_states, incoming_states, now_sec)
-        merged_states = {suffix: state for (suffix, _), state in zip(QUOTA_WINDOWS, merged_values)}
+        merged_states = {}
+        for idx_w, ((suffix, _), state) in enumerate(zip(QUOTA_WINDOWS, merged_values)):
+            inc_u, inc_r, inc_s, inc_t = incoming_states[idx_w]
+            if inc_u == 100 and inc_r is None and inc_s == "server_anchor" and inc_t is not None:
+                cur_u, cur_r, cur_s, cur_t = current_states[idx_w]
+                if cur_t is None or inc_t >= cur_t:
+                    kept_reset = cur_r if (cur_r is not None and cur_r > now_sec) else None
+                    state = (100, kept_reset, "server_anchor", inc_t)
+            merged_states[suffix] = state
         for suffix, _ in QUOTA_WINDOWS:
             used, reset, source, observed_at = merged_states[suffix]
             item[f"used_{suffix}"] = used
             item[f"reset_{suffix}_ts"] = reset
             item[f"quota_{suffix}_source"] = source
             item[f"quota_{suffix}_observed_at_ms"] = observed_at
+        if incoming_anchor is None and isinstance(prev_anchor, dict) and plan_blocks_no_5h:
+            prev_anchor = dict(prev_anchor)
+            prev_anchor.pop("no_five_hour", None)
         eff_anchor = incoming_anchor if isinstance(incoming_anchor, dict) else (prev_anchor if isinstance(prev_anchor, dict) else {})
-        no_5h_active = bool(eff_anchor.get("no_five_hour") is True and merged_states["5h"][0] is None)
+        no_5h_active = bool(
+            not plan_blocks_no_5h
+            and eff_anchor.get("no_five_hour") is True
+            and merged_states["5h"][0] is None
+        )
         item["quota_no_5h_limit"] = no_5h_active
         agg_src = aggregate_quota_source(merged_states["5h"][2], merged_states["7d"][2])
         if no_5h_active and merged_states["7d"][2] in QUOTA_SOURCES and merged_states["7d"][2] != "unknown":
@@ -1386,8 +1448,6 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
         else:
             item["quota_7d_fable_used"] = None
             item["quota_7d_fable_reset_at"] = None
-        if prev_entry.get("plan") == "Ultra" and item.get("plan") in (None, "Max", "Pro", "Pro / Max"):
-            item["plan"] = "Ultra"
         if item.get("refresh_token_expires_at") is None and prev_entry.get("refresh_token_expires_at") is not None:
             item["refresh_token_expires_at"] = prev_entry.get("refresh_token_expires_at")
         item["server_anchor"] = incoming_anchor
@@ -1485,8 +1545,23 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
             if prev.get("quota_identity") and matched.get("quota_identity") != prev["quota_identity"]:
                 continue
             resolved_plan = matched.get("plan") or prev.get("plan") or "Pro"
-            if prev.get("plan") == "Ultra" and resolved_plan in ("Max", "Pro", "Pro / Max"):
+            if prev.get("plan") == "Ultra" and not matched.get("plan_tier_cleared") and resolved_plan in ("Max", "Pro / Max"):
                 resolved_plan = "Ultra"
+            raw_no_5h = bool(matched.get("quota_no_5h_limit")) if matched.get("quota_no_5h_limit") is not None else bool(prev.get("quota_no_5h_limit") and matched.get("used_5h") is None)
+            if _plan_disallows_no_5h(resolved_plan):
+                raw_no_5h = False
+            raw_rested_5h = (
+                bool(matched.get("quota_5h_rested"))
+                if matched.get("quota_5h_rested") is not None
+                else bool(
+                    prev.get("quota_5h_rested") is True
+                    and not raw_no_5h
+                    and matched.get("used_5h") is None
+                    and matched.get("quota_5h_source") in (None, "unknown")
+                    and matched.get("used_7d") is not None
+                    and matched.get("quota_7d_source") not in (None, "unknown")
+                )
+            )
             new_sum = {
                 "display_name": matched.get("display") or prev.get("display_name"),
                 "email": matched.get("email") or prev.get("email"),
@@ -1497,7 +1572,8 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 "quota_5h_reset_at": matched.get("reset_5h_ts"),
                 "quota_7d_used": matched.get("used_7d"),
                 "quota_7d_reset_at": matched.get("reset_7d_ts"),
-                "quota_no_5h_limit": bool(matched.get("quota_no_5h_limit")) if matched.get("quota_no_5h_limit") is not None else bool(prev.get("quota_no_5h_limit") and matched.get("used_5h") is None),
+                "quota_no_5h_limit": raw_no_5h,
+                "quota_5h_rested": True if raw_rested_5h else None,
                 "quota_7d_fable_used": matched.get("quota_7d_fable_used"),
                 "quota_7d_fable_reset_at": matched.get("quota_7d_fable_reset_at"),
                 "quota_checked": True,
@@ -1524,6 +1600,7 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
                 "manual_resets_remaining",
                 "manual_resets_valid_until",
                 "manual_resets_grant_ends_at",
+                "manual_resets_grants",
                 "metadata_observed_at_ms",
                 "billing_observed_at_ms",
                 "manual_resets_observed_at_ms",
@@ -1541,6 +1618,309 @@ def _save_ledger_and_sync_sqlite(app_dir: str, vault_dir: str, accounts_out: lis
         conn.close()
     except Exception:
         pass
+
+
+_SLOT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_REPARSE_ATTR = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+
+def _is_safe_no_reparse_dir(path: Path) -> bool:
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        return False
+    if getattr(info, "st_file_attributes", 0) & _REPARSE_ATTR:
+        return False
+    return True
+
+
+def _classify_claude_config_dir(env_claude_dir: str | None, app_dir: str) -> tuple[bool, str | None, bool]:
+    """Identify symlink-safe managed slots under %APPDATA%\\ai.local.claude-local\\cli-slots\\<32-hex>."""
+    if not env_claude_dir:
+        return False, None, False
+    cfg_abs = os.path.abspath(env_claude_dir)
+    slots_root_abs = os.path.abspath(os.path.join(app_dir, "cli-slots"))
+    if os.path.normcase(os.path.dirname(cfg_abs)) != os.path.normcase(slots_root_abs):
+        return False, None, False
+    slot_name = os.path.basename(cfg_abs)
+    if not _SLOT_ID_RE.fullmatch(slot_name):
+        return False, None, False
+    if not _is_safe_no_reparse_dir(Path(os.path.abspath(app_dir))):
+        return False, None, True
+    if not _is_safe_no_reparse_dir(Path(slots_root_abs)):
+        return False, None, True
+    if not _is_safe_no_reparse_dir(Path(cfg_abs)):
+        return False, None, True
+    slot_cj = Path(cfg_abs) / ".claude.json"
+    try:
+        cj_info = slot_cj.lstat()
+    except FileNotFoundError:
+        cj_info = None
+    except OSError:
+        return False, None, True
+    if cj_info is not None:
+        if stat.S_ISLNK(cj_info.st_mode) or not stat.S_ISREG(cj_info.st_mode):
+            return False, None, True
+        if getattr(cj_info, "st_file_attributes", 0) & _REPARSE_ATTR:
+            return False, None, True
+    return True, slot_name, False
+
+
+def _read_saved_identity_names(vault_dir: str) -> tuple[dict[str, str], dict[str, str]]:
+    saved_name_by_id: dict[str, str] = {}
+    saved_name_by_email: dict[str, str] = {}
+    for ident_id, rec in _read_saved_identity_records(vault_dir).items():
+        ident_name = rec.get("name") or ""
+        semail = rec.get("email") or ""
+        if ident_id and ident_name:
+            saved_name_by_id[ident_id] = ident_name
+        if semail and ident_name:
+            saved_name_by_email[semail] = ident_name
+    return saved_name_by_id, saved_name_by_email
+
+
+def _active_reset_cards_a1(meta: dict, now_sec: int) -> int:
+    """Match Rust evaluator.rs::active_reset_cards Strategy A1 reset-card count."""
+    if not isinstance(meta, dict):
+        return 0
+    raw_val = meta.get("manual_resets_remaining")
+    raw_rem = (
+        int(raw_val)
+        if isinstance(raw_val, (int, float)) and not isinstance(raw_val, bool) and raw_val > 0
+        else 0
+    )
+    grants = meta.get("manual_resets_grants")
+    if isinstance(grants, list) and grants:
+        has_positive = False
+        future_sum = 0
+        had_expired_positive = False
+        for g in grants:
+            if not isinstance(g, dict):
+                continue
+            left_val = g.get("resets_left")
+            left = (
+                int(left_val)
+                if isinstance(left_val, (int, float)) and not isinstance(left_val, bool) and left_val > 0
+                else 0
+            )
+            if left <= 0:
+                continue
+            has_positive = True
+            ends_val = g.get("ends_at")
+            if ends_val is None:
+                future_sum += left
+            elif isinstance(ends_val, (int, float)) and not isinstance(ends_val, bool) and int(ends_val) > now_sec:
+                future_sum += left
+            else:
+                had_expired_positive = True
+        if has_positive:
+            if future_sum > 0:
+                if had_expired_positive:
+                    return min(raw_rem, future_sum) if raw_rem > 0 else future_sum
+                return raw_rem if raw_rem > 0 else future_sum
+            return raw_rem
+    return raw_rem
+
+
+def _read_saved_identity_records(vault_dir: str, now_sec: int | None = None) -> dict[str, dict]:
+    """Read saved identity id/name/email/reset-card metadata keyed by record id."""
+    if now_sec is None:
+        now_sec = int(datetime.now(timezone.utc).timestamp())
+    records_by_id: dict[str, dict] = {}
+    web_resets_by_qident: dict[str, int] = {}
+    manual_plan_by_qident: dict[str, str] = {}
+    manual_plan_by_record: dict[str, str] = {}
+    web_meta_path = os.path.join(vault_dir, "quota_web_metadata.json")
+    if os.path.isfile(web_meta_path):
+        try:
+            with open(web_meta_path, "r", encoding="utf-8") as wf:
+                wobj = json.load(wf)
+            if isinstance(wobj, dict) and isinstance(wobj.get("accounts"), dict):
+                for qid, meta in wobj["accounts"].items():
+                    if isinstance(meta, dict):
+                        rem = _active_reset_cards_a1(meta, now_sec)
+                        if rem > 0:
+                            web_resets_by_qident[str(qid)] = rem
+        except Exception:
+            pass
+
+    manual_sub_path = os.path.join(vault_dir, "manual_subscriptions.json")
+    if os.path.isfile(manual_sub_path):
+        try:
+            with open(manual_sub_path, "r", encoding="utf-8") as mf:
+                mobj = json.load(mf)
+            if isinstance(mobj, dict):
+                p_by_id = mobj.get("plan_by_identity")
+                if isinstance(p_by_id, dict):
+                    for qid, p_entry in p_by_id.items():
+                        mp = p_entry.get("manual_plan") if isinstance(p_entry, dict) else None
+                        if isinstance(mp, str) and mp.strip():
+                            manual_plan_by_qident[str(qid)] = mp.strip()
+                p_by_rec = mobj.get("plan_by_record")
+                if isinstance(p_by_rec, dict):
+                    for rid, p_entry in p_by_rec.items():
+                        mp = p_entry.get("manual_plan") if isinstance(p_entry, dict) else None
+                        if isinstance(mp, str) and mp.strip():
+                            manual_plan_by_record[str(rid)] = mp.strip()
+        except Exception:
+            pass
+
+    db_path = os.path.join(vault_dir, "identities.sqlite")
+    if os.path.isfile(db_path):
+        try:
+            conn = _connect_sqlite_readonly(db_path, timeout=2.0)
+            rows = conn.execute(
+                "SELECT i.id, i.name, s.summary FROM identities i "
+                "JOIN identity_summaries s ON i.id = s.id WHERE i.empty = 0"
+            ).fetchall()
+            conn.close()
+            for ident_id, ident_name, sjson in rows:
+                if not ident_id:
+                    continue
+                sid = str(ident_id)
+                sname = str(ident_name or "")
+                semail = ""
+                splan = ""
+                qid = ""
+                resets_rem = 0
+                rested_5h = False
+                try:
+                    sobj = json.loads(sjson)
+                    if isinstance(sobj, dict):
+                        semail = (sobj.get("email") or "").strip().lower()
+                        splan = str(sobj.get("plan") or "").strip()
+                        resets_rem = _active_reset_cards_a1(sobj, now_sec)
+                        qid = str(sobj.get("quota_identity") or "")
+                        rested_5h = bool(sobj.get("quota_5h_rested"))
+                        if qid and qid in web_resets_by_qident:
+                            resets_rem = web_resets_by_qident[qid]
+                except Exception:
+                    pass
+                if qid and qid in manual_plan_by_qident:
+                    splan = manual_plan_by_qident[qid]
+                elif sid in manual_plan_by_record:
+                    splan = manual_plan_by_record[sid]
+                records_by_id[sid] = {
+                    "id": sid,
+                    "name": sname,
+                    "email": semail,
+                    "plan": splan,
+                    "quota_identity": qid,
+                    "quota_5h_rested": rested_5h,
+                    "manual_resets_remaining": resets_rem,
+                }
+        except Exception:
+            pass
+    return records_by_id
+
+
+def _read_active_identity_guard(vault_dir: str) -> tuple[str | None, str | None]:
+    """Read-only lookup of state.active and its stored identity_summaries quota_identity."""
+    db_path = os.path.join(vault_dir, "identities.sqlite")
+    if not os.path.isfile(db_path):
+        return None, None
+    conn = None
+    try:
+        conn = _connect_sqlite_readonly(db_path, timeout=2.0)
+        row = conn.execute("SELECT value FROM state WHERE key = 'active'").fetchone()
+        if not row or not row[0]:
+            return None, None
+        active_id = str(row[0]).strip()
+        if not _SLOT_ID_RE.fullmatch(active_id):
+            return None, None
+        sum_row = conn.execute(
+            "SELECT summary FROM identity_summaries WHERE id = ?", (active_id,)
+        ).fetchone()
+        if not sum_row or not sum_row[0]:
+            return active_id, None
+        sobj = json.loads(sum_row[0])
+        if not isinstance(sobj, dict):
+            return active_id, None
+        stored_qi = str(sobj.get("quota_identity") or "").strip() or None
+        return active_id, stored_qi
+    except Exception:
+        return None, None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _connect_sqlite_readonly(db_path: str, timeout: float = 5.0) -> sqlite3.Connection:
+    try:
+        uri = f"{Path(db_path).resolve().as_uri()}?mode=ro"
+        return sqlite3.connect(uri, uri=True, timeout=timeout)
+    except Exception:
+        return sqlite3.connect(db_path, timeout=timeout)
+
+
+def _load_smart_relay_filter(app_dir: str, now_sec: int) -> dict:
+    """Read smart_relay_v1.json exclusions, cooldowns, and threshold without writing."""
+    out = {
+        "spent_threshold_pct": 98,
+        "auto_continue": False,
+        "excluded_ids": set(),
+        "cooldown_ids": set(),
+        "no_return_id": None,
+        "preferred_id": None,
+        "return_to_preferred": True,
+        "preferred_return_threshold_pct": 90,
+    }
+    cfg_path = Path(os.path.join(app_dir, "smart_relay_v1.json"))
+    try:
+        st = cfg_path.lstat()
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            return out
+        if getattr(st, "st_file_attributes", 0) & _REPARSE_ATTR:
+            return out
+        if st.st_size <= 0 or st.st_size > 128 * 1024:
+            return out
+        raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return out
+    if not isinstance(raw, dict):
+        return out
+    thresh = raw.get("spentThresholdPct", raw.get("spent_threshold_pct"))
+    if isinstance(thresh, int) and not isinstance(thresh, bool) and thresh in (90, 95, 98, 100):
+        out["spent_threshold_pct"] = thresh
+    auto_cont = raw.get("autoContinueOnRelay", raw.get("auto_continue_on_relay"))
+    if isinstance(auto_cont, bool):
+        out["auto_continue"] = auto_cont
+    ret_pref = raw.get("returnToPreferred", raw.get("return_to_preferred"))
+    if isinstance(ret_pref, bool):
+        out["return_to_preferred"] = ret_pref
+    ret_thresh = raw.get("preferredReturnThresholdPct", raw.get("preferred_return_threshold_pct"))
+    if isinstance(ret_thresh, int) and not isinstance(ret_thresh, bool) and ret_thresh in (50, 70, 80, 85, 90):
+        out["preferred_return_threshold_pct"] = ret_thresh
+    pref_id = raw.get("preferredAccountId", raw.get("preferred_account_id"))
+    if isinstance(pref_id, str) and pref_id.strip() and pref_id.strip() != "current":
+        out["preferred_id"] = pref_id.strip()
+    no_ret_id = raw.get("noReturnAccountId", raw.get("no_return_account_id"))
+    no_ret_until = raw.get("noReturnUntilSec", raw.get("no_return_until_sec"))
+    if (
+        isinstance(no_ret_id, str)
+        and no_ret_id.strip()
+        and isinstance(no_ret_until, (int, float))
+        and not isinstance(no_ret_until, bool)
+        and int(no_ret_until) > now_sec
+    ):
+        out["no_return_id"] = no_ret_id.strip()
+    excl = raw.get("excludedAccountIds", raw.get("excluded_account_ids"))
+    if isinstance(excl, list):
+        for item in excl:
+            if isinstance(item, str) and item.strip():
+                out["excluded_ids"].add(item.strip())
+    cd_map = raw.get("cooldownUntilSec", raw.get("cooldown_until_sec"))
+    if isinstance(cd_map, dict):
+        for k, v in cd_map.items():
+            if isinstance(k, str) and isinstance(v, (int, float)) and not isinstance(v, bool):
+                if int(v) > now_sec:
+                    out["cooldown_ids"].add(k.strip())
+    return out
 
 
 def handle_statusline() -> None:
@@ -1565,10 +1945,18 @@ def handle_statusline() -> None:
     now_utc = datetime.now(timezone.utc)
     now_sec = int(now_utc.timestamp())
     home = os.path.expandvars(r"%USERPROFILE%")
+    app_dir = os.path.expandvars(r"%APPDATA%\ai.local.claude-local")
     default_claude_dir = os.path.normcase(os.path.abspath(os.path.join(home, ".claude")))
     env_claude_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    is_managed_slot, slot_id, slot_symlink_rejected = _classify_claude_config_dir(
+        env_claude_dir, app_dir
+    )
+    if slot_symlink_rejected:
+        return
     is_isolated_relay = bool(
-        env_claude_dir and os.path.normcase(os.path.abspath(env_claude_dir)) != default_claude_dir
+        not is_managed_slot
+        and env_claude_dir
+        and os.path.normcase(os.path.abspath(env_claude_dir)) != default_claude_dir
     )
 
     model_obj = payload.get("model") or {}
@@ -1596,7 +1984,11 @@ def handle_statusline() -> None:
             print(" │ ".join(parts))
         return
 
-    live_cj_path = os.path.join(home, ".claude.json")
+    live_cj_path = (
+        os.path.join(os.path.abspath(env_claude_dir), ".claude.json")
+        if is_managed_slot and env_claude_dir
+        else os.path.join(home, ".claude.json")
+    )
     live_cj = {}
     if os.path.isfile(live_cj_path):
         try:
@@ -1611,7 +2003,6 @@ def handle_statusline() -> None:
 
     has_live_rl = (rl_5h.get("used_percentage") is not None) or (rl_7d.get("used_percentage") is not None)
     server_anchor = None
-    app_dir = os.path.expandvars(r"%APPDATA%\ai.local.claude-local")
     vault_dir = os.path.join(app_dir, "identity-vault")
     ledger = load_ledger(app_dir)
     email = (acc.get("emailAddress") or "").strip()
@@ -1709,7 +2100,11 @@ def handle_statusline() -> None:
         used5, r5_int = None, None
 
     def status_window_provenance(suffix: str, window: str, used, reset):
-        if used is None or reset is None:
+        if used is None:
+            return "unknown", None
+        if reset is None:
+            if window in observed_windows and used == 100:
+                return "server_anchor", window_fetched_at_ms(server_anchor, window) or now_ms
             return "unknown", None
         if window in observed_windows:
             return "server_anchor", window_fetched_at_ms(server_anchor, window) or now_ms
@@ -1726,40 +2121,80 @@ def handle_statusline() -> None:
 
     source5, observed5 = status_window_provenance("5h", "five_hour", used5, r5_int)
     source7, observed7 = status_window_provenance("7d", "seven_day", used7, r7_int)
+    resolved_status_plan = None
+
+    skip_persist_for_mismatch = False
+    disk_qi = account_info.get("quota_identity")
+    if not is_managed_slot:
+        active_guard_id, active_guard_qi = _read_active_identity_guard(vault_dir)
+        if (
+            active_guard_id
+            and _SLOT_ID_RE.fullmatch(active_guard_id)
+            and active_guard_qi
+            and disk_qi
+            and active_guard_qi != disk_qi
+        ):
+            skip_persist_for_mismatch = True
 
     if has_live_rl and email and (used5 is not None or used7 is not None):
-        save_ledger_and_sync_sqlite(
-            app_dir,
-            vault_dir,
-            [
-                {
-                    "role": "current",
-                    "display": acct_name,
-                    "email": email,
-                    "organization": acc.get("organizationName"),
-                    "account_uuid": acct_uuid,
-                    "organization_uuid": acc.get("organizationUuid"),
-                    "quota_identity": quota_identity(acc),
-                    "quota_source": aggregate_quota_source(source5, source7),
-                    "quota_5h_source": source5,
-                    "quota_7d_source": source7,
-                    "quota_5h_observed_at_ms": observed5,
-                    "quota_7d_observed_at_ms": observed7,
-                    "plan": "Pro",
-                    "auth_status": "valid",
-                    "used_5h": used5,
-                    "rem_5h": max(0, 100 - used5) if used5 is not None else None,
-                    "reset_5h_ts": r5_int,
-                    "used_7d": used7,
-                    "rem_7d": max(0, 100 - used7) if used7 is not None else None,
-                    "reset_7d_ts": r7_int,
-                    "server_anchor": server_anchor,
-                    "server_anchor_observed_windows": observed_windows,
-                    "server_anchor_base_fetched_at_ms": anchor_base_ms,
-                }
-            ],
-            now_utc,
+        live_cred_path = (
+            os.path.join(os.path.abspath(env_claude_dir), ".credentials.json")
+            if is_managed_slot and env_claude_dir
+            else os.path.join(home, ".claude", ".credentials.json")
         )
+        live_oa = {}
+        try:
+            cred_st = os.lstat(live_cred_path)
+            if (
+                stat.S_ISREG(cred_st.st_mode)
+                and not stat.S_ISLNK(cred_st.st_mode)
+                and not (getattr(cred_st, "st_file_attributes", 0) & _REPARSE_ATTR)
+            ):
+                with open(live_cred_path, "r", encoding="utf-8") as cf:
+                    cred_doc = json.load(cf)
+                if isinstance(cred_doc, dict) and isinstance(cred_doc.get("claudeAiOauth"), dict):
+                    live_oa = cred_doc["claudeAiOauth"]
+        except Exception:
+            live_oa = {}
+        resolved_status_plan = resolve_account_plan(
+            live_oa,
+            acc,
+            fallback=(account_entry.get("plan") if same_quota_account(account_info, account_entry) else None),
+        )
+        ledger_item = {
+            "role": "saved" if is_managed_slot else "current",
+            "display": acct_name,
+            "email": email,
+            "organization": acc.get("organizationName"),
+            "account_uuid": acct_uuid,
+            "organization_uuid": acc.get("organizationUuid"),
+            "quota_identity": disk_qi,
+            "quota_source": aggregate_quota_source(source5, source7),
+            "quota_5h_source": source5,
+            "quota_7d_source": source7,
+            "quota_5h_observed_at_ms": observed5,
+            "quota_7d_observed_at_ms": observed7,
+            "plan": resolved_status_plan,
+            "auth_status": "valid",
+            "used_5h": used5,
+            "rem_5h": max(0, 100 - used5) if used5 is not None else None,
+            "reset_5h_ts": r5_int,
+            "used_7d": used7,
+            "rem_7d": max(0, 100 - used7) if used7 is not None else None,
+            "reset_7d_ts": r7_int,
+            "server_anchor": server_anchor,
+            "server_anchor_observed_windows": observed_windows,
+            "server_anchor_base_fetched_at_ms": anchor_base_ms,
+        }
+        if is_managed_slot and slot_id:
+            ledger_item["id"] = slot_id
+        if not skip_persist_for_mismatch:
+            save_ledger_and_sync_sqlite(
+                app_dir,
+                vault_dir,
+                [ledger_item],
+                now_utc,
+            )
 
     if "--quiet" in sys.argv:
         return
@@ -1812,6 +2247,66 @@ def handle_statusline() -> None:
     }
     effort_label = effort_map.get(str(effort_raw).strip().lower(), str(effort_raw).strip())
 
+    saved_records_by_id = _read_saved_identity_records(vault_dir, now_sec)
+    saved_name_by_id = {
+        sid: rec["name"] for sid, rec in saved_records_by_id.items() if rec.get("name")
+    }
+    saved_name_by_email = {
+        rec["email"]: rec["name"]
+        for rec in saved_records_by_id.values()
+        if rec.get("email") and rec.get("name")
+    }
+    saved_rec_by_email = {
+        rec["email"]: rec for rec in saved_records_by_id.values() if rec.get("email")
+    }
+    saved_rec_by_qident = {
+        rec["quota_identity"]: rec for rec in saved_records_by_id.values() if rec.get("quota_identity")
+    }
+    saved_name_by_qident = {
+        rec["quota_identity"]: rec["name"]
+        for rec in saved_records_by_id.values()
+        if rec.get("quota_identity") and rec.get("name")
+    }
+
+    if is_managed_slot:
+        slot_label = (
+            saved_name_by_id.get(slot_id or "")
+            or (saved_name_by_qident.get(disk_qi) if disk_qi else None)
+            or saved_name_by_email.get(email.lower())
+            or acct_name
+        )
+        m_part = model_name
+        if "--no-quota-bar" in sys.argv:
+            if effort_label and effort_label.lower() not in m_part.lower():
+                m_part += f" · {effort_label}"
+            if ctx_pct is not None:
+                m_part += f" (Ctx {int(round(float(ctx_pct)))}%)"
+            print(f"⚡ Slot·{slot_label} │ {m_part}")
+            return
+        if ctx_pct is not None:
+            m_part += f" (Ctx {int(round(float(ctx_pct)))}%)"
+        slot_parts = [f"⚡ Slot·{slot_label}", m_part]
+        slot_plan = (
+            resolved_status_plan
+            or saved_records_by_id.get(slot_id or "", {}).get("plan")
+            or (saved_rec_by_qident.get(disk_qi, {}).get("plan") if disk_qi else None)
+            or saved_rec_by_email.get(email.lower(), {}).get("plan")
+            or account_entry.get("plan")
+        )
+        no_5h_limit = bool(
+            not _plan_disallows_no_5h(slot_plan)
+            and (
+                (isinstance(server_anchor, dict) and server_anchor.get("no_five_hour") is True)
+                or account_entry.get("quota_no_5h_limit") is True
+            )
+        ) and used5 is None
+        if used5 is not None or used7 is not None or no_5h_limit:
+            q5 = "5h ∞" if no_5h_limit else (f"5h {used5}%" if used5 is not None else "5h --")
+            q7 = f"7d {used7}%" if used7 is not None else "7d --"
+            slot_parts.append(f"{q5} · {q7}")
+        print(" │ ".join(slot_parts))
+        return
+
     m_part = model_name
     if "--no-quota-bar" in sys.argv:
         if effort_label and effort_label.lower() not in m_part.lower():
@@ -1823,62 +2318,149 @@ def handle_statusline() -> None:
 
     if ctx_pct is not None:
         m_part += f" (Ctx {int(round(float(ctx_pct)))}%)"
-    parts = [m_part]
+    relay_active = os.environ.get("CLAUDE_LOCAL_RELAY_ACTIVE") == "1"
+    active_card_name = (
+        (saved_name_by_qident.get(disk_qi) if disk_qi else None)
+        or (saved_name_by_email.get(email.lower()) if email else None)
+    )
+    parts = [f"🔗 {active_card_name}", m_part] if (relay_active and active_card_name) else [m_part]
 
+    curr_plan = (
+        resolved_status_plan
+        or (saved_rec_by_qident.get(disk_qi, {}).get("plan") if disk_qi else None)
+        or saved_rec_by_email.get(email.lower(), {}).get("plan")
+        or account_entry.get("plan")
+    )
+    curr_no_5h = bool(
+        not _plan_disallows_no_5h(curr_plan)
+        and (
+            (isinstance(server_anchor, dict) and server_anchor.get("no_five_hour") is True)
+            or account_entry.get("quota_no_5h_limit") is True
+        )
+    ) and used5 is None
     curr_rem7 = max(0, 100 - used7) if used7 is not None else None
-    curr_rem5 = (0 if curr_rem7 == 0 else max(0, 100 - used5)) if used5 is not None else None
+    curr_rem5 = (
+        (0 if curr_rem7 == 0 else 100)
+        if curr_no_5h
+        else ((0 if curr_rem7 == 0 else max(0, 100 - used5)) if used5 is not None else None)
+    )
     if curr_rem5 is not None and curr_rem7 is not None:
         curr_eff = min(curr_rem5, curr_rem7)
+    elif curr_rem5 is not None:
+        curr_eff = curr_rem5
+    elif curr_rem7 is not None:
+        curr_eff = curr_rem7
     else:
         curr_eff = None
 
-    # Resolve saved identity custom names from identities.sqlite when available
-    saved_name_by_email = {}
-    db_path = os.path.join(vault_dir, "identities.sqlite")
-    if os.path.isfile(db_path):
-        try:
-            conn = sqlite3.connect(db_path, timeout=1.5)
-            rows = conn.execute(
-                "SELECT i.name, s.summary FROM identities i "
-                "JOIN identity_summaries s ON i.id = s.id WHERE i.empty = 0"
-            ).fetchall()
-            conn.close()
-            for ident_name, sjson in rows:
-                try:
-                    sobj = json.loads(sjson)
-                    semail = (sobj.get("email") or "").strip().lower()
-                    if semail and ident_name:
-                        saved_name_by_email[semail] = str(ident_name)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+    relay_filter = _load_smart_relay_filter(app_dir, now_sec)
+    cfg_spent_thresh = int(relay_filter.get("spent_threshold_pct") or 98)
+    excluded_ids = relay_filter["excluded_ids"]
+    cooldown_ids = relay_filter["cooldown_ids"]
+    no_return_id = relay_filter.get("no_return_id")
+    preferred_id = relay_filter.get("preferred_id")
+    return_to_preferred = bool(relay_filter.get("return_to_preferred", True))
+    pref_ret_thresh = int(relay_filter.get("preferred_return_threshold_pct") or 90)
 
     # Show only other (non-active) accounts from quota_ledger.json in a compact format
     peer_parts = []
-    best_peer = None  # (tier_consume_first, -r7, p_eff, p_rem7, p_rem5, p_name)
-    for k_email, le in ledger.get("accounts", {}).items():
+    best_peer = None
+    best_fallback_locked_peer = None
+    seen_peer_keys: set[str] = set()
+    sorted_ledger_items = sorted(
+        ledger.get("accounts", {}).items(),
+        key=lambda kv: (int((kv[1] or {}).get("quota_observed_at_ms") or 0), kv[0]),
+        reverse=True,
+    )
+    for k_email, le in sorted_ledger_items:
+        if not isinstance(le, dict):
+            continue
         k_lower = k_email.strip().lower()
-        if email and k_lower == email.lower():
-            continue
+        k_base_email = k_lower.split("#", 1)[0]
         le_anchor = le.get("server_anchor") if isinstance(le.get("server_anchor"), dict) else {}
-        if acct_uuid and le_anchor.get("accountUuid") == acct_uuid:
+        le_qi = str(le.get("quota_identity") or "").strip() or None
+        if disk_qi and le_qi:
+            if le_qi == disk_qi:
+                continue
+        else:
+            if email and k_base_email == email.lower():
+                continue
+            if acct_uuid and le_anchor.get("accountUuid") == acct_uuid:
+                continue
+
+        dedup_key = f"qi:{le_qi}" if le_qi else f"email:{k_base_email}"
+        if dedup_key in seen_peer_keys:
             continue
-        if saved_name_by_email and k_lower not in saved_name_by_email:
+
+        rec_meta = (saved_rec_by_qident.get(le_qi) if le_qi else None) or {}
+        if not rec_meta:
+            email_cand = saved_rec_by_email.get(k_base_email) or {}
+            if email_cand and (not email_cand.get("quota_identity") or not le_qi or email_cand.get("quota_identity") == le_qi):
+                rec_meta = email_cand
+        if saved_records_by_id and not rec_meta:
             continue
-        p_name = saved_name_by_email.get(k_lower) or le.get("display_name") or k_email.split("@")[0]
+        seen_peer_keys.add(dedup_key)
+
+        rec_id = str(rec_meta.get("id") or le.get("id") or "").strip()
+        p_name = rec_meta.get("name") or le.get("display_name") or k_base_email.split("@")[0]
         p_u5, p_r5, p_s5, _ = entry_window_state(le, "5h", "five_hour")
         p_u7, p_r7, p_s7, _ = entry_window_state(le, "7d", "seven_day")
-        if (p_s5 == "unknown" or p_s7 in ("unknown", "reset_inferred") or p_u5 is None or p_u7 is None
-                or p_r5 is None or p_r7 is None or (p_s5 != "reset_inferred" and p_r5 <= now_sec) or p_r7 <= now_sec):
+        p_plan = rec_meta.get("plan") or le.get("plan")
+        p_no_5h = bool(
+            not _plan_disallows_no_5h(p_plan)
+            and (le.get("quota_no_5h_limit") is True or le_anchor.get("no_five_hour") is True)
+        ) and p_u5 is None
+        if p_s7 == "unknown" or p_u7 is None or p_r7 is None or (p_s7 != "reset_inferred" and p_r7 <= now_sec):
             continue
-        p_u5_i, p_u7_i = int(p_u5), int(p_u7)
-        p_r5_i, p_r7_i = int(p_r5), int(p_r7)
+        p_rested_5h = bool(
+            not p_no_5h
+            and p_s7 != "local_estimate"
+            and p_u5 is None
+            and p_r5 is None
+            and (bool(rec_meta.get("quota_5h_rested")) or bool(le.get("quota_5h_rested")))
+        )
+        if not p_no_5h and not p_rested_5h and (
+            p_s5 == "unknown" or p_u5 is None or p_r5 is None or (p_s5 != "reset_inferred" and p_r5 <= now_sec)
+        ):
+            continue
+        p_u5_i = 0 if (p_no_5h or p_rested_5h) else int(p_u5)
+        p_u7_i = int(p_u7)
+        p_r5_i = int(p_r7) if (p_no_5h or p_rested_5h) else int(p_r5)
+        p_r7_i = int(p_r7)
         p_rem7 = max(0, 100 - p_u7_i)
-        p_rem5 = 0 if p_rem7 == 0 else max(0, 100 - p_u5_i)
+        p_rem5 = 0 if p_rem7 == 0 else (100 if (p_no_5h or p_rested_5h) else max(0, 100 - p_u5_i))
         p_eff = min(p_rem5, p_rem7)
-        if le.get("auth_status") != "expired" and p_eff > 0:
+
+        resets_rem = (
+            int(rec_meta["manual_resets_remaining"])
+            if "manual_resets_remaining" in rec_meta
+            else _active_reset_cards_a1(le, now_sec)
+        )
+        awaiting_manual_reset = resets_rem > 0 and p_u7_i >= min(cfg_spent_thresh, 98)
+        is_excluded = (rec_id and rec_id in excluded_ids) or (k_base_email in excluded_ids)
+        in_cooldown = (rec_id and rec_id in cooldown_ids) or (k_base_email in cooldown_ids)
+        is_spent = p_u7_i >= cfg_spent_thresh or (not p_no_5h and not p_rested_5h and p_u5_i >= cfg_spent_thresh)
+        is_no_return = bool(no_return_id and rec_id == no_return_id)
+        is_pref_recovered = bool(
+            return_to_preferred
+            and preferred_id
+            and rec_id == preferred_id
+            and p_s5 != "reset_inferred"
+            and p_s7 != "reset_inferred"
+            and p_u5_i < pref_ret_thresh
+            and p_u7_i < pref_ret_thresh
+        )
+
+        if (
+            le.get("auth_status") != "expired"
+            and p_eff > 0
+            and not is_excluded
+            and not in_cooldown
+            and not awaiting_manual_reset
+            and not is_spent
+        ):
             cand_key = (
+                1 if is_pref_recovered else 0,
                 1 if (p_rem5 >= 50 and p_r7_i and p_r7_i > now_sec) else 0,
                 -(p_r7_i or (now_sec + 30 * 86400)) if p_rem5 >= 50 else 0,
                 p_eff,
@@ -1886,7 +2468,10 @@ def handle_statusline() -> None:
                 p_rem5,
                 p_name,
             )
-            if best_peer is None or cand_key > best_peer:
+            if is_no_return:
+                if best_fallback_locked_peer is None or cand_key > best_fallback_locked_peer:
+                    best_fallback_locked_peer = cand_key
+            elif best_peer is None or cand_key > best_peer:
                 best_peer = cand_key
         p_bottleneck_r = p_r7_i if p_rem7 <= p_rem5 else (p_r5_i or p_r7_i)
         if p_bottleneck_r and p_bottleneck_r > now_sec and p_eff < 100:
@@ -1894,12 +2479,35 @@ def handle_statusline() -> None:
             peer_parts.append(f"{p_name}:{p_eff}%({p_eta})")
         else:
             peer_parts.append(f"{p_name}:{p_eff}%")
+    if best_peer is None and best_fallback_locked_peer is not None:
+        best_peer = best_fallback_locked_peer
     if peer_parts:
         parts.append(" · ".join(peer_parts))
 
-    if curr_eff is not None and curr_eff <= 15 and best_peer is not None and best_peer[2] >= 30:
-        bp_eff = best_peer[2]
-        bp_name = best_peer[5]
+    if relay_active:
+        env_thresh = os.environ.get("CLAUDE_LOCAL_RELAY_THRESHOLD")
+        if env_thresh is not None and str(env_thresh).strip():
+            try:
+                relay_thresh = int(str(env_thresh).strip())
+            except (TypeError, ValueError):
+                relay_thresh = cfg_spent_thresh
+        else:
+            relay_thresh = cfg_spent_thresh
+        relay_thresh = max(1, min(100, relay_thresh))
+        relay_due = (
+            (used5 is not None and used5 >= relay_thresh)
+            or (used7 is not None and used7 >= relay_thresh)
+            or (curr_eff is not None and curr_eff <= 0)
+        )
+        if relay_due and best_peer is not None:
+            bp_name = best_peer[6]
+            if relay_filter.get("auto_continue"):
+                parts.append(f"🔄 接力就绪→[{bp_name}]")
+            else:
+                parts.append(f"🔄 /exit 切[{bp_name}]")
+    elif curr_eff is not None and curr_eff <= 15 and best_peer is not None and best_peer[3] >= 30:
+        bp_eff = best_peer[3]
+        bp_name = best_peer[6]
         if curr_eff <= 0:
             parts.append(f"🚨 额度耗尽→切[{bp_name}:{bp_eff}%]后 /resume")
         else:
@@ -2100,13 +2708,30 @@ def main():
 
     db_path = os.path.join(vault, "identities.sqlite")
     live_active_since_dt = None
+    saved_rows = None
+    summary_emails = {}
     if os.path.isfile(db_path):
         try:
-            conn_as = sqlite3.connect(db_path, timeout=2.0)
-            row_as = conn_as.execute("SELECT value FROM state WHERE key='active_since'").fetchone()
-            conn_as.close()
-            if row_as and row_as[0] and str(row_as[0]).isdigit() and int(row_as[0]) > 0:
-                live_active_since_dt = datetime.fromtimestamp(int(row_as[0]), tz=timezone.utc)
+            conn_ro = _connect_sqlite_readonly(db_path, timeout=5.0)
+            try:
+                try:
+                    row_as = conn_ro.execute("SELECT value FROM state WHERE key='active_since'").fetchone()
+                    if row_as and row_as[0] and str(row_as[0]).isdigit() and int(row_as[0]) > 0:
+                        live_active_since_dt = datetime.fromtimestamp(int(row_as[0]), tz=timezone.utc)
+                except Exception:
+                    pass
+                try:
+                    saved_rows = conn_ro.execute(
+                        "SELECT id, name, archive, saved_at FROM identities WHERE empty=0"
+                    ).fetchall()
+                    for sid, sjson in conn_ro.execute("SELECT id, summary FROM identity_summaries").fetchall():
+                        sobj = json.loads(sjson)
+                        if isinstance(sobj, dict) and sobj.get("email"):
+                            summary_emails[sid] = str(sobj["email"]).lower()
+                except Exception:
+                    pass
+            finally:
+                conn_ro.close()
         except Exception:
             pass
 
@@ -2134,21 +2759,10 @@ def main():
         accounts_out.append(info)
 
     key_path = os.path.join(vault, "key.bin")
-    if os.path.isfile(db_path) and os.path.isfile(key_path):
+    if os.path.isfile(db_path) and os.path.isfile(key_path) and saved_rows is not None:
         with open(key_path, "rb") as kf:
             master_key = kf.read()
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
-        rows = cur.execute("SELECT id, name, archive, saved_at FROM identities WHERE empty=0").fetchall()
-        summary_emails = {}
-        try:
-            for sid, sjson in cur.execute("SELECT id, summary FROM identity_summaries").fetchall():
-                sobj = json.loads(sjson)
-                if isinstance(sobj, dict) and sobj.get("email"):
-                    summary_emails[sid] = str(sobj["email"]).lower()
-        except Exception:
-            pass
-        conn.close()
+        rows = saved_rows
 
         cache_path = os.path.join(app_dir, "quota_cache.json")
         quota_cache = {}

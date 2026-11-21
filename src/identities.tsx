@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生身份命令、轻量实时会话存活命令（identities_live_sessions）、手动/自动订阅到期与充值日命令、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、Ultra无上限/Fable专项池/离线刷新凭据到期元数据、智能接力池摘要与悬浮窗穿透态、保留策略、逐窗观测、隐私偏好、顶部横条卡片拖拽排序及本地额度修订轮询。
- * [OUTPUT]: 同风格计数的166×286 CLI身份/养号工牌（清晰区分当前使用/CLI运行中/桌面端运行、切换前与聚焦即时会话刷新、一键无残留中断恢复、支持顶部横条拖拽排序、恢复默认顺序与共享弹簧滚轮）、Ultra无上限展示、跨机防关联环境交接卡一键复制、智能接力池平均余量摘要、未知/过期账号定向批次查询、悬浮窗穿透态恢复及用量详情专项池/重置倒计时/凭据到期提醒。
+ * [INPUT]: 原生身份命令、轻量实时会话存活命令（identities_live_sessions，含 cli-slots 子代理槽位、后台守护标记 background、前台交互子 Shell child_shells 与待接管任务 active_adopt_jobs）、可选编排状态/安装命令（identities_orchestrator_* / identities_install_cli_wrappers）、手动/自动订阅到期、充值日与套餐层级校准命令（manualPlan）、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、Ultra无上限/Fable专项池/离线刷新凭据到期元数据、智能接力池摘要与悬浮窗穿透态、保留策略、逐窗观测、隐私偏好、顶部横条卡片拖拽排序、跨页卡片定位及本地额度修订轮询。
+ * [OUTPUT]: 同风格计数的166×286 CLI身份/养号工牌（语义套餐色标 Free/Pro/Max/Ultra/Team、72h临期提醒、清晰区分当前使用/CLI运行中/桌面端运行与脉冲子代理槽位状态、快速筛选与可选多行平铺、切换前三态运行中CLI引导［后台守护无损保活挂起 / 前台子Shell防断管告警 / 标准无感接力直达］、顶部横条拖拽排序与共享弹簧滚轮）、单滚动容器无嵌套双滚的智能接力与自动续杯弹窗（2分区账号行、语义5h/7d微缩条、重置卡一键同步验证与差值回执、未入库当前号提示、同出口并发风控提示、错峰打开多号用量页）、额度详情5h/7d燃尽ETA与套餐校准、跨机防关联环境交接卡复制及悬浮窗穿透态恢复。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定；后台 revision 触发的读取在原生快照内容未变时保留现有状态对象，避免整页重渲染。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -16,7 +16,7 @@ import type {WarmingCard, WarmingFields, WarmingOpenMode} from './warming-model'
 import type {BrowserState} from './browser-model';
 import {useBrowserRuntime} from './use-browser-runtime';
 import {formatWakeupWait, presentWakeupAccount, verifyWakeupAnchorAdvancement, type WakeupAnchorVerificationResult} from './wakeup-presentation';
-import {ShieldCheck, Refresh} from 'cromma-ui/pika';
+import {CheckTickCircle, ShieldCheck, Refresh} from 'cromma-ui/pika';
 import {invoke} from '@tauri-apps/api/core';
 import {getVersion} from '@tauri-apps/api/app';
 import {useI18n} from './i18n';
@@ -25,7 +25,7 @@ import {IdentityOperationProgress, recordAuditHistoryItem, useCleanupActivity} f
 import {formatBytes} from './cleaner-model';
 import {ClaudeCliPanel} from './claude-cli-panel';
 import {ClaudeResiduePanel} from './claude-residue-panel';
-import {defaultPolicy, policyRows, type ActiveSession, type Identity, type IdentityState, type LiveSessionsSnapshot} from './identity-model';
+import {collectInteractiveChildShells, defaultPolicy, isBackgroundOnlyState, normalizeAdoptJobIds, policyRows, type ActiveSession, type Identity, type IdentityState, type LiveSessionsSnapshot} from './identity-model';
 import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
 import {evaluateQuota, formatCompactEta, formatElapsedSinceReset, formatResetClock, type WeeklyPace} from './identity-quota';
 import {usePageRefresh, type IdentityReviewRequest} from './app-events';
@@ -38,17 +38,38 @@ import {
   useSmartRelayConfig,
   updateSmartRelayConfig,
   resetSmartRelayConfig,
+  syncNativeSmartRelayConfigIfLive,
+  flushNativeSmartRelaySync,
   evaluateSmartRelay,
+  extractResetCardInfo,
+  isAccountInCooldown,
   summarizeRelayPool,
+  computeResetCardExpiryUrgency,
+  computeWindowBurnEta,
+  normalizePlanSlug,
   noteRelayAccountRateLimited,
   noteRelayAccountSwitch,
   clearAccountCooldown,
   formatTruthfulPercent,
+  validateSlotHttpProxy,
+  buildSubagentMarkdownTemplate,
+  getRelayLaunchDirs,
+  useRelayLaunchDirs,
+  recordRelayLaunchDir,
+  removeRelayLaunchDir,
+  formatLaunchDirChip,
+  formatRelayCliModelEffortArgs,
+  relayCliModelDisplayLabel,
+  CANONICAL_MANUAL_PLANS,
+  RELAY_CLI_EFFORTS,
+  RELAY_CLI_MODELS,
   RELAY_STRATEGIES,
   RELAY_RATE_LIMIT_MODES,
   RELAY_AFFINITY_MODES,
   RELAY_SPENT_THRESHOLDS,
+  RELAY_HANDOFF_MODES,
   type RelayAccountInput,
+  type RelayCandidate,
 } from './smart-relay-model';
 import './identity-productivity.css';
 import './floating-monitor.css';
@@ -157,25 +178,47 @@ function SubscriptionAndResets({meta, locale, showBilling = false, nowSec, t}: {
   );
 }
 
-function IdentityName({name, email, accountName, plan, expiry = null, onEditExpiry, privacyMask, saved = false, t}: {name: string; email?:string|null; accountName?: string | null; plan?: string | null; expiry?: SubscriptionExpiryBadge | null; onEditExpiry?: () => void; privacyMask: boolean; saved?: boolean; t: (key: string, slots?: Record<string, string | number>) => string}) {
+function computeExpiryUrgency(expiry: SubscriptionExpiryBadge | null | undefined, nowSec?: number): 'soon' | 'expired' | undefined {
+  if (!expiry || typeof nowSec !== 'number') return undefined;
+  const parts = expiry.fullYmd.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return undefined;
+  const [yy, mm, dd] = parts;
+  const endOfDaySec = Math.floor(new Date(yy, mm - 1, dd, 23, 59, 59).getTime() / 1000);
+  const delta = endOfDaySec - nowSec;
+  if (delta <= 0 && expiry.source !== 'browser') return 'expired';
+  if (delta > 0 && delta <= 72 * 3600) return 'soon';
+  return undefined;
+}
+
+function IdentityName({name, email, accountName, plan, expiry = null, nowSec, onEditExpiry, privacyMask, saved = false, t}: {name: string; email?:string|null; accountName?: string | null; plan?: string | null; expiry?: SubscriptionExpiryBadge | null; nowSec?: number; onEditExpiry?: () => void; privacyMask: boolean; saved?: boolean; t: (key: string, slots?: Record<string, string | number>) => string}) {
   const shownName = maskDisplayName(name, email, privacyMask);
   const description = !privacyMask && accountName && accountName !== name ? `${t('identityCard.accountName')}: ${accountName}` : undefined;
   const hasPlan = Boolean(plan && plan.trim().length > 0);
+  const expiryUrgency = computeExpiryUrgency(expiry, nowSec);
   const expiryTooltip = expiry
-    ? expiry.rechargeYmd
-      ? t('identityCard.expiryTooltipWithRecharge', {expiry: expiry.fullYmd, recharge: expiry.rechargeYmd})
-      : expiry.source === 'browser'
-        ? t('identityCard.renewalTooltip', {expiry: expiry.fullYmd})
-        : t('identityCard.expiryTooltip', {expiry: expiry.fullYmd})
+    ? expiryUrgency === 'expired'
+      ? t('identityCard.expiryExpiredTooltip', {expiry: expiry.fullYmd})
+      : expiryUrgency === 'soon'
+        ? t('identityCard.expirySoonTooltip', {expiry: expiry.fullYmd})
+        : expiry.rechargeYmd
+          ? t('identityCard.expiryTooltipWithRecharge', {expiry: expiry.fullYmd, recharge: expiry.rechargeYmd})
+          : expiry.source === 'browser'
+            ? t('identityCard.renewalTooltip', {expiry: expiry.fullYmd})
+            : t('identityCard.expiryTooltip', {expiry: expiry.fullYmd})
     : undefined;
   return (
     <h3 className="identity-name-with-label" data-identity-name data-identity-username={!saved || undefined} data-identity-saved-name={saved || undefined} aria-label={shownName} aria-description={description}>
       <strong title={description ? `${shownName}\n${description}` : shownName}>{shownName}</strong>
-      {hasPlan && <span className={`identity-plan-pill plan-${plan!.toLowerCase()}`}>{plan}</span>}
+      {hasPlan && (
+        <span className="identity-plan-pill" data-plan-tier={normalizePlanSlug(plan)}>
+          {plan}
+        </span>
+      )}
       {expiry && (
         <span
           className={`identity-expiry-tag${onEditExpiry ? ' is-clickable' : ''}`}
           data-identity-expiry
+          data-urgency={expiryUrgency}
           role={onEditExpiry ? 'button' : undefined}
           tabIndex={onEditExpiry ? 0 : undefined}
           title={expiryTooltip}
@@ -201,16 +244,54 @@ interface ExpiryEditorState {
   label: string;
   email: string | null;
   plan: string | null;
+  manualPlan: string;
+  initialManualPlan: string;
   rechargeYmd: string;
   expiryYmd: string;
+  initialRechargeYmd: string;
+  initialExpiryYmd: string;
+  browserSyncedShortMd: string | null;
+  browserSyncedFullYmd: string | null;
   hasManual: boolean;
   error: string;
+}
+
+function sameStringArrays(a?: readonly string[] | null, b?: readonly string[] | null): boolean {
+  const left = a ?? [];
+  const right = b ?? [];
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
 }
 
 function sameActiveSessions(a: readonly ActiveSession[], b: readonly ActiveSession[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i].pid !== b[i].pid || a[i].entrypoint !== b[i].entrypoint || a[i].workspace !== b[i].workspace) {
+    if (
+      a[i].pid !== b[i].pid ||
+      a[i].entrypoint !== b[i].entrypoint ||
+      a[i].workspace !== b[i].workspace ||
+      Boolean(a[i].background) !== Boolean(b[i].background) ||
+      !sameStringArrays(a[i].child_shells, b[i].child_shells)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameSlotSessions(
+  a?: Record<string, ActiveSession[]>,
+  b?: Record<string, ActiveSession[]>,
+): boolean {
+  const aKeys = Object.keys(a ?? {}).filter(k => (a![k]?.length ?? 0) > 0).sort();
+  const bKeys = Object.keys(b ?? {}).filter(k => (b![k]?.length ?? 0) > 0).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  for (let i = 0; i < aKeys.length; i++) {
+    const key = aKeys[i];
+    if (key !== bKeys[i] || !sameActiveSessions(a![key], b![key])) {
       return false;
     }
   }
@@ -226,10 +307,33 @@ function canQueryLiveSessions(): boolean {
   return Boolean(win.__TAURI_INTERNALS__?.metadata) || Boolean(win.identityFixture?.supportsLiveSessions);
 }
 
-export function IdentityPanel({onBusy, initialEmpty = false, identityReviewRequest = null, onIdentityReviewConsumed}: {onBusy?: (busy: boolean) => void; initialEmpty?: boolean; identityReviewRequest?: IdentityReviewRequest | null; onIdentityReviewConsumed?: (requestId: number) => void}) {
+type CardFilterKind = 'all' | 'ready' | 'reset_cards' | 'expiring' | 'live';
+
+export function IdentityPanel({
+  onBusy,
+  initialEmpty = false,
+  identityReviewRequest = null,
+  onIdentityReviewConsumed,
+  focusAccountRequest = null,
+  onFocusAccountConsumed,
+  openRelayRequest = 0,
+}: {
+  onBusy?: (busy: boolean) => void;
+  initialEmpty?: boolean;
+  identityReviewRequest?: IdentityReviewRequest | null;
+  onIdentityReviewConsumed?: (requestId: number) => void;
+  focusAccountRequest?: {accountId: string; requestId: number} | null;
+  onFocusAccountConsumed?: (requestId: number) => void;
+  openRelayRequest?: number;
+}) {
   const {t, locale} = useI18n();
   const prefs = usePreferences();
   const [state, setState] = useState<IdentityState | null>(null);
+  const [cardFilter, setCardFilter] = useState<CardFilterKind>('all');
+  const [gridWrap, setGridWrap] = useState(false);
+  const [focusedCardId, setFocusedCardId] = useState<string | null>(null);
+  const focusTimerRef = useRef<number | null>(null);
+  const lastOpenRelayReqRef = useRef(openRelayRequest);
   const [policy, setPolicy] = useState({...defaultPolicy});
   const [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
@@ -251,8 +355,15 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [deleteBrowser, setDeleteBrowser] = useState(false);
   const [deletion, setDeletion] = useState<Identity | 'current' | null>(null),
     [accepted, setAccepted] = useState(false);
+  type QuotaFeedbackEntry =
+    | ''
+    | string
+    | {key: string; values?: Record<string, string | number>}
+    | {render: (tr: typeof t) => string};
   const [quotaDetails, setQuotaDetails] = useState<{id:string;name:string;expectedIdentity:string|null}|null>(null);
-  const [quotaFeedback, setQuotaFeedback] = useState('');
+  const [quotaFeedback, setQuotaFeedback] = useState<QuotaFeedbackEntry>('');
+  const [suppressQuotaRestoreFocus, setSuppressQuotaRestoreFocus] = useState(false);
+  const quotaOpenerRef = useRef<HTMLElement | null>(null);
   const [quotaSetup, setQuotaSetup] = useState<QuotaSetupStatus|null>(null);
   const [quotaSetupError, setQuotaSetupError] = useState(false);
   const [copyDiagnosticStatus, setCopyDiagnosticStatus] = useState<'copied'|'failed'|null>(null);
@@ -261,8 +372,17 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const [foregroundAutoRefresh, setForegroundAutoRefresh] = useState(false);
   const [onlinePanelOpen, setOnlinePanelOpen] = useState(false);
   const [relayPanelOpen, setRelayPanelOpen] = useState(false);
+  const [cliWrappersBusy, setCliWrappersBusy] = useState(false);
+  const [launchRelayBusy, setLaunchRelayBusy] = useState(false);
+  const [launchCwdDraft, setLaunchCwdDraft] = useState('');
+  const [cliWrappersFeedback, setCliWrappersFeedback] = useState<{text: string; isError?: boolean} | null>(null);
+  const [slotProxyDrafts, setSlotProxyDrafts] = useState<Record<string, string>>({});
+  const [slotProxyErrors, setSlotProxyErrors] = useState<Record<string, string>>({});
+  const [expandedProxyIds, setExpandedProxyIds] = useState<Record<string, boolean>>({});
+  const focusedSlotProxyIdRef = useRef<string | null>(null);
   const [syncCliBrowserOnSwitch, setSyncCliBrowserOnSwitch] = useState(true);
   const smartRelay = useSmartRelayConfig();
+  const recentLaunchDirs = useRelayLaunchDirs();
   const nativeWakeup = useSyncExternalStore(subscribeNativeWakeup, readNativeWakeupSnapshot);
   const autoWakeConfig = nativeWakeup.config;
   const autoWakeState = nativeWakeup;
@@ -315,6 +435,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const lockedRef = useRef(false);
   const busyRef = useRef(false);
   const activity = useCleanupActivity();
+  const [showCleanroomBar, setShowCleanroomBar] = useState(false);
   const warmingActivity = useCleanupActivity();
   const rail = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotionConfig() ?? false;
@@ -327,17 +448,58 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const actionLockedRef = useRef(false);
   actionLockedRef.current = actionLocked;
   const mountedRef = useRef(true);
+  const [copiedBgResume, setCopiedBgResume] = useState(false);
+  const bgResumeCopyTimerRef = useRef<number | null>(null);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (syncedTimerRef.current !== null) window.clearTimeout(syncedTimerRef.current);
+      if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current);
+      if (bgResumeCopyTimerRef.current !== null) window.clearTimeout(bgResumeCopyTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (openRelayRequest > 0 && openRelayRequest !== lastOpenRelayReqRef.current) {
+      lastOpenRelayReqRef.current = openRelayRequest;
+      setRelayPanelOpen(true);
+    }
+  }, [openRelayRequest]);
   const tRef = useRef(t);
   tRef.current = t;
   const stateRef = useRef(state);
   stateRef.current = state;
+  function resolveRelayAccountId(accountId: string, expectedIdentity?: string | null): string {
+    if (accountId !== 'current') return accountId;
+    const snap = stateRef.current;
+    if (snap?.active && /^[0-9a-f]{32}$/i.test(snap.active)) {
+      return snap.active;
+    }
+    const fp = (expectedIdentity ?? snap?.current?.quota_identity ?? '').trim().toLowerCase();
+    if (fp && snap?.records && snap.summaries) {
+      const matched = snap.records.find(
+        rec => (snap.summaries[rec.id]?.quota_identity ?? '').trim().toLowerCase() === fp,
+      );
+      if (matched?.id) return matched.id;
+    }
+    if (snap?.active && snap.active !== 'current') {
+      return snap.active;
+    }
+    return 'current';
+  }
+  function commitAuthoritativeState(next: IdentityState) {
+    ++readSeqRef.current;
+    stateRef.current = next;
+    setState(next);
+  }
+  const quotaFeedbackText = quotaFeedback
+    ? typeof quotaFeedback === 'string'
+      ? t(quotaFeedback)
+      : 'render' in quotaFeedback
+        ? quotaFeedback.render(t)
+        : t(quotaFeedback.key, quotaFeedback.values)
+    : '';
   const liveSessionsInFlightRef = useRef<Promise<void> | null>(null);
   const lastLiveSessionsAtRef = useRef(0);
   async function refreshLiveSessions(force = false): Promise<void> {
@@ -353,16 +515,29 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         lastLiveSessionsAtRef.current = Date.now();
         if (!mountedRef.current || busyRef.current || !snap || typeof snap.running !== 'boolean') return;
         const sessions = Array.isArray(snap.sessions) ? snap.sessions : [];
+        const slotSessions =
+          snap.slot_sessions && typeof snap.slot_sessions === 'object' ? snap.slot_sessions : undefined;
         const cliRunning = typeof snap.cli_running === 'boolean'
           ? snap.cli_running
           : snap.running && sessions.some(s => s.entrypoint !== 'Claude Desktop');
+        const backgroundOnly = typeof snap.background_only === 'boolean'
+          ? snap.background_only
+          : isBackgroundOnlyState({sessions});
+        const hasAdoptJobsField = Array.isArray(snap.active_adopt_jobs);
+        const normalizedAdoptJobs = hasAdoptJobsField
+          ? normalizeAdoptJobIds(snap.active_adopt_jobs)
+          : undefined;
         setState(previous => {
           if (!previous) return previous;
           const prevCli = previous.cli_running ?? (previous.running && (previous.sessions?.some(s => s.entrypoint !== 'Claude Desktop') ?? false));
+          const nextAdoptJobs = hasAdoptJobsField ? normalizedAdoptJobs : previous.active_adopt_jobs;
           if (
             previous.running === snap.running &&
             prevCli === cliRunning &&
-            sameActiveSessions(previous.sessions ?? [], sessions)
+            Boolean(previous.background_only) === backgroundOnly &&
+            sameStringArrays(previous.active_adopt_jobs, nextAdoptJobs) &&
+            sameActiveSessions(previous.sessions ?? [], sessions) &&
+            sameSlotSessions(previous.slot_sessions, slotSessions)
           ) {
             return previous;
           }
@@ -370,7 +545,10 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             ...previous,
             running: snap.running,
             cli_running: cliRunning,
+            background_only: backgroundOnly,
+            active_adopt_jobs: nextAdoptJobs,
             sessions,
+            slot_sessions: slotSessions,
           };
         });
       } catch {
@@ -407,7 +585,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         setBatchBusy(false);
         batchSummaryRef.current = {...batchSummaryRef.current, inProgress: false, state: 'cancelled', notRunCount: Math.max(0, batchSummaryRef.current.total - batchSummaryRef.current.completed)};
         setBatchSummary(batchSummaryRef.current);
-        setQuotaFeedback(tRef.current('quotaOnline.targetSetChanged'));
+        setQuotaFeedback('quotaOnline.targetSetChanged');
       }
       setCardStatusMap({});
     }
@@ -456,23 +634,62 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   const recoveryRecord = state?.records.find(row => row.id === state.recovery);
   const targetSummary = typeof review === 'object' && review ? state?.summaries?.[review.id] : undefined;
   const targetQuota = evaluateQuota(targetSummary, nowSec);
+  const targetSlotBusy =
+    typeof review === 'object' && review !== null && (state?.slot_sessions?.[review.id]?.length ?? 0) > 0;
+  const hasLiveClaudeProcess = Boolean(
+    state?.cli_running || state?.running || (state?.sessions?.length ?? 0) > 0,
+  );
+  const activeAdoptJobs = useMemo(
+    () => normalizeAdoptJobIds(state?.active_adopt_jobs),
+    [state?.active_adopt_jobs],
+  );
+  const primaryAdoptJobId = activeAdoptJobs[0] ?? null;
+  const defaultCliFlagSuffix = useMemo(() => {
+    const args = formatRelayCliModelEffortArgs(smartRelay);
+    return args.length > 0 ? ` ${args.join(' ')}` : '';
+  }, [smartRelay.defaultCliModel, smartRelay.defaultCliEffort]);
+  const resumeShellCmd = primaryAdoptJobId
+    ? `claude attach ${primaryAdoptJobId}`
+    : `claude --resume${defaultCliFlagSuffix}`;
+  const hasBackgroundDaemonOnly = useMemo(() => isBackgroundOnlyState(state), [state]);
+  const interactiveChildShells = useMemo(() => collectInteractiveChildShells(state), [state]);
+  const hasInteractiveChildShells = !hasBackgroundDaemonOnly && interactiveChildShells.length > 0;
   const proxyChanged =
     (typeof review === 'object' && review && (current?.proxy || null) !== (targetSummary?.proxy || null)) ||
     (review === 'empty' && Boolean(current?.proxy));
   const bestSaved = useMemo(
     () =>
-      saved.reduce<{row: Identity; effectiveRem: number; inferred: boolean} | null>((best, row) => {
+      saved.reduce<{row: Identity; effectiveRem: number; inferred: boolean; awaitingReset: boolean} | null>((best, row) => {
         const sum = state?.summaries?.[row.id];
-        if (sum?.auth_status === 'expired') return best;
+        if ((sum?.auth_status === 'expired' || sum?.auth_status === 'missing') && sum?.auth_has_refresh !== true) {
+          return best;
+        }
+        const subExpiresAt = sum?.subscription_expires_at;
+        const subExpired =
+          typeof subExpiresAt === 'number' &&
+          Number.isFinite(subExpiresAt) &&
+          subExpiresAt > 0 &&
+          sum?.billing_date_kind !== 'next_renewal' &&
+          (sum?.subscription_date_source === 'manual' ? nowSec >= subExpiresAt + 86_400 : nowSec >= subExpiresAt);
+        if (subExpired || isAccountInCooldown(smartRelay, row.id, nowSec)) return best;
         const q = evaluateQuota(sum, nowSec);
         if (!q || !q.known5h || !q.known7d || q.inferred7d || q.effectiveRem <= 0) return best;
+        const {manualResetsRemaining} = extractResetCardInfo(sum, nowSec);
+        const awaitingReset = Boolean(
+          manualResetsRemaining > 0 && q.used7d >= Math.min(smartRelay.spentThresholdPct, 98),
+        );
         const inferred = !q.recommendable;
-        if (!best || q.effectiveRem > best.effectiveRem || (q.effectiveRem === best.effectiveRem && best.inferred && !inferred)) {
-          return {row, effectiveRem: q.effectiveRem, inferred};
+        if (
+          !best ||
+          (best.awaitingReset && !awaitingReset) ||
+          (best.awaitingReset === awaitingReset &&
+            (q.effectiveRem > best.effectiveRem || (q.effectiveRem === best.effectiveRem && best.inferred && !inferred)))
+        ) {
+          return {row, effectiveRem: q.effectiveRem, inferred, awaitingReset};
         }
         return best;
       }, null),
-    [saved, state?.summaries, nowSec],
+    [saved, state?.summaries, smartRelay, nowSec],
   );
   const relayAccounts = useMemo<RelayAccountInput[]>(
     () => [
@@ -515,7 +732,14 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     smartRelay.enabled && relayTargetCand && !relayTargetCand.isCurrent
       ? (() => {
           const row = saved.find(r => r.id === relayTargetCand.id);
-          return row ? {row, effectiveRem: relayTargetCand.effectiveRem, inferred: relayTargetCand.inferred} : null;
+          return row
+            ? {
+                row,
+                effectiveRem: relayTargetCand.effectiveRem,
+                inferred: relayTargetCand.inferred,
+                isPreferred: relayTargetCand.isPreferred,
+              }
+            : null;
         })()
       : null;
   const recommendSaved = smartRelay.enabled
@@ -524,6 +748,90 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       ? bestSaved
       : null;
   const totalIdentities = (current?.present ? 1 : 0) + saved.length;
+
+  const cardFilterCounts = useMemo(() => {
+    let ready = 0;
+    let resetCards = 0;
+    let expiring = 0;
+    let live = 0;
+    for (const item of identityReorder.orderedItems) {
+      const meta = item.kind === 'current' ? current : state?.summaries?.[item.row.id];
+      const cand =
+        item.kind === 'current'
+          ? relayEval.candidates.find(c => c.isCurrent)
+          : relayEval.candidates.find(c => !c.isCurrent && c.id === item.row.id);
+      const isLive =
+        item.kind === 'current'
+          ? Boolean(state?.running || state?.cli_running || (state?.sessions?.length ?? 0) > 0)
+          : (state?.slot_sessions?.[item.row.id]?.length ?? 0) > 0;
+      const hasResets = (meta?.manual_resets_remaining ?? 0) > 0;
+      const expUrg = computeExpiryUrgency(formatSubscriptionExpiryBadge(meta), nowSec);
+      const isReady = Boolean(
+        cand && (smartRelay.enabled ? cand.isIncluded : true) && cand.tier === 0,
+      );
+      if (isReady) ready++;
+      if (hasResets) resetCards++;
+      if (expUrg === 'soon' || expUrg === 'expired') expiring++;
+      if (isLive) live++;
+    }
+    return {ready, resetCards, expiring, live};
+  }, [identityReorder.orderedItems, current, relayEval.candidates, smartRelay.enabled, state?.summaries, state?.running, state?.cli_running, state?.sessions, state?.slot_sessions, nowSec]);
+
+  const filteredRailItems = useMemo(() => {
+    if (cardFilter === 'all') return identityReorder.orderedItems;
+    return identityReorder.orderedItems.filter(item => {
+      const meta = item.kind === 'current' ? current : state?.summaries?.[item.row.id];
+      if (cardFilter === 'ready') {
+        const cand =
+          item.kind === 'current'
+            ? relayEval.candidates.find(c => c.isCurrent)
+            : relayEval.candidates.find(c => !c.isCurrent && c.id === item.row.id);
+        return Boolean(
+          cand && (smartRelay.enabled ? cand.isIncluded : true) && cand.tier === 0,
+        );
+      }
+      if (cardFilter === 'reset_cards') {
+        return (meta?.manual_resets_remaining ?? 0) > 0;
+      }
+      if (cardFilter === 'expiring') {
+        const expUrg = computeExpiryUrgency(formatSubscriptionExpiryBadge(meta), nowSec);
+        return expUrg === 'soon' || expUrg === 'expired';
+      }
+      if (cardFilter === 'live') {
+        return item.kind === 'current'
+          ? Boolean(state?.running || state?.cli_running || (state?.sessions?.length ?? 0) > 0)
+          : (state?.slot_sessions?.[item.row.id]?.length ?? 0) > 0;
+      }
+      return true;
+    });
+  }, [cardFilter, identityReorder.orderedItems, current, relayEval.candidates, smartRelay.enabled, state?.summaries, state?.running, state?.cli_running, state?.sessions, state?.slot_sessions, nowSec]);
+
+  useEffect(() => {
+    if (!focusAccountRequest || !state) return;
+    if (cardFilter !== 'all') {
+      setCardFilter('all');
+      return;
+    }
+    const {accountId, requestId} = focusAccountRequest;
+    const targetDomId =
+      current?.present && (accountId === 'current' || accountId === state.active)
+        ? CURRENT_IDENTITY_ORDER_TOKEN
+        : accountId;
+    setFocusedCardId(targetDomId);
+    if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = window.setTimeout(() => {
+      if (mountedRef.current) setFocusedCardId(null);
+    }, 2200);
+    window.requestAnimationFrame(() => {
+      const node = rail.current?.querySelector<HTMLElement>(`[data-reorder-card-id="${targetDomId}"]`);
+      node?.scrollIntoView({
+        behavior: reduceMotion ? 'auto' : 'smooth',
+        inline: 'center',
+        block: 'nearest',
+      });
+    });
+    onFocusAccountConsumed?.(requestId);
+  }, [focusAccountRequest, state, cardFilter, current?.present, reduceMotion, onFocusAccountConsumed]);
 
   const standbyCandId = relayRecommendedSaved?.row.id ?? null;
   const standbyCandName = relayRecommendedSaved?.row.name ?? null;
@@ -547,6 +855,35 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     writeMonitorRelayStandbyHint(hint);
     postMonitorBusMessage({type: 'relay-standby-updated', hint});
   }, [smartRelay.enabled, standbyCandEmail, standbyCandName, standbyCandRem, standbyUrgent]);
+
+  useEffect(() => {
+    void syncNativeSmartRelayConfigIfLive();
+  }, []);
+
+  useEffect(() => {
+    if (!relayPanelOpen) {
+      focusedSlotProxyIdRef.current = null;
+      return;
+    }
+    focusedSlotProxyIdRef.current = null;
+    setCliWrappersFeedback(null);
+    setSlotProxyErrors({});
+    setSlotProxyDrafts({...smartRelay.slotProxies});
+    setExpandedProxyIds({});
+    void syncNativeSmartRelayConfigIfLive();
+  }, [relayPanelOpen]);
+
+  useEffect(() => {
+    if (!relayPanelOpen) return;
+    setSlotProxyDrafts(prev => {
+      const focusedId = focusedSlotProxyIdRef.current;
+      const next: Record<string, string> = {...smartRelay.slotProxies};
+      if (focusedId && Object.prototype.hasOwnProperty.call(prev, focusedId)) {
+        next[focusedId] = prev[focusedId];
+      }
+      return next;
+    });
+  }, [relayPanelOpen, smartRelay.slotProxies]);
 
   useEffect(() => {
     void read();
@@ -603,7 +940,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     let unlisten: (() => void) | undefined;
     let active = true;
     void listen('quota-metadata-updated', () => {
-      if (active && mountedRef.current) void read(false);
+      if (active && mountedRef.current && !busyRef.current) void read(false);
     })
       .then(fn => {
         if (!active || !mountedRef.current) {
@@ -632,7 +969,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           progressReadTimer = null;
         }
         lastProgressReadAt = Date.now();
-        if (active && mountedRef.current) void read(false);
+        if (active && mountedRef.current && !busyRef.current) void read(false);
       };
       if (immediate) {
         flush();
@@ -669,7 +1006,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
       const statusInfo = formatOnlineQuotaStatus(payload.result, Date.now(), tRef.current);
       if (payload.result.status === 'rate_limited' || payload.result.reason === 'rate_limited') {
-        const relayAccId = payload.account_id === 'current' ? (stateRef.current?.active || 'current') : payload.account_id;
+        const relayAccId = resolveRelayAccountId(payload.account_id, payload.expected_identity);
         noteRelayAccountRateLimited(relayAccId, payload.result.retry_at_ms);
       }
       setCardStatusMap(prev => ({
@@ -753,25 +1090,41 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
   useEffect(() => {
     let cancelled = false;
+    let running = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let revision: string | undefined;
     const isFixture = typeof window !== 'undefined' && 'identityFixture' in window;
-    const pollIntervalMs = isFixture ? 2000 : 5000;
+    // Fixture mode keeps the fast deterministic 2s cadence; desktop slows to 15s when the window is visible but unfocused.
+    const intervalFor = () => (isFixture ? 2000 : document.hasFocus() ? 5000 : 15000);
+    const clearTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+    };
+    const schedule = () => {
+      clearTimer();
+      // A hidden window pauses polling completely; `visibilitychange` resumes it with one catch-up refresh.
+      if (cancelled || document.hidden) return;
+      timer = setTimeout(() => void check(), intervalFor());
+    };
     const check = async () => {
+      if (running) return;
+      running = true;
+      timer = undefined;
       try {
         if (!document.hidden && !busyRef.current && !batchBusyRef.current && !actionLockedRef.current) {
           const next = await invoke<string>('identities_quota_revision');
           if (!cancelled) {
+            const focused = isFixture || document.hasFocus();
             if (revision === undefined && !isFixture && readSeqRef.current > 0) {
               revision = next;
-              await refreshLiveSessions(false);
+              if (focused) await refreshLiveSessions(false);
             } else if (revision === undefined || next !== revision) {
               // A failed or superseded read must leave the change pending for the next check.
               if (await read(false)) {
                 revision = next;
                 lastLiveSessionsAtRef.current = Date.now();
               }
-            } else {
+            } else if (focused) {
               await refreshLiveSessions(false);
             }
           }
@@ -779,11 +1132,22 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       } catch {
         // A failed local metadata check does not clear any quota observation.
       } finally {
-        if (!cancelled) timer = setTimeout(() => void check(), pollIntervalMs);
+        running = false;
+        schedule();
       }
     };
+    const onVisibilityChange = () => {
+      if (cancelled) return;
+      clearTimer();
+      if (!document.hidden) void check();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
     void check();
-    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+    return () => {
+      cancelled = true;
+      clearTimer();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, []);
 
   const sessionConfirmOpen = review !== null || snapshot || deletion === 'current';
@@ -811,7 +1175,10 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
     const onForegroundChange = () => {
       scheduler.onForegroundChange();
-      if (!document.hidden) void refreshLiveSessions(false);
+      if (!document.hidden) {
+        void refreshLiveSessions(false);
+        void syncNativeSmartRelayConfigIfLive();
+      }
     };
     document.addEventListener('visibilitychange', onForegroundChange);
     window.addEventListener('focus', onForegroundChange);
@@ -850,7 +1217,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       }
     } catch (error) {
       pendingAutoWakePatchRef.current = null;
-      setQuotaFeedback(tRef.current(String(error) === 'wakeup.runtimeUnavailable' ? 'wakeup.runtimeUnavailable' : 'wakeup.configSaveFailed'));
+      setQuotaFeedback(String(error) === 'wakeup.runtimeUnavailable' ? 'wakeup.runtimeUnavailable' : 'wakeup.configSaveFailed');
     } finally {
       autoWakeSavingRef.current = false;
       if (mountedRef.current) setAutoWakeSaving(false);
@@ -858,15 +1225,15 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   }
 
   async function resumeWakeup(identity: string) {
-    try { await resumeNativeWakeup(identity); setQuotaFeedback(tRef.current('wakeup.recoveryGranted')); }
-    catch (error) { setQuotaFeedback(tRef.current(String(error) === 'wakeup.outcomeUnknown' ? 'wakeup.outcomeUnknown' : 'wakeup.stateSaveFailed')); }
+    try { await resumeNativeWakeup(identity); setQuotaFeedback('wakeup.recoveryGranted'); }
+    catch (error) { setQuotaFeedback(String(error) === 'wakeup.outcomeUnknown' ? 'wakeup.outcomeUnknown' : 'wakeup.stateSaveFailed'); }
   }
 
   async function wakeupSingleAccount(accountId: string, expectedIdentity: string, isAuto = false): Promise<boolean> {
     if (actionLockedRef.current || busyRef.current || batchBusyRef.current || wakingRef.current) return false;
     const inventory = buildBatchTargets(stateRef.current).targets;
     if (!isValidQuotaTargetSubset([{account_id: accountId, expected_identity: expectedIdentity}], inventory)) {
-      if (!isAuto) setQuotaFeedback(tRef.current('quotaOnline.accountMismatch'));
+      if (!isAuto) setQuotaFeedback('quotaOnline.accountMismatch');
       return false;
     }
     wakingRef.current = true;
@@ -874,7 +1241,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     const beforeSummary = accountId === 'current' ? stateRef.current?.current : stateRef.current?.summaries?.[accountId];
     const beforeQuota = evaluateQuota(beforeSummary, Math.floor(Date.now() / 1000));
     const expiredResetSec = beforeQuota?.inferredReset5h ?? beforeSummary?.quota_5h_reset_at ?? null;
-    if (!isAuto) setQuotaFeedback(tRef.current('wakeup.waking'));
+    if (!isAuto) setQuotaFeedback('wakeup.waking');
     try {
       const res = await invoke<OnlineQuotaResult>('identities_wakeup_quota_window', {
         accountId,
@@ -884,7 +1251,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       });
       const nowMs = Date.now();
       if (res.status === 'rate_limited' || res.reason === 'rate_limited') {
-        const relayAccId = accountId === 'current' ? (stateRef.current?.active || 'current') : accountId;
+        const relayAccId = resolveRelayAccountId(accountId, expectedIdentity);
         noteRelayAccountRateLimited(relayAccId, res.retry_at_ms, Math.floor(nowMs / 1000));
       }
       const anchorKey = expectedIdentity.trim().toLowerCase();
@@ -894,8 +1261,8 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         setWakeupAnchorMap(persistedWakeupAnchorMap);
       }
       if (isConfirmedNewWakeup5h(res) && res.wakeup_5h_reset_at > Math.floor(nowMs / 1000) && expiredResetSec !== null && res.wakeup_5h_reset_at > expiredResetSec) {
-        const baseMsg = tRef.current(res.wakeup_audit_status === 'unavailable' ? 'wakeup.auditUnavailable' : 'wakeup.wokenSuccess');
-        const fullMsg = `${baseMsg} · ${tRef.current(anchorCheck.labelKey)}`;
+        const baseKey = res.wakeup_audit_status === 'unavailable' ? 'wakeup.auditUnavailable' : 'wakeup.wokenSuccess';
+        const fullMsg = `${tRef.current(baseKey)} · ${tRef.current(anchorCheck.labelKey)}`;
         recordAuditHistoryItem({
           kind: 'identity',
           title: tRef.current('wakeup.auditTitle'),
@@ -905,16 +1272,27 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         });
         if (mountedRef.current) {
           await read(false);
-          setQuotaFeedback(fullMsg);
+          setQuotaFeedback({render: tr => `${tr(baseKey)} · ${tr(anchorCheck.labelKey)}`});
         }
         return true;
       }
-      if (mountedRef.current) setQuotaFeedback(res.stage === 'scheduler' ? formatOnlineQuotaStatus(res, nowMs, tRef.current).message : res.wakeup_effect === 'outcome_unknown'
-        ? tRef.current('wakeup.outcomeUnknown') : res.status === 'auth_required' ? tRef.current('wakeup.authBlocked')
-        : res.wakeup_effect ? `${tRef.current('wakeup.notConfirmed')} · ${tRef.current(anchorCheck.labelKey)}` : formatOnlineQuotaStatus(res, nowMs, tRef.current).message);
+      if (mountedRef.current) {
+        setQuotaFeedback({
+          render: tr =>
+            res.stage === 'scheduler'
+              ? formatOnlineQuotaStatus(res, nowMs, tr).message
+              : res.wakeup_effect === 'outcome_unknown'
+                ? tr('wakeup.outcomeUnknown')
+                : res.status === 'auth_required'
+                  ? tr('wakeup.authBlocked')
+                  : res.wakeup_effect
+                    ? `${tr('wakeup.notConfirmed')} · ${tr(anchorCheck.labelKey)}`
+                    : formatOnlineQuotaStatus(res, nowMs, tr).message,
+        });
+      }
       return false;
     } catch (error) {
-      if (mountedRef.current) setQuotaFeedback(tRef.current(String(error) === 'wakeup.notReady' ? 'wakeup.notReady' : String(error) === 'wakeup.stateSaveFailed' ? 'wakeup.stateSaveFailed' : 'wakeup.requestFailed'));
+      if (mountedRef.current) setQuotaFeedback(String(error) === 'wakeup.notReady' ? 'wakeup.notReady' : String(error) === 'wakeup.stateSaveFailed' ? 'wakeup.stateSaveFailed' : 'wakeup.requestFailed');
       return false;
     } finally {
       wakingRef.current = false;
@@ -937,7 +1315,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       if (ok) wokenCount++;
     }
     if (wokenCount > 1 && mountedRef.current) {
-      setQuotaFeedback(tRef.current('wakeup.wokenBatchSuccess', {count: wokenCount}));
+      setQuotaFeedback({key: 'wakeup.wokenBatchSuccess', values: {count: wokenCount}});
     }
   }
 
@@ -1071,7 +1449,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     batchResultsMapRef.current = resultsById;
     for (const item of validResults) {
       if (item.result.status === 'rate_limited' || item.result.reason === 'rate_limited') {
-        const relayAccId = item.account_id === 'current' ? (stateRef.current?.active || 'current') : item.account_id;
+        const relayAccId = resolveRelayAccountId(item.account_id, item.expected_identity);
         noteRelayAccountRateLimited(relayAccId, item.result.retry_at_ms);
       }
     }
@@ -1114,12 +1492,12 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     if (!requestId || batchCancelingRef.current) return;
     batchCancelingRef.current = true;
     setBatchCanceling(true);
-    setQuotaFeedback(tRef.current('quotaOnline.cancelling'));
+    setQuotaFeedback('quotaOnline.cancelling');
     try {
       const result = await invoke<BatchQuotaResult>('identities_cancel_quota_batch', {requestId});
       adoptBatchSnapshot(result, false);
     } catch (e) {
-      setQuotaFeedback(tRef.current(String(e)));
+      setQuotaFeedback(String(e));
       batchCancelingRef.current = false;
       if (mountedRef.current) setBatchCanceling(false);
     }
@@ -1131,11 +1509,11 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     const inventory = buildBatchTargets(stateRef.current).targets;
     const targets = requestedTargets ?? inventory;
     if (requestedTargets && !isValidQuotaTargetSubset(requestedTargets, inventory)) {
-      setQuotaFeedback(tRef.current('quotaOnline.accountMismatch'));
+      setQuotaFeedback('quotaOnline.accountMismatch');
       return;
     }
     if (targets.length === 0) {
-      setQuotaFeedback(tRef.current('quotaOnline.noValidTargets'));
+      setQuotaFeedback('quotaOnline.noValidTargets');
       return;
     }
 
@@ -1173,9 +1551,10 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       if (currentBatchRequestIdRef.current !== reqId) return;
       adoptBatchSnapshot(res, false);
       if (mountedRef.current) await read(false);
-      setQuotaFeedback(formatBatchProgress(summarizeBatchResult(res), tRef.current));
+      const batchSummarySnapshot = summarizeBatchResult(res);
+      setQuotaFeedback({render: tr => formatBatchProgress(batchSummarySnapshot, tr)});
     } catch (e) {
-      setQuotaFeedback(tRef.current(String(e)));
+      setQuotaFeedback(String(e));
     } finally {
       // Native task state owns the lock. A dropped frontend promise must not unlock an active worker.
       if (currentBatchRequestIdRef.current === reqId) {
@@ -1198,21 +1577,21 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   async function openAccountBrowser(target: QuotaBatchTarget, openMode?: 'usage' | 'claude_ai'): Promise<void> {
     if (actionLockedRef.current || batchBusyRef.current || busyRef.current) return;
     if (!isValidQuotaTargetSubset([target], buildBatchTargets(stateRef.current).targets)) {
-      setQuotaFeedback(tRef.current('quotaOnline.accountMismatch'));
+      setQuotaFeedback('quotaOnline.accountMismatch');
       return;
     }
     busyRef.current = true;
     setBusy(true);
-    setQuotaFeedback(tRef.current('quotaOnline.openingAccountBrowser'));
+    setQuotaFeedback('quotaOnline.openingAccountBrowser');
     try {
       await invoke('browser_open_identity_profile', {
         accountId: target.account_id,
         expectedIdentity: target.expected_identity,
         ...(openMode ? {openMode} : {}),
       });
-      setQuotaFeedback(tRef.current('quotaOnline.accountBrowserOpened'));
+      setQuotaFeedback('quotaOnline.accountBrowserOpened');
     } catch (error) {
-      setQuotaFeedback(tRef.current(String(error)));
+      setQuotaFeedback(String(error));
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -1223,18 +1602,27 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     if (actionLockedRef.current || batchBusyRef.current || busyRef.current) return;
     const targets = buildBatchTargets(stateRef.current).targets.slice(0, 8);
     if (targets.length === 0) {
-      setQuotaFeedback(tRef.current('quotaOnline.noValidTargets'));
+      setQuotaFeedback('quotaOnline.noValidTargets');
       return;
     }
     busyRef.current = true;
     setBusy(true);
-    setQuotaFeedback(tRef.current('quotaOnline.openingAccountBrowser'));
+    setQuotaFeedback('quotaOnline.openingAccountBrowser');
+    const isSyntheticFixture =
+      typeof window !== 'undefined' && ('identityFixture' in window || 'usageFixture' in window);
     let opened = 0;
     let firstErr = '';
     try {
-      for (const target of targets) {
+      for (let idx = 0; idx < targets.length; idx++) {
+        const target = targets[idx];
         if (!mountedRef.current) break;
         if (!isValidQuotaTargetSubset([target], buildBatchTargets(stateRef.current).targets)) continue;
+        if (targets.length > 1) {
+          setQuotaFeedback({
+            key: 'browser.openingUsageProgress',
+            values: {current: idx + 1, total: targets.length},
+          });
+        }
         try {
           await invoke('browser_open_identity_profile', {
             accountId: target.account_id,
@@ -1242,17 +1630,18 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             openMode: 'usage',
           });
           opened++;
-          if (targets.length > 1) {
-            await new Promise<void>(resolve => window.setTimeout(resolve, 120));
+          if (idx < targets.length - 1 && !isSyntheticFixture) {
+            const staggerMs = 1800 + Math.floor(Math.random() * 1401);
+            await new Promise<void>(resolve => window.setTimeout(resolve, staggerMs));
           }
         } catch (err) {
           if (!firstErr) firstErr = String(err);
         }
       }
       if (opened > 0) {
-        setQuotaFeedback(tRef.current('browser.openedAllAccountUsage', {count: opened}));
+        setQuotaFeedback({key: 'browser.openedAllAccountUsage', values: {count: opened}});
       } else if (firstErr) {
-        setQuotaFeedback(tRef.current(firstErr));
+        setQuotaFeedback(firstErr);
       }
     } finally {
       busyRef.current = false;
@@ -1271,13 +1660,16 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     }
   }
 
-  async function syncSubscription(targetAccountId?: string, targetExpectedIdentity?: string) {
+  async function syncSubscription(targetAccountId?: string, targetExpectedIdentity?: string, verifyReset = false) {
     const isCurrentTarget = !targetAccountId || targetAccountId === 'current';
+    const preMeta = isCurrentTarget ? stateRef.current?.current : stateRef.current?.summaries?.[targetAccountId!];
+    const prevUsed7d = typeof preMeta?.quota_7d_used === 'number' ? preMeta.quota_7d_used : null;
+    const prevResets = typeof preMeta?.manual_resets_remaining === 'number' ? preMeta.manual_resets_remaining : null;
     const rawIdentity = isCurrentTarget
-      ? (targetExpectedIdentity ?? current?.quota_identity)
+      ? (targetExpectedIdentity ?? stateRef.current?.current?.quota_identity)
       : (targetExpectedIdentity ?? stateRef.current?.summaries?.[targetAccountId]?.quota_identity);
     if (!rawIdentity || !rawIdentity.trim()) {
-      setQuotaFeedback(tRef.current('quotaOnline.accountMismatch'));
+      setQuotaFeedback('quotaOnline.accountMismatch');
       return;
     }
     const syncKey = isCurrentTarget ? 'current' : targetAccountId!;
@@ -1287,7 +1679,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
     syncingIdsRef.current = {...syncingIdsRef.current, [syncKey]: true};
     setSyncingAccountIds({...syncingIdsRef.current});
-    setQuotaFeedback(tRef.current('identityCard.syncInitiated'));
+    setQuotaFeedback('identityCard.syncInitiated');
     try {
       await invoke(
         'identities_sync_subscription',
@@ -1300,15 +1692,59 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         ? isExpectedCurrentTarget(stateRef.current, { active: frozenActive, expectedIdentity: frozenExpectedIdentity })
         : isExpectedSavedTarget(stateRef.current, { targetId: targetAccountId, expectedIdentity: frozenExpectedIdentity });
       if (!stillMatches) {
-        setQuotaFeedback(tRef.current('quotaOnline.accountMismatch'));
+        setQuotaFeedback('quotaOnline.accountMismatch');
         return;
       }
       if (mountedRef.current) {
         await read(false);
-        setQuotaFeedback(tRef.current('identityCard.syncCompleted'));
+        const postMeta = isCurrentTarget ? stateRef.current?.current : stateRef.current?.summaries?.[targetAccountId!];
+        const nextUsed7d = typeof postMeta?.quota_7d_used === 'number' ? postMeta.quota_7d_used : null;
+        const nextResets = typeof postMeta?.manual_resets_remaining === 'number' ? postMeta.manual_resets_remaining : null;
+        const resetDropped = prevUsed7d !== null && nextUsed7d !== null && prevUsed7d >= 80 && nextUsed7d <= prevUsed7d - 20;
+        const cardConsumed = prevResets !== null && nextResets !== null && nextResets < prevResets;
+        if (resetDropped || (verifyReset && cardConsumed)) {
+          const cooldownKey = resolveRelayAccountId(isCurrentTarget ? 'current' : targetAccountId!, frozenExpectedIdentity);
+          clearAccountCooldown(cooldownKey, true);
+          if (isCurrentTarget && cooldownKey !== 'current' && smartRelay.cooldownUntilSec?.current) {
+            clearAccountCooldown('current', true);
+          }
+          const fbEntry: QuotaFeedbackEntry =
+            prevResets !== null && nextResets !== null && prevResets !== nextResets
+              ? {
+                  key: 'relay.verifyResetConfirmed',
+                  values: {
+                    prevUsed: Math.round(prevUsed7d ?? 0),
+                    nextUsed: Math.round(nextUsed7d ?? 0),
+                    prevResets,
+                    nextResets,
+                  },
+                }
+              : {
+                  key: 'relay.verifyResetConfirmedDropOnly',
+                  values: {
+                    prevUsed: Math.round(prevUsed7d ?? 0),
+                    nextUsed: Math.round(nextUsed7d ?? 0),
+                  },
+                };
+          setQuotaFeedback(fbEntry);
+          if (relayPanelOpen) setCliWrappersFeedback({text: tRef.current(fbEntry.key, fbEntry.values)});
+        } else if (verifyReset) {
+          const usedVal = Math.round(nextUsed7d ?? prevUsed7d ?? 0);
+          setQuotaFeedback({key: 'relay.verifyResetPending', values: {used: usedVal}});
+          if (relayPanelOpen) {
+            setCliWrappersFeedback({
+              text: tRef.current('relay.verifyResetPending', {used: usedVal}),
+              isError: true,
+            });
+          }
+        } else {
+          setQuotaFeedback('identityCard.syncCompleted');
+        }
       }
     } catch (e) {
-      setQuotaFeedback(tRef.current(String(e)));
+      const rawErr = String(e);
+      setQuotaFeedback(rawErr);
+      if (verifyReset && relayPanelOpen) setCliWrappersFeedback({text: tRef.current(rawErr), isError: true});
     } finally {
       const next = {...syncingIdsRef.current};
       delete next[syncKey];
@@ -1331,8 +1767,12 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       // does not re-render after a background revision check.
       const previous = stateRef.current;
       const unchanged = previous !== null && JSON.stringify(previous) === JSON.stringify(next);
-      if (!unchanged) setState(next);
+      if (!unchanged) {
+        stateRef.current = next;
+        setState(next);
+      }
       setReadReady(true);
+      void syncNativeSmartRelayConfigIfLive();
       notifyHudIfTelemetryChanged(next, false);
       if (invalidateResidue) setResidueRevision(value => value + 1);
       setError('');
@@ -1436,7 +1876,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   async function refreshAfterError() {
     setResidueRevision(value => value + 1);
     try {
-      setState(await invoke<IdentityState>('identities_read'));
+      commitAuthoritativeState(await invoke<IdentityState>('identities_read'));
     } catch {
       /* 保留操作错误，不掩盖恢复失败。 */
     }
@@ -1447,7 +1887,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     setBusy(true);
     setError('');
     try {
-      setState(await invoke<IdentityState>('identities_browser', {enabled, useExisting}));
+      commitAuthoritativeState(await invoke<IdentityState>('identities_browser', {enabled, useExisting}));
       setBrowserReview(null);
     } catch (e) {
       setError(String(e));
@@ -1461,6 +1901,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     setBusy(true);
     setError('');
     try {
+      setShowCleanroomBar(false);
       await invoke('browser_launch', {onProgress: activity.start('browser')});
       activity.finish(true, '浏览器资料已与身份同步。');
       await read();
@@ -1474,7 +1915,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
   async function openUsagePage(openMode?: 'usage' | 'claude_ai') {
     if (busy) return;
     const expectedIdentity = quotaDetails?.expectedIdentity;
-    if (!expectedIdentity) { setQuotaFeedback(tRef.current('browser.cliIdentityUnavailable')); return; }
+    if (!expectedIdentity) { setQuotaFeedback('browser.cliIdentityUnavailable'); return; }
     if (!detailsAreCurrent && quotaDetails) {
       await openAccountBrowser({account_id: quotaDetails.id, expected_identity: expectedIdentity}, openMode);
       return;
@@ -1482,22 +1923,32 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     setBusy(true);
     setQuotaFeedback('');
     try {
+      setShowCleanroomBar(false);
       if (openMode === 'claude_ai') {
         const next = await invoke<BrowserState>('browser_return_to_cli', {expectedIdentity, openMode: 'claude_ai', onProgress: activity.start('browser')});
         if (mountedRef.current) {
-          setState(previous => previous ? {...previous, active_browser_slot: next.active_browser_slot,
-            warming_cards: previous.warming_cards?.map(card => ({...card, browser_active: card.slot === next.active_browser_slot}))} : previous);
+          ++readSeqRef.current;
+          setState(previous => {
+            if (!previous) return previous;
+            const updated: IdentityState = {
+              ...previous,
+              active_browser_slot: next.active_browser_slot,
+              warming_cards: previous.warming_cards?.map(card => ({...card, browser_active: card.slot === next.active_browser_slot})),
+            };
+            stateRef.current = updated;
+            return updated;
+          });
         }
         activity.finish(true, 'browser.returnToCliDone');
-        setQuotaFeedback(tRef.current('browser.returnToCliDone'));
+        setQuotaFeedback('browser.returnToCliDone');
       } else {
         await invoke('browser_open_usage', {expectedIdentity, onProgress: activity.start('browser')});
         activity.finish(true, 'quota.opened');
-        setQuotaFeedback(tRef.current('quota.opened'));
+        setQuotaFeedback('quota.opened');
       }
     } catch (reason) {
       const message = String(reason);
-      setQuotaFeedback(tRef.current(message));
+      setQuotaFeedback(message);
       activity.finish(false, message);
     } finally {
       setBusy(false);
@@ -1512,11 +1963,21 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     browserRuntime.invalidate();
     setError('');
     try {
+      setShowCleanroomBar(false);
       const next = await invoke<BrowserState>('browser_return_to_cli', {expectedIdentity: target.expectedIdentity, ...(openMode ? {openMode} : {}), onProgress: activity.start('browser')});
       if (!mountedRef.current) return;
       // Apply the returned slot locally; this action never switches, saves or stops the CLI.
-      setState(previous => previous ? {...previous, active_browser_slot: next.active_browser_slot,
-        warming_cards: previous.warming_cards?.map(card => ({...card, browser_active: card.slot === next.active_browser_slot}))} : previous);
+      ++readSeqRef.current;
+      setState(previous => {
+        if (!previous) return previous;
+        const updated: IdentityState = {
+          ...previous,
+          active_browser_slot: next.active_browser_slot,
+          warming_cards: previous.warming_cards?.map(card => ({...card, browser_active: card.slot === next.active_browser_slot})),
+        };
+        stateRef.current = updated;
+        return updated;
+      });
       setQuotaFeedback('');
       activity.finish(true, 'browser.returnToCliDone');
     } catch (reason) {
@@ -1553,6 +2014,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     setWarmingPromotion(null);
     setBusy(true);
     setError('');
+    setShowCleanroomBar(true);
     const onProgress = activity.start('identity', '恢复原身份');
     try {
       await stop();
@@ -1563,7 +2025,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         recover: true,
         onProgress,
       });
-      setState(next);
+      commitAuthoritativeState(next);
       notifyHudIfTelemetryChanged(next, true);
       setResidueRevision(value => value + 1);
       activity.finish(true, next.browser_warning || '原身份已恢复。');
@@ -1583,11 +2045,12 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     setSnapshot(false);
     setBusy(true);
     setError('');
+    setShowCleanroomBar(false);
     const onProgress = activity.start('identity', '备份当前身份');
     try {
       await stop();
       const next = await invoke<IdentityState>('identities_save', {currentName: name.trim(), policy, onProgress});
-      setState(next);
+      commitAuthoritativeState(next);
       setResidueRevision(value => value + 1);
       activity.finish(true, '当前身份已加密备份到保险库，无需退出当前工作区。');
     } catch (e) {
@@ -1608,13 +2071,24 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       return;
     }
     const target = review;
+    if (typeof target === 'object' && target !== null) {
+      await refreshLiveSessions(true);
+      if ((stateRef.current?.slot_sessions?.[target.id]?.length ?? 0) > 0) {
+        setError(t('relay.error.targetSlotBusy'));
+        setReview(null);
+        setWarmingPromotion(null);
+        return;
+      }
+    }
     setReview(null);
     setBusy(true);
     setError('');
+    setShowCleanroomBar(true);
     const onProgress = activity.start('identity', target === 'recovery' ? '恢复原身份' : target === 'empty' ? '切换到空身份' : '切换身份');
     try {
       await stop();
-      const previousActiveId = stateRef.current?.active ?? null;
+      const resolvedPrevId = resolveRelayAccountId('current');
+      const previousActiveId = resolvedPrevId === 'current' ? null : resolvedPrevId;
       const previousReset5hSec = stateRef.current?.current?.quota_5h_reset_at ?? null;
       let next = warmingPromotion ? await invoke<IdentityState>('identities_warming_promote', {
         id: warmingPromotion.id, currentName: name.trim(), policy, onProgress,
@@ -1653,7 +2127,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           /* Keep completed CLI identity switch even if browser return fails */
         }
       }
-      setState(next);
+      commitAuthoritativeState(next);
       notifyHudIfTelemetryChanged(next, true);
       setWarmingPromotion(null);
       setResidueRevision(value => value + 1);
@@ -1675,7 +2149,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     const onProgress = warmingActivity.start('browser');
     try {
       const next = await invoke<IdentityState>(command, {...args, ...(progress ? {onProgress} : {})});
-      setState(next);
+      commitAuthoritativeState(next);
       warmingActivity.finish(true, 'warming.operationDone');
       return true;
     } catch (e) {
@@ -1704,6 +2178,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     setDeletion(null);
     setBusy(true);
     setError('');
+    setShowCleanroomBar(false);
     const onProgress = activity.start('identity', target === 'current' ? '直接删除当前身份' : '删除暂存身份');
     try {
       if (target === 'current') await stop();
@@ -1713,7 +2188,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         deleteBrowser: target !== 'current' && deleteBrowser,
         onProgress,
       });
-      setState(next);
+      commitAuthoritativeState(next);
       if (target === 'current') notifyHudIfTelemetryChanged(next, true);
       setResidueRevision(value => value + 1);
       activity.finish(true, next.browser_warning || '所选本地身份已直接删除。');
@@ -1729,7 +2204,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     if (!rename || busy) return;
     setBusy(true);
     try {
-      setState(await invoke<IdentityState>('identities_rename', {id: rename.id, value: renameValue}));
+      commitAuthoritativeState(await invoke<IdentityState>('identities_rename', {id: rename.id, value: renameValue}));
       setRename(null);
       setError('');
     } catch (e) {
@@ -1744,6 +2219,13 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     meta: (IdentitySubscriptionMetadata & {quota_identity?: string | null; email?: string | null; plan?: string | null; subscription_expires_at?: number | null}) | null | undefined,
   ) {
     const badge = formatSubscriptionExpiryBadge(meta);
+    const isManualDate = meta?.subscription_date_source === 'manual';
+    const initialManualPlan = meta?.manual_plan?.trim() || '';
+    const initialRechargeYmd = isManualDate ? (meta?.subscription_recharge_ymd?.trim() || badge?.rechargeYmd || '') : '';
+    const initialExpiryYmd = isManualDate ? (meta?.subscription_expiry_ymd?.trim() || badge?.fullYmd || '') : '';
+    if (quotaDetails !== null) {
+      setSuppressQuotaRestoreFocus(true);
+    }
     setQuotaDetails(null);
     setExpiryEditor({
       accountId,
@@ -1751,9 +2233,15 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       label,
       email: meta?.email ?? null,
       plan: meta?.plan ?? null,
-      rechargeYmd: badge?.rechargeYmd ?? '',
-      expiryYmd: badge?.fullYmd ?? '',
-      hasManual: meta?.subscription_date_source === 'manual',
+      manualPlan: initialManualPlan,
+      initialManualPlan,
+      rechargeYmd: initialRechargeYmd,
+      expiryYmd: initialExpiryYmd,
+      initialRechargeYmd,
+      initialExpiryYmd,
+      browserSyncedShortMd: !isManualDate && badge ? badge.shortMd : null,
+      browserSyncedFullYmd: !isManualDate && badge ? badge.fullYmd : null,
+      hasManual: isManualDate || Boolean(initialManualPlan),
       error: '',
     });
     setError('');
@@ -1762,27 +2250,46 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
     if (!expiryEditor || busy) return;
     const rechargeTrimmed = clear ? '' : expiryEditor.rechargeYmd.trim();
     const expiryTrimmed = clear ? '' : expiryEditor.expiryYmd.trim();
+    const planChanged = expiryEditor.manualPlan !== expiryEditor.initialManualPlan;
+    const dateChanged =
+      expiryTrimmed !== expiryEditor.initialExpiryYmd ||
+      rechargeTrimmed !== expiryEditor.initialRechargeYmd;
+    const hasDateInput = Boolean(rechargeTrimmed || expiryTrimmed);
+    let effectiveExpiry = expiryTrimmed;
     if (!clear) {
       if (rechargeTrimmed && !isValidCalendarYmd(rechargeTrimmed)) {
         setExpiryEditor(prev => (prev ? {...prev, error: 'identityCard.invalidSubscriptionDate'} : prev));
         return;
       }
-      const effectiveExpiry = expiryTrimmed || (rechargeTrimmed ? addOneCalendarMonthYmd(rechargeTrimmed) ?? '' : '');
-      if (!effectiveExpiry || !isValidCalendarYmd(effectiveExpiry)) {
+      if (hasDateInput) {
+        effectiveExpiry = expiryTrimmed || (rechargeTrimmed ? addOneCalendarMonthYmd(rechargeTrimmed) ?? '' : '');
+        if (!effectiveExpiry || !isValidCalendarYmd(effectiveExpiry)) {
+          setExpiryEditor(prev => (prev ? {...prev, error: 'identityCard.invalidSubscriptionDate'} : prev));
+          return;
+        }
+      } else if (!planChanged && !dateChanged) {
         setExpiryEditor(prev => (prev ? {...prev, error: 'identityCard.invalidSubscriptionDate'} : prev));
         return;
       }
     }
     setBusy(true);
     try {
+      const manualPlanArg = clear
+        ? expiryEditor.initialManualPlan
+          ? 'auto'
+          : undefined
+        : planChanged || expiryEditor.manualPlan
+          ? expiryEditor.manualPlan || 'auto'
+          : undefined;
       const next = await invoke<IdentityState>('identities_set_subscription_expiry', {
         accountId: expiryEditor.accountId,
         expectedIdentity: expiryEditor.expectedIdentity,
-        expiryYmd: clear ? null : expiryTrimmed || null,
+        expiryYmd: clear ? null : (hasDateInput ? effectiveExpiry || null : null),
         rechargeYmd: clear ? null : rechargeTrimmed || null,
+        ...(manualPlanArg !== undefined ? {manualPlan: manualPlanArg} : {}),
       });
       if (mountedRef.current) {
-        setState(next);
+        commitAuthoritativeState(next);
         setExpiryEditor(null);
         setError('');
       }
@@ -1824,17 +2331,211 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       t('identities.handoffSpec.rule3'),
     ];
     const text = lines.join('\n');
+    const copied = await copyToClipboard(text);
+    setQuotaFeedback(copied ? 'identities.handoffSpecCopied' : 'identities.handoffSpecCopyFailed');
+  }
+
+  async function copyToClipboard(text: string): Promise<boolean> {
     try {
       await invoke('copy_result', {text});
-      setQuotaFeedback('identities.handoffSpecCopied');
+      return true;
     } catch {
       try {
-        if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+        if (!navigator.clipboard?.writeText) return false;
         await navigator.clipboard.writeText(text);
-        setQuotaFeedback('identities.handoffSpecCopied');
+        return true;
       } catch {
-        setQuotaFeedback('identities.handoffSpecCopyFailed');
+        return false;
       }
+    }
+  }
+
+  async function copyBgResumeCommand(cmd: string): Promise<void> {
+    if (bgResumeCopyTimerRef.current !== null) window.clearTimeout(bgResumeCopyTimerRef.current);
+    const ok = await copyToClipboard(cmd);
+    if (!mountedRef.current) return;
+    setCopiedBgResume(ok);
+    bgResumeCopyTimerRef.current = window.setTimeout(() => {
+      if (mountedRef.current) setCopiedBgResume(false);
+    }, 2000);
+  }
+
+  async function openRelayAccountUsage(cand: RelayCandidate): Promise<void> {
+    const summary = cand.isCurrent ? current : state?.summaries?.[cand.id];
+    const expectedIdentity = summary?.quota_identity;
+    if (!expectedIdentity) {
+      setQuotaFeedback('browser.cliIdentityUnavailable');
+      return;
+    }
+    if (cand.isCurrent) {
+      if (actionLockedRef.current || batchBusyRef.current || busyRef.current) return;
+      busyRef.current = true;
+      setBusy(true);
+      setQuotaFeedback('');
+      try {
+        setShowCleanroomBar(false);
+        await invoke('browser_open_usage', {expectedIdentity, onProgress: activity.start('browser')});
+        activity.finish(true, 'quota.opened');
+        setQuotaFeedback('quota.opened');
+      } catch (reason) {
+        const message = String(reason);
+        setQuotaFeedback(message);
+        activity.finish(false, message);
+      } finally {
+        busyRef.current = false;
+        if (mountedRef.current) setBusy(false);
+      }
+      return;
+    }
+    await openAccountBrowser({account_id: cand.id, expected_identity: expectedIdentity}, 'usage');
+  }
+
+  function commitSlotProxy(accountId: string, rawValue: string): void {
+    const res = validateSlotHttpProxy(rawValue);
+    if (!res.ok) {
+      setSlotProxyErrors(prev => ({...prev, [accountId]: res.errorKey || 'relay.proxy.invalidHttp'}));
+      return;
+    }
+    setSlotProxyErrors(prev => {
+      if (!(accountId in prev)) return prev;
+      const next = {...prev};
+      delete next[accountId];
+      return next;
+    });
+    setSlotProxyDrafts(prev => ({...prev, [accountId]: res.normalized}));
+    const existing = smartRelay.slotProxies[accountId] ?? '';
+    if (existing === res.normalized) return;
+    const nextSlotProxies = {...smartRelay.slotProxies};
+    if (res.normalized) {
+      nextSlotProxies[accountId] = res.normalized;
+    } else {
+      delete nextSlotProxies[accountId];
+    }
+    updateSmartRelayConfig({slotProxies: nextSlotProxies});
+  }
+
+  function flushPendingSlotProxies(): void {
+    let changed = false;
+    const nextSlotProxies = {...smartRelay.slotProxies};
+    for (const [accountId, draft] of Object.entries(slotProxyDrafts)) {
+      const res = validateSlotHttpProxy(draft);
+      if (!res.ok) continue;
+      const existing = nextSlotProxies[accountId] ?? '';
+      if (existing === res.normalized) continue;
+      changed = true;
+      if (res.normalized) {
+        nextSlotProxies[accountId] = res.normalized;
+      } else {
+        delete nextSlotProxies[accountId];
+      }
+    }
+    if (changed) {
+      updateSmartRelayConfig({slotProxies: nextSlotProxies});
+    }
+  }
+
+  function normalizeNativeErrorKey(err: unknown): string {
+    return String(err).replace(/^Error:\s*/i, '').trim();
+  }
+
+  async function installCliWrappers(): Promise<void> {
+    if (cliWrappersBusy) return;
+    setCliWrappersBusy(true);
+    setCliWrappersFeedback(null);
+    try {
+      const res = await invoke<{agent_path?: string | null} | null>('identities_install_cli_wrappers');
+      if (mountedRef.current) {
+        const msgKey = res && typeof res === 'object' && res.agent_path ? 'relay.deployCliAndAgentOk' : 'relay.deployCliAndAgentOk';
+        setCliWrappersFeedback({text: tRef.current(msgKey)});
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        setCliWrappersFeedback({text: tRef.current(normalizeNativeErrorKey(err)), isError: true});
+      }
+    } finally {
+      if (mountedRef.current) setCliWrappersBusy(false);
+    }
+  }
+
+  async function launchRelayTerminal(explicitCwd?: string): Promise<void> {
+    if (launchRelayBusy) return;
+    setLaunchRelayBusy(true);
+    if (relayPanelOpen) setCliWrappersFeedback(null);
+    const chosenCwd = (explicitCwd !== undefined ? explicitCwd : launchCwdDraft).trim();
+    const chosenNorm = chosenCwd.replace(/\//g, '\\').toLowerCase();
+    const isMruStaleCandidate = Boolean(
+      chosenCwd &&
+      getRelayLaunchDirs().some(dir => dir.replace(/\//g, '\\').toLowerCase() === chosenNorm),
+    );
+    let retriedWithFallback = false;
+    try {
+      await flushNativeSmartRelaySync();
+      let res: {ok?: boolean; terminal?: string; cwd?: string | null};
+      try {
+        res = await invoke<{ok?: boolean; terminal?: string; cwd?: string | null}>('identities_launch_relay_cli', {
+          cwd: chosenCwd || null,
+          autoContinue: smartRelay.autoContinueOnRelay,
+        });
+      } catch (firstErr) {
+        if (isMruStaleCandidate && normalizeNativeErrorKey(firstErr) === 'relay.error.invalidLaunchCwd') {
+          removeRelayLaunchDir(chosenCwd);
+          if (launchCwdDraft.trim().replace(/\//g, '\\').toLowerCase() === chosenNorm) {
+            setLaunchCwdDraft('');
+          }
+          retriedWithFallback = true;
+          res = await invoke<{ok?: boolean; terminal?: string; cwd?: string | null}>('identities_launch_relay_cli', {
+            cwd: '',
+            autoContinue: smartRelay.autoContinueOnRelay,
+          });
+        } else {
+          throw firstErr;
+        }
+      }
+      const savedDir = (res?.cwd && typeof res.cwd === 'string' ? res.cwd.trim() : '') || (retriedWithFallback ? '' : chosenCwd);
+      if (savedDir && !retriedWithFallback) {
+        recordRelayLaunchDir(savedDir);
+      }
+      if (mountedRef.current) {
+        if (relayPanelOpen) {
+          setCliWrappersFeedback({text: tRef.current('relay.launchedTerminalOk')});
+        } else {
+          setQuotaFeedback('relay.launchedTerminalOk');
+        }
+      }
+    } catch (err) {
+      const errKey = normalizeNativeErrorKey(err);
+      if (mountedRef.current) {
+        if (relayPanelOpen) {
+          setCliWrappersFeedback({text: tRef.current(errKey), isError: true});
+        } else {
+          setQuotaFeedback(errKey);
+        }
+      }
+    } finally {
+      if (mountedRef.current) setLaunchRelayBusy(false);
+    }
+  }
+
+  async function copyRelayCommand(): Promise<void> {
+    const cmd = smartRelay.autoContinueOnRelay ? 'claude-relay -AutoContinue' : 'claude-relay';
+    const ok = await copyToClipboard(cmd);
+    if (mountedRef.current) {
+      setCliWrappersFeedback(
+        ok
+          ? {text: tRef.current('relay.copiedRelayCmd', {cmd})}
+          : {text: tRef.current('relay.copyFailed'), isError: true},
+      );
+    }
+  }
+
+  async function copySubagentTemplate(): Promise<void> {
+    const ok = await copyToClipboard(buildSubagentMarkdownTemplate());
+    if (mountedRef.current) {
+      setCliWrappersFeedback(
+        ok
+          ? {text: tRef.current('relay.copiedSubagentTpl')}
+          : {text: tRef.current('relay.copyFailed'), isError: true},
+      );
     }
   }
 
@@ -1913,11 +2614,6 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       <header className="cleanup-title">
         <h1>{t('身份管理')}</h1>
         <div className="identity-header-actions">
-          {syncedFeedback && (
-            <span className="identity-sync-feedback" role="status">
-              ✓ {t('identityCard.localQuotaSynced')}
-            </span>
-          )}
           <div className="identity-header-group identity-header-primary">
             <div className={`wakeup-header-pill${autoWakeConfig.enabled ? ' is-enabled' : ''}`}>
               <Button
@@ -1986,13 +2682,21 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             <Button
               variant="secondary"
               size="small"
+              data-quota-sync
+              aria-label={t('identityCard.localQuotaSync')}
               disabled={actionLocked || loading || manualSyncing}
               loading={loading || manualSyncing}
-              leftIcon={<Refresh aria-hidden size={16} className={loading || manualSyncing ? 'spin' : ''} />}
+              leftIcon={
+                syncedFeedback && !loading && !manualSyncing ? (
+                  <CheckTickCircle aria-hidden="true" size={15} />
+                ) : (
+                  <Refresh aria-hidden size={16} className={loading || manualSyncing ? 'spin' : ''} />
+                )
+              }
               title={t('identityCard.localQuotaSync')}
               onClick={() => void manualSyncLocalQuota()}
             >
-              {t('identityCard.localQuotaSync')}
+              {syncedFeedback && !loading && !manualSyncing ? t('identityCard.localQuotaSynced') : t('identityCard.localQuotaSync')}
             </Button>
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
@@ -2053,9 +2757,10 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         title={t('identityCard.onlineQuery')}
         width={680}
         className="identity-online-query-dialog"
+        fallbackFocusRef={quotaOpenerRef}
       >
         {onlinePanelOpen ? (
-          <>
+          <div className="identity-online-query-body">
             <div className="identity-online-query-controls">
           <Button
             variant="secondary"
@@ -2257,21 +2962,32 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         onOpen={target => void openAccountBrowser(target)}
         onRetry={targets => void refreshAllQuotas(true, targets)}
       />
-      {!quotaDetails && (quotaFeedback || batchSummary.completed > 0) && <p className="identity-online-feedback" role="status">{quotaFeedback ? t(quotaFeedback) : formatBatchProgress(batchSummary, t)}{unverifiedQuotaTargets > 0 && <> · {t('quotaOnline.unverifiedTargets', {count:unverifiedQuotaTargets})}</>}</p>}
-          </>
+      {!quotaDetails && (quotaFeedbackText || batchSummary.completed > 0) && <p className="identity-online-feedback" role="status">{quotaFeedbackText ? quotaFeedbackText : formatBatchProgress(batchSummary, t)}{unverifiedQuotaTargets > 0 && <> · {t('quotaOnline.unverifiedTargets', {count:unverifiedQuotaTargets})}</>}</p>}
+          </div>
         ) : null}
       </AppDialog>
 
       <AppDialog
         open={relayPanelOpen}
-        onOpenChange={open => setRelayPanelOpen(open)}
+        onOpenChange={open => {
+          if (!open) flushPendingSlotProxies();
+          setRelayPanelOpen(open);
+        }}
         title={t('relay.dialogTitle')}
         description={t('relay.dialogDesc')}
-        width={660}
+        width={720}
         className="identity-relay-dialog"
         footer={
           <div className="identity-dialog-footer-spread">
-            <Button variant="ghost" size="small" onClick={() => resetSmartRelayConfig()}>
+            <Button
+              variant="ghost"
+              size="small"
+              onClick={() => {
+                resetSmartRelayConfig();
+                setSlotProxyDrafts({});
+                setSlotProxyErrors({});
+              }}
+            >
               {t('settings.relayResetBtn')}
             </Button>
             <div className="identity-relay-banner-actions">
@@ -2281,6 +2997,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   size="small"
                   disabled={blocked}
                   onClick={() => {
+                    flushPendingSlotProxies();
                     setRelayPanelOpen(false);
                     choose(relayRecommendedSaved.row);
                   }}
@@ -2294,7 +3011,14 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   })}
                 </Button>
               )}
-              <Button variant="primary" size="small" onClick={() => setRelayPanelOpen(false)}>
+              <Button
+                variant="primary"
+                size="small"
+                onClick={() => {
+                  flushPendingSlotProxies();
+                  setRelayPanelOpen(false);
+                }}
+              >
                 {t('关闭')}
               </Button>
             </div>
@@ -2330,59 +3054,193 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               <span>{t('relay.pool.avg7dRem')}:</span>
               <strong>{relayPoolSummary.avgRem7dPct}%</strong>
             </span>
+            <span className="identity-relay-pool-stat">
+              <span>{t('relay.pool.manualResets')}:</span>
+              <strong>{relayPoolSummary.totalManualResetsRemaining}</strong>
+            </span>
             {relayPoolSummary.soonestResetSec && (
               <span className="identity-relay-pool-stat">
                 <span>{t('relay.pool.nextReset')}:</span>
                 <strong>{formatCompactEta(relayPoolSummary.soonestResetSec, nowSec)}</strong>
               </span>
             )}
+            {relayPoolSummary.totalManualResetsRemaining > 0 && smartRelay.strategy !== 'reset_harvest' && (
+              <button
+                type="button"
+                className="identity-relay-harvest-recommend-btn"
+                data-relay-recommend-harvest
+                onClick={() => updateSmartRelayConfig({enabled: true, strategy: 'reset_harvest'})}
+              >
+                {t('relay.recommendHarvestChip', {count: relayPoolSummary.totalManualResetsRemaining})}
+              </button>
+            )}
           </div>
+
+          {current?.present && !active && (
+            <div className="identity-unsaved-pool-hint" role="note" data-relay-unsaved-hint>
+              <span>{t('identities.unsavedPoolHint')}</span>
+              <Button
+                variant="secondary"
+                size="small"
+                disabled={blocked}
+                onClick={() => {
+                  flushPendingSlotProxies();
+                  setRelayPanelOpen(false);
+                  openSnapshot();
+                }}
+              >
+                {t('identities.unsavedSaveNow')}
+              </Button>
+            </div>
+          )}
 
           <section className="identity-relay-section" aria-label={t('relay.accountsLabel')}>
             <div className="identity-relay-section-head">
               <h3>{t('relay.accountsLabel')}</h3>
-              <label className="identity-relay-return-preferred">
-                <Checkbox
-                  label={t('settings.relayPreferredReturnLabel')}
-                  checked={smartRelay.returnToPreferred}
-                  onCheckedChange={v => updateSmartRelayConfig({returnToPreferred: v === true})}
-                />
-              </label>
+              <div className="identity-relay-preferred-controls">
+                <label className="identity-relay-return-preferred">
+                  <Checkbox
+                    label={t('settings.relayPreferredReturnLabel')}
+                    checked={smartRelay.returnToPreferred}
+                    onCheckedChange={v => updateSmartRelayConfig({returnToPreferred: v === true})}
+                  />
+                </label>
+                {smartRelay.returnToPreferred && (
+                  <div
+                    className="identity-wakeup-presets identity-relay-return-thresh"
+                    role="group"
+                    aria-label={t('relay.preferredReturnThresholdLabel')}
+                  >
+                    {([80, 85, 90] as const).map(pct => (
+                      <button
+                        key={pct}
+                        type="button"
+                        data-relay-return-threshold={pct}
+                        className={`wakeup-preset-chip${smartRelay.preferredReturnThresholdPct === pct ? ' active' : ''}`}
+                        onClick={() => updateSmartRelayConfig({preferredReturnThresholdPct: pct})}
+                      >
+                        ≤{pct}%
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="identity-relay-account-list">
               {[...relayEval.candidates]
                 .sort((a, b) => a.listIndex - b.listIndex)
                 .map(acc => {
                   const isExcluded = !acc.isIncluded;
-                  const isPreferred = acc.isPreferred || (!smartRelay.preferredAccountId && acc.isCurrent);
+                  const isPreferred = smartRelay.preferredAccountId === acc.id;
                   const isRecommendedNext = !acc.isCurrent && relayEval.recommended?.id === acc.id;
                   const used5h = acc.known5h && !acc.no5hLimit ? acc.used5h : 0;
                   const used7d = acc.known7d ? acc.used7d : 0;
+                  const shown5hPct = prefs.quotaDisplay === 'used' ? acc.used5h : acc.rem5h;
+                  const shown7dPct = prefs.quotaDisplay === 'used' ? acc.used7d : acc.rem7d;
+                  const bar5hWidth = acc.no5hLimit ? 100 : acc.known5h ? Math.min(100, Math.max(4, shown5hPct)) : 0;
+                  const bar7dWidth = acc.known7d ? Math.min(100, Math.max(4, shown7dPct)) : 0;
+                  const fill5hClass = acc.no5hLimit
+                    ? ' is-unlimited'
+                    : used5h >= 95
+                      ? ' is-empty'
+                      : used5h >= 80
+                        ? ' is-warn'
+                        : '';
+                  const fill7dClass = used7d >= 95 ? ' is-empty' : used7d >= 80 ? ' is-warn' : '';
+                  const quotaPrefix = t(prefs.quotaDisplay === 'used' ? 'identityCard.used' : 'identityCard.remaining');
+                  const syncKey = acc.isCurrent ? 'current' : acc.id;
+                  const isSyncingAcc = Boolean(syncingAccountIds[syncKey]);
                   const displayLabel = maskDisplayName(acc.name, acc.email, prefs.privacyMask);
+                  const accSlotSessions = state?.slot_sessions?.[acc.id] ?? [];
+                  const accSummary = acc.isCurrent ? current : state?.summaries?.[acc.id];
+                  const accIdentity = accSummary?.quota_identity;
+                  const summaryHttpProxy = accSummary?.proxy ? toCliHttpProxy(accSummary.proxy) : '';
+                  const proxyPlaceholder = summaryHttpProxy || 'http://127.0.0.1:7899';
+                  const savedSlotProxy = smartRelay.slotProxies[acc.id] ?? '';
+                  const slotProxyDraft = slotProxyDrafts[acc.id] ?? savedSlotProxy;
+                  const slotProxyError = slotProxyErrors[acc.id];
+                  const isProxyExpanded = Boolean(expandedProxyIds[acc.id] || slotProxyError);
+                  const customEndpointShort = savedSlotProxy
+                    ? savedSlotProxy.replace(/^http:\/\//i, '').replace(/^127\.0\.0\.1:/, ':').replace(/^localhost:/i, ':')
+                    : '';
+                  const inheritedPort = summaryHttpProxy.match(/:(\d+)$/)?.[1] ?? '7899';
+                  const proxyPillLabel = savedSlotProxy
+                    ? t('relay.proxyCustomPill', {endpoint: customEndpointShort})
+                    : summaryHttpProxy
+                      ? t('relay.proxyInheritedPill', {port: inheritedPort})
+                      : t('relay.proxyDefaultPill');
+                  const resetTier = computeResetCardExpiryUrgency(
+                    acc.earliestResetGrantEndsAt,
+                    acc.manualResetsRemaining,
+                    nowSec,
+                  );
+                  const resetGrantEta =
+                    acc.earliestResetGrantEndsAt && acc.earliestResetGrantEndsAt > nowSec
+                      ? formatCompactEta(acc.earliestResetGrantEndsAt, nowSec)
+                      : '';
                   return (
                     <div
                       className={`identity-relay-account-row${isExcluded ? ' is-excluded' : ''}${acc.isCurrent ? ' is-current' : ''}`}
                       key={acc.id}
                     >
                       <div className="identity-relay-account-top">
-                        <Checkbox
-                          label={displayLabel}
-                          checked={!isExcluded}
-                          onCheckedChange={checked => {
-                            const nextExcluded = checked
-                              ? smartRelay.excludedAccountIds.filter(id => id !== acc.id)
-                              : [...smartRelay.excludedAccountIds, acc.id];
-                            updateSmartRelayConfig({excludedAccountIds: nextExcluded});
-                          }}
-                        />
-                        {acc.plan && <span className={`identity-plan-pill plan-${acc.plan.toLowerCase()}`}>{acc.plan}</span>}
-                        {acc.isCurrent && <span className="identity-relay-current-badge">{t('relay.currentBadge')}</span>}
-                        {isRecommendedNext && (
-                          <span className="identity-relay-recommended-pill">{t('relay.recommendedBadge')}</span>
-                        )}
-                        {acc.inCooldown && (
-                          <>
-                            <span className="identity-relay-cooling-pill">{t('relay.coolingBadge')}</span>
+                        <div className="identity-relay-account-left">
+                          <Checkbox
+                            label={displayLabel}
+                            checked={!isExcluded}
+                            onCheckedChange={checked => {
+                              const nextExcluded = checked
+                                ? smartRelay.excludedAccountIds.filter(id => id !== acc.id)
+                                : [...smartRelay.excludedAccountIds, acc.id];
+                              updateSmartRelayConfig({excludedAccountIds: nextExcluded});
+                            }}
+                          />
+                          {acc.plan && (
+                            <span className="identity-plan-pill" data-plan-tier={normalizePlanSlug(acc.plan)}>
+                              {acc.plan}
+                            </span>
+                          )}
+                          {acc.isCurrent && <span className="identity-relay-current-badge">{t('relay.currentBadge')}</span>}
+                          {isRecommendedNext && (
+                            <span className="identity-relay-recommended-pill">{t('relay.recommendedBadge')}</span>
+                          )}
+                          {accSlotSessions.length > 0 && (
+                            <span
+                              className="identity-relay-slot-pill"
+                              title={accSlotSessions
+                                .map(s => `${s.entrypoint}${s.workspace ? ` · ${s.workspace}` : ''} (PID ${s.pid})`)
+                                .join('\n')}
+                            >
+                              <i className="slot-live-dot" aria-hidden="true" />
+                              {accSlotSessions.length > 1
+                                ? t('relay.slotLiveCount', {count: accSlotSessions.length})
+                                : t('relay.slotLiveBadge')}
+                            </span>
+                          )}
+                        </div>
+                        <div className="identity-relay-account-right">
+                          {acc.awaitingManualReset && (
+                            <>
+                              <button
+                                type="button"
+                                className="identity-relay-quick-reset-btn"
+                                disabled={busy || batchBusy || loading || !!state?.recovery || !accIdentity}
+                                onClick={() => void openRelayAccountUsage(acc)}
+                              >
+                                {t('relay.goResetBtn')}
+                              </button>
+                              <button
+                                type="button"
+                                className="identity-relay-verify-reset-btn"
+                                data-relay-verify-reset={acc.id}
+                                disabled={busy || batchBusy || loading || !!state?.recovery || !state?.browser.enabled || !accIdentity || isSyncingAcc}
+                                onClick={() => void syncSubscription(acc.isCurrent ? undefined : acc.id, accIdentity || undefined, true)}
+                              >
+                                {t('relay.verifyResetBtn')}
+                              </button>
+                            </>
+                          )}
+                          {acc.inCooldown && (
                             <button
                               type="button"
                               className="identity-relay-set-preferred"
@@ -2390,51 +3248,175 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                             >
                               {t('relay.clearCooldown')}
                             </button>
-                          </>
-                        )}
-                        {acc.known5h && !acc.no5hLimit && Math.abs(acc.pace5hDeltaPct) >= 10 && (
-                          <span className={`identity-relay-pace-pill${acc.pace5hDeltaPct >= 10 ? ' is-ahead' : ' is-safe'}`}>
-                            {t(acc.pace5hDeltaPct >= 10 ? 'relay.paceAheadBadge' : 'relay.paceSafeBadge', {
-                              delta: Math.abs(Math.round(acc.pace5hDeltaPct)),
-                            })}
-                          </span>
-                        )}
-                        <div className="identity-relay-account-spacer" />
-                        {isPreferred ? (
-                          <span className="identity-relay-preferred-pill">{t('relay.preferredBadge')}</span>
-                        ) : (
+                          )}
                           <button
                             type="button"
-                            className="identity-relay-set-preferred"
-                            onClick={() => updateSmartRelayConfig({preferredAccountId: acc.id})}
+                            className={`identity-relay-proxy-pill${savedSlotProxy ? ' is-custom' : ''}${slotProxyError ? ' is-invalid' : ''}`}
+                            data-relay-proxy-toggle={acc.id}
+                            title={`${t('relay.slotProxyLabel')}: ${savedSlotProxy || proxyPlaceholder}`}
+                            onClick={() =>
+                              setExpandedProxyIds(prev => ({
+                                ...prev,
+                                [acc.id]: !isProxyExpanded,
+                              }))
+                            }
                           >
-                            {t('relay.setPreferred')}
+                            {proxyPillLabel}
                           </button>
-                        )}
+                          {isPreferred ? (
+                            <button
+                              type="button"
+                              className="identity-relay-preferred-pill is-clickable"
+                              title={t('relay.unsetPreferredTooltip')}
+                              aria-label={t('relay.unsetPreferredTooltip')}
+                              data-relay-unset-preferred={acc.id}
+                              onClick={() => updateSmartRelayConfig({preferredAccountId: null})}
+                            >
+                              {t('relay.preferredBadge')}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="identity-relay-set-preferred"
+                              data-relay-set-preferred={acc.id}
+                              onClick={() => updateSmartRelayConfig({preferredAccountId: acc.id})}
+                            >
+                              {t('relay.setPreferred')}
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="identity-relay-account-bars">
-                        <div className="identity-relay-mini-quota">
-                          <span>{t('relay.window5hShort')}</span>
-                          <div className="identity-relay-mini-track">
-                            <div
-                              className={`identity-relay-mini-fill${used5h >= 95 ? ' is-warn' : ''}`}
-                              style={{width: `${acc.no5hLimit ? 2 : Math.min(100, Math.max(2, used5h))}%`}}
-                            />
+                        <div className="identity-relay-bars-tracks">
+                          <div className="identity-relay-mini-quota">
+                            <span>{t('relay.window5hShort')}</span>
+                            <div className="identity-relay-mini-track">
+                              <div
+                                className={`identity-relay-mini-fill${fill5hClass}`}
+                                style={{width: `${bar5hWidth}%`}}
+                              />
+                            </div>
+                            <strong>
+                              {acc.no5hLimit
+                                ? t('identityCard.unlimited')
+                                : acc.known5h
+                                  ? `${quotaPrefix} ${formatTruthfulPercent(shown5hPct)}`
+                                  : '—'}
+                            </strong>
                           </div>
-                          <strong>{acc.no5hLimit ? t('identityCard.unlimited') : acc.known5h ? `${t('已用')} ${formatTruthfulPercent(acc.used5h)}` : '—'}</strong>
-                        </div>
-                        <div className="identity-relay-account-bars-sep" />
-                        <div className="identity-relay-mini-quota">
-                          <span>{t('relay.window7dShort')}</span>
-                          <div className="identity-relay-mini-track">
-                            <div
-                              className={`identity-relay-mini-fill${used7d >= 95 ? ' is-warn' : ''}`}
-                              style={{width: `${Math.min(100, Math.max(2, used7d))}%`}}
-                            />
+                          <div className="identity-relay-account-bars-sep" />
+                          <div className="identity-relay-mini-quota">
+                            <span>{t('relay.window7dShort')}</span>
+                            <div className="identity-relay-mini-track">
+                              <div
+                                className={`identity-relay-mini-fill${fill7dClass}`}
+                                style={{width: `${bar7dWidth}%`}}
+                              />
+                            </div>
+                            <strong>
+                              {acc.known7d ? `${quotaPrefix} ${formatTruthfulPercent(shown7dPct)}` : '—'}
+                            </strong>
                           </div>
-                          <strong>{acc.known7d ? `${t('已用')} ${formatTruthfulPercent(acc.used7d)}` : '—'}</strong>
                         </div>
+                        {(acc.manualResetsRemaining > 0 ||
+                          acc.awaitingManualReset ||
+                          acc.inCooldown ||
+                          (acc.known5h && !acc.no5hLimit && Math.abs(acc.pace5hDeltaPct) >= 10)) && (
+                          <div className="identity-relay-bars-badges">
+                            {acc.manualResetsRemaining > 0 && (
+                              <span
+                                className={`identity-relay-reset-pill${resetTier && resetTier !== 'normal' ? ` tier-${resetTier}` : ''}`}
+                                data-reset-tier={resetTier || undefined}
+                                title={resetGrantEta ? t('relay.resetCardExpiringTitle', {eta: resetGrantEta}) : undefined}
+                              >
+                                {t('relay.resetCardBadge', {count: acc.manualResetsRemaining})}
+                                {resetTier && resetTier !== 'normal' && resetGrantEta ? ` · ${resetGrantEta}` : ''}
+                              </span>
+                            )}
+                            {acc.awaitingManualReset && (
+                              <span className="identity-relay-awaiting-pill">{t('relay.awaitingResetBadge')}</span>
+                            )}
+                            {acc.inCooldown && (
+                              <span className="identity-relay-cooling-pill">{t('relay.coolingBadge')}</span>
+                            )}
+                            {acc.known5h && !acc.no5hLimit && Math.abs(acc.pace5hDeltaPct) >= 10 && (
+                              <span className={`identity-relay-pace-pill${acc.pace5hDeltaPct >= 10 ? ' is-ahead' : ' is-safe'}`}>
+                                {t(acc.pace5hDeltaPct >= 10 ? 'relay.paceAheadBadge' : 'relay.paceSafeBadge', {
+                                  delta: Math.abs(Math.round(acc.pace5hDeltaPct)),
+                                })}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
+                      {isProxyExpanded && (
+                        <div className="identity-relay-account-proxy">
+                          <label htmlFor={`relay-slot-proxy-${acc.id}`}>{t('relay.slotProxyLabel')}</label>
+                          <input
+                            id={`relay-slot-proxy-${acc.id}`}
+                            type="text"
+                            className={`identity-relay-proxy-input${slotProxyError ? ' is-invalid' : ''}`}
+                            placeholder={proxyPlaceholder}
+                            value={slotProxyDraft}
+                            aria-invalid={slotProxyError ? true : undefined}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setSlotProxyDrafts(prev => ({...prev, [acc.id]: val}));
+                              const res = validateSlotHttpProxy(val);
+                              if (res.ok) {
+                                setSlotProxyErrors(prev => {
+                                  if (!(acc.id in prev)) return prev;
+                                  const next = {...prev};
+                                  delete next[acc.id];
+                                  return next;
+                                });
+                                if (!res.normalized && smartRelay.slotProxies[acc.id]) {
+                                  const nextSlotProxies = {...smartRelay.slotProxies};
+                                  delete nextSlotProxies[acc.id];
+                                  updateSmartRelayConfig({slotProxies: nextSlotProxies});
+                                }
+                              } else if (/^socks/i.test(val.trim()) || /[\u0000-\u001f\u007f]/.test(val)) {
+                                setSlotProxyErrors(prev => ({
+                                  ...prev,
+                                  [acc.id]: res.errorKey || 'relay.proxy.invalidHttp',
+                                }));
+                              }
+                            }}
+                            onFocus={() => {
+                              focusedSlotProxyIdRef.current = acc.id;
+                            }}
+                            onBlur={e => {
+                              if (focusedSlotProxyIdRef.current === acc.id) {
+                                focusedSlotProxyIdRef.current = null;
+                              }
+                              commitSlotProxy(acc.id, e.currentTarget.value);
+                            }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                commitSlotProxy(acc.id, e.currentTarget.value);
+                              }
+                            }}
+                          />
+                          {!slotProxyError && (
+                            <button
+                              type="button"
+                              className="identity-relay-set-preferred"
+                              onClick={() => {
+                                commitSlotProxy(acc.id, slotProxyDraft);
+                                setExpandedProxyIds(prev => ({...prev, [acc.id]: false}));
+                              }}
+                            >
+                              {t('relay.proxyHideBtn')}
+                            </button>
+                          )}
+                          {slotProxyError && (
+                            <span className="identity-relay-proxy-error" role="alert">
+                              {t(slotProxyError)}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -2461,41 +3443,43 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               </div>
             </div>
 
-            <div className="identity-relay-form-row">
-              <span className="identity-relay-form-label">{t('relay.rateLimitLabel')}</span>
-              <div className="identity-relay-form-body">
-                <div className="identity-wakeup-presets">
-                  {RELAY_RATE_LIMIT_MODES.map(mode => (
-                    <button
-                      key={mode}
-                      type="button"
-                      className={`wakeup-preset-chip${smartRelay.rateLimitMode === mode ? ' active' : ''}`}
-                      onClick={() => updateSmartRelayConfig({rateLimitMode: mode})}
-                    >
-                      {t(`relay.rateLimit.${mode}`)}
-                    </button>
-                  ))}
+            <div className="identity-relay-form-pair">
+              <div className="identity-relay-form-row">
+                <span className="identity-relay-form-label">{t('relay.rateLimitLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-wakeup-presets">
+                    {RELAY_RATE_LIMIT_MODES.map(mode => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={`wakeup-preset-chip${smartRelay.rateLimitMode === mode ? ' active' : ''}`}
+                        onClick={() => updateSmartRelayConfig({rateLimitMode: mode})}
+                      >
+                        {t(`relay.rateLimit.${mode}`)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="identity-relay-form-desc">{t(`relay.rateLimitDesc.${smartRelay.rateLimitMode}`)}</p>
                 </div>
-                <p className="identity-relay-form-desc">{t(`relay.rateLimitDesc.${smartRelay.rateLimitMode}`)}</p>
               </div>
-            </div>
 
-            <div className="identity-relay-form-row">
-              <span className="identity-relay-form-label">{t('relay.affinityLabel')}</span>
-              <div className="identity-relay-form-body">
-                <div className="identity-wakeup-presets">
-                  {RELAY_AFFINITY_MODES.map(mode => (
-                    <button
-                      key={mode}
-                      type="button"
-                      className={`wakeup-preset-chip${smartRelay.affinityMode === mode ? ' active' : ''}`}
-                      onClick={() => updateSmartRelayConfig({affinityMode: mode})}
-                    >
-                      {t(`relay.affinity.${mode}`)}
-                    </button>
-                  ))}
+              <div className="identity-relay-form-row">
+                <span className="identity-relay-form-label">{t('relay.affinityLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-wakeup-presets">
+                    {RELAY_AFFINITY_MODES.map(mode => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={`wakeup-preset-chip${smartRelay.affinityMode === mode ? ' active' : ''}`}
+                        onClick={() => updateSmartRelayConfig({affinityMode: mode})}
+                      >
+                        {t(`relay.affinity.${mode}`)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="identity-relay-form-desc">{t(`relay.affinityDesc.${smartRelay.affinityMode}`)}</p>
                 </div>
-                <p className="identity-relay-form-desc">{t(`relay.affinityDesc.${smartRelay.affinityMode}`)}</p>
               </div>
             </div>
 
@@ -2518,67 +3502,254 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               </div>
             </div>
           </div>
+
+          <section className="identity-relay-section identity-relay-cli-section" aria-label={t('relay.cliSectionTitle')}>
+            <div className="identity-relay-section-head">
+              <h3>{t('relay.cliSectionTitle')}</h3>
+            </div>
+            <div className="identity-relay-form-rows identity-relay-cli-rows">
+              <div className="identity-relay-form-row" data-relay-cli-model-row>
+                <span className="identity-relay-form-label">{t('relay.cliModelLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-wakeup-presets">
+                    {RELAY_CLI_MODELS.map(model => (
+                      <button
+                        key={model || 'follow'}
+                        type="button"
+                        data-relay-cli-model={model || 'follow'}
+                        className={`wakeup-preset-chip${smartRelay.defaultCliModel === model ? ' active' : ''}`}
+                        onClick={() => updateSmartRelayConfig({defaultCliModel: model})}
+                      >
+                        {relayCliModelDisplayLabel(model, t('relay.cliFollowSettings'))}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="identity-relay-form-desc">{t('relay.cliModelDesc')}</p>
+                </div>
+              </div>
+
+              <div className="identity-relay-form-row" data-relay-cli-effort-row>
+                <span className="identity-relay-form-label">{t('relay.cliEffortLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-wakeup-presets">
+                    {RELAY_CLI_EFFORTS.map(effort => (
+                      <button
+                        key={effort || 'follow'}
+                        type="button"
+                        data-relay-cli-effort={effort || 'follow'}
+                        className={`wakeup-preset-chip${smartRelay.defaultCliEffort === effort ? ' active' : ''}`}
+                        onClick={() => updateSmartRelayConfig({defaultCliEffort: effort})}
+                      >
+                        {effort || t('relay.cliFollowSettings')}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="identity-relay-form-desc">
+                    {t(smartRelay.defaultCliEffort === 'max' ? 'relay.cliEffortMaxDesc' : 'relay.cliEffortDesc')}
+                  </p>
+                </div>
+              </div>
+
+              <div className="identity-relay-form-row">
+                <span className="identity-relay-form-label">{t('relay.continuationModeLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-wakeup-presets">
+                    <button
+                      type="button"
+                      className={`wakeup-preset-chip${!smartRelay.autoContinueOnRelay ? ' active' : ''}`}
+                      onClick={() => updateSmartRelayConfig({autoContinueOnRelay: false})}
+                    >
+                      {t('relay.autoContinueOff')}
+                    </button>
+                    <button
+                      type="button"
+                      className={`wakeup-preset-chip${smartRelay.autoContinueOnRelay ? ' active' : ''}`}
+                      onClick={() => updateSmartRelayConfig({autoContinueOnRelay: true})}
+                    >
+                      {t('relay.autoContinueOn')}
+                    </button>
+                  </div>
+                  <p className="identity-relay-form-desc">
+                    {t(smartRelay.autoContinueOnRelay ? 'relay.autoContinueOnDesc' : 'relay.autoContinueOffDesc')}
+                  </p>
+                </div>
+              </div>
+
+              <div className="identity-relay-form-row" data-relay-handoff-mode-row>
+                <span className="identity-relay-form-label">{t('relay.handoffModeLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-wakeup-presets" role="group" aria-label={t('relay.handoffModeLabel')}>
+                    {RELAY_HANDOFF_MODES.map(mode => (
+                      <button
+                        key={mode}
+                        type="button"
+                        data-relay-handoff-mode={mode}
+                        aria-pressed={smartRelay.relayHandoffMode === mode}
+                        className={`wakeup-preset-chip${smartRelay.relayHandoffMode === mode ? ' active' : ''}`}
+                        onClick={() => updateSmartRelayConfig({relayHandoffMode: mode})}
+                      >
+                        {t(mode === 'clean_handoff' ? 'relay.handoffModeClean' : 'relay.handoffModeFork')}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="identity-relay-form-desc">
+                    {t(smartRelay.relayHandoffMode === 'fork_resume' ? 'relay.handoffModeForkDesc' : 'relay.handoffModeCleanDesc')}
+                  </p>
+                  {smartRelay.relayHandoffMode === 'fork_resume' && (
+                    <div className="identity-unsaved-pool-hint identity-relay-handoff-warn" role="alert" data-relay-handoff-warning>
+                      <span>
+                        <strong>{t('relay.handoffForkWarnTitle')}</strong>
+                        <span>{t('relay.handoffForkWarnDesc')}</span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="identity-relay-form-row">
+                <span className="identity-relay-form-label">{t('relay.concurrencyLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-wakeup-presets">
+                    {([1, 2, 3, 4, 5] as const).map(cap => (
+                      <button
+                        key={cap}
+                        type="button"
+                        className={`wakeup-preset-chip${smartRelay.maxSameExitConcurrency === cap ? ' active' : ''}`}
+                        onClick={() => updateSmartRelayConfig({maxSameExitConcurrency: cap})}
+                      >
+                        {cap === 1
+                          ? t('relay.concurrencySerial')
+                          : cap === 2
+                            ? t('relay.concurrencyRecommendedMainPlusOne')
+                            : String(cap)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="identity-relay-form-desc">
+                    {t('relay.concurrencyDesc', {max: smartRelay.maxSameExitConcurrency})}
+                  </p>
+                  {smartRelay.maxSameExitConcurrency >= 3 &&
+                    Object.values(smartRelay.slotProxies ?? {}).filter(v => Boolean(v && v.trim())).length <= 1 && (
+                      <div className="relay-same-exit-risk-banner" role="note" data-same-exit-risk>
+                        <strong>{t('relay.sameExitRiskBadge')}</strong>
+                        <span>{t('relay.sameExitRiskHint', {max: smartRelay.maxSameExitConcurrency})}</span>
+                      </div>
+                    )}
+                </div>
+              </div>
+
+              <div className="identity-relay-form-row">
+                <span className="identity-relay-form-label">{t('relay.launchTerminalLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-relay-launch-row">
+                    <input
+                      type="text"
+                      className="identity-relay-cwd-input"
+                      data-relay-launch-cwd
+                      placeholder={t('relay.launchCwdPlaceholder')}
+                      aria-label={t('relay.launchCwdPlaceholder')}
+                      value={launchCwdDraft}
+                      onChange={e => setLaunchCwdDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void launchRelayTerminal();
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      data-launch-relay-cli
+                      loading={launchRelayBusy}
+                      disabled={launchRelayBusy}
+                      onClick={() => void launchRelayTerminal()}
+                    >
+                      {t('relay.launchTerminalBtn')}
+                    </Button>
+                  </div>
+                  {recentLaunchDirs.length > 0 && (
+                    <div className="identity-relay-mru-row" data-relay-recent-dirs>
+                      <span className="identity-relay-mru-label">{t('relay.launchRecentLabel')}</span>
+                      {recentLaunchDirs.map(dir => {
+                        const chip = formatLaunchDirChip(dir);
+                        return (
+                          <span className="identity-relay-mru-chip" key={dir}>
+                            <button
+                              type="button"
+                              className="identity-relay-mru-open"
+                              title={dir}
+                              disabled={launchRelayBusy}
+                              onClick={() => {
+                                setLaunchCwdDraft(dir);
+                                void launchRelayTerminal(dir);
+                              }}
+                            >
+                              <strong>{chip.leaf}</strong>
+                              {chip.parent && <small>{chip.parent}</small>}
+                            </button>
+                            <button
+                              type="button"
+                              className="identity-relay-mru-remove"
+                              aria-label={t('relay.removeRecentDir')}
+                              title={t('relay.removeRecentDir')}
+                              onClick={() => removeRelayLaunchDir(dir)}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="identity-relay-form-row">
+                <span className="identity-relay-form-label">{t('relay.toolchainLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-relay-cli-actions">
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      loading={cliWrappersBusy}
+                      disabled={cliWrappersBusy}
+                      onClick={() => void installCliWrappers()}
+                    >
+                      {t('relay.deployCliAndAgentBtn')}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      onClick={() => void copyRelayCommand()}
+                    >
+                      {t('relay.copyRelayCmdBtn')}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      onClick={() => void copySubagentTemplate()}
+                    >
+                      {t('relay.copySubagentTplBtn')}
+                    </Button>
+                  </div>
+                  {cliWrappersFeedback && (
+                    <p
+                      className={`identity-relay-cli-feedback${cliWrappersFeedback.isError ? ' is-error' : ''}`}
+                      role={cliWrappersFeedback.isError ? 'alert' : 'status'}
+                    >
+                      {cliWrappersFeedback.text}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
         ) : null}
       </AppDialog>
 
-      {!onlinePanelOpen && !quotaDetails && quotaFeedback && <p className="identity-online-feedback identity-page-feedback" role="status"><span>{t(quotaFeedback)}</span><Button variant="ghost" size="small" type="button" data-quota-feedback-dismiss="" onClick={() => setQuotaFeedback('')}>{t('关闭记录')}</Button></p>}
-
-      {smartRelay.enabled && smartRelay.affinityMode !== 'manual' && relayRecommendedSaved && (
-        <div
-          className={`identity-relay-banner${relayEval.shouldRelayNow ? ' is-urgent' : ' is-standby'}`}
-          role="status"
-          data-smart-relay-banner
-        >
-          <div className="identity-relay-banner-text">
-            <strong>{t('relay.toggleOn')}</strong>
-            <span>
-              {relayEval.shouldRelayNow
-                ? relayEval.relayTriggerKind === 'preferred_recovered'
-                  ? t('relay.banner.preferredRecovered', {
-                      name: maskDisplayName(
-                        relayRecommendedSaved.row.name,
-                        state?.summaries?.[relayRecommendedSaved.row.id]?.email,
-                        prefs.privacyMask,
-                      ),
-                      rem: formatTruthfulPercent(relayRecommendedSaved.effectiveRem).replace(/%$/, ''),
-                    })
-                  : t('relay.banner.currentSpent', {
-                      used: formatTruthfulPercent(relayEval.currentCandidate?.effectiveUsed ?? smartRelay.spentThresholdPct).replace(/%$/, ''),
-                      name: maskDisplayName(
-                        relayRecommendedSaved.row.name,
-                        state?.summaries?.[relayRecommendedSaved.row.id]?.email,
-                        prefs.privacyMask,
-                      ),
-                      reason: t(`relay.strategy.${smartRelay.strategy}`),
-                    })
-                : t('relay.banner.standbyNext', {
-                    strategy: t(`relay.strategy.${smartRelay.strategy}`),
-                    name: maskDisplayName(
-                      relayRecommendedSaved.row.name,
-                      state?.summaries?.[relayRecommendedSaved.row.id]?.email,
-                      prefs.privacyMask,
-                    ),
-                    rem: formatTruthfulPercent(relayRecommendedSaved.effectiveRem).replace(/%$/, ''),
-                  })}
-            </span>
-          </div>
-          <div className="identity-relay-banner-actions">
-            <Button variant="secondary" size="small" disabled={blocked} onClick={() => choose(relayRecommendedSaved.row)}>
-              {t('relay.relaySwitchNow', {
-                target: maskDisplayName(
-                  relayRecommendedSaved.row.name,
-                  state?.summaries?.[relayRecommendedSaved.row.id]?.email,
-                  prefs.privacyMask,
-                ),
-              })}
-            </Button>
-            <Button variant="ghost" size="small" onClick={() => setRelayPanelOpen(true)}>
-              {t('relay.configureShort')}
-            </Button>
-          </div>
-        </div>
-      )}
+      {!onlinePanelOpen && !quotaDetails && quotaFeedbackText && <p className="identity-online-feedback identity-page-feedback" role="status"><span>{quotaFeedbackText}</span><Button variant="ghost" size="small" type="button" data-quota-feedback-dismiss="" onClick={() => setQuotaFeedback('')}>{t('关闭记录')}</Button></p>}
 
       {error && (
         <p role="alert" className="cleanup-feedback error">
@@ -2607,7 +3778,22 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               {current?.present === false ? t('当前为新身份') : t('新身份')}
             </Button>
             {recommendSaved && (
-              <Button variant="secondary" size="small" disabled={blocked} onClick={() => choose(recommendSaved.row)}>
+              <Button
+                variant="secondary"
+                size="small"
+                disabled={blocked}
+                title={
+                  t('identities.switchBestTooltip', {
+                    name: maskDisplayName(
+                      recommendSaved.row.name,
+                      state?.summaries?.[recommendSaved.row.id]?.email,
+                      prefs.privacyMask,
+                    ),
+                    rem: Math.round(recommendSaved.effectiveRem),
+                  }) + (hasLiveClaudeProcess ? t('identities.switchBestLiveCliSuffix') : '')
+                }
+                onClick={() => choose(recommendSaved.row)}
+              >
                 {t('切到最优号')}
               </Button>
             )}
@@ -2645,8 +3831,47 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             ))}
           </div>
         </div>
+        {(totalIdentities >= 4 || cardFilter !== 'all' || gridWrap) && (
+          <div className="identity-filter-bar" data-identity-filter-bar>
+            <div className="identity-filter-chips" role="group" aria-label={t('身份')}>
+              {(
+                [
+                  ['all', 'identities.filter.all', totalIdentities, true],
+                  ['ready', 'identities.filter.ready', cardFilterCounts.ready, true],
+                  ['reset_cards', 'identities.filter.resetCards', cardFilterCounts.resetCards, cardFilterCounts.resetCards > 0 || cardFilter === 'reset_cards'],
+                  ['expiring', 'identities.filter.expiring', cardFilterCounts.expiring, cardFilterCounts.expiring > 0 || cardFilter === 'expiring'],
+                  ['live', 'identities.filter.live', cardFilterCounts.live, cardFilterCounts.live > 0 || cardFilter === 'live'],
+                ] as const
+              )
+                .filter(([, , , visible]) => visible)
+                .map(([kind, labelKey, count]) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    className={`identity-filter-chip${cardFilter === kind ? ' is-active' : ''}`}
+                    data-identity-filter={kind}
+                    aria-pressed={cardFilter === kind}
+                    onClick={() => setCardFilter(kind)}
+                  >
+                    <span>{t(labelKey)}</span>
+                    <span>{count}</span>
+                  </button>
+                ))}
+            </div>
+            <button
+              type="button"
+              className={`identity-filter-chip${gridWrap ? ' is-active' : ''}`}
+              data-identity-grid-toggle
+              aria-pressed={gridWrap}
+              title={t('identities.gridWrapHint')}
+              onClick={() => setGridWrap(v => !v)}
+            >
+              {t('identities.gridWrapToggle')}
+            </button>
+          </div>
+        )}
         <div
-          className="identity-card-rail"
+          className={`identity-card-rail${gridWrap ? ' is-grid-wrap' : ''}`}
           ref={node => {
             rail.current = node;
             identityReorder.railRef.current = node;
@@ -2688,8 +3913,14 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               </div>
             </IdentityCard>
           )}
-          {identityReorder.orderedItems.map(item => {
+          {cardFilter !== 'all' && filteredRailItems.length === 0 && (
+            <p className="identity-filter-empty" role="status">
+              {t('identities.filterEmpty')}
+            </p>
+          )}
+          {filteredRailItems.map(item => {
             const isDragging = identityReorder.draggingId === item.id;
+            const isFocusHighlighted = focusedCardId === item.id;
             if (item.kind === 'current') {
               const cliSessions = state?.sessions?.filter(s => s.entrypoint !== 'Claude Desktop') ?? [];
               const cliSessionCount = state?.sessions ? cliSessions.length : (state?.cli_running ? 1 : 0);
@@ -2709,7 +3940,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               return (
                 <IdentityCard
                   key={CURRENT_IDENTITY_ORDER_TOKEN}
-                  className={`identity-card current ${state?.running ? 'running' : 'stopped'}${isDragging ? ' is-dragging' : ''}`}
+                  className={`identity-card current ${state?.running ? 'running' : 'stopped'}${isDragging ? ' is-dragging' : ''}${isFocusHighlighted ? ' is-focus-highlight' : ''}`}
                   running={state?.running}
                   label={t('当前身份')}
                   reorderId={CURRENT_IDENTITY_ORDER_TOKEN}
@@ -2779,6 +4010,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                     accountName={current?.display_name}
                     plan={current?.plan}
                     expiry={formatSubscriptionExpiryBadge(current)}
+                    nowSec={nowSec}
                     onEditExpiry={blocked ? undefined : () => openExpiryEditor('current', currentName, current)}
                     privacyMask={prefs.privacyMask}
                     t={t}
@@ -2795,7 +4027,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                       <span className="identity-meta-badge auth-expired">{t('identityCard.reauthRequired')}</span>
                     </div>
                   )}
-                  <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:active?.id || 'current', name:currentName, expectedIdentity:current?.quota_identity || null});setQuotaFeedback('');}} />
+                  <IdentityQuota quota={currentQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {quotaOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setSuppressQuotaRestoreFocus(false); setQuotaDetails({id:active?.id || 'current', name:currentName, expectedIdentity:current?.quota_identity || null}); setQuotaFeedback('');}} />
                   <SubscriptionAndResets meta={current} locale={locale} nowSec={nowSec} t={t} />
                   <div className="identity-card-footer">
                     <Button variant="secondary" size="small" disabled={blocked} onClick={openSnapshot}>
@@ -2808,9 +4040,13 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             const row = item.row;
             const summary = state?.summaries?.[row.id];
             const savedQuota = evaluateQuota(summary, nowSec);
+            const slotSessions = state?.slot_sessions?.[row.id] ?? [];
+            const slotBadgeTitle = slotSessions.length > 0
+              ? slotSessions.map(s => `${s.entrypoint}${s.workspace ? ` · ${s.workspace}` : ''} (PID ${s.pid})`).join('\n')
+              : undefined;
             return (
               <IdentityCard
-                className={`identity-card${isDragging ? ' is-dragging' : ''}`}
+                className={`identity-card${isDragging ? ' is-dragging' : ''}${isFocusHighlighted ? ' is-focus-highlight' : ''}`}
                 key={row.id}
                 title={`${new Date(row.saved_at).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})} · ${formatBytes(row.bytes)}`}
                 reorderId={row.id}
@@ -2825,6 +4061,18 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   <div className="identity-avatar" aria-hidden="true">
                     {Array.from(row.name)[0]?.toUpperCase()}
                   </div>
+                  {slotSessions.length > 0 && (
+                    <span
+                      className="identity-slot-live-pill"
+                      data-slot-live={row.id}
+                      title={slotBadgeTitle}
+                    >
+                      <i className="slot-live-dot" aria-hidden="true" />
+                      {slotSessions.length > 1
+                        ? t('relay.slotLiveCount', {count: slotSessions.length})
+                        : t('relay.slotLiveBadge')}
+                    </span>
+                  )}
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger asChild>
                       <button
@@ -2906,6 +4154,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   accountName={summary?.display_name}
                   plan={summary?.plan}
                   expiry={formatSubscriptionExpiryBadge(summary)}
+                  nowSec={nowSec}
                   onEditExpiry={blocked ? undefined : () => openExpiryEditor(row.id, row.name, summary)}
                   privacyMask={prefs.privacyMask}
                   saved
@@ -2919,7 +4168,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                     <span className="identity-meta-badge auth-expired">{t('identityCard.reauthRequired')}</span>
                   </div>
                 )}
-                <IdentityQuota quota={savedQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {setQuotaDetails({id:row.id, name:row.name, expectedIdentity:summary?.quota_identity || null});setQuotaFeedback('');}} />
+                <IdentityQuota quota={savedQuota} display={prefs.quotaDisplay} nowSec={nowSec} t={t} onOpenDetails={() => {quotaOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setSuppressQuotaRestoreFocus(false); setQuotaDetails({id:row.id, name:row.name, expectedIdentity:summary?.quota_identity || null}); setQuotaFeedback('');}} />
                 <SubscriptionAndResets meta={summary} locale={locale} nowSec={nowSec} t={t} />
                 <div className="identity-card-footer">
                   <Button variant="secondary" size="small" disabled={blocked} onClick={() => choose(row)}>
@@ -2930,7 +4179,16 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             );
           })}
         </div>
-        <IdentityOperationProgress activity={activity.state} />
+        <IdentityOperationProgress
+          activity={activity.state}
+          showCleanroomBar={Boolean(
+            showCleanroomBar &&
+              activity.state?.kind === 'identity' &&
+              (activity.state.title === '切换身份' ||
+                activity.state.title === '切换到空身份' ||
+                activity.state.title === '恢复原身份'),
+          )}
+        />
       </section>
       <WarmingLibrary
         cards={state?.warming_cards ?? []} blocked={warmingBlocked} promotionBlocked={!!state?.recovery}
@@ -2940,7 +4198,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         onOpen={(card, openMode) => warmingAction('identities_warming_open', {id: card.id, openMode})}
         onProbeState={nextState => {
           if (mountedRef.current && nextState && typeof nextState === 'object') {
-            setState(nextState as IdentityState);
+            commitAuthoritativeState(nextState as IdentityState);
           }
         }}
         onSave={saveWarming}
@@ -2953,7 +4211,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           choose('empty'); setWarmingPromotion(card);
         }}
         onExpiry={card => openExpiryEditor(card.id, card.name, {...card, plan: card.stage === 'pro_ready' ? 'PRO' : 'FREE'})}
-        renderName={card => <IdentityName name={card.name} email={card.email} plan={card.stage === 'pro_ready' ? 'PRO' : 'FREE'} expiry={formatSubscriptionExpiryBadge(card)} onEditExpiry={warmingBlocked ? undefined : () => openExpiryEditor(card.id, card.name, {...card, plan: card.stage === 'pro_ready' ? 'PRO' : 'FREE'})} privacyMask={prefs.privacyMask} saved t={t} />}
+        renderName={card => <IdentityName name={card.name} email={card.email} plan={card.stage === 'pro_ready' ? 'PRO' : 'FREE'} expiry={formatSubscriptionExpiryBadge(card)} nowSec={nowSec} onEditExpiry={warmingBlocked ? undefined : () => openExpiryEditor(card.id, card.name, {...card, plan: card.stage === 'pro_ready' ? 'PRO' : 'FREE'})} privacyMask={prefs.privacyMask} saved t={t} />}
       />
       <Disclosure
         className="identity-policy"
@@ -2980,7 +4238,13 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           if (!(await read(false))) throw new Error('身份状态刷新失败，请重新检查。');
         }}
       />
-      <ClaudeCliPanel blocked={locked || loading || !!state?.recovery} onBusy={setCliBusy} />
+      <ClaudeCliPanel
+        blocked={locked || loading || !!state?.recovery}
+        onBusy={setCliBusy}
+        sessions={state?.sessions}
+        backgroundOnly={state?.background_only}
+        cliRunning={state?.cli_running}
+      />
       <AppDialog alert open={!!returnCliBrowser} onOpenChange={open => {if (!open && !busy) setReturnCliBrowser(null);}}
         title={t('browser.returnToCliConfirmTitle')} description={t('browser.returnToCliConfirm')}
         footer={<><Button variant="secondary" data-dialog-cancel disabled={busy} onClick={() => setReturnCliBrowser(null)}>{t('取消')}</Button><Button variant="secondary" data-return-cli-claude disabled={busy || !returnCliBrowser} onClick={() => void returnToCliBrowser('claude_ai')}>{t('browser.enterClaudeAi')}</Button><Button variant="secondary" data-return-cli-confirm disabled={busy || !returnCliBrowser} onClick={() => void returnToCliBrowser('verify')}>{t('browser.returnToCli')}</Button></>}>
@@ -2988,10 +4252,11 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       </AppDialog>
       <AppDialog
         open={quotaDetails !== null}
-        onOpenChange={open => {if (!open && !busy) { setQuotaDetails(null); setQuotaFeedback(''); }}}
+        onOpenChange={open => {if (!open && !busy) { setSuppressQuotaRestoreFocus(false); setQuotaDetails(null); setQuotaFeedback(''); }}}
         title={t('quota.details')}
         width={600}
         className="quota-details-dialog"
+        restoreFocus={!suppressQuotaRestoreFocus}
         footer={<>
           <Button variant="ghost" size="small" disabled={busy || loading || manualSyncing} onClick={() => void manualSyncLocalQuota()}>{t('quota.refreshLocal')}</Button>
           {(detailsQuota?.inferred5h || detailsQuota?.expired5h) && detailsSummary?.quota_identity && (
@@ -3006,7 +4271,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             </Button>
           )}
           {(detailsQuota?.inferred5h || detailsQuota?.inferred7d) && (
-            <Button variant="ghost" size="small" disabled={busy || loading || batchBusy} onClick={() => { setQuotaDetails(null); setQuotaFeedback(''); setOnlinePanelOpen(true); }}>{t('quota.calibrateOnline')}</Button>
+            <Button variant="ghost" size="small" disabled={busy || loading || batchBusy} onClick={() => { setSuppressQuotaRestoreFocus(true); setQuotaDetails(null); setQuotaFeedback(''); setOnlinePanelOpen(true); }}>{t('quota.calibrateOnline')}</Button>
           )}
           <span className="quota-details-footer-spacer" aria-hidden="true" />
           <Button
@@ -3069,6 +4334,18 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           const windowCard = (window: '5h' | '7d') => {
             const is5h = window === '5h';
             const source = sourceLabel(window);
+            const burnEta =
+              (!is5h || !detailsQuota?.no5hLimit) &&
+              !(is5h ? detailsQuota?.inferred5h : detailsQuota?.inferred7d) &&
+              (is5h ? detailsQuota?.known5h : detailsQuota?.known7d)
+                ? computeWindowBurnEta(
+                    is5h ? detailsQuota?.used5h : detailsQuota?.used7d,
+                    is5h ? detailsQuota?.r5 : detailsQuota?.r7,
+                    nowSec,
+                    is5h ? 5 : 168,
+                    smartRelay.spentThresholdPct,
+                  )
+                : null;
             return (
               <article className="quota-details-window" key={window}>
                 <QuotaWindow
@@ -3088,6 +4365,22 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   inDialog
                   t={t}
                 />
+                {burnEta && (
+                  <p
+                    className={`quota-details-burn-eta${burnEta.hitsBeforeReset ? ' is-warn' : ''}`}
+                    data-quota-burn-eta={window}
+                  >
+                    {burnEta.hitsBeforeReset
+                      ? t('quota.burnEtaHitsBeforeReset', {
+                          rate: burnEta.ratePerHour,
+                          eta: formatCompactEta(nowSec + Math.max(60, burnEta.etaToTargetSec ?? 0), nowSec) || '1m',
+                        })
+                      : t('quota.burnEtaSafeUntilReset', {
+                          rate: burnEta.ratePerHour,
+                          projected: Math.round(burnEta.projectedEndPct),
+                        })}
+                  </p>
+                )}
                 <p className="quota-details-source" data-source-verified={source.verified || undefined}>
                   <i aria-hidden="true" />
                   <span>{source.kind}</span>
@@ -3107,6 +4400,15 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           const subDisplay = formatSubscriptionAndResets(detailsSummary, locale, t, nowSec * 1000);
           const resets = subDisplay.manualResets;
           const resetUrgency = resets && resets.usable && resets.urgency !== 'normal' ? resets.urgency : undefined;
+          const resetExpiresAt = resets?.usable && resets.remaining > 0 && resets.realExpiresAt ? resets.realExpiresAt : null;
+          const resetExpiryClock = (() => {
+            if (!resetExpiresAt) return '';
+            const clock = formatResetClock(resetExpiresAt, true);
+            if (!clock) return '';
+            const expYear = new Date(resetExpiresAt * 1000).getFullYear();
+            const curYear = new Date(nowSec * 1000).getFullYear();
+            return expYear !== curYear ? `${expYear}-${clock}` : clock;
+          })();
           const tokenExpiry = typeof detailsSummary?.refresh_token_expires_at === 'number' && Number.isFinite(detailsSummary.refresh_token_expires_at) &&
             detailsSummary.refresh_token_expires_at > 0 && detailsSummary.refresh_token_expires_at - nowSec <= 7 * 86400
             ? detailsSummary.refresh_token_expires_at
@@ -3122,7 +4424,11 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   <h3>{shownName}</h3>
                   {detailsSummary?.email && <p>{maskEmailAddress(detailsSummary.email, prefs.privacyMask)}</p>}
                 </div>
-                {plan && <span className={`identity-plan-pill plan-${plan.toLowerCase()}`}>{plan}</span>}
+                {plan && (
+                  <span className="identity-plan-pill" data-plan-tier={normalizePlanSlug(plan)}>
+                    {plan}
+                  </span>
+                )}
                 {detailsAreCurrent && <span className="quota-details-current">{t('quota.currentAccount')}</span>}
               </header>
 
@@ -3166,6 +4472,27 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
 
               <dl className="quota-details-facts">
                 <div>
+                  <dt>{t('identityCard.planCalibrationTitle')}</dt>
+                  <dd>
+                    <span>
+                      {detailsSummary?.manual_plan
+                        ? t('identityCard.planManualActive', {plan: detailsSummary.manual_plan})
+                        : plan || t('identityCard.planAutoDetect')}
+                    </span>
+                    {quotaDetails && (
+                      <button
+                        type="button"
+                        className="identity-expiry-inline-edit"
+                        data-open-plan-calibration
+                        disabled={busy || loading || !!state?.recovery}
+                        onClick={() => openExpiryEditor(detailsAreCurrent ? 'current' : quotaDetails.id, quotaDetails.name, detailsSummary)}
+                      >
+                        {t('identityCard.editExpiryShort')}
+                      </button>
+                    )}
+                  </dd>
+                </div>
+                <div>
                   <dt>{subDisplay.billing?.label || t('identityCard.nextRenewal')}</dt>
                   <dd>
                     <span>{billingKnown
@@ -3192,10 +4519,69 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                     <span className="quota-details-strong">{resets && !resets.ended
                       ? t('identityCard.manualResetsCount', {count: resets.remaining, v0: resets.remaining})
                       : resets?.ended ? t('identityCard.manualResetsEnded') : t('identityCard.notProvided')}</span>
-                    {resetUrgency && resets?.realExpiresAt && (
+                    {resetUrgency && resetExpiresAt ? (
                       <small className="identity-reset-urgency-badge" data-urgency={resetUrgency}>
-                        {t('quota.manualResetsExpiringSoon', {countdown: formatCompactEta(resets.realExpiresAt, nowSec)})}
+                        {t('quota.manualResetsExpiringSoon', {countdown: formatCompactEta(resetExpiresAt, nowSec)})}
+                        {resetExpiryClock ? ` · ${resetExpiryClock}` : ''}
                       </small>
+                    ) : resetExpiresAt && resetExpiryClock ? (
+                      <small>{t('quota.manualResetsValidUntil')} {resetExpiryClock}</small>
+                    ) : null}
+                    {(resets?.remaining ?? 0) > 0 && (detailsQuota?.used7d ?? 0) >= 90 && quotaDetails?.expectedIdentity && (
+                      <>
+                        <button
+                          type="button"
+                          className="identity-relay-quick-reset-btn"
+                          disabled={busy || loading || !state?.browser.enabled || !!state?.recovery}
+                          onClick={() => {
+                            if (detailsAreCurrent && quotaDetails.expectedIdentity) {
+                              setShowCleanroomBar(false);
+                              void invoke('browser_open_usage', {
+                                expectedIdentity: quotaDetails.expectedIdentity,
+                                onProgress: activity.start('browser'),
+                              }).then(
+                                () => {
+                                  activity.finish(true, 'quota.opened');
+                                  setQuotaFeedback('quota.opened');
+                                },
+                                err => {
+                                  const message = String(err);
+                                  activity.finish(false, message);
+                                  setQuotaFeedback(message);
+                                },
+                              );
+                            } else if (quotaDetails.expectedIdentity) {
+                              void openAccountBrowser(
+                                {account_id: quotaDetails.id, expected_identity: quotaDetails.expectedIdentity},
+                                'usage',
+                              );
+                            }
+                          }}
+                        >
+                          {t('relay.goResetBtn')}
+                        </button>
+                        <button
+                          type="button"
+                          className="identity-relay-verify-reset-btn"
+                          data-details-verify-reset
+                          disabled={
+                            busy ||
+                            loading ||
+                            !state?.browser.enabled ||
+                            !!state?.recovery ||
+                            Boolean(syncingAccountIds[detailsAreCurrent ? 'current' : quotaDetails.id])
+                          }
+                          onClick={() =>
+                            void syncSubscription(
+                              detailsAreCurrent ? undefined : quotaDetails.id,
+                              quotaDetails.expectedIdentity || undefined,
+                              true,
+                            )
+                          }
+                        >
+                          {t('relay.verifyResetBtn')}
+                        </button>
+                      </>
                     )}
                   </dd>
                 </div>
@@ -3241,7 +4627,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                   {copyDiagnosticStatus && <p role={copyDiagnosticStatus === 'failed' ? 'alert' : 'status'}>{t(copyDiagnosticStatus === 'copied' ? 'identityDiagnostic.copied' : 'identityDiagnostic.failed')}</p>}
                 </div>
               </Disclosure>
-              {quotaFeedback && <p className="quota-details-feedback" role="status">{t(quotaFeedback)}</p>}
+              {quotaFeedbackText && <p className="quota-details-feedback" role="status">{quotaFeedbackText}</p>}
               <p className="quota-details-footnote">{t('quota.localOnly')}</p>
             </div>
           );
@@ -3289,14 +4675,69 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               <code>{current.proxy}</code>
             </div>
           )}
+          {hasBackgroundDaemonOnly ? (
+            <div className="identity-live-relay-callout" role="status" data-bg-daemon-continuity>
+              <div className="identity-live-relay-copy">
+                <strong>{t('identities.bgDaemonContinuityTitle')}</strong>
+                <span>{t('identities.bgDaemonContinuityDesc', {cmd: resumeShellCmd})}</span>
+              </div>
+              <Button
+                variant="secondary"
+                size="small"
+                data-snapshot-copy-resume-cmd
+                disabled={busy}
+                onClick={() => void copyBgResumeCommand(resumeShellCmd)}
+              >
+                {copiedBgResume
+                  ? t('identities.copiedResumeCmd', {cmd: resumeShellCmd})
+                  : t('identities.copyResumeCmdBtn', {cmd: resumeShellCmd})}
+              </Button>
+            </div>
+          ) : (
+            <>
+              {hasInteractiveChildShells && (
+                <div
+                  className="identity-unsaved-pool-hint"
+                  role="alert"
+                  data-child-shells-warn={interactiveChildShells.join(',')}
+                >
+                  <div style={{display: 'grid', gap: '2px', flex: '1 1 240px', minWidth: 0}}>
+                    <strong>{t('identities.childShellsWarnTitle', {shells: interactiveChildShells.join(', ')})}</strong>
+                    <span>{t('identities.childShellsWarnDesc')}</span>
+                  </div>
+                </div>
+              )}
+              {hasLiveClaudeProcess && (
+                <div className="identity-live-relay-callout" role="note" data-live-cli-safe-relay>
+                  <div className="identity-live-relay-copy">
+                    <strong>{t('identities.liveCliSafeRelayTitle')}</strong>
+                    <span>{t('identities.liveCliSafeRelayDesc')}</span>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    data-switch-launch-relay
+                    loading={launchRelayBusy}
+                    disabled={launchRelayBusy || busy}
+                    onClick={() => {
+                      setSnapshot(false);
+                      void launchRelayTerminal(recentLaunchDirs[0] || '');
+                    }}
+                  >
+                    {t('identities.liveCliSafeRelayBtn')}
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
           {(state?.sessions?.length ?? 0) > 0 && (
             <div className="identity-confirm-sessions">
-              <span>{t('活跃 Claude 会话（保存时将自动结束）')}</span>
+              <span>{t(hasBackgroundDaemonOnly ? 'identities.bgDaemonSessionsLabel' : '活跃 Claude 会话（保存时将自动结束）')}</span>
               <ul>
                 {state!.sessions.map(s => (
                   <li key={s.pid}>
                     <code>PID {s.pid}</code>
-                    <span>{s.entrypoint}</span>
+                    <span>{s.entrypoint}{s.background ? ` · ${t('identities.sessionBackgroundTag')}` : ''}</span>
                     {s.workspace && <strong>{s.workspace}</strong>}
                   </li>
                 ))}
@@ -3311,19 +4752,36 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
           if (!open && !busy) {setReview(null); setWarmingPromotion(null);}
         }}
         title={warmingPromotion ? t('warming.promote') : review === 'recovery' ? t('恢复原身份') : review === 'empty' ? t('切换到空身份') : t('切换身份')}
-        description={t(review === 'recovery' ? 'identitySafety.recoveryHint' : (state?.running || (state?.sessions?.length ?? 0) > 0) ? '先压缩暂存当前 Claude Code 与 Desktop 状态，再切换。将结束已识别的 Claude 进程，未保存任务会中断。' : 'identitySafety.switchIdleHint')}
+        description={t(
+          review === 'recovery'
+            ? 'identitySafety.recoveryHint'
+            : !warmingPromotion && hasBackgroundDaemonOnly
+              ? 'identities.switchBgDaemonDesc'
+              : (state?.running || (state?.sessions?.length ?? 0) > 0)
+                ? '先压缩暂存当前 Claude Code 与 Desktop 状态，再切换。将结束已识别的 Claude 进程，未保存任务会中断。'
+                : 'identitySafety.switchIdleHint',
+        )}
         footer={
           <>
             <Button variant="secondary" onClick={() => {setReview(null); setWarmingPromotion(null);}}>
               {t('取消')}
             </Button>
-            <Button variant="secondary" disabled={busy || loading || !state || !name.trim() || (review !== 'recovery' && !!state.recovery)} onClick={() => void change()}>
-              {review === 'recovery' ? t('确认恢复') : t('确认暂存并切换')}
+            <Button variant="secondary" disabled={busy || loading || !state || !name.trim() || targetSlotBusy || (review !== 'recovery' && !!state.recovery)} onClick={() => void change()}>
+              {review === 'recovery'
+                ? t('确认恢复')
+                : !warmingPromotion && hasBackgroundDaemonOnly
+                  ? t('identities.confirmParkDaemonAndSwitch')
+                  : t('确认暂存并切换')}
             </Button>
           </>
         }
       >
         <div className="identity-confirm">
+          {targetSlotBusy && (
+            <p role="alert" className="cleanup-feedback error">
+              {t('relay.error.targetSlotBusy')}
+            </p>
+          )}
           {warmingPromotion && <div className="identity-confirm-target warming-promote-target"><span>{t('warming.promoteHint')}</span><strong>{maskDisplayName(warmingPromotion.name, warmingPromotion.email, prefs.privacyMask)}</strong><p>{t('warming.promotionContinuity')}</p></div>}
           {current?.present !== false || review === 'recovery' ? (
             <>
@@ -3385,6 +4843,11 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             <span>{t('留在工作区')}</span>
             <strong>{kept.join(' · ') || t('无')}</strong>
           </div>
+          {!policy.history && review !== 'recovery' && (hasBackgroundDaemonOnly || activeAdoptJobs.length > 0) && (
+            <p className="identity-proxy-notice" role="note">
+              {t('identities.adoptHistoryDisabledHint')}
+            </p>
+          )}
           {review === 'empty' && (
             <div className="identity-confirm-guide">
               <strong>{t('切换后添加新号步骤：')}</strong>
@@ -3395,14 +4858,77 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
               </ol>
             </div>
           )}
+          {review !== 'recovery' && !warmingPromotion && (
+            hasBackgroundDaemonOnly ? (
+              <div className="identity-live-relay-callout" role="status" data-bg-daemon-continuity>
+                <div className="identity-live-relay-copy">
+                  <strong>{t('identities.bgDaemonContinuityTitle')}</strong>
+                  <span>{t('identities.bgDaemonContinuityDesc', {cmd: resumeShellCmd})}</span>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="small"
+                  data-switch-copy-resume-cmd
+                  disabled={busy}
+                  onClick={() => void copyBgResumeCommand(resumeShellCmd)}
+                >
+                  {copiedBgResume
+                    ? t('identities.copiedResumeCmd', {cmd: resumeShellCmd})
+                    : t('identities.copyResumeCmdBtn', {cmd: resumeShellCmd})}
+                </Button>
+              </div>
+            ) : (
+              <>
+                {hasInteractiveChildShells && (
+                  <div
+                    className="identity-unsaved-pool-hint"
+                    role="alert"
+                    data-child-shells-warn={interactiveChildShells.join(',')}
+                  >
+                    <div style={{display: 'grid', gap: '2px', flex: '1 1 240px', minWidth: 0}}>
+                      <strong>{t('identities.childShellsWarnTitle', {shells: interactiveChildShells.join(', ')})}</strong>
+                      <span>{t('identities.childShellsWarnDesc')}</span>
+                    </div>
+                  </div>
+                )}
+                {hasLiveClaudeProcess && (
+                  <div className="identity-live-relay-callout" role="note" data-live-cli-safe-relay>
+                    <div className="identity-live-relay-copy">
+                      <strong>{t('identities.liveCliSafeRelayTitle')}</strong>
+                      <span>{t('identities.liveCliSafeRelayDesc')}</span>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      data-switch-launch-relay
+                      loading={launchRelayBusy}
+                      disabled={launchRelayBusy || busy}
+                      onClick={() => {
+                        setReview(null);
+                        void launchRelayTerminal(recentLaunchDirs[0] || '');
+                      }}
+                    >
+                      {t('identities.liveCliSafeRelayBtn')}
+                    </Button>
+                  </div>
+                )}
+              </>
+            )
+          )}
           {(state?.sessions?.length ?? 0) > 0 && (
             <div className="identity-confirm-sessions">
-              <span>{t('活跃 Claude 会话（切换时将自动结束）')}</span>
+              <span>
+                {t(
+                  hasBackgroundDaemonOnly && review !== 'recovery' && !warmingPromotion
+                    ? 'identities.bgDaemonSessionsLabel'
+                    : '活跃 Claude 会话（切换时将自动结束）',
+                )}
+              </span>
               <ul>
                 {state!.sessions.map(s => (
                   <li key={s.pid}>
                     <code>PID {s.pid}</code>
-                    <span>{s.entrypoint}</span>
+                    <span>{s.entrypoint}{s.background ? ` · ${t('identities.sessionBackgroundTag')}` : ''}</span>
                     {s.workspace && <strong>{s.workspace}</strong>}
                   </li>
                 ))}
@@ -3532,6 +5058,7 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
         }}
         title={t('identityCard.expiryDialogTitle', {name: maskDisplayName(expiryEditor?.label, expiryEditor?.email, prefs.privacyMask)})}
         description={t('identityCard.expiryDialogDesc')}
+        fallbackFocusRef={quotaOpenerRef}
         footer={
           <>
             {expiryEditor?.hasManual && (
@@ -3545,7 +5072,14 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
             <Button
               variant="secondary"
               loading={busy}
-              disabled={busy || (!expiryEditor?.expiryYmd.trim() && !expiryEditor?.rechargeYmd.trim())}
+              disabled={
+                busy ||
+                (!expiryEditor?.expiryYmd.trim() &&
+                  !expiryEditor?.rechargeYmd.trim() &&
+                  expiryEditor?.manualPlan === expiryEditor?.initialManualPlan &&
+                  (expiryEditor?.expiryYmd.trim() ?? '') === (expiryEditor?.initialExpiryYmd ?? '') &&
+                  (expiryEditor?.rechargeYmd.trim() ?? '') === (expiryEditor?.initialRechargeYmd ?? ''))
+              }
               onClick={() => void saveSubscriptionExpiry(false)}
             >
               {t('保存')}
@@ -3555,11 +5089,36 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
       >
         {expiryEditor && (() => {
           const previewExpiryYmd = expiryEditor.expiryYmd.trim() || addOneCalendarMonthYmd(expiryEditor.rechargeYmd.trim());
-          const previewShort = formatYmdAsShortMd(previewExpiryYmd);
+          const previewShort = formatYmdAsShortMd(previewExpiryYmd) || expiryEditor.browserSyncedShortMd;
           const previewName = maskDisplayName(expiryEditor.label, expiryEditor.email, prefs.privacyMask);
-          const previewPlan = expiryEditor.plan && expiryEditor.plan.trim() ? expiryEditor.plan : 'Pro';
+          const effectivePreviewPlan = expiryEditor.manualPlan || (expiryEditor.plan && expiryEditor.plan.trim() ? expiryEditor.plan : 'Pro');
           return (
             <div className="identity-expiry-dialog">
+              <div className="identity-expiry-field">
+                <label>{t('identityCard.planCalibrationTitle')}</label>
+                <div className="identity-plan-calibration-chips" role="group" aria-label={t('identityCard.planCalibrationTitle')}>
+                  <button
+                    type="button"
+                    className={`wakeup-preset-chip${expiryEditor.manualPlan === '' ? ' active' : ''}`}
+                    data-manual-plan="auto"
+                    onClick={() => setExpiryEditor(prev => (prev ? {...prev, manualPlan: '', error: ''} : prev))}
+                  >
+                    {t('identityCard.planAutoDetect')}
+                  </button>
+                  {CANONICAL_MANUAL_PLANS.map(tier => (
+                    <button
+                      key={tier}
+                      type="button"
+                      className={`wakeup-preset-chip${expiryEditor.manualPlan === tier ? ' active' : ''}`}
+                      data-manual-plan={tier}
+                      onClick={() => setExpiryEditor(prev => (prev ? {...prev, manualPlan: tier, error: ''} : prev))}
+                    >
+                      {tier}
+                    </button>
+                  ))}
+                </div>
+                <p className="identity-plan-calibration-hint">{t('identityCard.planCalibrationHint')}</p>
+              </div>
               <div className="identity-expiry-field">
                 <label htmlFor="identity-recharge-date">{t('identityCard.rechargeDateLabel')}</label>
                 <div className="identity-expiry-date-row">
@@ -3624,12 +5183,19 @@ export function IdentityPanel({onBusy, initialEmpty = false, identityReviewReque
                     }}
                   />
                 </div>
+                {!expiryEditor.expiryYmd.trim() && !expiryEditor.rechargeYmd.trim() && expiryEditor.browserSyncedFullYmd && (
+                  <p className="identity-plan-calibration-hint">
+                    {t('identityCard.browserDatePreservedHint', {date: expiryEditor.browserSyncedFullYmd})}
+                  </p>
+                )}
               </div>
               <div className="identity-expiry-preview">
                 <span>{t('identityCard.cardPreviewLabel')}</span>
                 <span className="identity-expiry-preview-badge">
                   <span>{previewName}</span>
-                  <span className={`identity-plan-pill plan-${previewPlan.toLowerCase()}`}>{previewPlan}</span>
+                  <span className="identity-plan-pill" data-plan-tier={normalizePlanSlug(effectivePreviewPlan)}>
+                    {effectivePreviewPlan}
+                  </span>
                   {previewShort && <span className="identity-expiry-tag">{previewShort}</span>}
                 </span>
               </div>

@@ -1,5 +1,5 @@
 /* [INPUT]: Global design tokens (--foreground, --muted-foreground, --panel, --card-elevated, --background, --border, --local-accent, --glass-blur, --glass-opacity, --wallpaper-dim, --custom-wallpaper-image) from style.css plus --monitor-opacity. */
-/* [OUTPUT]: Frameless transparent HUD layout (340x258 / 340x152 / 52x138), click-through ghost state & main-window ghost restore badge, Smart Relay pool capacity strip, time-elapsed pace tick markers, glass/theme/opacity controls, account-scoped token composition, cache rate and bounded bilingual metrics. */
+/* [OUTPUT]: Frameless transparent HUD layout (340x258 / 340x152 / 52x138), click-through ghost state & main-window ghost restore badge, Smart Relay pool capacity strip & compact-safe HUD standby/slot/reset micro-badges, time-elapsed pace tick markers, glass/theme/opacity controls, account-scoped token composition, cache rate and bounded bilingual metrics. */
 /* [POS]: Dedicated stylesheet for src/floating-monitor.tsx and the main-window header toggle button. */
 /* [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md */
 
@@ -295,6 +295,10 @@ body:has(.monitor-hud-shell),
   flex-shrink: 0;
 }
 
+.monitor-hud-shell:not(.is-collapsed):is(.dock-left, .dock-right, .dock-top) .monitor-hud-header .monitor-hud-brand-mark {
+  display: none;
+}
+
 .monitor-hud-dot {
   width: 6.5px;
   height: 6.5px;
@@ -527,6 +531,36 @@ body:has(.monitor-hud-shell),
   border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.monitor-hud-micro-pill {
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 650;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.monitor-hud-micro-pill.is-slot {
+  color: var(--local-accent);
+  background: var(--local-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--local-accent) 32%, transparent);
+}
+
+.monitor-hud-micro-pill.is-reset {
+  color: var(--hud-ok);
+  background: var(--hud-ok-soft);
+  border: 1px solid var(--hud-ok-border);
+}
+
+.monitor-hud-micro-pill.is-awaiting {
+  color: var(--hud-warn);
+  background: var(--hud-warn-soft);
+  border: 1px solid var(--hud-warn-border);
 }
 
 /* Token Monitor 2-column side-by-side quota cards (5h | 7d) */
@@ -943,13 +977,35 @@ body:has(.monitor-hud-shell),
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 3px 7px;
+  padding: 2px 7px;
   border-radius: 7px;
   background: color-mix(in srgb, var(--card-elevated) 82%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
   font-size: 10px;
   line-height: 1.2;
   color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.monitor-hud-shell[data-has-relay="true"] {
+  padding-top: 7px;
+  padding-bottom: 8px;
+  gap: 4px;
+}
+
+.monitor-hud-shell[data-has-relay="true"] .monitor-limit-window {
+  padding-top: 5px;
+  padding-bottom: 5px;
+  gap: 3px;
+}
+
+.monitor-hud-shell[data-has-relay="true"] .monitor-hud-detail-body {
+  gap: 4px;
+}
+
+.monitor-hud-shell[data-has-relay="true"] .monitor-usage-tile {
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 .monitor-relay-standby-pill.is-urgent {

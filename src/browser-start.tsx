@@ -8,7 +8,7 @@ import { Button, MotionRoot, TooltipProvider } from 'cromma-ui';
 import { useEffect, useState } from 'react';
 import {setLocale,useI18n} from "./i18n";
 import { createRoot } from 'react-dom/client';
-import { classifyExitIsp, type BrowserContext, type Report, type Exit } from './browser-model';
+import { classifyBrowserExitIsp, type BrowserContext, type Report, type Exit } from './browser-model';
 import { probeBrowserExit } from './browser-network';
 import {probeWebRtcLocalCandidates,type WebRtcPeer,type WebRtcProbeResult} from './browser-webrtc';
 import {verifyBrowser} from './browser-verification';
@@ -236,7 +236,7 @@ function Start() {
     const identityName=identity?.name||t(identity?.status==='empty'?'空身份':identity?.status==='unlinked'?'通用浏览器资料':'当前身份');
     const identityStatus=!context&&busy?'正在读取身份':!linked?'主应用未连接':!identity?'身份待核对':identity.status==='warming'?'warming.verificationOwner':identity.status==='unlinked'?'未联动':identity.status==='mismatch'?'身份待同步':identity.status==='unknown'?'身份待核对':'身份已联动';
     const identityReady=linked&&!!identity?.linked&&['linked','draft','empty','warming'].includes(identity.status);
-    const ispKind = classifyExitIsp(report?.exit);
+    const ispKind = classifyBrowserExitIsp(report?.exit);
 
     return <div className={`browser-verification-page is-${phase}`} data-verification={phase}>
      <main className="browser-start">

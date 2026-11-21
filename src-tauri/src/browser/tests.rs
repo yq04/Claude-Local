@@ -1011,6 +1011,7 @@ fn deep_probes_close_graphics_and_webrtc_checks() {
     assert_eq!(old_checks[9].status, "pending");
     let unknown_exit = network::Exit {
         hosting: None,
+        asn: None,
         isp: "Unlisted carrier".into(),
         ..host.clone()
     };
@@ -1022,4 +1023,185 @@ fn deep_probes_close_graphics_and_webrtc_checks() {
         network::checks(&m, &c, Some(&unknown), Some(&host), "148")[9].status,
         "pending"
     );
+
+    // RCN / AS6079 without upstream hosting flag resolves cleanly as ResidentialIsp with canonical label
+    let rcn_exit = network::parse(&serde_json::json!({
+        "ip": "198.51.100.42",
+        "country_code": "US",
+        "city": "Ashburn",
+        "timezone": "America/New_York",
+        "org": "RCN",
+        "asn": "AS6079"
+    }))
+    .unwrap();
+    assert_eq!(rcn_exit.hosting, Some(false));
+    assert_eq!(rcn_exit.isp, "RCN (Astound Broadband · AS6079)");
+    assert!(network::Report {
+        cores: 1,
+        exit: Some(rcn_exit.clone()),
+        ..Default::default()
+    }
+    .valid());
+    let rcn_report = network::Report {
+        exit: Some(rcn_exit.clone()),
+        ..unknown
+    };
+    assert_eq!(
+        network::checks(&m, &c, Some(&rcn_report), Some(&rcn_exit), "148")[9].status,
+        "ok"
+    );
+}
+
+#[test]
+fn launch_policy_blocks_restricted_direct_and_unsupported_exit_while_passing_us_proxy() {
+    use std::io::{BufRead, BufReader, Write};
+    let mut cn_machine = machine();
+    cn_machine.timezone = "Asia/Shanghai".into();
+    cn_machine.locale = "zh_CN".into();
+    cn_machine.locale_country = "CN".into();
+    cn_machine.languages = vec!["zh-CN".into()];
+
+    let empty_cfg = Config::default();
+    assert_eq!(
+        config::evaluate_browser_launch_policy_with_urls(
+            &empty_cfg,
+            &cn_machine,
+            true,
+            false,
+            &[]
+        )
+        .unwrap_err(),
+        "browser.error.proxyRequiredOnRestrictedHost"
+    );
+    assert!(config::evaluate_browser_launch_policy_with_urls(
+        &empty_cfg,
+        &cn_machine,
+        true,
+        true,
+        &[]
+    )
+    .is_ok());
+
+    let spawn_proxy_trace = |loc: &'static str| -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                    if line == "\r\n" {
+                        break;
+                    }
+                    line.clear();
+                }
+                let body = format!("ip=198.51.100.42\nloc={loc}\n");
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        format!("http://{addr}")
+    };
+
+    let mut hk_cfg = Config::default();
+    hk_cfg.proxy = spawn_proxy_trace("HK");
+    assert_eq!(
+        config::evaluate_browser_launch_policy_with_urls(
+            &hk_cfg,
+            &cn_machine,
+            true,
+            false,
+            &["http://trace.example.invalid/cdn-cgi/trace"],
+        )
+        .unwrap_err(),
+        "browser.error.unsupportedExitCountry"
+    );
+
+    let mut us_cfg = Config::default();
+    us_cfg.proxy = spawn_proxy_trace("US");
+    assert!(config::evaluate_browser_launch_policy_with_urls(
+        &us_cfg,
+        &cn_machine,
+        true,
+        false,
+        &["http://trace.example.invalid/cdn-cgi/trace"],
+    )
+    .is_ok());
+}
+
+#[test]
+fn slot_materialization_prioritizes_slot_proxies_and_auto_heals_empty_proxy_without_touching_seed() {
+    let fixture = sample();
+    let root = fixture.join("browser");
+    crate::identities::private::directory(&root).unwrap();
+    let mut root_cfg = Config::default();
+    root_cfg.proxy = "http://127.0.0.1:7897".into();
+    config::save(&root, &root_cfg).unwrap();
+
+    let mut db = workspaces::database(&root).unwrap();
+    let owner_a = crate::identities::new_id().unwrap();
+    let owner_b = crate::identities::new_id().unwrap();
+    let make_record = |id: &str, name: &str| crate::identities::database::Record {
+        id: id.into(),
+        name: name.into(),
+        archive: format!("{id}.baga"),
+        saved_at: 1,
+        bytes: 1,
+        policy: crate::identities::Policy::default(),
+        empty: false,
+        account_key: Some(name.into()),
+    };
+    db.remember(&make_record(&owner_a, "Owner A")).unwrap();
+    db.remember(&make_record(&owner_b, "Owner B")).unwrap();
+    db.configure_browser(true, false, Some(&owner_a)).unwrap();
+    let scope_a = workspaces::ensure(&root).unwrap();
+    let mut donor_cfg = config::load(&scope_a).unwrap();
+    donor_cfg.proxy = "socks5://127.0.0.1:7899".into();
+    donor_cfg.follow_machine = false;
+    donor_cfg.language = "en-US".into();
+    donor_cfg.timezone = "America/New_York".into();
+    config::save(&scope_a, &donor_cfg).unwrap();
+
+    fs::write(
+        fixture.join("smart_relay_v1.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "slotProxies": {
+                owner_b.clone(): "http://127.0.0.1:17899"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let (slot_b, seed_b) = db.ensure_identity_binding(&owner_b).unwrap();
+    let scope_b =
+        workspaces::ensure_slot_with_home_and_policy(&root, &db, &slot_b, None, true).unwrap();
+    let cfg_b = config::load(&scope_b).unwrap();
+    assert_eq!(cfg_b.seed, seed_b);
+    assert_eq!(cfg_b.proxy, "socks5://127.0.0.1:17899");
+    assert!(!cfg_b.follow_machine);
+    assert_eq!(cfg_b.timezone, "America/New_York");
+
+    // Remove slotProxies and clear scope_b proxy while customizing seed -> auto-heal restores donor proxy & timezone without touching seed!
+    fs::remove_file(fixture.join("smart_relay_v1.json")).unwrap();
+    let mut broken = cfg_b.clone();
+    broken.seed = 777_777;
+    broken.proxy.clear();
+    broken.follow_machine = true;
+    broken.timezone = "Asia/Shanghai".into();
+    config::save(&scope_b, &broken).unwrap();
+
+    workspaces::ensure_slot_with_home_and_policy(&root, &db, &slot_b, None, true).unwrap();
+    let healed = config::load(&scope_b).unwrap();
+    assert_eq!(healed.seed, 777_777, "auto-heal must never overwrite seed");
+    assert_eq!(healed.proxy, "socks5://127.0.0.1:7899");
+    assert!(!healed.follow_machine);
+    assert_eq!(healed.timezone, "America/New_York");
+
+    drop(db);
+    fs::remove_dir_all(fixture).unwrap();
 }

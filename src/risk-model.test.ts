@@ -13,7 +13,9 @@ import {
   buildShadowrocketSocksQrUri,
   buildShadowrocketUniversalAntiLeakConf,
   buildStandaloneMobilePrompt,
+  classifyRiskExitIsp,
   evaluateRiskChecks,
+  formatExitIspLabel,
   compareProbeExits,
   isCliMcpBoundarySafe,
   isCliSecurityShieldOk,
@@ -23,6 +25,7 @@ import {
   isValidRfc1918Ipv4,
   maskIpAddress,
   parsePortInput,
+  resolveRiskBanner,
   summarizeRiskChecks,
   toBrowserSocks5ProxyFromCli,
   toCliHttpProxy,
@@ -562,10 +565,44 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
   expect(parsed.env.DO_NOT_TRACK).toBe('1');
 
   const desktopYamlFull = buildDesktopMihomoAntiLeakYaml(7899).configText;
+  const zhPromptFull = buildDesktopDnsFixPrompt({locale: 'zh', dedicatedPort: 7899});
+  const enPromptFull = buildDesktopDnsFixPrompt({locale: 'en', dedicatedPort: 7899});
+  for (const portfolioDomain of [
+    'claude.ai',
+    'ant.dev',
+    'anthropic.com',
+    'anthropic.dev',
+    'anthropic.team',
+    'antspace.dev',
+    'chatbotclaude.com',
+    'clau.de',
+    'claude.app',
+    'claude.com',
+    'claude.dev',
+    'claude.new',
+    'claude.site',
+    'claudeacademy.com',
+    'claudemcpclient.com',
+    'claudemcpcontent.com',
+    'claudepages.dev',
+    'claudestudio.com',
+    'claudeusercontent.com',
+    'http-intake.logs.us5.datadoghq.com',
+    'datadoghq.com',
+    'browser-intake-datadoghq.com',
+    'browser-intake-us5-datadoghq.com',
+    'datadoghq.eu',
+    'beyondwickedmapping.org',
+  ]) {
+    expect(desktopYamlFull).toContain(`DOMAIN-SUFFIX,${portfolioDomain},`);
+    expect(zhPromptFull).toContain(portfolioDomain);
+    expect(enPromptFull).toContain(portfolioDomain);
+  }
+  expect(desktopYamlFull).toContain('GEOSITE,anthropic,');
   expect(desktopYamlFull).toContain('DOMAIN-KEYWORD,datadoghq,');
-  expect(desktopYamlFull).toContain('DOMAIN-SUFFIX,browser-intake-us5-datadoghq.com,');
   expect(desktopYamlFull).toContain('DOMAIN-SUFFIX,growthbook.io,');
   expect(desktopYamlFull).toContain('DOMAIN-SUFFIX,storage.googleapis.com,');
+  expect(desktopYamlFull).toContain('::1/128');
 
   const hardenedAudit = auditClaudeCliSecurityBoundary({
     settingsJson: parsed,
@@ -586,7 +623,7 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
   expect(hardenedAudit.windows_bare_npx_count).toBe(0);
   expect(hardenedAudit.remote_http_mcp_count).toBe(0);
 
-  // Windows uppercase-only proxy vars + 2-var telemetry shield + settings.local.json override + project-scoped mcpServers
+  // Windows uppercase-only proxy vars + 3-var telemetry shield + settings.local.json override + project-scoped mcpServers
   const winUpperAudit = auditClaudeCliSecurityBoundary({
     settingsJson: {
       env: {
@@ -597,6 +634,7 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
         NO_PROXY: 'localhost,127.0.0.1',
         DISABLE_TELEMETRY: '1',
         DISABLE_ERROR_REPORTING: '1',
+        DO_NOT_TRACK: '1',
       },
     },
     mcpJson: {
@@ -605,6 +643,11 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
           mcpServers: {
             projectUnpinned: {command: 'npx', args: ['-y', '@scope/proj-pkg@latest']},
             projectRemote: {url: 'https://proj-mcp.example.com/mcp'},
+          },
+        },
+        'd:\\repo\\a\\': {
+          mcpServers: {
+            duplicateShouldSkip: {command: 'npx', args: ['-y', '@scope/proj-pkg@latest']},
           },
         },
       },
@@ -671,4 +714,227 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
   expect(isCliSecurityShieldOk(tunOnlyAudit)).toBe(false);
   expect(isCliSecurityShieldOk(null)).toBe(false);
   expect(isCliMcpBoundarySafe(undefined)).toBe(false);
+});
+
+test('classifyRiskExitIsp, formatExitIspLabel, and resolveRiskBanner classify RCN/Astound/US residential ISPs and produce cause-specific banner copy', () => {
+  // Multi-signal residential recognition even when supplementary hosting flag is omitted (RFC 5737 synthetic IP)
+  expect(classifyRiskExitIsp({isp: 'RCN', asn: 'AS6079'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'RCN Corporation'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Astound Broadband', asn: 'AS6079'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Wave Broadband', asn: 'AS11404'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Comcast Cable Communications', asn: 'AS7922'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Verizon Fios', asn: 'AS701'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'AT&T Services, Inc.', asn: 'AS7018'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Google Fiber Inc.', asn: 'AS16591'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Google LLC', asn: 'AS16591'})).toBe('isp');
+
+  // Hard datacenter blocklist wins first (Google Cloud AS15169/AS396982, M247 AS9009, Cogent AS174, Hurricane Electric AS6939)
+  expect(classifyRiskExitIsp({isp: 'Google LLC', asn: 'AS15169', hosting: false})).toBe('hosting');
+  expect(classifyRiskExitIsp({isp: 'Google Cloud', asn: 'AS396982'})).toBe('hosting');
+  expect(classifyRiskExitIsp({isp: 'M247 Europe SRL', asn: 'AS9009'})).toBe('hosting');
+  expect(classifyRiskExitIsp({isp: 'Cogent Communications', asn: 'AS174'})).toBe('hosting');
+  expect(classifyRiskExitIsp({isp: 'Hurricane Electric LLC', asn: 'AS6939'})).toBe('hosting');
+
+  // Unlisted carrier without hosting flag stays unknown
+  expect(classifyRiskExitIsp({isp: 'Obscure Regional Carrier', asn: 'AS64512'})).toBe('unknown');
+
+  // Clean display label appends ASN once without duplicating
+  expect(formatExitIspLabel({isp: 'RCN', asn: 'AS6079'})).toBe('RCN · AS6079');
+  expect(formatExitIspLabel({isp: 'RCN (Astound Broadband · AS6079)', asn: 'AS6079'})).toBe(
+    'RCN (Astound Broadband · AS6079)',
+  );
+
+  const staticGreenLocal: LocalRiskSnapshot = {
+    browser: {
+      proxy_configured: true,
+      proxy_scheme: 'socks5',
+      proxy_local_port: 7899,
+      remote_dns_locked: true,
+      target_country: 'US',
+      target_timezone: 'America/New_York',
+      target_language: 'en-US',
+    },
+    mihomo: {
+      detected: true,
+      config_source: 'running_core',
+      config_source_status: 'confirmed',
+      dns_projection_complete: true,
+      dns_has_encrypted_resolver: true,
+      client_kind: 'clash-verge-rev',
+      mixed_port: 7897,
+      allow_lan: false,
+      tun_enabled: true,
+      tun_strict_route: true,
+      dns_enabled: true,
+      dns_enhanced_mode: 'fake-ip',
+      dns_respect_rules: true,
+      dns_has_remote_doh: true,
+      dns_has_domestic_plain: false,
+      dns_has_nameserver_policy: true,
+      has_claude_rules: true,
+      has_persona_rules: true,
+      has_quic_reject: true,
+      has_geoip_cn: true,
+      dedicated_listener_port: 7899,
+    },
+    system: {
+      tun_adapter_active: true,
+      secondary_plaintext_dns_active: false,
+      lan_ipv4_candidates: ['192.168.1.10'],
+      public_wan_detected: false,
+    },
+  };
+
+  // 1) Before probe: static 3/3 ready -> green localReady banner prompting to run probe
+  const preProbeChecks = evaluateRiskChecks(staticGreenLocal, null, false);
+  expect(resolveRiskBanner(staticGreenLocal, null, preProbeChecks)).toEqual({
+    status: 'ok',
+    titleKey: 'risk.auditStatus.localReadyTitle',
+    descKey: 'risk.auditStatus.localReadyDesc',
+  });
+
+  // 2) RCN (AS6079) without hosting boolean -> 6/6 all green!
+  const rcnProbe: ConsistencyProbeReport = {
+    claude: {domain: 'claude.ai', ok: true, country: 'US', colo: 'IAD', ip: '198.51.100.42', latency_ms: 165, error: null},
+    persona: {domain: 'withpersona.com', ok: true, country: 'US', colo: 'IAD', ip: '198.51.100.42', latency_ms: 170, error: null},
+    unlisted_dns: {domain: 'cloudflare-dns.com', ok: true, country: 'US', colo: 'IAD', ip: '198.51.100.42', latency_ms: 160, error: null},
+    exit_isp: {ip: '198.51.100.42', country: 'US', city: 'New York', timezone: 'America/New_York', isp: 'RCN', asn: 'AS6079'},
+    same_country: true,
+    same_exit_ip: true,
+    unlisted_same_country: true,
+  };
+  const rcnChecks = evaluateRiskChecks(staticGreenLocal, rcnProbe, false);
+  expect(rcnChecks.every(c => c.status === 'ok')).toBe(true);
+  expect(resolveRiskBanner(staticGreenLocal, rcnProbe, rcnChecks)).toEqual({
+    status: 'ok',
+    titleKey: 'risk.auditStatus.okTitle',
+    descKey: 'risk.auditStatus.okDesc',
+  });
+
+  // 3) Static 3/3 green + unlisted ISP -> points to Exit ASN card, NEVER tells user to fix Strict-Route!
+  const unlistedIspProbe: ConsistencyProbeReport = {
+    ...rcnProbe,
+    exit_isp: {ip: '198.51.100.42', country: 'US', city: 'New York', timezone: 'America/New_York', isp: 'Unlisted Cooperative Fiber', asn: 'AS64512'},
+  };
+  const unlistedChecks = evaluateRiskChecks(staticGreenLocal, unlistedIspProbe, false);
+  const unlistedBanner = resolveRiskBanner(staticGreenLocal, unlistedIspProbe, unlistedChecks);
+  expect(unlistedBanner).toEqual({
+    status: 'warn',
+    titleKey: 'risk.auditStatus.ispPendingTitle',
+    descKey: 'risk.auditStatus.ispPendingDesc',
+  });
+  expect(translate(unlistedBanner.descKey, {}, 'zh')).not.toContain('Strict-Route');
+  expect(translate(unlistedBanner.descKey, {}, 'en')).not.toContain('Strict-Route');
+
+  // 4) Static 3/3 green + datacenter node -> ispHosting banner
+  const idcProbe: ConsistencyProbeReport = {
+    ...rcnProbe,
+    exit_isp: {ip: '198.51.100.42', country: 'US', city: 'Ashburn', timezone: 'America/New_York', isp: 'M247 Europe SRL', asn: 'AS9009'},
+  };
+  const idcChecks = evaluateRiskChecks(staticGreenLocal, idcProbe, false);
+  expect(resolveRiskBanner(staticGreenLocal, idcProbe, idcChecks)).toEqual({
+    status: 'fail',
+    titleKey: 'risk.auditStatus.ispHostingTitle',
+    descKey: 'risk.auditStatus.ispHostingDesc',
+  });
+
+  // 5) Datacenter exit + same-country multi-IP warn STILL shows ispHostingTitle instead of generic split fail
+  const idcDiffIpProbe: ConsistencyProbeReport = {
+    ...idcProbe,
+    persona: {...idcProbe.persona, ip: '198.51.100.43'},
+    same_exit_ip: false,
+  };
+  const idcDiffIpChecks = evaluateRiskChecks(staticGreenLocal, idcDiffIpProbe, false);
+  expect(resolveRiskBanner(staticGreenLocal, idcDiffIpProbe, idcDiffIpChecks)).toEqual({
+    status: 'fail',
+    titleKey: 'risk.auditStatus.ispHostingTitle',
+    descKey: 'risk.auditStatus.ispHostingDesc',
+  });
+
+  // 6) Corrected ASN catalog parity (GleSYS AS42708 & Internap AS11854 -> hosting; Brightspeed/Altafiber/Starry/Ting/Hawaiian/Singtel -> isp)
+  expect(classifyRiskExitIsp({isp: 'GleSYS AB', asn: 'AS42708'})).toBe('hosting');
+  expect(classifyRiskExitIsp({isp: 'Internap Holding LLC', asn: 'AS11854'})).toBe('hosting');
+  expect(classifyRiskExitIsp({isp: 'Datacamp Limited', asn: 'AS212238'})).toBe('hosting');
+  expect(classifyRiskExitIsp({isp: 'DigitalOcean, LLC', asn: 'AS62567'})).toBe('hosting');
+  expect(classifyRiskExitIsp({isp: 'Acme Dedicated Servers', asn: 'AS64512'})).toBe('hosting');
+  expect(classifyRiskExitIsp({isp: 'Connect Holding II LLC', asn: 'AS40127'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Cincinnati Bell', asn: 'AS10910'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Starry, Inc.', asn: 'AS394925'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Tucows', asn: 'AS14654'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Hawaiian Telcom', asn: 'AS11858'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Singapore Telecommunications', asn: 'AS7473'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Ting Fiber'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Ting Internet'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Sonic.net'})).toBe('isp');
+  expect(classifyRiskExitIsp({isp: 'Ting Mobile Corp'})).toBe('unknown');
+  expect(classifyRiskExitIsp({isp: 'Sonic Corp'})).toBe('unknown');
+});
+
+test('auditClaudeCliSecurityBoundary rejects NO_PROXY bypasses, case-clobbered or split-port proxies, unpinned npx trailing @, ws(s) remote MCP, missing DO_NOT_TRACK, and flags non-English language', () => {
+  const baseEnv = {
+    HTTP_PROXY: 'http://127.0.0.1:7899',
+    HTTPS_PROXY: 'http://127.0.0.1:7899',
+    ALL_PROXY: 'http://127.0.0.1:7899',
+    GRPC_PROXY: 'http://127.0.0.1:7899',
+    NO_PROXY: 'localhost,127.0.0.1',
+    DISABLE_TELEMETRY: '1',
+    DISABLE_ERROR_REPORTING: '1',
+    DO_NOT_TRACK: '1',
+  };
+
+  expect(
+    auditClaudeCliSecurityBoundary({
+      settingsJson: {env: {...baseEnv, DO_NOT_TRACK: undefined}},
+    }).telemetry_shield_active,
+  ).toBe(false);
+
+  expect(
+    auditClaudeCliSecurityBoundary({
+      settingsJson: {env: {...baseEnv, NO_PROXY: '*'}},
+    }).proxy_env_complete,
+  ).toBe(false);
+
+  for (const bypassedDomain of [
+    '.claude.ai',
+    'claudeusercontent.com',
+    'claudemcpclient.com',
+    'claudemcpcontent.com',
+    'claudepages.dev',
+    'claude.site',
+    'ant.dev',
+    'clau.de',
+    'http-intake.logs.us5.datadoghq.com',
+  ]) {
+    expect(
+      auditClaudeCliSecurityBoundary({
+        settingsJson: {env: {...baseEnv, NO_PROXY: `localhost,${bypassedDomain}`}},
+      }).proxy_env_complete,
+    ).toBe(false);
+  }
+
+  expect(
+    auditClaudeCliSecurityBoundary({
+      settingsJson: {env: {...baseEnv, https_proxy: ''}},
+    }).proxy_env_complete,
+  ).toBe(false);
+
+  expect(
+    auditClaudeCliSecurityBoundary({
+      settingsJson: {env: {...baseEnv, GRPC_PROXY: 'http://127.0.0.1:7890'}},
+    }).proxy_env_complete,
+  ).toBe(false);
+
+  const mcpEdgeAudit = auditClaudeCliSecurityBoundary({
+    settingsJson: {language: 'zh-CN', env: baseEnv},
+    claudeJson: {
+      mcpServers: {
+        spoofedTrailingAt: {command: 'cmd.exe', args: ['/c', 'npx', '-y', 'unpinned-pkg', 'admin@example.com']},
+        wsLoopback: {url: 'ws://127.0.0.1:9000/mcp'},
+        wssRemote: {url: 'wss://remote-mcp.example.invalid/ws'},
+      },
+    },
+  });
+  expect(mcpEdgeAudit.non_english_language).toBe(true);
+  expect(mcpEdgeAudit.unpinned_npx_count).toBe(1);
+  expect(mcpEdgeAudit.remote_http_mcp_count).toBe(1);
 });

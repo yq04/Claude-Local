@@ -1,5 +1,5 @@
 // [INPUT]: 当前绑定浏览器快照、本机网卡、当前用户已知代理内核的只读配置投影、Claude CLI 只读遥测/MCP 安全边界与手动触发的三路 trace。
-// [OUTPUT]: 带配置来源/解析不确定性的 DNS 结构诊断、本机 TUN/明文 DNS 布尔状态、CLI 遥测护盾/MCP 供应链计数、同上下文的遮罩浏览器归属、安全内网候选与绑定上下文一致的跨域出口结果。
+// [OUTPUT]: 带配置来源/解析不确定性的 DNS 结构诊断、本机 TUN/明文 DNS 布尔状态、CLI 遥测护盾/MCP 供应链计数、同上下文的遮罩浏览器归属、安全内网候选与绑定上下文一致（socks5h 远程 DNS + 多信号北美/全球家宽 ISP 与机房 ASN 识别及 IPQuery 回退）的跨域出口结果。
 // [POS]: 风控验证原生只读边界；绝不读取或输出任何代理密码、节点域名、订阅地址或账号凭据，不修改系统设置或中断运行进程。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,8 @@ pub struct CliSecurityAudit {
     pub proxy_env_complete: bool,
     pub socks5_in_cli_env: bool,
     pub has_custom_hooks_or_helpers: bool,
+    #[serde(default)]
+    pub non_english_language: bool,
     pub unpinned_npx_count: usize,
     pub remote_http_mcp_count: usize,
     pub windows_bare_npx_count: usize,
@@ -279,6 +281,8 @@ fn project_resolvers(raw: &str, audit: &mut MihomoAudit) {
             "223.5.5.5"
                 | "223.6.6.6"
                 | "119.29.29.29"
+                | "1.12.12.12"
+                | "120.53.53.53"
                 | "114.114.114.114"
                 | "180.76.76.76"
                 | "dns.alidns.com"
@@ -325,6 +329,11 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
     let mut current_listener_port: Option<u16> = None;
     let mut current_listener_has_proxy = false;
     let mut current_listener_is_proxy_type = false;
+    let mut seen_unresolved_ip_rule = false;
+    let mut claude_group: Option<String> = None;
+    let mut persona_group: Option<String> = None;
+    let mut has_datadog_logs_rule = false;
+    let mut datadog_groups: Vec<String> = Vec::new();
 
     let flush_listener =
         |audit: &mut MihomoAudit, port: Option<u16>, has_proxy: bool, is_proxy_type: bool| {
@@ -499,25 +508,6 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
             }
             Section::Rules => {
                 let lower = line.to_ascii_lowercase();
-                if lower.contains("claude.ai")
-                    || lower.contains("anthropic.com")
-                    || lower.contains("claude.com")
-                {
-                    audit.has_claude_rules = true;
-                }
-                if lower.contains("withpersona.com")
-                    || lower.contains("withpersona")
-                    || lower.contains("persona.com")
-                    || lower.contains("persona.org")
-                {
-                    audit.has_persona_rules = true;
-                }
-                if lower.contains("datadoghq")
-                    || lower.contains("growthbook.io")
-                    || lower.contains("claudeusercontent.com")
-                {
-                    audit.has_telemetry_rules = true;
-                }
                 if (lower.contains("443") && lower.contains("udp") && lower.contains("reject"))
                     || (lower.contains("quic") && lower.contains("reject"))
                 {
@@ -526,9 +516,103 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                 if lower.contains("geoip,cn") || lower.contains("geoip, cn") {
                     audit.has_geoip_cn = true;
                 }
+                if let Some(rule_item) = line.strip_prefix('-') {
+                    let cleaned = rule_item.trim().trim_matches(['"', '\'']).trim();
+                    let upper_head = cleaned.to_ascii_uppercase();
+                    if upper_head.starts_with("AND,")
+                        || upper_head.starts_with("OR,")
+                        || upper_head.starts_with("NOT,")
+                    {
+                        continue;
+                    }
+                    let parts: Vec<&str> = cleaned.split(',').map(str::trim).collect();
+                    if parts.len() >= 3 {
+                        let rtype = parts[0].to_ascii_uppercase();
+                        let pattern = parts[1].trim_start_matches('.').to_ascii_lowercase();
+                        let target = parts[2];
+                        let has_no_resolve = parts[3..]
+                            .iter()
+                            .any(|p| p.eq_ignore_ascii_case("no-resolve"));
+                        if matches!(
+                            rtype.as_str(),
+                            "IP-CIDR" | "IP-CIDR6" | "GEOIP" | "IP-ASN"
+                        ) {
+                            if !has_no_resolve
+                                && !matches!(
+                                    pattern.as_str(),
+                                    "127.0.0.0/8" | "::1/128" | "198.18.0.0/15"
+                                )
+                            {
+                                seen_unresolved_ip_rule = true;
+                            }
+                            continue;
+                        }
+                        if matches!(
+                            rtype.as_str(),
+                            "DOMAIN" | "DOMAIN-SUFFIX" | "DOMAIN-KEYWORD" | "GEOSITE"
+                        ) && !target.is_empty()
+                            && !target.eq_ignore_ascii_case("DIRECT")
+                            && !target.eq_ignore_ascii_case("REJECT")
+                            && !target.eq_ignore_ascii_case("REJECT-DROP")
+                            && !target.eq_ignore_ascii_case("REJECT-NO-DROP")
+                            && !seen_unresolved_ip_rule
+                        {
+                            if matches!(
+                                pattern.as_str(),
+                                "claude.ai" | "anthropic.com" | "claude.com"
+                            ) || (matches!(rtype.as_str(), "DOMAIN-KEYWORD" | "GEOSITE")
+                                && matches!(pattern.as_str(), "claude" | "anthropic"))
+                            {
+                                claude_group.get_or_insert_with(|| target.to_string());
+                            }
+                            if matches!(
+                                pattern.as_str(),
+                                "withpersona.com" | "persona.com" | "persona.org"
+                            ) || (rtype == "DOMAIN-KEYWORD" && pattern == "withpersona")
+                            {
+                                persona_group.get_or_insert_with(|| target.to_string());
+                            }
+                            let is_dd_keyword =
+                                rtype == "DOMAIN-KEYWORD" && pattern == "datadoghq";
+                            let is_dd_logs_domain = matches!(
+                                pattern.as_str(),
+                                "datadoghq.com" | "http-intake.logs.us5.datadoghq.com"
+                            );
+                            let is_dd_aux_domain = matches!(
+                                pattern.as_str(),
+                                "browser-intake-datadoghq.com"
+                                    | "browser-intake-us5-datadoghq.com"
+                                    | "datadoghq.eu"
+                                    | "ddog-gov.com"
+                            );
+                            if is_dd_keyword || is_dd_logs_domain || is_dd_aux_domain {
+                                if is_dd_keyword || is_dd_logs_domain {
+                                    has_datadog_logs_rule = true;
+                                }
+                                datadog_groups.push(target.to_string());
+                            }
+                        }
+                    }
+                }
             }
         }
     }
+
+    audit.has_claude_rules = claude_group.is_some();
+    audit.has_persona_rules = match (&persona_group, &claude_group) {
+        (Some(pg), Some(cg)) => pg == cg,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    audit.has_telemetry_rules = has_datadog_logs_rule
+        && !datadog_groups.is_empty()
+        && match &claude_group {
+            Some(cg) => datadog_groups.iter().all(|dg| dg == cg),
+            None => {
+                let first = &datadog_groups[0];
+                datadog_groups.iter().all(|dg| dg == first)
+            }
+        };
 
     if section == Section::Listeners {
         flush_listener(
@@ -894,6 +978,8 @@ fn is_loopback_mcp_url(url: &str) -> bool {
     let rest = lower
         .strip_prefix("http://")
         .or_else(|| lower.strip_prefix("https://"))
+        .or_else(|| lower.strip_prefix("ws://"))
+        .or_else(|| lower.strip_prefix("wss://"))
         .unwrap_or("");
     if rest.is_empty() {
         return false;
@@ -942,8 +1028,9 @@ fn scan_mcp_servers_map(
             .to_ascii_lowercase();
         let is_http_or_sse = url.starts_with("http://")
             || url.starts_with("https://")
-            || server_type == "sse"
-            || server_type == "http";
+            || url.starts_with("ws://")
+            || url.starts_with("wss://")
+            || matches!(server_type.as_str(), "sse" | "http" | "ws" | "websocket");
         if is_http_or_sse && (url.is_empty() || !is_loopback_mcp_url(&url)) {
             audit.remote_http_mcp_count += 1;
         }
@@ -964,43 +1051,48 @@ fn scan_mcp_servers_map(
         {
             audit.windows_bare_npx_count += 1;
         }
-        let is_npx_family = matches!(cmd_stem, "npx" | "uvx" | "bunx")
-            || cmd_stem == "cmd"
-                && obj
-                    .get("args")
-                    .and_then(|v| v.as_array())
-                    .is_some_and(|args| {
-                        args.iter().any(|a| {
-                            a.as_str().is_some_and(|s| {
-                                let sub = s.trim().to_ascii_lowercase();
-                                let sub_name = sub.rsplit(['/', '\\']).next().unwrap_or(sub.as_str());
-                                let sub_stem = sub_name
-                                    .strip_suffix(".cmd")
-                                    .or_else(|| sub_name.strip_suffix(".exe"))
-                                    .unwrap_or(sub_name);
-                                matches!(sub_stem, "npx" | "uvx" | "bunx")
-                            })
+        let is_cmd_wrapped_npx = cmd_stem == "cmd"
+            && obj
+                .get("args")
+                .and_then(|v| v.as_array())
+                .is_some_and(|args| {
+                    args.len() >= 2
+                        && args[0]
+                            .as_str()
+                            .is_some_and(|a| a.trim().eq_ignore_ascii_case("/c"))
+                        && args[1].as_str().is_some_and(|s| {
+                            let sub = s.trim().to_ascii_lowercase();
+                            let sub_name = sub.rsplit(['/', '\\']).next().unwrap_or(sub.as_str());
+                            let sub_stem = sub_name
+                                .strip_suffix(".cmd")
+                                .or_else(|| sub_name.strip_suffix(".exe"))
+                                .or_else(|| sub_name.strip_suffix(".bat"))
+                                .unwrap_or(sub_name);
+                            matches!(sub_stem, "npx" | "uvx" | "bunx")
                         })
-                    });
+                });
+        let is_npx_family = matches!(cmd_stem, "npx" | "uvx" | "bunx") || is_cmd_wrapped_npx;
         if is_npx_family {
             let mut has_pinned = false;
             if let Some(args) = obj.get("args").and_then(|v| v.as_array()) {
-                for raw in args.iter().filter_map(|v| v.as_str()) {
+                let start_idx = if is_cmd_wrapped_npx { 2 } else { 0 };
+                for raw in args.iter().skip(start_idx).filter_map(|v| v.as_str()) {
                     let s = raw.trim();
-                    if s.is_empty()
-                        || s.starts_with('-')
-                        || matches!(s.to_ascii_lowercase().as_str(), "/c" | "npx" | "uvx" | "bunx")
-                    {
+                    if s.is_empty() || s.starts_with('-') {
                         continue;
                     }
                     let without_scope = s.strip_prefix('@').map_or(s, |rest| {
-                        rest.find('/').map_or(rest, |idx| &rest[idx + 1..])
+                        rest.find('/').map_or("", |idx| &rest[idx + 1..])
                     });
-                    if let Some((_, ver)) = without_scope.rsplit_once('@') {
-                        if !ver.is_empty() && ver != "latest" {
+                    if let Some((pkg_name, ver)) = without_scope.rsplit_once('@') {
+                        if !pkg_name.is_empty()
+                            && !ver.is_empty()
+                            && !ver.eq_ignore_ascii_case("latest")
+                        {
                             has_pinned = true;
                         }
                     }
+                    break;
                 }
             }
             if !has_pinned {
@@ -1010,14 +1102,87 @@ fn scan_mcp_servers_map(
     }
 }
 
-fn is_valid_http_proxy_url(raw: &str) -> bool {
+fn normalize_http_proxy_host_port(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let url = reqwest::Url::parse(trimmed).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host_raw = url.host_str()?.trim_matches(['[', ']']);
+    if host_raw.is_empty() {
+        return None;
+    }
+    let host = if host_raw.eq_ignore_ascii_case("localhost") {
+        "127.0.0.1".to_string()
+    } else {
+        host_raw.to_ascii_lowercase()
+    };
+    let port = url.port_or_known_default()?;
+    if port == 0 {
+        return None;
+    }
+    Some(format!("{host}:{port}"))
+}
+
+fn is_safe_no_proxy_value(raw: &str) -> bool {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return false;
     }
-    reqwest::Url::parse(trimmed).is_ok_and(|u| {
-        matches!(u.scheme(), "http" | "https") && u.host_str().is_some_and(|h| !h.is_empty())
-    })
+    let mut has_entry = false;
+    for part in trimmed.split(',') {
+        let token = part.trim().to_ascii_lowercase();
+        if token.is_empty() {
+            continue;
+        }
+        has_entry = true;
+        if token == "*" {
+            return false;
+        }
+        let host_part = if token.starts_with('[') {
+            token.split(']').next().unwrap_or("").trim_start_matches('[')
+        } else {
+            token.split(':').next().unwrap_or("")
+        };
+        let clean = host_part.trim_start_matches("*.").trim_start_matches('.');
+        for protected in [
+            "claude.ai",
+            "anthropic.com",
+            "claude.com",
+            "claudeusercontent.com",
+            "claudemcpclient.com",
+            "claudemcpcontent.com",
+            "claudepages.dev",
+            "claude.site",
+            "claude.app",
+            "claude.dev",
+            "claude.new",
+            "claudestudio.com",
+            "ant.dev",
+            "antspace.dev",
+            "anthropic.dev",
+            "anthropic.team",
+            "clau.de",
+            "datadoghq.com",
+        ] {
+            if clean == protected || clean.ends_with(&format!(".{protected}")) {
+                return false;
+            }
+        }
+    }
+    has_entry
+}
+
+fn is_english_language_pref(raw: &str) -> bool {
+    let s = raw.trim().to_ascii_lowercase();
+    s.is_empty()
+        || s == "en"
+        || s.starts_with("en-")
+        || s.starts_with("en_")
+        || s.starts_with("english")
 }
 
 fn inspect_settings_object(
@@ -1074,17 +1239,26 @@ pub fn audit_claude_cli_security_dir(root: &std::path::Path) -> CliSecurityAudit
     let claude_dir = root.join(".claude");
     let mut merged_env = serde_json::Map::new();
 
+    let mut effective_language: Option<String> = None;
     for settings_name in ["settings.json", "settings.local.json"] {
         let settings_path = claude_dir.join(settings_name);
         if let Some(raw) = config_source::read_bounded_utf8(&settings_path, 512 * 1024) {
             if let Ok(serde_json::Value::Object(settings)) = serde_json::from_str(&raw) {
                 audit.settings_present = true;
+                if let Some(lang_val) = settings.get("language") {
+                    effective_language = lang_val.as_str().map(|s| s.trim().to_string());
+                }
                 inspect_settings_object(&settings, &mut merged_env, &mut audit);
             }
         }
     }
 
     if audit.settings_present {
+        if let Some(ref lang) = effective_language {
+            if !is_english_language_pref(lang) {
+                audit.non_english_language = true;
+            }
+        }
         let truthy = |k: &str| match merged_env.get(k) {
             Some(serde_json::Value::Bool(b)) => *b,
             Some(serde_json::Value::Number(n)) => n.as_i64() == Some(1),
@@ -1096,6 +1270,7 @@ pub fn audit_claude_cli_security_dir(root: &std::path::Path) -> CliSecurityAudit
         audit.nonessential_traffic_blocked = truthy("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC");
         audit.telemetry_shield_active = truthy("DISABLE_TELEMETRY")
             && truthy("DISABLE_ERROR_REPORTING")
+            && truthy("DO_NOT_TRACK")
             && !audit.nonessential_traffic_blocked;
 
         let str_val = |k: &str| {
@@ -1115,14 +1290,45 @@ pub fn audit_claude_cli_security_dir(root: &std::path::Path) -> CliSecurityAudit
             str_val(upper).to_ascii_lowercase().starts_with("socks")
                 || str_val(lower).to_ascii_lowercase().starts_with("socks")
         });
-        let all_pairs_http = canonical_pairs.iter().all(|(upper, lower)| {
-            let u = str_val(upper);
-            let l = str_val(lower);
-            !u.to_ascii_lowercase().starts_with("socks")
-                && !l.to_ascii_lowercase().starts_with("socks")
-                && (is_valid_http_proxy_url(u) || is_valid_http_proxy_url(l))
-        });
-        let no_proxy_ok = !str_val("NO_PROXY").is_empty() || !str_val("no_proxy").is_empty();
+        let mut shared_endpoint: Option<String> = None;
+        let mut all_pairs_http = true;
+        for (upper, lower) in canonical_pairs {
+            let has_u = merged_env.contains_key(upper);
+            let has_l = merged_env.contains_key(lower);
+            if !has_u && !has_l {
+                all_pairs_http = false;
+                break;
+            }
+            for (present, raw) in [(has_u, str_val(upper)), (has_l, str_val(lower))] {
+                if !present {
+                    continue;
+                }
+                if raw.to_ascii_lowercase().starts_with("socks") {
+                    all_pairs_http = false;
+                    break;
+                }
+                let Some(ep) = normalize_http_proxy_host_port(raw) else {
+                    all_pairs_http = false;
+                    break;
+                };
+                match &shared_endpoint {
+                    None => shared_endpoint = Some(ep),
+                    Some(prev) if prev != &ep => {
+                        all_pairs_http = false;
+                        break;
+                    }
+                    Some(_) => {}
+                }
+            }
+            if !all_pairs_http {
+                break;
+            }
+        }
+        let has_np_u = merged_env.contains_key("NO_PROXY");
+        let has_np_l = merged_env.contains_key("no_proxy");
+        let no_proxy_ok = (has_np_u || has_np_l)
+            && (!has_np_u || is_safe_no_proxy_value(str_val("NO_PROXY")))
+            && (!has_np_l || is_safe_no_proxy_value(str_val("no_proxy")));
         audit.proxy_env_complete = all_pairs_http && no_proxy_ok && !audit.socks5_in_cli_env;
     }
 
@@ -1133,7 +1339,16 @@ pub fn audit_claude_cli_security_dir(root: &std::path::Path) -> CliSecurityAudit
                     scan_mcp_servers_map(mcp, &mut audit);
                 }
                 if let Some(projects) = doc.get("projects").and_then(|v| v.as_object()) {
-                    for (_, proj) in projects.iter().take(256) {
+                    let mut seen_proj_paths = std::collections::HashSet::new();
+                    for (proj_key, proj) in projects.iter().take(256) {
+                        let norm_key = proj_key
+                            .trim()
+                            .replace('/', "\\")
+                            .trim_end_matches('\\')
+                            .to_ascii_lowercase();
+                        if !seen_proj_paths.insert(norm_key) {
+                            continue;
+                        }
                         if let Some(proj_mcp) = proj
                             .as_object()
                             .and_then(|o| o.get("mcpServers"))
@@ -1306,9 +1521,9 @@ pub(crate) async fn probe_consistency_urls(
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(8));
 
-    let trimmed = proxy.trim();
+    let trimmed = crate::browser::config::normalize_reqwest_proxy(proxy);
     if !trimmed.is_empty() {
-        if let Ok(p) = reqwest::Proxy::all(trimmed) {
+        if let Ok(p) = reqwest::Proxy::all(&trimmed) {
             builder = builder.proxy(p);
         }
     }
@@ -1377,10 +1592,36 @@ pub(crate) async fn probe_consistency_urls(
     let unlisted_dns = t_unlisted
         .await
         .unwrap_or_else(|_| fallback("cloudflare-dns.com"));
-    let exit_isp = match t_isp {
+    let claude_parsed_ip = claude
+        .ip
+        .as_deref()
+        .and_then(|s| s.trim().parse::<IpAddr>().ok());
+    let mut exit_isp = match t_isp {
         Some(handle) => handle.await.ok().flatten(),
         None => None,
     };
+    if let (Some(expected_ip), Some(ref current_exit)) = (claude_parsed_ip, &exit_isp) {
+        let actual_ip = current_exit.ip.trim().parse::<IpAddr>().ok();
+        if actual_ip != Some(expected_ip) {
+            exit_isp = None;
+        }
+    }
+    if exit_isp.is_none() && include_isp {
+        if let Some(ref cip) = claude.ip {
+            exit_isp = crate::browser::network::probe_ip_via_ipquery(&trimmed, cip)
+                .await
+                .ok()
+                .filter(
+                    |queried| match (claude_parsed_ip, queried.ip.trim().parse::<IpAddr>().ok()) {
+                        (Some(exp), Some(act)) => exp == act,
+                        _ => false,
+                    },
+                );
+        }
+    }
+    if let Some(ref mut exit) = exit_isp {
+        crate::browser::network::apply_builtin_classification(exit);
+    }
 
     let same_country = match (&claude.country, &persona.country) {
         (Some(a), Some(b)) => Some(a == b),
@@ -1796,7 +2037,15 @@ Windows IP 配置
                     "D:/workspace/demo": {
                         "mcpServers": {
                             "unpinned": {"command": "npx", "args": ["-y", "@scope/pkg@latest"]},
+                            "spoofedAt": {"command": "cmd.exe", "args": ["/c", "npx", "-y", "unpinned-pkg", "ops@example.invalid"]},
+                            "wsLocal": {"url": "ws://127.0.0.1:9000/mcp"},
+                            "wssRemote": {"url": "wss://mcp.example.invalid/ws"},
                             "remote": {"url": "https://mcp.example.invalid/sse"}
+                        }
+                    },
+                    "d:\\workspace\\demo\\": {
+                        "mcpServers": {
+                            "dupSkipped": {"command": "npx", "args": ["-y", "dup-pkg"]}
                         }
                     }
                 }
@@ -1810,19 +2059,22 @@ Windows IP 配置
         assert!(!audit.nonessential_traffic_blocked);
         assert!(audit.proxy_env_complete);
         assert!(!audit.socks5_in_cli_env);
+        assert!(!audit.non_english_language);
         assert!(!audit.has_custom_hooks_or_helpers);
-        assert_eq!(audit.unpinned_npx_count, 1);
+        assert_eq!(audit.unpinned_npx_count, 2);
         assert_eq!(audit.windows_bare_npx_count, 1);
-        assert_eq!(audit.remote_http_mcp_count, 1);
+        assert_eq!(audit.remote_http_mcp_count, 2);
         assert_eq!(audit.pending_failed_telemetry_files, 1);
 
-        // settings.local.json overrides settings.json env keys and flags CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+        // settings.local.json overrides settings.json env keys, detects non-English language & NO_PROXY bypass, and flags CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
         std::fs::write(
             claude_dir.join("settings.local.json"),
             r#"{
+                "language": "zh-CN",
                 "env": {
                     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                    "ALL_PROXY": "socks://127.0.0.1:7899"
+                    "ALL_PROXY": "socks://127.0.0.1:7899",
+                    "NO_PROXY": "localhost,.claude.ai"
                 }
             }"#,
         )
@@ -1830,14 +2082,161 @@ Windows IP 配置
         let blocked = audit_claude_cli_security_dir(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(blocked.nonessential_traffic_blocked);
+        assert!(blocked.non_english_language);
         assert!(!blocked.telemetry_shield_active);
         assert!(blocked.socks5_in_cli_env);
         assert!(!blocked.proxy_env_complete);
 
         let mihomo = audit_mihomo_yaml_structure(
-            "rules:\n  - DOMAIN-KEYWORD,datadoghq,ClaudeGroup\n",
+            "dns:\n  nameserver:\n    - https://1.12.12.12/dns-query\nrules:\n  - DOMAIN-KEYWORD,datadoghq,ClaudeGroup\n",
             None,
         );
         assert!(mihomo.has_telemetry_rules);
+        assert!(mihomo.dns_has_domestic_encrypted);
+        assert!(!mihomo.dns_has_remote_doh);
+
+        // Same residential group with QUIC UDP-443 REJECT above claude.ai & datadoghq.com passes without false positive
+        let aligned_tun = audit_mihomo_yaml_structure(
+            "rules:\n  - AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,claude.ai)),REJECT\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,withpersona.com,US-Residential\n  - DOMAIN-SUFFIX,datadoghq.com,US-Residential\n  - IP-CIDR,104.16.0.0/13,Cloudflare\n",
+            None,
+        );
+        assert!(aligned_tun.has_quic_reject);
+        assert!(aligned_tun.has_claude_rules);
+        assert!(aligned_tun.has_persona_rules);
+        assert!(aligned_tun.has_telemetry_rules);
+
+        // Split exit group (claude.ai -> US-Residential vs datadoghq.com -> JP-Residential) fails telemetry check
+        let split_dd = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,datadoghq.com,JP-Residential\n",
+            None,
+        );
+        assert!(!split_dd.has_telemetry_rules);
+
+        // Missing datadoghq (only growthbook.io) or shadowed by non-no-resolve IP-CIDR fails telemetry check
+        let missing_dd = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,growthbook.io,US-Residential\n",
+            None,
+        );
+        assert!(!missing_dd.has_telemetry_rules);
+
+        let shadowed_dd = audit_mihomo_yaml_structure(
+            "rules:\n  - IP-CIDR,104.16.0.0/13,Cloudflare\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,datadoghq.com,US-Residential\n",
+            None,
+        );
+        assert!(!shadowed_dd.has_telemetry_rules);
+
+        // GEOSITE,anthropic aligned with datadoghq.com passes without requiring every vanity domain
+        let geosite_aligned = audit_mihomo_yaml_structure(
+            "rules:\n  - GEOSITE,anthropic,US-Residential\n  - DOMAIN-SUFFIX,datadoghq.com,US-Residential\n",
+            None,
+        );
+        assert!(geosite_aligned.has_claude_rules);
+        assert!(geosite_aligned.has_telemetry_rules);
+    }
+
+    #[test]
+    fn exit_isp_multi_signal_classifier_recognizes_rcn_and_us_broadband_while_blocking_idc() {
+        use crate::browser::network::{self, ExitKind};
+
+        // 1. Live RCN / Astound Broadband (AS6079) payload without hosting boolean -> ResidentialIsp + enriched display
+        let rcn_ipwho = serde_json::json!({
+            "success": true,
+            "type": "IPv4",
+            "ip": "198.51.100.42",
+            "country_code": "US",
+            "city": "Washington",
+            "timezone": { "id": "America/New_York" },
+            "connection": {
+                "asn": 6079,
+                "org": "RCN",
+                "isp": "RCN",
+                "domain": "rcn.com"
+            }
+        });
+        let rcn_exit = network::parse(&rcn_ipwho).unwrap();
+        assert_eq!(network::classify_exit(&rcn_exit), ExitKind::ResidentialIsp);
+        assert_eq!(rcn_exit.hosting, Some(false));
+        assert_eq!(rcn_exit.asn.as_deref(), Some("AS6079"));
+        assert_eq!(rcn_exit.isp, "RCN (Astound Broadband · AS6079)");
+
+        // 2. Google Fiber (AS16591) is ResidentialIsp, whereas Google Cloud (AS15169 / AS396982) is Hosting!
+        let gfiber = network::parse(&serde_json::json!({
+            "ip": "198.51.100.43",
+            "country_code": "US",
+            "org": "Google Fiber Inc.",
+            "asn": "AS16591"
+        }))
+        .unwrap();
+        assert_eq!(network::classify_exit(&gfiber), ExitKind::ResidentialIsp);
+        assert_eq!(gfiber.hosting, Some(false));
+        assert_eq!(gfiber.isp, "Google Fiber Inc. (AS16591)");
+
+        let gcloud = network::parse(&serde_json::json!({
+            "ip": "198.51.100.44",
+            "country_code": "US",
+            "org": "Google Cloud",
+            "asn": "AS15169",
+            "hosting": false
+        }))
+        .unwrap();
+        assert_eq!(network::classify_exit(&gcloud), ExitKind::Hosting);
+        assert_eq!(gcloud.hosting, Some(true));
+
+        // 3. Hard IDC / Transit blocklist wins first (M247 AS9009, Cogent AS174, Hurricane Electric AS6939, Choopa AS20473)
+        for (org, asn) in [
+            ("M247 Europe SRL", "AS9009"),
+            ("Cogent Communications", "AS174"),
+            ("Hurricane Electric LLC", "AS6939"),
+            ("The Constant Company, LLC", "AS20473"),
+            ("ColoCrossing", "AS36352"),
+            ("Hostinger International Limited", "AS47583"),
+        ] {
+            let idc = network::parse(&serde_json::json!({
+                "ip": "198.51.100.45",
+                "country_code": "US",
+                "org": org,
+                "asn": asn
+            }))
+            .unwrap();
+            assert_eq!(
+                network::classify_exit(&idc),
+                ExitKind::Hosting,
+                "expected Hosting for {org} ({asn})"
+            );
+            assert_eq!(idc.hosting, Some(true));
+        }
+
+        // 4. Major US & regional residential ISPs resolve to ResidentialIsp without ipquery
+        for (org, asn) in [
+            ("Astound Broadband", "AS6079"),
+            ("Wave Broadband", "AS11404"),
+            ("Comcast Cable Communications, LLC", "AS7922"),
+            ("Charter Communications Inc", "AS20115"),
+            ("AT&T Services, Inc.", "AS7018"),
+            ("MCI Communications Services, Inc. d/b/a Verizon Business", "AS701"),
+            ("Cox Communications Inc.", "AS22773"),
+            ("Cablevision Systems Corp.", "AS6128"),
+            ("Frontier Communications of America, Inc.", "AS5650"),
+            ("CenturyLink Communications, LLC", "AS209"),
+            ("Ziply Fiber", "AS20055"),
+            ("Sonic.net, Inc.", "AS46375"),
+            ("SpaceX Starlink", "AS14593"),
+            ("Chunghwa Telecom Co., Ltd.", "AS3462"),
+            ("Open Computer Network", "AS4713"),
+        ] {
+            let res = network::parse(&serde_json::json!({
+                "ip": "198.51.100.46",
+                "country_code": "US",
+                "org": org,
+                "asn": asn
+            }))
+            .unwrap();
+            assert_eq!(
+                network::classify_exit(&res),
+                ExitKind::ResidentialIsp,
+                "expected ResidentialIsp for {org} ({asn})"
+            );
+            assert_eq!(res.hosting, Some(false));
+        }
     }
 }

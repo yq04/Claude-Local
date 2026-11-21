@@ -1,5 +1,5 @@
 // [INPUT]: 当前身份的浏览器资料、配置、原生引擎与进度通道；调用方已持有 Browser gate。
-// [OUTPUT]: 唯一启动过程，验证实际进程和回环会话并重置断流急停告警，失败不冒充成功。
+// [OUTPUT]: 唯一启动过程（含回环代理 300ms TCP 预检、受限主机无代理直连拦截与启动前 60s 缓存出口国家门禁），验证实际进程和回环会话并重置断流急停告警，失败不冒充成功。
 // [POS]: 身份联动和手动启动共用的同步核心，避免重复锁和不同资料路径。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -33,6 +33,7 @@ pub(super) fn launch_with_urls_locked(
     let config = config::load(&workspaces::scope(&root)?)?;
     let machine = config::machine()?;
     config.validate(&machine)?;
+    config::preflight_browser_launch_policy(&config, &machine, !running)?;
     let engine = prepare_engine(app)?;
     register(&engine)?;
     let binary = binary(&engine);
@@ -68,6 +69,7 @@ pub(super) fn launch_with_urls_locked(
             .stderr(file)
             .spawn()
             .map_err(|_| "无法在已运行的伴生浏览器中打开目标页面。")?;
+        super::kill_switch::notify_browser_activity();
         std::thread::spawn(move || {
             let _ = child.wait();
         });
@@ -103,6 +105,7 @@ pub(super) fn launch_with_urls_locked(
         .stderr(file)
         .spawn()
         .map_err(|_| "浏览器启动失败。")?;
+    super::kill_switch::notify_browser_activity();
     for _ in 0..100 {
         if profile::running(&profile)? {
             let ok_msg = if urls.iter().any(|u| *u == USAGE_SETTINGS_URL) {

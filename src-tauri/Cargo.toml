@@ -1,6 +1,6 @@
 [package]
 name = "claude-local"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 license = "MIT"
 
@@ -19,7 +19,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "socks"] }
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "time"] }
 flate2 = "1.1.10"
 zstd = { version = "0.13.3", default-features = false }
 tar = "0.4.46"
@@ -32,6 +32,8 @@ chrono-tz = { version = "0.10.4", default-features = false, features = ["std"] }
 
 [target.'cfg(windows)'.dependencies]
 dunce = "1"
+webview2-com = "0.39"
+windows-core = "0.62"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_Threading",

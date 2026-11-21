@@ -1,5 +1,5 @@
 // [INPUT]: 用户显式触发的隔离 Chromium、带本地 quota_identity 指纹的短期票据与当前或已保存账号的绑定身份快照。
-// [OUTPUT]: 独立短期回环监听与多票据目标绑定复核后的白名单订阅/重置元数据、实时 5h/7d（含 Ultra five_hour=null 与周级模型池回退）额度窗口与有界权益有效期（24h新鲜度边界 + 可选未截断真实 grant 结束时间），或白名单桥接失败；Python仍唯一写入额度账本。
+// [OUTPUT]: 独立短期回环监听与多票据目标绑定复核后的白名单订阅/重置元数据（区分自动续费 next_renewal 与取消到期 access_until）、实时 5h/7d（含 Ultra five_hour=null 与周级模型池回退）额度窗口与有界权益有效期（24h新鲜度边界 + 可选未截断最晚 grant 结束时间 + 逐份 active grant 明细），或白名单桥接失败；Python仍唯一写入额度账本。
 // [POS]: Claude.ai 到身份账本的多账号并发短期单次桥；支持 current 与任意已保存 account_id 并行同步，不串号、不抢占全局会话、不读取 Cookie，不后台轮询。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub(crate) use super::quota_existing::query_existing_profile;
@@ -48,6 +48,14 @@ pub(super) struct Incoming {
     pub failure: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct ResetGrant {
+    pub resets_left: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ends_at: Option<i64>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) struct Snapshot {
@@ -57,11 +65,15 @@ pub(super) struct Snapshot {
     pub billing_date: Option<i64>,
     pub manual_resets_remaining: Option<u64>,
     pub manual_resets_valid_until: Option<i64>,
-    /// Earliest `ends_at` of the active grants, uncapped. `manual_resets_valid_until`
-    /// stays bounded to 24h as a freshness window; this keeps the real expiry so the UI
-    /// can tell "re-verify" apart from "resets actually ended".
+    /// Latest finite `ends_at` across active positive grants, uncapped. `None` when
+    /// balance is zero or any active positive grant has `ends_at: null`.
+    /// `manual_resets_valid_until` stays bounded to 24h as a freshness window.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manual_resets_grant_ends_at: Option<i64>,
+    /// Per-grant breakdown for active positive grants sorted earliest-first
+    /// (`ends_at: None` last); depleted, paused, and out-of-window grants are excluded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manual_resets_grants: Option<Vec<ResetGrant>>,
     pub metadata_observed_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Value>,
@@ -84,41 +96,68 @@ fn parse_timestamp(value: &Value) -> Option<i64> {
         .map(|date| date.timestamp())
 }
 
-fn billing_date(details: Option<&Value>) -> Option<i64> {
-    let details = details?;
-    // The pinned public implementation identifies next_charge_date as the
-    // subscription date. It is a renewal date, never an access-end date.
-    parse_timestamp(details.get("next_charge_date")?)
+fn billing_info(details: Option<&Value>) -> (Option<i64>, &'static str) {
+    let Some(details) = details else {
+        return (None, "unknown");
+    };
+    let cancel_at_end = details
+        .get("cancel_at_period_end")
+        .and_then(Value::as_bool)
+        == Some(true)
+        || details.get("canceled_at").is_some_and(|v| !v.is_null())
+        || details.get("cancelled_at").is_some_and(|v| !v.is_null());
+    let next_charge = details.get("next_charge_date").and_then(parse_timestamp);
+    if !cancel_at_end {
+        if let Some(ts) = next_charge {
+            return (Some(ts), "next_renewal");
+        }
+    }
+    for key in ["ends_at", "cancel_at", "current_period_end", "access_until"] {
+        if let Some(ts) = details.get(key).and_then(parse_timestamp) {
+            return (Some(ts), "access_until");
+        }
+    }
+    if let Some(ts) = next_charge {
+        return (Some(ts), "access_until");
+    }
+    (None, "unknown")
 }
 
-/// (remaining, 24h-bounded freshness expiry, uncapped earliest active grant end).
+fn parse_optional_timestamp(grant: &Value, key: &str) -> Result<Option<i64>, ()> {
+    let Some(raw) = grant.get(key) else {
+        return Err(());
+    };
+    if raw.is_null() {
+        return Ok(None);
+    }
+    parse_timestamp(raw).map(Some).ok_or(())
+}
+
+/// (remaining, 24h-bounded freshness expiry, uncapped latest finite grant end, per-grant slices).
 fn resets_with_grant_end(
     usage: Option<&Value>,
     observed_ms: u64,
-) -> (Option<u64>, Option<i64>, Option<i64>) {
+) -> (Option<u64>, Option<i64>, Option<i64>, Option<Vec<ResetGrant>>) {
     let Some(cedar) = usage.and_then(|value| value.get("cedar_ember")) else {
-        return (None, None, None);
+        return (None, None, None, None);
     };
-    if cedar.get("eligible").and_then(Value::as_bool) == Some(false) {
-        return (None, None, None);
-    }
     if cedar.get("eligible").and_then(Value::as_bool) != Some(true) {
-        return (None, None, None);
+        return (None, None, None, None);
     }
     let Ok(observed) = i64::try_from(observed_ms / 1000) else {
-        return (None, None, None);
+        return (None, None, None, None);
     };
     let Some(grants) = cedar.get("grants").and_then(Value::as_array) else {
-        return (Some(0), Some(observed.saturating_add(ZERO_VALIDITY_SECS)), None);
+        return (Some(0), Some(observed.saturating_add(ZERO_VALIDITY_SECS)), None, None);
     };
     if grants.len() > MAX_GRANTS {
-        return (None, None, None);
+        return (None, None, None, None);
     }
     let mut total = 0u64;
-    let mut active_ends = Vec::new();
+    let mut active_grants: Vec<ResetGrant> = Vec::new();
     for grant in grants {
         let Some(count) = grant.get("resets_left").and_then(Value::as_u64) else {
-            return (None, None, None);
+            return (None, None, None, None);
         };
         if count == 0
             && (grant.get("paused").is_none()
@@ -128,33 +167,66 @@ fn resets_with_grant_end(
             continue;
         }
         let Some(paused) = grant.get("paused").and_then(Value::as_bool) else {
-            return (None, None, None);
+            return (None, None, None, None);
         };
-        let Some(starts) = grant.get("starts_at").and_then(parse_timestamp) else {
-            return (None, None, None);
+        let Ok(starts) = parse_optional_timestamp(grant, "starts_at") else {
+            return (None, None, None, None);
         };
-        let Some(ends) = grant.get("ends_at").and_then(parse_timestamp) else {
-            return (None, None, None);
+        let Ok(ends) = parse_optional_timestamp(grant, "ends_at") else {
+            return (None, None, None, None);
         };
-        if starts >= ends {
-            return (None, None, None);
+        // Depleted grants never contribute counts or constrain later positive grants' expiry.
+        if count == 0 {
+            continue;
         }
-        if !paused && starts <= observed && observed < ends {
+        if let (Some(s), Some(e)) = (starts, ends) {
+            if s >= e {
+                return (None, None, None, None);
+            }
+        }
+        let Ok(count_u32) = u32::try_from(count) else {
+            return (None, None, None, None);
+        };
+        if !paused
+            && starts.is_none_or(|s| s <= observed)
+            && ends.is_none_or(|e| observed < e)
+        {
             total = match total.checked_add(count) {
                 Some(value) => value,
-                None => return (None, None, None),
+                None => return (None, None, None, None),
             };
-            active_ends.push(ends);
+            let bounded_end = ends.filter(|e| *e <= 253402300799);
+            if let Some(existing) = active_grants.iter_mut().find(|g| g.ends_at == bounded_end) {
+                existing.resets_left = match existing.resets_left.checked_add(count_u32) {
+                    Some(sum) => sum,
+                    None => return (None, None, None, None),
+                };
+            } else {
+                active_grants.push(ResetGrant {
+                    resets_left: count_u32,
+                    ends_at: bounded_end,
+                });
+            }
         }
     }
+    active_grants.sort_by_key(|g| (g.ends_at.is_none(), g.ends_at));
     let validity_bound = observed.saturating_add(24 * 60 * 60);
-    let grant_end = active_ends.into_iter().min();
-    let valid_until = grant_end.map_or(observed.saturating_add(ZERO_VALIDITY_SECS), |ends| {
-        ends.min(validity_bound)
-    });
-    // Only a positive count has a meaningful grant end; bound it to a sane calendar range.
-    let grant_end = grant_end.filter(|ends| total > 0 && *ends > observed && *ends <= 253402300799);
-    (Some(total), Some(valid_until), grant_end)
+    let earliest_finite = active_grants.iter().filter_map(|g| g.ends_at).min();
+    let latest_finite = active_grants.iter().filter_map(|g| g.ends_at).max();
+    let has_unbounded = active_grants.iter().any(|g| g.ends_at.is_none());
+    let valid_until = if total == 0 {
+        observed.saturating_add(ZERO_VALIDITY_SECS)
+    } else {
+        earliest_finite.map_or(validity_bound, |ends| ends.min(validity_bound))
+    };
+    // Only a positive balance with no unbounded grant has a definite finite overall end.
+    let grant_end = if total > 0 && !has_unbounded {
+        latest_finite.filter(|ends| *ends > observed && *ends <= 253402300799)
+    } else {
+        None
+    };
+    let grant_slices = (total > 0).then_some(active_grants);
+    (Some(total), Some(valid_until), grant_end, grant_slices)
 }
 
 pub(super) fn snapshot(incoming: Incoming, observed_ms: u64) -> Result<Snapshot, String> {
@@ -178,14 +250,13 @@ pub(super) fn snapshot(incoming: Incoming, observed_ms: u64) -> Result<Snapshot,
     if incoming.nonce.len() != 48 || !incoming.nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("quotaOnline.bridgeTicketInvalid".into());
     }
-    let billing_date = billing_date(incoming.subscription_details.as_ref());
-    let billing_date_kind = if billing_date.is_some() {
-        "next_renewal"
-    } else {
-        "unknown"
-    };
-    let (manual_resets_remaining, manual_resets_valid_until, manual_resets_grant_ends_at) =
-        resets_with_grant_end(incoming.usage.as_ref(), observed_ms);
+    let (billing_date, billing_date_kind) = billing_info(incoming.subscription_details.as_ref());
+    let (
+        manual_resets_remaining,
+        manual_resets_valid_until,
+        manual_resets_grant_ends_at,
+        manual_resets_grants,
+    ) = resets_with_grant_end(incoming.usage.as_ref(), observed_ms);
     let usage = quota_windows(incoming.usage.as_ref());
     Ok(Snapshot {
         account_uuid: account_uuid.to_string(),
@@ -195,6 +266,7 @@ pub(super) fn snapshot(incoming: Incoming, observed_ms: u64) -> Result<Snapshot,
         manual_resets_remaining,
         manual_resets_valid_until,
         manual_resets_grant_ends_at,
+        manual_resets_grants,
         metadata_observed_at_ms: observed_ms,
         usage,
     })
@@ -611,6 +683,73 @@ mod tests {
     }
 
     #[test]
+    fn depleted_grant_with_earlier_end_does_not_poison_active_grants() {
+        let obs_s = OBSERVED as i64 / 1000;
+        let soon_end = "2027-01-16T00:00:00Z";
+        let far_end = "2028-01-01T00:00:00Z";
+        let usage = json!({"cedar_ember":{"eligible":true,"grants":[
+            {"resets_left":0,"starts_at":"2026-01-01T00:00:00Z","ends_at":soon_end,"paused":false},
+            {"resets_left":0,"starts_at":"2026-06-01T00:00:00Z","ends_at":"2026-06-01T00:00:00Z","paused":false},
+            {"resets_left":4,"starts_at":"2026-01-01T00:00:00Z","ends_at":far_end,"paused":false}
+        ]}});
+        let result = snapshot(input(None, Some(usage)), OBSERVED).unwrap();
+        assert_eq!(result.manual_resets_remaining, Some(4));
+        assert_eq!(result.manual_resets_valid_until, Some(obs_s + 24 * 60 * 60));
+        assert_eq!(result.manual_resets_grant_ends_at, Some(1_830_297_600));
+        assert_eq!(
+            result.manual_resets_grants,
+            Some(vec![ResetGrant {
+                resets_left: 4,
+                ends_at: Some(1_830_297_600),
+            }])
+        );
+    }
+
+    #[test]
+    fn multiple_positive_grants_keep_slices_and_latest_finite_end() {
+        // OBSERVED = 1_800_000_000_000 -> 1_800_000_000s (2027-01-15T08:00:00Z)
+        let soon_ts = 1_800_010_800; // +3h
+        let far_ts = 1_830_297_600; // 2028-01-01T00:00:00Z
+        let soon_iso = chrono::DateTime::from_timestamp(soon_ts, 0).unwrap().to_rfc3339();
+        let far_iso = chrono::DateTime::from_timestamp(far_ts, 0).unwrap().to_rfc3339();
+        let usage = json!({"cedar_ember":{"eligible":true,"grants":[
+            {"resets_left":2,"starts_at":"2026-01-01T00:00:00Z","ends_at":far_iso,"paused":false},
+            {"resets_left":1,"starts_at":"2026-01-01T00:00:00Z","ends_at":soon_iso,"paused":false},
+            {"resets_left":1,"starts_at":"2026-01-01T00:00:00Z","ends_at":far_iso,"paused":false}
+        ]}});
+        let result = snapshot(input(None, Some(usage)), OBSERVED).unwrap();
+        assert_eq!(result.manual_resets_remaining, Some(4));
+        assert_eq!(result.manual_resets_valid_until, Some(soon_ts));
+        assert_eq!(result.manual_resets_grant_ends_at, Some(far_ts));
+        assert_eq!(
+            result.manual_resets_grants,
+            Some(vec![
+                ResetGrant { resets_left: 1, ends_at: Some(soon_ts) },
+                ResetGrant { resets_left: 3, ends_at: Some(far_ts) },
+            ])
+        );
+    }
+
+    #[test]
+    fn unbounded_positive_grant_with_null_starts_and_ends_is_retained() {
+        let obs_s = OBSERVED as i64 / 1000;
+        let usage = json!({"cedar_ember":{"eligible":true,"grants":[
+            {"resets_left":2,"starts_at":null,"ends_at":null,"paused":false}
+        ]}});
+        let result = snapshot(input(None, Some(usage)), OBSERVED).unwrap();
+        assert_eq!(result.manual_resets_remaining, Some(2));
+        assert_eq!(result.manual_resets_valid_until, Some(obs_s + 24 * 60 * 60));
+        assert_eq!(result.manual_resets_grant_ends_at, None);
+        assert_eq!(
+            result.manual_resets_grants,
+            Some(vec![ResetGrant {
+                resets_left: 2,
+                ends_at: None,
+            }])
+        );
+    }
+
+    #[test]
     fn ticket_requires_matching_session_and_nonce_and_supports_concurrent_accounts() {
         let (reply_a, _rx_a) = mpsc::channel();
         let (reply_b, _rx_b) = mpsc::channel();
@@ -715,5 +854,31 @@ mod tests {
             failure.failure = Some(reason.into());
             assert_eq!(snapshot(failure, OBSERVED).err().as_deref(), Some(expected));
         }
+    }
+
+    #[test]
+    fn cancelled_subscription_parses_period_end_as_access_until() {
+        let active = input(
+            Some(serde_json::json!({
+                "next_charge_date": "2026-11-29T12:00:00Z",
+                "cancel_at_period_end": false
+            })),
+            None,
+        );
+        let snap_active = snapshot(active, OBSERVED).unwrap();
+        assert_eq!(snap_active.billing_date_kind, "next_renewal");
+        assert!(snap_active.billing_date.is_some());
+
+        let cancelled = input(
+            Some(serde_json::json!({
+                "next_charge_date": null,
+                "cancel_at_period_end": true,
+                "current_period_end": "2026-11-29T12:00:00Z"
+            })),
+            None,
+        );
+        let snap_cancelled = snapshot(cancelled, OBSERVED).unwrap();
+        assert_eq!(snap_cancelled.billing_date_kind, "access_until");
+        assert_eq!(snap_cancelled.billing_date, snap_active.billing_date);
     }
 }

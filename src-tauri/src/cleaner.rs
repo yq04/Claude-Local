@@ -1,12 +1,12 @@
 // [INPUT]: Claude 白名单、所选文件夹发现、配置变换、原子写入、官方原生 CLI 版本路径及 macOS/Linux/Windows 白名单路径边界。
-// [OUTPUT]: 全机/文件夹元数据扫描、文件残留专用快照与选择清理、实时 Claude 进程检查/停止与退出后工作区文件句柄释放等待；CLI、身份和残留操作共用互斥门，身份写入显式提升代次，额度短提交门保持只读代次。
+// [OUTPUT]: 全机/文件夹元数据扫描、文件残留专用快照与选择清理、实时 Claude 进程角色分类（InteractiveCli/BackgroundDaemon/BackgroundPtyHost/BackgroundWorker/Desktop）与子 Shell 检测、后台守护进程优雅挂起（`daemon stop --any` 保活脱离 Shell 并落盘 `adopt.json`）、进程停止与退出后工作区文件句柄释放等待；CLI、身份和残留操作共用互斥门，身份写入显式提升代次，额度短提交门保持只读代次。
 // [POS]: 白名单与进程共用边界；身份由 identities 编排，残留入口仅允许文件操作且不访问钥匙串。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use crate::native;
 use crate::progress::{Progress, Reporter};
 #[cfg(windows)]
 use dunce::canonicalize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 #[cfg(not(windows))]
 use std::fs::canonicalize;
 #[cfg(unix)]
@@ -173,6 +173,9 @@ impl Cleaner {
     }
     pub(crate) fn leave(&self) {
         self.active.store(false, Ordering::SeqCst);
+    }
+    pub(crate) fn is_busy(&self) -> bool {
+        self.active.load(Ordering::SeqCst)
     }
 }
 fn home() -> Result<PathBuf, String> {
@@ -431,6 +434,24 @@ fn diagnostics(scan: &mut Scan) {
         status: "ok",
     });
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaudeProcessRole {
+    #[default]
+    InteractiveCli,
+    BackgroundDaemon,
+    BackgroundPtyHost,
+    BackgroundWorker,
+    Desktop,
+}
+impl ClaudeProcessRole {
+    pub fn is_background(self) -> bool {
+        matches!(
+            self,
+            Self::BackgroundDaemon | Self::BackgroundPtyHost | Self::BackgroundWorker
+        )
+    }
+}
 #[derive(Clone, Serialize)]
 pub struct ClaudeProcess {
     pub pid: i32,
@@ -441,6 +462,38 @@ pub struct ClaudeProcess {
     #[cfg(windows)]
     #[serde(skip)]
     pub created: u64,
+    #[cfg(windows)]
+    #[serde(skip)]
+    pub role: ClaudeProcessRole,
+    #[cfg(windows)]
+    #[serde(skip)]
+    pub child_shells: Vec<String>,
+}
+impl ClaudeProcess {
+    pub fn role(&self) -> ClaudeProcessRole {
+        #[cfg(windows)]
+        {
+            self.role
+        }
+        #[cfg(not(windows))]
+        {
+            if self.name == "Claude Desktop" {
+                ClaudeProcessRole::Desktop
+            } else {
+                ClaudeProcessRole::InteractiveCli
+            }
+        }
+    }
+    pub fn child_shells(&self) -> &[String] {
+        #[cfg(windows)]
+        {
+            &self.child_shells
+        }
+        #[cfg(not(windows))]
+        {
+            &[]
+        }
+    }
 }
 #[cfg(not(target_os = "windows"))]
 fn process_row(line: &str, desktop: &[i32], uid: u32) -> Option<ClaudeProcess> {
@@ -676,11 +729,224 @@ pub async fn cleaner_scan(
     state.active.store(false, Ordering::SeqCst);
     result
 }
+#[cfg(not(test))]
+fn verified_daemon_stop_executable(bg_procs: &[ClaudeProcess]) -> Option<PathBuf> {
+    let preferred = bg_procs
+        .iter()
+        .find(|p| p.role() == ClaudeProcessRole::BackgroundDaemon)
+        .into_iter()
+        .chain(bg_procs.iter());
+    for proc in preferred {
+        if proc.executable.trim().is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(&proc.executable);
+        if let Ok(meta) = fs::symlink_metadata(&path) {
+            if !linked(&meta) && meta.is_file() {
+                #[cfg(windows)]
+                if !crate::windows::owned(&path) {
+                    continue;
+                }
+                return Some(path);
+            }
+        }
+    }
+    if let Ok(root) = home() {
+        #[cfg(windows)]
+        let fallback = root.join(".local/bin/claude.exe");
+        #[cfg(not(windows))]
+        let fallback = root.join(".local/bin/claude");
+        if let Ok(meta) = fs::symlink_metadata(&fallback) {
+            if !linked(&meta) && meta.is_file() {
+                #[cfg(windows)]
+                if !crate::windows::owned(&fallback) {
+                    return None;
+                }
+                return Some(fallback);
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn park_background_daemon_in(app_data_dir: Option<&Path>) -> Result<bool, String> {
+    let non_slot = identity::filter_non_slot_processes(app_data_dir, processes()?);
+    let bg_procs: Vec<ClaudeProcess> = non_slot
+        .into_iter()
+        .filter(|p| p.role().is_background())
+        .collect();
+    if bg_procs.is_empty() {
+        return Ok(false);
+    }
+    #[cfg(test)]
+    {
+        let _ = bg_procs;
+        Ok(false)
+    }
+    #[cfg(not(test))]
+    {
+        const SCRUB_ENV_KEYS: &[&str] = &[
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+            "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+            "CLAUDE_CODE_USE_GATEWAY",
+            "CLAUDE_CODE_SIMPLE",
+            "CLAUDECODE",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CONFIG_DIR",
+        ];
+        const PROXY_ENV_KEYS: &[&str] = &[
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "GRPC_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "grpc_proxy",
+        ];
+        let Some(exe) = verified_daemon_stop_executable(&bg_procs) else {
+            return Ok(false);
+        };
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.args(["daemon", "stop", "--any"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000);
+        }
+        for key in SCRUB_ENV_KEYS {
+            cmd.env_remove(key);
+        }
+        for key in PROXY_ENV_KEYS {
+            cmd.env_remove(key);
+        }
+        if let Ok(root) = home() {
+            if let Some(proxy) = crate::identities::read_claude_dir_http_proxy(&root.join(".claude"))
+            {
+                for key in PROXY_ENV_KEYS {
+                    cmd.env(key, &proxy);
+                }
+            }
+        }
+        cmd.env("NO_PROXY", "localhost,127.0.0.1,::1")
+            .env("no_proxy", "localhost,127.0.0.1,::1")
+            .env("DISABLE_TELEMETRY", "1")
+            .env("DISABLE_ERROR_REPORTING", "1")
+            .env("DO_NOT_TRACK", "1");
+
+        let Ok(mut child) = cmd.spawn() else {
+            return Ok(false);
+        };
+        let stop_deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(4500);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if std::time::Instant::now() < stop_deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+            }
+        }
+        let drain_deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(2500);
+        loop {
+            let still_bg = identity::filter_non_slot_processes(
+                app_data_dir,
+                processes().unwrap_or_default(),
+            )
+            .iter()
+            .any(|p| p.role().is_background());
+            if !still_bg || std::time::Instant::now() >= drain_deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        if let Ok(root) = home() {
+            wait_claude_workspace_handles_released(&root, 300);
+        }
+        Ok(true)
+    }
+}
+
+pub(crate) fn park_if_only_background_in(app_data_dir: Option<&Path>) -> Result<bool, String> {
+    let non_slot = identity::filter_non_slot_processes(app_data_dir, processes()?);
+    if non_slot.is_empty() || non_slot.iter().any(|p| !p.role().is_background()) {
+        return Ok(false);
+    }
+    let parked = park_background_daemon_in(app_data_dir)?;
+    #[cfg(not(test))]
+    {
+        let remaining = identity::filter_non_slot_processes(app_data_dir, processes()?);
+        if !remaining.is_empty() && remaining.iter().all(|p| p.role().is_background()) {
+            for target in &remaining {
+                let _ = signal_same_process(target, 15);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            for target in identity::filter_non_slot_processes(app_data_dir, processes()?)
+                .into_iter()
+                .filter(|p| p.role().is_background())
+            {
+                let _ = signal_same_process(&target, 9);
+            }
+        }
+        if let Ok(root) = home() {
+            identity::clear_stale_locks(&root);
+            wait_claude_workspace_handles_released(&root, 300);
+        }
+    }
+    Ok(parked)
+}
+
 pub(crate) fn stop_processes() -> Result<usize, String> {
+    stop_processes_in(None)
+}
+pub(crate) fn stop_processes_in(app_data_dir: Option<&Path>) -> Result<usize, String> {
+    let filter_main = |all: Vec<ClaudeProcess>| -> Vec<ClaudeProcess> {
+        let Some(app_dir) = app_data_dir else {
+            return all;
+        };
+        let slot_pids: std::collections::HashSet<i32> =
+            crate::identities::orchestrator::slot_pids_by_record(app_dir, &all)
+                .into_values()
+                .flatten()
+                .collect();
+        if slot_pids.is_empty() {
+            all
+        } else {
+            all.into_iter()
+                .filter(|p| !slot_pids.contains(&p.pid))
+                .collect()
+        }
+    };
     let mut targets = std::collections::HashSet::new();
+    let initial_bg: Vec<i32> = filter_main(processes()?)
+        .into_iter()
+        .filter(|p| p.role().is_background())
+        .map(|p| p.pid)
+        .collect();
+    if !initial_bg.is_empty() {
+        targets.extend(initial_bg);
+        let _ = park_background_daemon_in(app_data_dir);
+    }
     // 主进程退出期间辅助进程可能重生；每轮重新识别，最多三轮，不扩大到其他 Node/MCP/终端。
     for _ in 0..3 {
-        let current = processes()?;
+        let current = filter_main(processes()?);
         if current.is_empty() {
             break;
         }
@@ -689,13 +955,13 @@ pub(crate) fn stop_processes() -> Result<usize, String> {
             signal_same_process(target, 15)?;
         }
         std::thread::sleep(std::time::Duration::from_millis(800));
-        for target in processes()? {
+        for target in filter_main(processes()?) {
             targets.insert(target.pid);
             signal_same_process(&target, 9)?;
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    if running()? {
+    if !filter_main(processes()?).is_empty() {
         return Err("仍有 Claude 进程在运行。".into());
     }
     if let Ok(root) = home() {

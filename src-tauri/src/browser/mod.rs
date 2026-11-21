@@ -267,11 +267,21 @@ fn risk_browser_context(
     };
     let (target_country, target_timezone, target_language) = match (cfg, &machine) {
         (Some(c), Some(m)) => (
-            c.region(m).map(|r| r.country.to_string()),
+            c.region(m).map(|r| r.country.to_string()).or_else(|| {
+                (!c.follow_machine)
+                    .then(|| crate::regions::timezone_country(&c.timezone).map(str::to_string))
+                    .flatten()
+            }),
             c.timezone(m),
             c.language(m),
         ),
-        (Some(c), None) => (None, c.timezone.clone(), c.language.clone()),
+        (Some(c), None) => (
+            (!c.follow_machine)
+                .then(|| crate::regions::timezone_country(&c.timezone).map(str::to_string))
+                .flatten(),
+            c.timezone.clone(),
+            c.language.clone(),
+        ),
         (None, Some(m)) => (
             crate::regions::matching_country(&m.locale_country, &m.timezone)
                 .map(|r| r.country.to_string()),

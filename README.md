@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.3.6 Quick-Setup-aligned overhaul & polish across Browser, Computer, Network, and Risk & KYC, built on 0.3.5 UI De-AI unification across all 9 pages, 0.3.3 kernel-handle CLI liveness & zero-residue rollback, 0.3.2 five-core-area polish, 0.3.1 Usage Analytics 2.1, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.3.7 Strategy A1 reset-card accounting & reset_harvest, modular --orchestrate CLI relay/subagent hardening & clean_handoff, Supported Countries Policy anti-ban & Scenario G guard, background silent resource optimization, and 5 UI refinements, built on 0.3.6 Quick-Setup-aligned workbench overhaul, 0.3.5 UI De-AI unification across all 9 pages, 0.3.3 kernel-handle CLI liveness & zero-residue rollback, 0.3.2 five-core-area polish, 0.3.1 Usage Analytics 2.1, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
 [OUTPUT]: Bilingual-linked flagship project presentation foregrounding anti-ban engineering, isolated Fingerprint Chromium, KYC/WebRTC/DNS/IPv6 protection, zero-kill encrypted vault switching, full-lifecycle warming cards, and 2x Usage Analytics.
 [POS]: Primary repository introduction (Simplified Chinese default, linked to README_EN.md).
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -15,7 +15,7 @@
 
 基于开源项目 [CCBaga](https://github.com/liseami/CCBaga)（[@liseami](https://github.com/liseami)）二次开发并独立维护，保留原贡献者版权与 [MIT 许可](LICENSE) · 纯本地单机优先（Local-First） · 零云端凭据托管 · 绝不强杀运行中的 `claude.exe`
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.3.6-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.6)
+[![Latest Release](https://img.shields.io/badge/Release-v0.3.7-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.3.7)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.6/Claude-Local_0.3.6_x64-setup.exe"><strong>⬇️ 下载 v0.3.6 安装包 (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.3.7/Claude-Local_0.3.7_x64-setup.exe"><strong>⬇️ 下载 v0.3.7 安装包 (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.6"><strong>✨ v0.3.6 Release 页面</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.3.7"><strong>✨ v0.3.7 Release 页面</strong></a>
   ·
   <a href="#-为什么选择-claude-local直击多账号风控四大痛点"><strong>🔥 四大防封壁垒</strong></a>
   ·
@@ -186,29 +186,30 @@ Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **W
 
 ## 📦 获取、安装与版本记录
 
-### 1. 下载最新安装包（`v0.3.6`）
+### 1. 下载最新安装包（`v0.3.7`）
 
 | 发行资产 | 适用系统 | 文件大小 | SHA-256 校验和 |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.3.6_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.6/Claude-Local_0.3.6_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | 见 Release 资产 | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.6/SHA256SUMS.txt) |
+| **[Claude-Local_0.3.7_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.3.7/Claude-Local_0.3.7_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | 见 Release 资产 | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.3.7/SHA256SUMS.txt) |
 
-下载后在 PowerShell 中计算 SHA-256，并与 [v0.3.6 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.6) 公布的校验值比对：
+下载后在 PowerShell 中计算 SHA-256，并与 [v0.3.7 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.3.7) 公布的校验值比对：
 
 ```powershell
-Get-FileHash .\Claude-Local_0.3.6_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Claude-Local_0.3.7_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. 安装与无损升级说明
 
 1. **安装位置与标识**：采用当前用户模式 NSIS 安装程序，默认安装至 `%LOCALAPPDATA%\Programs\Claude-Local`；主程序为 `claude-local.exe`，应用包标识为 `ai.local.claude-local`，伴侣浏览器注册名为 `Claude-Local-Browser`。
 2. **用户数据目录**：所有加密身份库、主密钥、额度/用量账本、外观壁纸配置与隔离浏览器个人资料均独立保存在 `%APPDATA%\ai.local.claude-local`。
-3. **平滑升级**：从 `0.1.x`、`0.2.x`、`0.3.0`、`0.3.1`、`0.3.2`、`0.3.3` 或 `0.3.5` 升级至 `0.3.6` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
+3. **平滑升级**：从 `0.1.x`、`0.2.x`、`0.3.0`、`0.3.1`、`0.3.2`、`0.3.3`、`0.3.5` 或 `0.3.6` 升级至 `0.3.7` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
 
 ### 3. 发行版本演进记录
 
 | 版本 | 发布日期 | 核心演进内容 | 详细文档 |
 | :--- | :--- | :--- | :--- |
-| **`v0.3.6`** *(Latest)* | 2026-11-15 | **对标「快速配置」重构「浏览环境 / 电脑环境 / 网络环境 / 风控验证」并完成二次打磨**：共享 `env-pages.css` 四栏去重遥测条、`.settings-group-heading`、边到边发丝分隔矩阵与 `@container` 断点；清除顶卡留白与嵌套套娃边框、电脑定位已关去重、风控 4 模块重构与 3+2 边界徽章拆分，并对齐 33 组工作台双语文案 | [发布说明](docs/RELEASE_NOTES_0.3.6.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.6.md) |
+| **`v0.3.7`** *(Latest)* | 2026-11-20 | **Strategy A1 重置卡与 `reset_harvest`、模块化 `--orchestrate` CLI 接力与子代理槽位池、防封与后台静默资源优化及五项工作台 UI 精修**：逐份重置切片与不凭本地时钟清零、[`orchestrator/`](src-tauri/src/identities/orchestrator/mod.rs) 6 模块重构 + `claude-relay`/`claude-subagent`（`Opus 5.5 + max`、`daemon stop --any`、`clean_handoff` 脱敏交接、`api-request-blob`/raw 模式防误切）、机器常驻代理/每身份设备 ID/浏览器出口国家门禁/Scenario G 守卫、Tokio/WebView2 托盘深睡资源减负，以及移除侧栏搜索栏/CLI 冗余提示框/接力横幅、重设计 5 列零溢出用量账号表与紧致账号筛选器 | [发布说明](docs/RELEASE_NOTES_0.3.7.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.7.md) |
+| **`v0.3.6`** | 2026-11-15 | **对标「快速配置」重构「浏览环境 / 电脑环境 / 网络环境 / 风控验证」并完成二次打磨**：共享 `env-pages.css` 四栏去重遥测条、`.settings-group-heading`、边到边发丝分隔矩阵与 `@container` 断点；清除顶卡留白与嵌套套娃边框、电脑定位已关去重、风控 4 模块重构与 3+2 边界徽章拆分，并对齐 33 组工作台双语文案 | [发布说明](docs/RELEASE_NOTES_0.3.6.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.6.md) |
 | **`v0.3.5`** | 2026-11-15 | **桌面端全 9 页去 AI 样板化与高密度紧凑重构（统一 44px 页头、12px 圆角、28×28 图标与紧凑 `.settings-row`，保留 `166×286` 工牌与浏览器校验几何）**、**快速配置 4 栏状态条 + 8 入口网格、环境三页共享样式（双列核验 / 三行设置卡 / 三联代理）、风控 3 列 `.risk-grid-3` 与双列帮助网格**、**设置「恢复默认」归位外观/关于页、单行 `.backup-location`、中性 CLI `>_` 徽章与残留 CLI 代理明细校验，以及 286 键双语微文案精简** | [发布说明](docs/RELEASE_NOTES_0.3.5.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.5.md) |
 | **`v0.3.3`** | 2026-11-14 | **内核句柄级 CLI 进程存活核验与分级状态徽章（过滤终止滞留僵尸句柄、`identities_live_sessions` 实时同步）**、**瞬态文件锁退避自愈、切号单故障零残留回滚与一键干净恢复**、**CLI 代理/遥测安全边界统一判定与防断流提示增强**、**用量分析 `单会话均耗` / `单次均耗` KPI 升级与 KPI/模型分布/2× 长图海报对齐精修** | [发布说明](docs/RELEASE_NOTES_0.3.3.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.3.md) |
 | **`v0.3.2`** | 2026-11-12 | **五大核心域全量打磨与加固（身份卡片、账号隔离、风险规避、额度查询、用量分析）**、**额度/用量加载提速（损坏日志游标缓存、零读取快路径、无变更零写入、按内容判断身份变化）**、**额度详情弹窗重设计与主动重置次数真实到期**、**多账号并发网页同步与隔离浏览器并排打开官方用量页** | [发布说明](docs/RELEASE_NOTES_0.3.2.md) · [交付核验](docs/RELEASE_VERIFICATION_0.3.2.md) |

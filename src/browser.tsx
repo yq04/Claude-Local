@@ -33,7 +33,12 @@ export function BrowserPanel({ onBusy }: {
     const browserRuntime = useBrowserRuntime(state?.active_browser_slot, !!state && !busy);
     const activity = useCleanupActivity();
     const [clock, setClock] = useState(Date.now);
-    useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30000); return () => window.clearInterval(timer); }, []);
+    useEffect(() => {
+        const tick = () => { if (!document.hidden) setClock(Date.now()); };
+        const timer = window.setInterval(tick, 30000);
+        document.addEventListener('visibilitychange', tick);
+        return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+    }, []);
     useEffect(() => { onBusy?.(!!busy); return () => onBusy?.(false); }, [busy, onBusy]);
     async function refreshKillSwitch() {
         const ks = await invoke<KillSwitchState>('browser_kill_switch_state').catch(() => null);
@@ -374,7 +379,7 @@ export function BrowserPanel({ onBusy }: {
                         </div>
                         <div>
                             <label htmlFor="browser-proxy">{t("浏览器代理")}</label>
-                            <Input id="browser-proxy" placeholder="http://127.0.0.1:7897" value={draft?.proxy || ''} disabled={disabled || state?.running} onChange={e => edit('proxy', e.currentTarget.value)} />
+                            <Input id="browser-proxy" placeholder="socks5://127.0.0.1:7899" value={draft?.proxy || ''} disabled={disabled || state?.running} onChange={e => edit('proxy', e.currentTarget.value)} />
                             <p className="system-hint">{t("留空使用 TUN；指定代理须含端口。")}</p>
                         </div>
                     </div>

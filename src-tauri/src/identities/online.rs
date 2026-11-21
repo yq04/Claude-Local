@@ -1,5 +1,5 @@
 // [INPUT]: Explicit account selectors and frozen fingerprints, packaged Python collector, account-bound browser summaries and fixed local quota/config/credentials file metadata.
-// [OUTPUT]: Bounded quota batches, structured scheduler admission, strict wakeup confirmation/effect contract, sanitized plan_tier metadata and native private audit; Python owns every ledger write.
+// [OUTPUT]: Bounded quota batches, structured scheduler admission, strict wakeup confirmation/effect contract, sanitized plan_tier metadata (with per-grant manual reset slices) and native private audit; Python owns every ledger write.
 // [POS]: Shared orchestration allows 10s cold runtime probes within one 30s preparation budget outside the identity door; frozen identity/epoch is rechecked at commit.
 // [PROTOCOL]: Batch progress is quota-batch-progress; update identities/CLAUDE.md and the package resource allowlist.
 use serde::{Deserialize, Serialize};
@@ -300,6 +300,14 @@ impl OnlineQuotaResult {
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
+pub struct ManualResetGrant {
+    pub resets_left: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ends_at: Option<u64>,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
 pub struct WebMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub billing_date_kind: Option<String>,
@@ -309,10 +317,13 @@ pub struct WebMetadata {
     pub manual_resets_remaining: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manual_resets_valid_until: Option<u64>,
-    /// Uncapped earliest active grant end from the same web observation (optional; older
-    /// metadata lacks it). Lets the UI separate "needs re-verification" from "ended".
+    /// Uncapped latest finite active grant end from the same web observation (optional; older
+    /// metadata lacks it). Absent when a positive grant has no expiry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manual_resets_grant_ends_at: Option<u64>,
+    /// Per-grant breakdown of active positive grants from the same web observation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manual_resets_grants: Option<Vec<ManualResetGrant>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_observed_at_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -325,6 +336,10 @@ pub struct WebMetadata {
     pub subscription_recharge_ymd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_date_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subscription_renews_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manual_plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_tier: Option<String>,
 }
@@ -628,8 +643,15 @@ fn parse_result(bytes: &[u8]) -> Option<OnlineQuotaResult> {
     if result.reason.as_deref().is_some_and(|v| {
         !matches!(
             v,
-            "unsupported_proxy" | "route_changed" | "auth_required" | "rate_limited"
-                | "non_us_exit" | "country_not_allowed" | "exit_check_failed" | "audit_write_failed"
+            "unsupported_proxy"
+                | "route_changed"
+                | "route_required"
+                | "auth_required"
+                | "rate_limited"
+                | "non_us_exit"
+                | "country_not_allowed"
+                | "exit_check_failed"
+                | "audit_write_failed"
         )
     }) || result
         .stage
@@ -1522,32 +1544,72 @@ pub async fn identities_refresh_all_quotas(
         for (index, target) in targets.iter().enumerate() {
             if !valid[index] { record_outcome(&app, &task, target, account_mismatch()); }
         }
-        let queue = Mutex::new(groups.into_iter().rev().collect::<Vec<_>>());
-        std::thread::scope(|scope| {
-            for _ in 0..2 {
-                let queue = &queue; let targets = &targets; let app = &app; let task = &task;
-                scope.spawn(move || loop {
-                    let group = { let mut queue = queue.lock().unwrap();
-                        if task.stopped().is_some() { None } else { queue.pop() } };
-                    let Some(group) = group else { break; };
-                    let target = &group.target;
-                    let mut result = collect_controlled(app, json!({"account_id":target.account_id,"expected_identity":target.expected_identity}), Some(task), epoch)
-                        .unwrap_or_else(|_| OnlineQuotaResult::unavailable());
-                    if allow_browser_fallback.unwrap_or(false) && browser_fallback_allowed(&result) && task.stopped().is_none() {
-                        result = with_browser_fallback(result,
-                            || crate::browser::quota_bridge::query_existing_profile(
-                                app, &target.account_id, &target.expected_identity, task.deadline,
-                                &|| task.stopped().is_some()),
-                            |snapshot| {
-                                if task.stopped().is_some() { return Err("quotaOnline.cancelled".into()); }
-                                collect_controlled(app, json!({"account_id":target.account_id,"expected_identity":target.expected_identity,"browser_snapshot":snapshot}), Some(task), epoch)
-                            });
-                    }
-                    if let Some(stopped) = task.stopped() { result = terminal_result(stopped); }
-                    for index in group.aliases { record_outcome(app, task, &targets[index], result.clone()); }
-                });
+        let skip_stagger = cfg!(test)
+            || std::env::var("CLAUDE_LOCAL_SKIP_PROXY_PREFLIGHT")
+                .ok()
+                .as_deref()
+                == Some("1");
+        for (group_idx, group) in groups.into_iter().enumerate() {
+            if task.stopped().is_some() {
+                break;
             }
-        });
+            if group_idx > 0 && !skip_stagger {
+                let jitter = super::codec::random::<2>()
+                    .map(u16::from_le_bytes)
+                    .unwrap_or(0) as u64;
+                let mut rem_ms = 1500 + (jitter % 1501);
+                while rem_ms > 0 && task.stopped().is_none() {
+                    let step = rem_ms.min(100);
+                    std::thread::sleep(Duration::from_millis(step));
+                    rem_ms -= step;
+                }
+                if task.stopped().is_some() {
+                    break;
+                }
+            }
+            let target = &group.target;
+            let mut result = collect_controlled(
+                &app,
+                json!({"account_id":target.account_id,"expected_identity":target.expected_identity}),
+                Some(&task),
+                epoch,
+            )
+            .unwrap_or_else(|_| OnlineQuotaResult::unavailable());
+            if allow_browser_fallback.unwrap_or(false)
+                && browser_fallback_allowed(&result)
+                && task.stopped().is_none()
+            {
+                result = with_browser_fallback(
+                    result,
+                    || {
+                        crate::browser::quota_bridge::query_existing_profile(
+                            &app,
+                            &target.account_id,
+                            &target.expected_identity,
+                            task.deadline,
+                            &|| task.stopped().is_some(),
+                        )
+                    },
+                    |snapshot| {
+                        if task.stopped().is_some() {
+                            return Err("quotaOnline.cancelled".into());
+                        }
+                        collect_controlled(
+                            &app,
+                            json!({"account_id":target.account_id,"expected_identity":target.expected_identity,"browser_snapshot":snapshot}),
+                            Some(&task),
+                            epoch,
+                        )
+                    },
+                );
+            }
+            if let Some(stopped) = task.stopped() {
+                result = terminal_result(stopped);
+            }
+            for index in group.aliases {
+                record_outcome(&app, &task, &targets[index], result.clone());
+            }
+        }
         let result = finalize_task(&task);
         let _ = app.emit("quota-batch-state", &result);
         Ok(result)
@@ -1661,15 +1723,26 @@ fn metadata_entry(root: &Value, identity: &str, now_ms: u64) -> Option<WebMetada
         data.manual_resets_valid_until = None;
         data.manual_resets_observed_at_ms = None;
         data.manual_resets_grant_ends_at = None;
-    } else if data.manual_resets_remaining.is_some() {
+        data.manual_resets_grants = None;
+    } else if let Some(remaining) = data.manual_resets_remaining {
         data.manual_resets_observed_at_ms = reset_time;
         let observed_sec = reset_time.unwrap_or(0) / 1000;
         let floor = data.manual_resets_valid_until.unwrap_or(0);
         data.manual_resets_grant_ends_at = data.manual_resets_grant_ends_at.filter(|ends| {
-            data.manual_resets_remaining.is_some_and(|n| n > 0)
-                && *ends > observed_sec
-                && *ends >= floor
-                && *ends <= 253402300799
+            remaining > 0 && *ends > observed_sec && *ends >= floor && *ends <= 253402300799
+        });
+        data.manual_resets_grants = data.manual_resets_grants.filter(|grants| {
+            remaining > 0
+                && (1..=100).contains(&grants.len())
+                && grants.iter().all(|g| {
+                    g.resets_left > 0
+                        && g.ends_at
+                            .is_none_or(|ends| ends > observed_sec && ends <= 253402300799)
+                })
+                && grants
+                    .iter()
+                    .try_fold(0u32, |sum, g| sum.checked_add(g.resets_left))
+                    == Some(remaining)
         });
     }
     data.metadata_observed_at_ms = data
@@ -1678,6 +1751,10 @@ fn metadata_entry(root: &Value, identity: &str, now_ms: u64) -> Option<WebMetada
     data.subscription_expiry_ymd = None;
     data.subscription_recharge_ymd = None;
     data.subscription_date_source = data.billing_date.map(|_| "browser".into());
+    data.subscription_renews_at = (data.billing_date_kind.as_deref() == Some("next_renewal"))
+        .then_some(data.billing_date)
+        .flatten();
+    data.manual_plan = None;
     data.plan_tier = data
         .plan_tier
         .filter(|tier| matches!(tier.as_str(), "Ultra" | "Team" | "Enterprise"));
@@ -2169,6 +2246,55 @@ print(json.dumps({'type':'result','result':{'status':'updated','source':'oauth'}
             assert_eq!(make(2, invalid).manual_resets_grant_ends_at, None);
         }
         assert_eq!(make(0, Some(9_000_000)).manual_resets_grant_ends_at, None);
+    }
+
+    #[test]
+    fn reset_grant_slices_are_kept_only_when_consistent_and_positive() {
+        let key = "a".repeat(64);
+        let make = |remaining: u32, grants: Option<Value>| {
+            let mut root = json!({"version":1,"accounts":{}});
+            root["accounts"][&key] = json!({
+                "manual_resets_remaining": remaining,
+                "manual_resets_observed_at_ms": 1_000_000,
+                "manual_resets_valid_until": 87_400,
+                "manual_resets_grants": grants
+            });
+            metadata_entry(&root, &key, 2_000_000).unwrap()
+        };
+        let multi = make(
+            3,
+            Some(json!([
+                {"resets_left": 1, "ends_at": 100_000},
+                {"resets_left": 2}
+            ])),
+        );
+        assert_eq!(
+            multi.manual_resets_grants,
+            Some(vec![
+                ManualResetGrant {
+                    resets_left: 1,
+                    ends_at: Some(100_000),
+                },
+                ManualResetGrant {
+                    resets_left: 2,
+                    ends_at: None,
+                },
+            ])
+        );
+
+        // Mismatched sum drops the slices while keeping manual_resets_remaining intact.
+        let mismatched = make(3, Some(json!([{"resets_left": 1, "ends_at": 100_000}])));
+        assert_eq!(mismatched.manual_resets_remaining, Some(3));
+        assert_eq!(mismatched.manual_resets_grants, None);
+
+        // Pre-observation end or zero balance drops the slices without dropping positive balance.
+        let pre_obs = make(2, Some(json!([{"resets_left": 2, "ends_at": 500}])));
+        assert_eq!(pre_obs.manual_resets_remaining, Some(2));
+        assert_eq!(pre_obs.manual_resets_grants, None);
+        assert_eq!(
+            make(0, Some(json!([{"resets_left": 1, "ends_at": 100_000}]))).manual_resets_grants,
+            None
+        );
     }
 
     fn target(account_id: &str, fingerprint: &str) -> QuotaTarget {

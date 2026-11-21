@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Claude-Local 品牌与座舱页面、共享页面图标和 YAML 文案、Cromma UI、任务锁与本地刷新/身份确认/任务交接事件。
- * [OUTPUT]: 可折叠侧栏、命令面板快捷键、受控任务交接模板弹窗、手动刷新、九个页面（含风控验证）、窗口隐藏态动画暂停同步（data-window-hidden）及常驻原生唤醒迁移/快照桥（不调度请求）。
+ * [OUTPUT]: 可折叠侧栏、Ctrl+K 命令面板、受控任务交接模板弹窗、跨页定位身份卡片与打开智能接力桥、手动刷新、九个页面（含风控验证）、窗口隐藏态动画暂停同步（data-window-hidden）及常驻原生唤醒迁移/快照桥（不调度请求）。
  * [POS]: 独立产品编排层；命令快捷键尊重输入、模态与任务锁，只读身份列表仅在面板打开时读取。根 MotionRoot 读取减少动画偏好。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -71,9 +71,16 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [handoffOpen, setHandoffOpen] = useState(false);
   const [identityReviewRequest, setIdentityReviewRequest] = useState<IdentityReviewRequest | null>(null);
+  const [focusAccountRequest, setFocusAccountRequest] = useState<{accountId: string; requestId: number} | null>(null);
+  const [openRelayRequest, setOpenRelayRequest] = useState(0);
   const [requestNonce, setRequestNonce] = useState(0);
   const paletteOpener = useRef<HTMLElement | null>(null);
-  const restorePaletteFocus = () => window.setTimeout(() => paletteOpener.current?.focus(), 0);
+  const suppressPaletteRestoreRef = useRef(false);
+  const restorePaletteFocus = () => window.setTimeout(() => {
+    if (paletteOpener.current?.isConnected) {
+      paletteOpener.current.focus();
+    }
+  }, 0);
   const locked = advancedBusy;
   useEffect(() => {
     rememberPage(page);
@@ -143,6 +150,13 @@ function App() {
     setPage('cleaner');
   }
 
+  function focusIdentityAccount(accountId: string) {
+    const requestId = requestNonce + 1;
+    setRequestNonce(requestId);
+    setFocusAccountRequest({accountId, requestId});
+    setPage('cleaner');
+  }
+
   const isCompact = prefs.sidebarLayout === 'compact';
 
   return (
@@ -208,9 +222,22 @@ function App() {
         <Panel frame className="workspace">
           <motion.div key={page} className="cleaner-slot" initial={{opacity: 0, y: navDir * 7}} animate={{opacity: 1, y: 0}} transition={MOTION.base}>
             {page === 'quick' && <QuickSetupPanel onNavigate={setPage} />}
-            {page === 'cleaner' && <IdentityPanel onBusy={setAdvancedBusy} identityReviewRequest={identityReviewRequest} onIdentityReviewConsumed={requestId => setIdentityReviewRequest(current => current?.requestId === requestId ? null : current)} />}
+            {page === 'cleaner' && (
+              <IdentityPanel
+                onBusy={setAdvancedBusy}
+                identityReviewRequest={identityReviewRequest}
+                onIdentityReviewConsumed={requestId =>
+                  setIdentityReviewRequest(current => (current?.requestId === requestId ? null : current))
+                }
+                focusAccountRequest={focusAccountRequest}
+                onFocusAccountConsumed={requestId =>
+                  setFocusAccountRequest(current => (current?.requestId === requestId ? null : current))
+                }
+                openRelayRequest={openRelayRequest}
+              />
+            )}
             {page === 'browser' && <BrowserPanel onBusy={setAdvancedBusy} />}
-            {page === 'usage' && <UsageStatisticsPanel />}
+            {page === 'usage' && <UsageStatisticsPanel onFocusAccount={focusIdentityAccount} />}
             {page === 'system' && <SystemPanel onBusy={setAdvancedBusy} />}
             {page === 'vps' && <VpsPanel />}
             {page === 'risk' && <RiskVerificationPanel onNavigate={setPage} />}
@@ -223,14 +250,31 @@ function App() {
         open={paletteOpen}
         onOpenChange={open => {
           setPaletteOpen(open);
-          if (!open) restorePaletteFocus();
+          if (open) {
+            suppressPaletteRestoreRef.current = false;
+          } else if (suppressPaletteRestoreRef.current) {
+            suppressPaletteRestoreRef.current = false;
+          } else {
+            restorePaletteFocus();
+          }
         }}
         page={page}
         locked={locked}
         onNavigate={setPage}
         onRefresh={() => window.setTimeout(() => window.dispatchEvent(new Event(APP_REFRESH_EVENT)), 0)}
-        onOpenHandoff={() => setHandoffOpen(true)}
-        onReviewIdentity={openIdentityReview}
+        onOpenHandoff={() => {
+          suppressPaletteRestoreRef.current = true;
+          setHandoffOpen(true);
+        }}
+        onReviewIdentity={identityId => {
+          suppressPaletteRestoreRef.current = true;
+          openIdentityReview(identityId);
+        }}
+        onOpenSmartRelay={() => {
+          suppressPaletteRestoreRef.current = true;
+          setOpenRelayRequest(n => n + 1);
+          setPage('cleaner');
+        }}
       />
       <AppDialog
         open={handoffOpen}
@@ -240,6 +284,7 @@ function App() {
         }}
         title={t('handoff.title')}
         width={640}
+        restoreFocus={false}
       >
         <TaskHandoff />
       </AppDialog>

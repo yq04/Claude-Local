@@ -58,12 +58,12 @@ let quotaRequestDeadlineMs = 0;
       ends_at: grant?.ends_at,
       paused: grant?.paused
     })) : undefined;
+    const projectedSubscription = projectSubscriptionDetails(subscriptionDetails);
     const snapshot = {
       nonce,
       account_uuid: accountUuid,
       organization_uuid: organizationUuid,
-      subscription_details: subscriptionDetails?.next_charge_date
-        ? { next_charge_date: subscriptionDetails.next_charge_date } : undefined,
+      ...(projectedSubscription ? { subscription_details: projectedSubscription } : {}),
       usage: usage ? { ...(cedar ? { cedar_ember: {
         ...(typeof cedar.eligible === "boolean" ? { eligible: cedar.eligible } : {}),
         ...(grants ? { grants } : {})
@@ -139,9 +139,11 @@ async function readTextLimited(response, maximum) {
 }
 
 async function readIdentity() {
-  const account = await getJson("/api/account");
-  const profile = await getJsonOptional("/api/account_profile");
-  const organizationsResponse = await getJson("/api/organizations");
+  const [account, profile, organizationsResponse] = await Promise.all([
+    getJson("/api/account"),
+    getJsonOptional("/api/account_profile"),
+    getJson("/api/organizations")
+  ]);
   const organizations = Array.isArray(organizationsResponse)
     ? organizationsResponse : organizationsResponse?.organizations;
   const accountObjects = [account, account?.account, profile, profile?.account]
@@ -154,6 +156,29 @@ async function readIdentity() {
     organizationUuids: uniqueStrings(Array.isArray(organizations)
       ? organizations.slice(0, 100).flatMap((item) => [item?.uuid, item?.id]) : [], 100)
   };
+}
+
+function projectSubscriptionDetails(details) {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return undefined;
+  const projected = {};
+  if (typeof details.cancel_at_period_end === "boolean") {
+    projected.cancel_at_period_end = details.cancel_at_period_end;
+  }
+  for (const key of [
+    "next_charge_date",
+    "canceled_at",
+    "cancelled_at",
+    "ends_at",
+    "cancel_at",
+    "current_period_end",
+    "access_until"
+  ]) {
+    const value = details[key];
+    if (typeof value === "string" && value.trim() && value.length <= 128) {
+      projected[key] = value.trim();
+    }
+  }
+  return Object.keys(projected).length > 0 ? projected : undefined;
 }
 
 function sameIdentity(left, right) {

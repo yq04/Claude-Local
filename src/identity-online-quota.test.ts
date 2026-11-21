@@ -242,23 +242,84 @@ test('manual resets older than the 24h freshness cap need re-sync instead of dis
   expect(withGrant.ended).toBe(false);
   expect(withGrant.realExpiresAt).toBe(nowSec + 10 * 86400);
 
-  // Grant end already passed: the resets ended and the row is hidden.
-  const ended = formatSubscriptionAndResets({
+  // Grant end already passed on the local clock: keep the positive count and ask for re-sync instead of hiding.
+  const elapsed = formatSubscriptionAndResets({
     manual_resets_remaining: 2,
     manual_resets_observed_at_ms: observed,
     manual_resets_valid_until: Math.floor(observed / 1000) + 24 * 3600,
     manual_resets_grant_ends_at: nowSec - 60,
   }, 'zh', key => key, nowMs).manualResets!;
-  expect(ended.ended).toBe(true);
-  expect(ended.needsResync).toBe(false);
+  expect(elapsed.remaining).toBe(2);
+  expect(elapsed.stale).toBe(true);
+  expect(elapsed.usable).toBe(false);
+  expect(elapsed.ended).toBe(false);
+  expect(elapsed.needsResync).toBe(true);
+  expect(elapsed.urgency).toBe('normal');
+  expect(elapsed.expiresInSec).toBeNull();
 
-  // A legacy sub-24h valid_until is a real grant end; once passed the resets ended.
-  const legacyEnded = formatSubscriptionAndResets({
+  // A legacy sub-24h valid_until once passed also retains the synced positive balance and requests re-sync.
+  const legacyElapsed = formatSubscriptionAndResets({
     manual_resets_remaining: 1,
     manual_resets_observed_at_ms: nowMs - 3 * 3600 * 1000,
     manual_resets_valid_until: nowSec - 60,
   }, 'zh', key => key, nowMs).manualResets!;
-  expect(legacyEnded.ended).toBe(true);
+  expect(legacyElapsed.remaining).toBe(1);
+  expect(legacyElapsed.stale).toBe(true);
+  expect(legacyElapsed.usable).toBe(false);
+  expect(legacyElapsed.ended).toBe(false);
+  expect(legacyElapsed.needsResync).toBe(true);
+  expect(legacyElapsed.urgency).toBe('normal');
+  expect(legacyElapsed.expiresInSec).toBeNull();
+
+  // Multi-grant slices pick the earliest future expiry while fresh, and keep the full balance if stale.
+  const multiFresh = formatSubscriptionAndResets({
+    manual_resets_remaining: 4,
+    manual_resets_observed_at_ms: nowMs - 60_000,
+    manual_resets_valid_until: nowSec + 1800,
+    manual_resets_grant_ends_at: nowSec + 20 * 86400,
+    manual_resets_grants: [
+      { resets_left: 1, ends_at: nowSec + 1800 },
+      { resets_left: 3, ends_at: nowSec + 20 * 86400 },
+    ],
+  }, 'zh', key => key, nowMs).manualResets!;
+  expect(multiFresh.remaining).toBe(4);
+  expect(multiFresh.usable).toBe(true);
+  expect(multiFresh.ended).toBe(false);
+  expect(multiFresh.realExpiresAt).toBe(nowSec + 1800);
+  expect(multiFresh.expiresInSec).toBe(1800);
+  expect(multiFresh.urgency).toBe('critical');
+
+  const multiStaleAfterFirstGrant = formatSubscriptionAndResets({
+    manual_resets_remaining: 4,
+    manual_resets_observed_at_ms: nowMs - 3600_000,
+    manual_resets_valid_until: nowSec - 60,
+    manual_resets_grant_ends_at: nowSec + 20 * 86400,
+    manual_resets_grants: [
+      { resets_left: 1, ends_at: nowSec - 60 },
+      { resets_left: 3, ends_at: nowSec + 20 * 86400 },
+    ],
+  }, 'zh', key => key, nowMs).manualResets!;
+  expect(multiStaleAfterFirstGrant.remaining).toBe(4);
+  expect(multiStaleAfterFirstGrant.ended).toBe(false);
+  expect(multiStaleAfterFirstGrant.usable).toBe(false);
+  expect(multiStaleAfterFirstGrant.needsResync).toBe(true);
+  expect(multiStaleAfterFirstGrant.urgency).toBe('normal');
+  expect(multiStaleAfterFirstGrant.expiresInSec).toBeNull();
+  expect(multiStaleAfterFirstGrant.realExpiresAt).toBe(nowSec + 20 * 86400);
+
+  // Unbounded positive grants (ends_at: null) remain usable without a finite expiry or urgency warning.
+  const unboundedFresh = formatSubscriptionAndResets({
+    manual_resets_remaining: 2,
+    manual_resets_observed_at_ms: nowMs - 60_000,
+    manual_resets_valid_until: Math.floor((nowMs - 60_000) / 1000) + 24 * 3600,
+    manual_resets_grants: [{ resets_left: 2, ends_at: null }],
+  }, 'zh', key => key, nowMs).manualResets!;
+  expect(unboundedFresh.remaining).toBe(2);
+  expect(unboundedFresh.usable).toBe(true);
+  expect(unboundedFresh.ended).toBe(false);
+  expect(unboundedFresh.realExpiresAt).toBeNull();
+  expect(unboundedFresh.expiresInSec).toBeNull();
+  expect(unboundedFresh.urgency).toBe('normal');
 
   // Fresh sync with a far grant end: no false "expiring soon" from the 24h freshness cap.
   const fresh = formatSubscriptionAndResets({

@@ -122,8 +122,30 @@ function projectSnapshot(snapshot, selected) {
     account_uuid: selected.account_uuid,
     organization_uuid: selected.organization_uuid
   };
-  const nextChargeDate = snapshot.subscription_details?.next_charge_date;
-  if (typeof nextChargeDate === "string") safe.subscription_details = { next_charge_date: nextChargeDate };
+  const details = snapshot.subscription_details;
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    const projectedDetails = {};
+    if (typeof details.cancel_at_period_end === "boolean") {
+      projectedDetails.cancel_at_period_end = details.cancel_at_period_end;
+    }
+    for (const key of [
+      "next_charge_date",
+      "canceled_at",
+      "cancelled_at",
+      "ends_at",
+      "cancel_at",
+      "current_period_end",
+      "access_until"
+    ]) {
+      const value = details[key];
+      if (typeof value === "string" && value.trim() && value.length <= 128) {
+        projectedDetails[key] = value.trim();
+      }
+    }
+    if (Object.keys(projectedDetails).length > 0) {
+      safe.subscription_details = projectedDetails;
+    }
+  }
   const cedar = snapshot.usage?.cedar_ember;
   if (cedar && typeof cedar === "object") {
     const projected = {};

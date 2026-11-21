@@ -69,6 +69,13 @@ pub(super) const ACCOUNT_KEYS: &[&str] = &[
     "penguinModeOrgEnabled",
     "connectorOAuthCache",
 ];
+pub(super) const DESKTOP_CONFIG_KEYS: &[&str] = &[
+    "lastKnownAccountUuid",
+    "oauth:tokenCache",
+    "oauth:tokenCacheV2",
+    "dxt:allowlist:*",
+    "remote_uploads_migration_done_v1_*",
+];
 pub(super) fn transform(text: &str, kind: EditKind) -> Result<(String, Vec<String>), String> {
     let mut names = Vec::new();
     if matches!(

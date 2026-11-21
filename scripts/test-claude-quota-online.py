@@ -28,6 +28,9 @@ class OnlineQuotaTests(unittest.TestCase):
             mocked = patch.object(online.urllib.request, name, return_value=value)
             mocked.start()
             self.addCleanup(mocked.stop)
+        env_patch = patch.dict(online.os.environ, {"CLAUDE_LOCAL_ALLOW_DIRECT": "1"})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
 
     def fixture(self, root, *, account_uuid="account-fixture-uuid", organization_uuid="org-fixture-uuid",
                 email="fixture@example.invalid", token="synthetic-access-token"):
@@ -546,9 +549,53 @@ class OnlineQuotaTests(unittest.TestCase):
             self.assertEqual(request.host, "b.invalid:81")
             self.assertEqual(request._tunnel_host, "api.anthropic.com")
 
-    def test_unset_route_is_tagged_host_system_and_frozen(self):
-        with patch.object(online.urllib.request, "getproxies", return_value={"https": "http://host.invalid:99"}):
-            self.assertEqual(online._route({}), ("host_system", (("https", "http://host.invalid:99"),)))
+    def test_unset_route_never_calls_getproxies_and_falls_back_via_slot_proxies_then_host_settings(self):
+        with patch.object(online.urllib.request, "getproxies", side_effect=AssertionError("naked getproxies forbidden")):
+            with patch.dict(online.os.environ, {"CLAUDE_LOCAL_ALLOW_DIRECT": "0"}):
+                with self.assertRaises(online.RouteUnavailable) as ctx_err:
+                    online._route({})
+                self.assertEqual(ctx_err.exception.reason, "route_required")
+            with patch.dict(online.os.environ, {"CLAUDE_LOCAL_ALLOW_DIRECT": "1"}):
+                self.assertEqual(online._route({}), ("host_system", ()))
+            request = online.urllib.request.Request(online.ENDPOINT)
+            handler = online._FrozenProxy({}, account_route=False)
+            with patch.dict(online.os.environ, {"CLAUDE_LOCAL_ALLOW_DIRECT": "0"}):
+                with self.assertRaises(online.RouteUnavailable):
+                    handler.https_open(request)
+            with patch.dict(online.os.environ, {"CLAUDE_LOCAL_ALLOW_DIRECT": "1"}):
+                self.assertIsNone(handler.https_open(request))
+
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, cur_acc = self.fixture(Path(temp))
+            with patch.dict(online.os.environ, {"CLAUDE_LOCAL_ALLOW_DIRECT": "0"}), \
+                 patch.object(online, "_fetch") as fetch_blocked:
+                blocked_res = online.run(app, home, "current", self.expected(cur_acc))
+                blocked_wake = online.run_wakeup(app, home, "current", self.expected(cur_acc))
+            self.assertEqual(blocked_res, {"status": "route_unavailable", "reason": "route_required", "stage": "route"})
+            self.assertEqual(blocked_wake, {"status": "route_unavailable", "reason": "route_required", "stage": "route"})
+            fetch_blocked.assert_not_called()
+
+            aid = "c" * 32
+            account = {"accountUuid": "saved-c", "emailAddress": "c@example.invalid", "organizationUuid": "org-c"}
+            self.saved_fixture(app, aid, account, "")
+            # 1. Fallback to ~/.claude/settings(.local).json when smart_relay_v1.json is absent
+            (home / ".claude" / "settings.json").write_text(
+                json.dumps({"env": {"HTTPS_PROXY": "http://127.0.0.1:7899"}}), encoding="utf-8"
+            )
+            cj_host, *_ = online.resolve_account(app, home, aid)
+            self.assertEqual(online._route(cj_host), ("account_proxy", (("https", "http://127.0.0.1:7899"),)))
+            # 2. smart_relay_v1.json slotProxies[aid] overrides BOTH host settings.json AND stale archived .baga proxy!
+            aid_stale = "d" * 32
+            acct_stale = {"accountUuid": "saved-d", "emailAddress": "d@example.invalid", "organizationUuid": "org-d"}
+            self.saved_fixture(app, aid_stale, acct_stale, "http://127.0.0.1:19999")
+            (app / "smart_relay_v1.json").write_text(
+                json.dumps({"schema": 1, "slotProxies": {aid: "http://127.0.0.1:7902", aid_stale: "http://127.0.0.1:7903"}}),
+                encoding="utf-8",
+            )
+            cj_slot, *_ = online.resolve_account(app, home, aid)
+            self.assertEqual(online._route(cj_slot), ("account_proxy", (("https", "http://127.0.0.1:7902"),)))
+            cj_override, *_ = online.resolve_account(app, home, aid_stale)
+            self.assertEqual(online._route(cj_override), ("account_proxy", (("https", "http://127.0.0.1:7903"),)))
 
     def test_browser_metadata_requires_exact_account_binding_and_keeps_whitelist(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -659,6 +706,67 @@ class OnlineQuotaTests(unittest.TestCase):
             latest = json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity]
             self.assertEqual(latest["manual_resets_remaining"], 1)
             self.assertNotIn("manual_resets_grant_ends_at", latest)
+
+    def test_per_grant_reset_slices_are_stored_validated_and_replaced(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            observed = int(time.time() * 1000)
+            soon_end = observed // 1000 + 3600
+            far_end = observed // 1000 + 20 * 86400
+            base = {
+                "account_uuid": account["accountUuid"], "organization_uuid": account["organizationUuid"],
+                "billing_date_kind": "unknown", "billing_date": None,
+                "manual_resets_remaining": 3, "manual_resets_valid_until": soon_end,
+                "metadata_observed_at_ms": observed,
+            }
+            meta_path = app / "identity-vault" / "quota_web_metadata.json"
+            identity = online.quota.quota_identity(account)
+            slices = [{"resets_left": 1, "ends_at": soon_end}, {"resets_left": 2, "ends_at": far_end}]
+            res = online.import_browser_snapshot(
+                app, home, "current",
+                {**base, "manual_resets_grant_ends_at": far_end, "manual_resets_grants": slices},
+                self.expected(account))
+            self.assertEqual(res["status"], "updated")
+            stored = json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity]
+            self.assertEqual(stored["manual_resets_grants"], slices)
+            self.assertEqual(stored["manual_resets_grant_ends_at"], far_end)
+
+            # Invalid slices (mismatched sum, bad ends_at, empty, inconsistent grant_ends_at) fail closed.
+            for bad_patch in (
+                {"manual_resets_grants": [{"resets_left": 1, "ends_at": far_end}], "manual_resets_grant_ends_at": far_end},
+                {"manual_resets_grants": [{"resets_left": 3, "ends_at": observed // 1000 - 1}], "manual_resets_grant_ends_at": far_end},
+                {"manual_resets_grants": [{"resets_left": 3, "ends_at": 253402300800}], "manual_resets_grant_ends_at": far_end},
+                {"manual_resets_grants": [], "manual_resets_grant_ends_at": far_end},
+                {"manual_resets_grants": slices},
+            ):
+                bad = online.import_browser_snapshot(
+                    app, home, "current",
+                    {**base, "metadata_observed_at_ms": observed + 200, **bad_patch},
+                    self.expected(account))
+                self.assertEqual(bad["status"], "invalid_response")
+            self.assertEqual(json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity], stored)
+
+            # Unbounded positive grant (ends_at: None) normalizes without ends_at and clears grant_ends_at.
+            unbounded = {
+                **base, "manual_resets_remaining": 2,
+                "manual_resets_valid_until": observed // 1000 + 86400,
+                "manual_resets_grants": [{"resets_left": 2, "ends_at": None}],
+                "metadata_observed_at_ms": observed + 500,
+            }
+            self.assertEqual(online.import_browser_snapshot(app, home, "current", unbounded, self.expected(account))["status"], "updated")
+            latest = json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity]
+            self.assertEqual(latest["manual_resets_grants"], [{"resets_left": 2}])
+            self.assertNotIn("manual_resets_grant_ends_at", latest)
+
+            # Newer observation omitting slices clears previous manual_resets_grants.
+            plain = {
+                **base, "manual_resets_remaining": 1,
+                "manual_resets_valid_until": observed // 1000 + 86400,
+                "metadata_observed_at_ms": observed + 1000,
+            }
+            self.assertEqual(online.import_browser_snapshot(app, home, "current", plain, self.expected(account))["status"], "updated")
+            cleared = json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity]
+            self.assertNotIn("manual_resets_grants", cleared)
 
     def test_browser_usage_only_updates_quota_with_host_observation_time(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1118,6 +1226,78 @@ class OnlineQuotaTests(unittest.TestCase):
             self.assertAlmostEqual(anchor["utilization"]["seven_day"]["utilization"], 47.5, places=2)
             self.assertAlmostEqual(anchor["scoped_fable_7d"]["pct"], 47.5, places=2)
             self.assertEqual(anchor["scoped_fable_7d"]["resetsAt"], reset_fable + 60)
+
+    def test_saved_wakeup_isolates_device_id_and_downgrade_clears_stale_ultra_plan_tier(self):
+        import hashlib
+        cj_sample = {"userID": "d" * 64}
+        fp = "e" * 64
+        aid = "f" * 32
+        self.assertEqual(online._device_id(cj_sample, fp, "current"), "d" * 64)
+        self.assertEqual(
+            online._device_id(cj_sample, fp, aid),
+            hashlib.sha256(f"claude-local-wakeup-dev:v1:{aid}:{fp}".encode("utf-8")).hexdigest(),
+        )
+
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            now_s = int(time.time())
+            expected = self.expected(account)
+            # 1. Initial Ultra profile + usage stamps Ultra and no_five_hour
+            ultra_profile = {
+                "account": {"uuid": account["accountUuid"], "email": account["emailAddress"]},
+                "organization": {"uuid": account["organizationUuid"], "plan_display_name": "Ultra"},
+            }
+            ultra_usage = {"five_hour": None, "seven_day": {"utilization": 15.0, "resets_at": now_s + 300000}}
+            with patch.object(online, "_fetch", side_effect=[
+                (200, json.dumps(ultra_profile).encode(), {}),
+                (200, json.dumps(ultra_usage).encode(), {}),
+            ]):
+                self.assertEqual(online.run(app, home, "current", expected)["status"], "updated")
+            meta_path = app / "identity-vault" / "quota_web_metadata.json"
+            self.assertEqual(json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][expected].get("plan_tier"), "Ultra")
+
+            # Expire online cooldown so we can probe after downgrade to Pro
+            state_path = online._state_path(app)
+            st = json.loads(state_path.read_text(encoding="utf-8"))
+            st["accounts"][expected]["retry_at_ms"] = 0
+            state_path.write_text(json.dumps(st), encoding="utf-8")
+
+            # 2. Downgrade to Pro: profile returns HTTP 200 without Ultra, usage has numeric five_hour
+            pro_profile = self.profile(account)
+            pro_usage = {
+                "five_hour": {"utilization": 12.0, "resets_at": now_s + 14000},
+                "seven_day": {"utilization": 20.0, "resets_at": now_s + 300000},
+            }
+            with patch.object(online, "_fetch", side_effect=[
+                (200, json.dumps(pro_profile).encode(), {}),
+                (200, json.dumps(pro_usage).encode(), {}),
+            ]):
+                self.assertEqual(online.run(app, home, "current", expected)["status"], "updated")
+            meta_after = json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][expected]
+            self.assertNotIn("plan_tier", meta_after)
+            ledger_after = json.loads((app / "quota_ledger.json").read_text(encoding="utf-8"))["accounts"]["fixture@example.invalid"]
+            self.assertEqual(ledger_after["plan"], "Pro")
+            self.assertFalse(ledger_after["quota_no_5h_limit"])
+            self.assertNotIn("no_five_hour", ledger_after["server_anchor"])
+
+            # 3. Browser snapshot optional plan_tier/plan extraction and validation
+            snap_team = {
+                "account_uuid": account["accountUuid"],
+                "organization_uuid": account["organizationUuid"],
+                "billing_date_kind": "next_renewal",
+                "billing_date": now_s + 864000,
+                "manual_resets_remaining": None,
+                "manual_resets_valid_until": None,
+                "metadata_observed_at_ms": (now_s + 10) * 1000,
+                "plan_tier": "Team",
+                "usage": {"five_hour": {"utilization": 14.0, "resets_at": now_s + 14000}},
+            }
+            self.assertEqual(online.import_browser_snapshot(app, home, "current", snap_team, expected)["status"], "updated")
+            self.assertEqual(json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][expected].get("plan_tier"), "Team")
+            self.assertEqual(
+                online.import_browser_snapshot(app, home, "current", {**snap_team, "plan": "InvalidPlan"}, expected)["status"],
+                "invalid_response",
+            )
 
 
 if __name__ == "__main__":

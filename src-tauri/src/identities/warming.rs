@@ -428,6 +428,7 @@ pub async fn identities_warming_create(
         }
         // A browser launch failure leaves the durable card available for retry.
         crate::browser::switch_warming_browser(app, &reporter, &slot, &open_mode)?;
+        crate::browser::kill_switch::notify_browser_activity();
         mark_opened(&vault, &card.id, &open_mode)
     })
     .await
@@ -657,6 +658,7 @@ pub async fn identities_warming_open(
             &slot,
             &open_mode,
         )?;
+        crate::browser::kill_switch::notify_browser_activity();
         mark_opened(&vault, &id, &open_mode)
     })
     .await

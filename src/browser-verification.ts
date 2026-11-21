@@ -4,7 +4,7 @@
  * [POS]: 起始页纯核验模型，与 DOM/网络分离；结果只描述已完成的有限测量。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {classifyExitIsp, effectiveBrowserTarget, matchesDevice, type BrowserContext, type Report} from './browser-model';
+import {classifyBrowserExitIsp, effectiveBrowserTarget, matchesDevice, type BrowserContext, type Report} from './browser-model';
 export type VerificationPhase='checking'|'failed'|'passed'|'incomplete';
 export type VerificationCheck={id:string;label:string;actual:string;expected:string;ok:boolean|null;applicable:boolean};
 export const REPORT_SCHEMA_VERSION = 1;
@@ -34,7 +34,7 @@ export function verifyBrowser(context:BrowserContext|null,report:Report|null,lin
   const observed=(value:boolean|undefined|null):boolean|null=>current&&(value===true||value===false)?value:null;
   if(!exit)problems.push('无法验证网络出口，请检查连接后重测。');
   add('exit.country','出口国家',exit?.country,region?.country,region&&exit?exit.country===region.country:null);
-  const ispKind=classifyExitIsp(exit);
+  const ispKind=classifyBrowserExitIsp(exit);
   const classificationFailures:Record<string,string>={rate_limited:'browserVerify.classificationError.rate_limited',timeout:'browserVerify.classificationError.timeout',http_error:'browserVerify.classificationError.http_error',network_error:'browserVerify.classificationError.network_error',invalid_response:'browserVerify.classificationError.invalid_response',ip_mismatch:'browserVerify.classificationError.ip_mismatch',response_too_large:'browserVerify.classificationError.response_too_large'};
   add('exit.provider','出口 IP 属性',ispKind==='hosting'?'已识别机房特征':ispKind==='isp'?'分类数据源未标记为机房':classificationFailures[exit?.hosting_error||'']||'运营商信息或机房分类不足，结果未知', '机房特征识别结果', ispKind==='hosting'?false:ispKind==='isp'?true:null);
   add('page.timezone','网页时区',report.timezone,target.timezone,!!report.timezone&&report.timezone===target.timezone);

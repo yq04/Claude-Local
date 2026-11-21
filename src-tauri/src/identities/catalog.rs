@@ -1,5 +1,5 @@
 // [INPUT]: 有界 OAuth 账号元数据、本机密钥、已认证旧归档与 SQLite 目录。
-// [OUTPUT]: 稳定的本机 HMAC 账号索引、旧记录去重与已提交归档代次回收。
+// [OUTPUT]: 稳定的本机 HMAC 账号索引、仅针对缺失摘要行的旧记录补建与已提交归档代次回收（未超 120 秒的新归档与 .pending-* 并发写入暂存予以保留）。
 // [POS]: 只按账号 UUID/组织（缺失时邮箱/组织）匹配；令牌刷新、名称变更不产生新身份。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{database::Database, private, store::Store};
@@ -33,7 +33,7 @@ pub(super) fn account_key(value: &Value, key: &[u8]) -> Option<String> {
     let tag = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, key), &bytes);
     Some(tag.as_ref().iter().map(|b| format!("{b:02x}")).collect())
 }
-fn file_key(path: &Path, key: &[u8]) -> Result<Option<String>, String> {
+pub(super) fn file_key(path: &Path, key: &[u8]) -> Result<Option<String>, String> {
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -86,13 +86,12 @@ pub(crate) fn current_id(
 impl Store {
     pub(super) fn index_legacy(&self) -> Result<(), String> {
         let summaries = self.db.summaries()?;
-        for record in self.db.records()?.into_iter().filter(|r| {
-            r.account_key.is_none()
-                || (!r.empty
-                    && !summaries
-                        .get(&r.id)
-                        .is_some_and(super::profile::Summary::has_quota_check))
-        }) {
+        for record in self
+            .db
+            .records()?
+            .into_iter()
+            .filter(|r| r.account_key.is_none() || (!r.empty && !summaries.contains_key(&r.id)))
+        {
             // 损坏的旧副本不自动删除；用户仍可单独删除或保留排查。
             let Ok(stage) = self.load(&record) else {
                 continue;
@@ -121,14 +120,38 @@ impl Store {
         }
         Ok(())
     }
+    pub(super) fn remove_unreferenced_archive_now(&self, archive: &str) {
+        if !archive_name(archive) {
+            return;
+        }
+        let Ok(records) = self.db.records() else {
+            return;
+        };
+        if records.iter().any(|r| r.archive == archive) {
+            return;
+        }
+        let path = self.vault.join(archive);
+        if private::safe(&path).is_ok() {
+            let _ = fs::remove_file(&path);
+        }
+    }
     pub(super) fn collect_generations(&self) -> Result<(), String> {
         let records = self.db.records()?;
         for entry in fs::read_dir(&self.vault).map_err(|_| "身份保险库无法读取。")? {
             let entry = entry.map_err(|_| "身份保险库无法读取。")?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if (archive_name(&name) && !records.iter().any(|r| r.archive == name))
-                || name.strip_prefix(".pending-").is_some_and(super::valid_id)
-            {
+            let is_aged = || {
+                fs::symlink_metadata(entry.path())
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
+                    .is_some_and(|age| age.as_secs() >= 120)
+            };
+            let unreferenced_archive =
+                archive_name(&name) && !records.iter().any(|r| r.archive == name) && is_aged();
+            let stale_pending =
+                name.strip_prefix(".pending-").is_some_and(super::valid_id) && is_aged();
+            if unreferenced_archive || stale_pending {
                 private::safe(&entry.path())?;
                 fs::remove_file(entry.path()).map_err(|_| "旧身份归档回收失败。")?;
             }

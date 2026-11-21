@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Claude 四个固定服务域名、用户触发的原生只读诊断、发行者固定的 iKuuu/Kookeey 推广链接、AI 配置提示词、Pika 图标、env-pages.css 与双语文案。
- * [OUTPUT]: 顶部内联复制状态胶囊、四栏链式拓扑发丝遥测条、三列紧凑代理配置卡（徽章 + 角色标签 + 步骤脚注与单复制按钮）及 2×2 边线四域名连通性矩阵。
+ * [INPUT]: Claude 四个固定服务域名、用户触发的原生只读诊断、发行者固定的 iKuuu/Kookeey 推广链接、AI 配置提示词、隐私遮罩偏好、Pika 图标、env-pages.css 与双语文案。
+ * [OUTPUT]: 顶部内联复制状态胶囊、四栏链式拓扑发丝遥测条、三列紧凑代理配置卡（徽章 + 角色标签 + 步骤脚注与单复制按钮）及支持隐私遮罩的 2×2 边线四域名连通性矩阵。
  * [POS]: 固定链接随软件分享，不接受本机自定义覆盖或外部自动导航；仅在点击检测后发起连通性探测。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -9,6 +9,8 @@ import {Refresh, CheckTickCircle, Share01, Server, Settings01, Globe} from 'crom
 import {useEffect, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {useI18n, type Locale} from './i18n';
+import {maskIpAddress} from './risk-model';
+import {usePreferences} from './settings-model';
 import './env-pages.css';
 
 export type DomainDiagnosis = {
@@ -57,6 +59,7 @@ export function buildAiProxyPrompt(locale: Locale = 'zh'): string {
 
 export function VpsPanel() {
   const {t, locale} = useI18n();
+  const {privacyMask} = usePreferences();
   const [copiedId, setCopiedId] = useState('');
   const [copyingId, setCopyingId] = useState('');
   const [copyError, setCopyError] = useState(false);
@@ -306,7 +309,7 @@ export function VpsPanel() {
                     )}
                     {item?.ip && (
                       <span className="domain-ip" title={t('连接对端，不代表出口 IP')}>
-                        {item.ip}
+                        {maskIpAddress(item.ip, privacyMask)}
                       </span>
                     )}
                   </div>

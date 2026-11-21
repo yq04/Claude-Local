@@ -1,12 +1,16 @@
 /**
- * [INPUT]: Selected browser slot, visible-page lifecycle and read-only browser_runtime_read IPC.
- * [OUTPUT]: Three-second runtime samples with structural equality deduplication and no overlapping requests or late/old-slot updates.
+ * [INPUT]: Selected browser slot, visible-page lifecycle (document.hidden / focus) and read-only browser_runtime_read IPC.
+ * [OUTPUT]: Runtime samples (3s focused, 15s when the desktop window is visible but unfocused, paused while hidden with one catch-up read on restore) with structural equality deduplication and no overlapping requests or late/old-slot updates.
  * [POS]: Shared desktop runtime hook; never refreshes identities, profile caches or OAuth usage.
  * [PROTOCOL]: Update this header and src/CLAUDE.md when changing polling or invalidation.
  */
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {browserRuntimeStatus, type BrowserRuntime} from './browser-runtime';
+import {canSyncNativeSmartRelay} from './smart-relay-model';
+
+const FOCUSED_POLL_MS = 3000;
+const UNFOCUSED_POLL_MS = 15000;
 
 export function useBrowserRuntime(selectedSlot: string | null | undefined, enabled = true) {
   const [sample, setSample] = useState<BrowserRuntime | null>(null);
@@ -20,9 +24,11 @@ export function useBrowserRuntime(selectedSlot: string | null | undefined, enabl
     let timer: number | undefined;
     generation.current++;
     setSample(null);
-    const visible = () => live && enabled && !!selectedSlot && document.visibilityState !== 'hidden';
+    const visible = () => live && enabled && !!selectedSlot && !document.hidden && document.visibilityState !== 'hidden';
     const clearTimer = () => { window.clearTimeout(timer); timer = undefined; };
-    const schedule = () => { clearTimer(); if (visible()) timer = window.setTimeout(poll, 3000); };
+    // Only the real desktop shell slows down when unfocused; fixtures and previews keep the fast cadence.
+    const pollDelay = () => (canSyncNativeSmartRelay() && !document.hasFocus() ? UNFOCUSED_POLL_MS : FOCUSED_POLL_MS);
+    const schedule = () => { clearTimer(); if (visible()) timer = window.setTimeout(poll, pollDelay()); };
     async function poll() {
       clearTimer();
       if (!visible()) return;

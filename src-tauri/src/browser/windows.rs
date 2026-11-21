@@ -148,6 +148,7 @@ fn start_windows_companion(app: &tauri::AppHandle, urls: &[String]) -> Result<()
     crate::startup_trace("machine ready");
     config.validate(&machine)?;
     let running = profile::running(&profile)?;
+    config::preflight_browser_launch_policy(&config, &machine, !running)?;
     if !running {
         profile::preferences(&profile, &config, &machine)?;
     }

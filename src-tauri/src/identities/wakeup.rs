@@ -1,5 +1,5 @@
 // [INPUT]: Explicit versioned settings, restricted local quota summaries and the shared audited collector.
-// [OUTPUT]: Independent local readiness synchronization, one process-owned scheduler, private durable plans and precise no-dispatch results.
+// [OUTPUT]: Independent local readiness synchronization, one process-owned scheduler (condvar-parked with zero wakeups when disabled/busy/unwritable; single-pass route projection without browser scans during candidate enumeration), private durable plans and precise no-dispatch results.
 // [POS]: No HTTP or quota-ledger writer; survives page unmount, stops with the application.
 // [PROTOCOL]: Keep identities/CLAUDE.md and frontend IPC types aligned.
 use super::online::{OnlineQuotaResult, OnlineStatus, WakeupEffect};
@@ -28,16 +28,25 @@ fn identity_valid(id: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 fn route_capability(proxy: &str, inherited: bool) -> &'static str {
-    if proxy.is_empty() {
-        return "http_connect";
+    let trimmed = proxy.trim();
+    if trimmed.is_empty() {
+        return if std::env::var("CLAUDE_LOCAL_ALLOW_DIRECT")
+            .ok()
+            .as_deref()
+            == Some("1")
+        {
+            "http_connect"
+        } else {
+            "route_required"
+        };
     }
-    if proxy.len() > 2048 || proxy.bytes().any(|b| b <= 32) {
+    if trimmed.len() > 2048 || trimmed.bytes().any(|b| b <= 32) {
         return "transport_unsupported";
     }
-    let normalized = if inherited && !proxy.contains("://") {
-        format!("http://{proxy}")
+    let normalized = if inherited && !trimmed.contains("://") {
+        format!("http://{trimmed}")
     } else {
-        proxy.to_string()
+        trimmed.to_string()
     };
     match reqwest::Url::parse(&normalized) {
         Ok(url)
@@ -55,29 +64,214 @@ fn route_capability(proxy: &str, inherited: bool) -> &'static str {
         _ => "transport_unsupported",
     }
 }
-fn host_proxy() -> String {
-    if let Some(value) = [
-        "HTTPS_PROXY",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-        "HTTP_PROXY",
-        "http_proxy",
-    ]
-    .iter()
-    .filter_map(|key| std::env::var(key).ok())
-    .find(|v| !v.is_empty())
+
+fn preflight_wakeup_http_proxy(proxy_raw: &str, inherited: bool) -> Result<(), String> {
+    if cfg!(test)
+        || std::env::var("CLAUDE_LOCAL_SKIP_PROXY_PREFLIGHT")
+            .ok()
+            .as_deref()
+            == Some("1")
     {
-        return value;
+        return Ok(());
     }
-    #[cfg(windows)]
-    {
-        crate::windows::system_proxy()
+    let trimmed = proxy_raw.trim();
+    if trimmed.is_empty() {
+        return if std::env::var("CLAUDE_LOCAL_ALLOW_DIRECT")
+            .ok()
+            .as_deref()
+            == Some("1")
+        {
+            Ok(())
+        } else {
+            Err("route_required".into())
+        };
     }
-    #[cfg(not(windows))]
-    {
-        String::new()
+    let normalized = if inherited && !trimmed.contains("://") {
+        format!("http://{trimmed}")
+    } else {
+        trimmed.to_string()
+    };
+    let Ok(url) = reqwest::Url::parse(&normalized) else {
+        return Err("transport_unsupported".into());
+    };
+    let host = url.host_str().unwrap_or("").trim_matches(['[', ']']);
+    let Some(port) = url.port_or_known_default() else {
+        return Err("transport_unsupported".into());
+    };
+    let timeout = Duration::from_millis(300);
+    let reachable = if host == "127.0.0.1" {
+        std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+            timeout,
+        )
+        .is_ok()
+    } else if host == "::1" {
+        std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
+            timeout,
+        )
+        .is_ok()
+    } else if host.eq_ignore_ascii_case("localhost") {
+        std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+            Duration::from_millis(200),
+        )
+        .is_ok()
+            || std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
+                Duration::from_millis(150),
+            )
+            .is_ok()
+    } else {
+        true
+    };
+    if reachable {
+        Ok(())
+    } else {
+        Err("proxy_unreachable".into())
     }
+}
+
+/// Shared route inputs loaded once per candidate pass (relay config + `~/.claude` proxy).
+struct ProxyContext {
+    app_data_dir: Option<PathBuf>,
+    relay_cfg: super::orchestrator::config::SmartRelayConfig,
+    claude_dir_proxy: Option<String>,
+}
+impl ProxyContext {
+    fn load(app: &tauri::AppHandle) -> Self {
+        let app_data_dir = app.path().app_data_dir().ok();
+        let home = crate::cleaner::identity::root().ok();
+        let relay_cfg = app_data_dir
+            .as_deref()
+            .map(super::orchestrator::config::load_config)
+            .unwrap_or_default();
+        let claude_dir_proxy = home.as_deref().and_then(|h| {
+            super::orchestrator::config::read_claude_dir_http_proxy(&h.join(".claude"))
+        });
+        Self {
+            app_data_dir,
+            relay_cfg,
+            claude_dir_proxy,
+        }
+    }
+}
+/// Minimal session view needed for same-exit counting; built from `State` without cloning sessions.
+struct RouteView<'a> {
+    cli_running: bool,
+    current_proxy: Option<&'a str>,
+    busy_slots: Vec<(&'a str, Option<&'a str>)>,
+}
+impl<'a> RouteView<'a> {
+    fn from_state(state: &'a super::State) -> Self {
+        Self {
+            cli_running: state.cli_running,
+            current_proxy: state.current.proxy.as_deref(),
+            busy_slots: state
+                .slot_sessions
+                .iter()
+                .filter(|(_, sessions)| !sessions.is_empty())
+                .map(|(id, _)| {
+                    (
+                        id.as_str(),
+                        state.summaries.get(id).and_then(|s| s.proxy.as_deref()),
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+/// Pure route projection: slot proxy > summary proxy > `~/.claude` proxy. Never scans processes.
+fn effective_route(
+    ctx: &ProxyContext,
+    active: &str,
+    account_id: &str,
+    summary_proxy: Option<&str>,
+) -> (String, bool) {
+    let slot_proxy_id = if account_id == "current" {
+        (active != "current").then_some(active)
+    } else {
+        Some(account_id)
+    };
+    let slot_proxy = slot_proxy_id
+        .and_then(|id| ctx.relay_cfg.slot_proxies.get(id))
+        .map(String::as_str)
+        .filter(|s| !s.trim().is_empty());
+    if let Some(p) = slot_proxy {
+        (p.trim().to_string(), false)
+    } else if let Some(p) = summary_proxy.filter(|v| !v.trim().is_empty()) {
+        (p.trim().to_string(), false)
+    } else if let Some(ref p) = ctx.claude_dir_proxy {
+        (p.trim().to_string(), false)
+    } else {
+        (String::new(), false)
+    }
+}
+/// Same-exit concurrency cap; the managed-browser process scan runs at most once per call.
+fn exit_capped(
+    ctx: &ProxyContext,
+    view: &RouteView<'_>,
+    effective_proxy: &str,
+    scan_browsers: &mut dyn FnMut(&Path) -> Vec<(String, PathBuf)>,
+) -> bool {
+    let target_exit = super::orchestrator::config::exit_key(
+        (!effective_proxy.trim().is_empty()).then_some(effective_proxy),
+    );
+    let mut active_on_exit = 0usize;
+    if view.cli_running {
+        let main_proxy = view.current_proxy.or(ctx.claude_dir_proxy.as_deref());
+        if super::orchestrator::config::exit_key(main_proxy) == target_exit {
+            active_on_exit += 1;
+        }
+    }
+    for (rec_id, summary_proxy) in &view.busy_slots {
+        let sp = ctx
+            .relay_cfg
+            .slot_proxies
+            .get(*rec_id)
+            .map(String::as_str)
+            .or(*summary_proxy)
+            .or(ctx.claude_dir_proxy.as_deref());
+        if super::orchestrator::config::exit_key(sp) == target_exit {
+            active_on_exit += 1;
+        }
+    }
+    if let Some(ref app_dir) = ctx.app_data_dir {
+        let browser_root = app_dir.join("browser");
+        if browser_root.is_dir() {
+            for (_slot, profile_dir) in scan_browsers(&browser_root) {
+                let b_proxy = profile_dir
+                    .parent()
+                    .and_then(|scope| crate::browser::config::load(scope).ok())
+                    .map(|cfg| cfg.proxy)
+                    .filter(|p| !p.trim().is_empty());
+                if super::orchestrator::config::exit_key(b_proxy.as_deref()) == target_exit {
+                    active_on_exit += 1;
+                }
+            }
+        }
+    }
+    active_on_exit >= ctx.relay_cfg.max_same_exit_concurrency as usize
+}
+
+fn resolve_candidate_proxy_and_exit_cap(
+    app: &tauri::AppHandle,
+    state: &super::State,
+    account_id: &str,
+    summary_proxy: Option<&str>,
+    check_exit_cap: bool,
+) -> (String, bool, bool) {
+    let ctx = ProxyContext::load(app);
+    let (effective_proxy, inherited) =
+        effective_route(&ctx, &state.active, account_id, summary_proxy);
+    let capped = check_exit_cap
+        && exit_capped(
+            &ctx,
+            &RouteView::from_state(state),
+            &effective_proxy,
+            &mut crate::browser::kill_switch::running_managed_profiles,
+        );
+    (effective_proxy, inherited, capped)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -237,7 +431,10 @@ impl Snapshot {
                     )
                     && matches!(
                         a.capability.as_str(),
-                        "" | "http_connect" | "auth_required" | "transport_unsupported"
+                        "" | "http_connect"
+                            | "auth_required"
+                            | "transport_unsupported"
+                            | "route_required"
                     )
             })
             && matches!(
@@ -310,21 +507,27 @@ fn candidates(app: &tauri::AppHandle) -> Result<(Vec<Candidate>, Option<u8>), St
         })
         .map(|used| 100 - used);
     let mut result = Vec::new();
-    let host_proxy = host_proxy();
+    // Route inputs load once per pass; readiness never scans browsers (exit cap is a dispatch-time check).
+    let route_ctx = ProxyContext::load(app);
+    let app_data_dir = route_ctx.app_data_dir.clone();
     let mut add = |account_id: String, summary: super::profile::Summary, running| {
-        if let Some(id) = summary.quota_identity.filter(|id| identity_valid(id)) {
+        if let Some(id) = summary.quota_identity.clone().filter(|id| identity_valid(id)) {
             if result.iter().any(|c: &Candidate| c.identity == id) {
                 return;
             }
+            let (effective_proxy, inherited) = effective_route(
+                &route_ctx,
+                &state.active,
+                &account_id,
+                summary.proxy.as_deref(),
+            );
             let capability = if matches!(
                 summary.auth_status.as_deref(),
                 Some("expired" | "refresh_needed")
             ) {
                 "auth_required"
-            } else if let Some(proxy) = summary.proxy.as_deref().filter(|v| !v.trim().is_empty()) {
-                route_capability(proxy, false)
             } else {
-                route_capability(&host_proxy, true)
+                route_capability(&effective_proxy, inherited)
             };
             result.push(Candidate {
                 account_id,
@@ -351,16 +554,30 @@ fn candidates(app: &tauri::AppHandle) -> Result<(Vec<Candidate>, Option<u8>), St
         }
     };
     if state.current.present {
+        let active_slot_running = state.active != "current"
+            && state
+                .slot_sessions
+                .get(&state.active)
+                .is_some_and(|s| !s.is_empty());
         add(
             "current".into(),
             super::profile::Summary::from_current(&state.current),
-            state.running,
+            state.running || active_slot_running,
         );
     }
-    for record in state.records {
+    for record in &state.records {
         if record.id != state.active {
             if let Some(summary) = state.summaries.get(&record.id) {
-                add(record.id, summary.clone(), false);
+                let slot_busy = state
+                    .slot_sessions
+                    .get(&record.id)
+                    .is_some_and(|s| !s.is_empty())
+                    || app_data_dir.as_deref().is_some_and(|dir| {
+                        super::orchestrator::slots::slot_lease_fresh_by_mtime(
+                            &dir.join("cli-slots").join(&record.id),
+                        )
+                    });
+                add(record.id.clone(), summary.clone(), slot_busy);
             }
         }
     }
@@ -541,6 +758,8 @@ fn dispatch_blocker(
         "outcome_unknown"
     } else if (a.auth_blocked || candidate.capability == "auth_required") && !a.recovery_allowed {
         "auth_required"
+    } else if candidate.capability == "route_required" {
+        "route_required"
     } else if candidate.capability != "http_connect"
         && !(candidate.capability == "auth_required" && a.recovery_allowed) {
         "capability_blocked"
@@ -560,6 +779,7 @@ fn dispatch_blocker(
         match reason {
             "auth_required" => OnlineStatus::AuthRequired,
             "backoff_cooldown" => OnlineStatus::Cooldown,
+            "route_required" => OnlineStatus::RouteUnavailable,
             _ => OnlineStatus::Unavailable,
         },
         reason,
@@ -572,6 +792,24 @@ struct Inner {
     active: bool,
     stopped: bool,
     writable: bool,
+}
+/// The automatic scheduler only ticks while enabled, writable and not mid-dispatch.
+fn worker_runnable(inner: &Inner) -> bool {
+    inner.snapshot.config.enabled && inner.writable && !inner.active
+}
+/// Blocks on the condvar (no timeout) until the owner is runnable or stopped.
+/// `configure` / `resume` / `attempt` completion / `stop` all `notify_all`.
+/// Returns the guard plus how many condvar wakeups were consumed while parked.
+fn park_until_runnable<'a>(
+    cv: &Condvar,
+    mut guard: std::sync::MutexGuard<'a, Inner>,
+) -> (std::sync::MutexGuard<'a, Inner>, usize) {
+    let mut wakeups = 0usize;
+    while !guard.stopped && !worker_runnable(&guard) {
+        guard = cv.wait(guard).unwrap_or_else(|poisoned| poisoned.into_inner());
+        wakeups += 1;
+    }
+    (guard, wakeups)
 }
 pub struct WakeupOwner {
     inner: Arc<(Mutex<Inner>, Condvar)>,
@@ -618,6 +856,11 @@ impl WakeupOwner {
                 loop {
                     let (lock, cv) = &*inner;
                     let guard = lock.lock().unwrap();
+                    // Disabled / unwritable / busy owner parks with zero periodic wakeups.
+                    let (guard, parked) = park_until_runnable(cv, guard);
+                    if parked > 0 {
+                        cache = None;
+                    }
                     if guard.stopped {
                         break;
                     }
@@ -625,7 +868,7 @@ impl WakeupOwner {
                     if guard.stopped {
                         break;
                     }
-                    let enabled = guard.writable && !guard.active;
+                    let enabled = worker_runnable(&guard);
                     drop(guard);
                     if !enabled {
                         continue;
@@ -683,6 +926,10 @@ impl WakeupOwner {
             inner.stopped = true;
             cv.notify_all();
         }
+    }
+    /// True while a wakeup dispatch is in flight (tray deep-sleep gate).
+    pub(crate) fn is_busy(&self) -> bool {
+        self.inner.0.lock().map(|inner| inner.active).unwrap_or(true)
     }
     fn save_locked(&self, inner: &mut Inner) -> Result<(), String> {
         if !inner.writable || persist(&self.path, &inner.snapshot).is_err() {
@@ -772,11 +1019,53 @@ impl WakeupOwner {
         expired: Option<u64>,
     ) -> Result<OnlineQuotaResult, String> {
         // Recheck local summary immediately before dispatch, outside the identity door.
+        let state_snap = super::state_for(app, false)?;
+        let summary_proxy = if account_id == "current" {
+            state_snap.current.proxy.clone()
+        } else {
+            state_snap
+                .summaries
+                .get(account_id)
+                .and_then(|s| s.proxy.clone())
+        };
+        let (effective_proxy, inherited, exit_capped) = resolve_candidate_proxy_and_exit_cap(
+            app,
+            &state_snap,
+            account_id,
+            summary_proxy.as_deref(),
+            true,
+        );
+        if automatic && exit_capped {
+            let defer_until = now_ms() + 120_000;
+            if let Ok(mut guard) = self.inner.0.lock() {
+                guard.snapshot.next_global_at_ms =
+                    guard.snapshot.next_global_at_ms.max(defer_until);
+                let _ = self.save_locked(&mut guard);
+            }
+            self.emit(app);
+            return Ok(OnlineQuotaResult::scheduler_blocked(
+                OnlineStatus::Cooldown,
+                "backoff_cooldown",
+                Some(defer_until),
+            ));
+        }
         let (items, _) = candidates(app)?;
         let candidate = items
             .iter()
             .find(|i| i.account_id == account_id && i.identity == identity)
             .ok_or("quotaOnline.accountMismatch")?;
+        if let Err(route_err) = preflight_wakeup_http_proxy(&effective_proxy, inherited) {
+            let reason = if route_err == "route_required" {
+                "route_required"
+            } else {
+                "capability_blocked"
+            };
+            return Ok(OnlineQuotaResult::scheduler_blocked(
+                OnlineStatus::RouteUnavailable,
+                reason,
+                None,
+            ));
+        }
         let admission = self.prepare_dispatch(
             candidate,
             &items,
@@ -814,10 +1103,13 @@ impl WakeupOwner {
         }
         if let Err(error) = self.save_locked(&mut guard) {
             drop(guard);
+            self.inner.1.notify_all();
             self.emit(app);
             return Err(error);
         }
         drop(guard);
+        // Wake a parked owner now that `active` cleared.
+        self.inner.1.notify_all();
         self.emit(app);
         result
     }
@@ -827,8 +1119,8 @@ fn local_preparation_failed(result: &OnlineQuotaResult) -> bool {
         && (result.runtime_stage.as_deref() == Some("probe")
             || (result.runtime_stage.as_deref() == Some("execute")
                 && result.runtime_reason.as_deref() == Some("probe_failed"))
-            || (result.stage.as_deref() == Some("route")
-                && result.reason.as_deref() == Some("unsupported_proxy")))
+            || (result.status == OnlineStatus::RouteUnavailable
+                && result.stage.as_deref() == Some("route")))
 }
 fn finish(
     state: &mut Snapshot,
@@ -880,6 +1172,9 @@ fn finish(
                 a.decision = "auth_blocked".into();
             } else if a.unknown {
                 a.decision = "outcome_unknown".into();
+            } else if r.status == OnlineStatus::RouteUnavailable {
+                a.capability = "route_required".into();
+                a.decision = "capability_blocked".into();
             }
         }
         Err(_) => {

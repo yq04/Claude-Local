@@ -1,11 +1,12 @@
 /**
  * [INPUT]: 固定 app_data_dir 预览、用户显式输入的备份文件路径/口令与原生加密备份命令。
- * [OUTPUT]: 精简单行范围说明、并排双列（导出/检查恢复）身份保险库加密备份卡片与受控回执；每次操作结束清除口令输入。
+ * [OUTPUT]: 精简单行范围说明、带按钮内联复制确认的产品目录栏、并排双列（导出/检查恢复）身份保险库加密备份卡片与受控回执；每次操作结束清除口令输入。
  * [POS]: 软件设置的数据管理区；只处理身份索引、主密钥、引用归档与养号/订阅元数据，不自动导出或接管当前身份。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {useEffect, useRef, useState} from 'react';
 import {Button, Switch} from 'cromma-ui';
+import {CheckTickCircle} from 'cromma-ui/pika';
 import {invoke} from '@tauri-apps/api/core';
 import {translate, type Locale} from './i18n';
 import {canRestoreInspection, inspectionPresentation, inspectBackupRequest, restoreBackupRequest, type BackupInspection as Inspection, type BackupReceipt as Receipt} from './backup-panel-workflow';
@@ -103,7 +104,13 @@ export function BackupPanel({locale}: {locale: Locale}) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [copiedLocation, setCopiedLocation] = useState(false);
+  const copiedTimer = useRef<number | null>(null);
   const inspectionRevision = useRef(0);
+
+  useEffect(() => () => {
+    if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+  }, []);
 
   async function refresh() {
     setError('');
@@ -163,7 +170,40 @@ export function BackupPanel({locale}: {locale: Locale}) {
           <strong>{text('location')}</strong>
           {location ? <code>{location.app_data_dir}</code> : <span>—</span>}
           {location?.vault_available ? null : <span>{text('noVault')}</span>}
-          {location && <div className="backup-location-actions"><Button size="small" variant="secondary" disabled={busy} onClick={() => void invoke('identities_backup_open_location').catch(cause => setError(translate(String(cause), {}, locale)))}>{text('openLocation')}</Button><Button size="small" variant="secondary" disabled={busy} onClick={() => void invoke('copy_result', {text: location.app_data_dir}).then(() => setNotice(text('copied'))).catch(cause => setError(translate(String(cause), {}, locale)))}>{text('copyLocation')}</Button></div>}
+          {location && (
+            <div className="backup-location-actions">
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={busy}
+                onClick={() =>
+                  void invoke('identities_backup_open_location').catch(cause =>
+                    setError(translate(String(cause), {}, locale)),
+                  )
+                }
+              >
+                {text('openLocation')}
+              </Button>
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={busy}
+                leftIcon={copiedLocation ? <CheckTickCircle size={14} aria-hidden="true" /> : undefined}
+                onClick={() =>
+                  void invoke('copy_result', {text: location.app_data_dir})
+                    .then(() => {
+                      setNotice(text('copied'));
+                      setCopiedLocation(true);
+                      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+                      copiedTimer.current = window.setTimeout(() => setCopiedLocation(false), 1600);
+                    })
+                    .catch(cause => setError(translate(String(cause), {}, locale)))
+                }
+              >
+                {copiedLocation ? text('copied') : text('copyLocation')}
+              </Button>
+            </div>
+          )}
         </div>
         <div className="backup-preview-bar">
           {preview ? (

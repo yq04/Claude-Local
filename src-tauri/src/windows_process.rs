@@ -1,20 +1,20 @@
 // [INPUT]: Win32 Toolhelp/进程句柄、当前用户 SID、精确 CLI 入口与独立浏览器资料路径。
-// [OUTPUT]: Claude 进程零侵入识别（PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE + WaitForSingleObject/GetExitCodeProcess 存活复核 + (pid, created) 缓存并自动剔除已退出句柄）、node/bun 与浏览器优先经 NtQueryInformationProcess(ProcessCommandLineInformation = 60) 零 VM_READ 读取完整参数（必要时优雅回退）、创建时间/所有权复核后的同步等待结束（1500ms 句柄排空），及以文件句柄标识匹配关闭与只读可见窗口采样。
-// [POS]: Windows 进程边界；原生二进制与受管浏览器免 PROCESS_VM_READ/ReadProcessMemory；参数仅用于 node/bun/chrome 判定，不返回 UI。
+// [OUTPUT]: Claude 进程零侵入识别与角色分类（InteractiveCli/BackgroundDaemon/BackgroundPtyHost/BackgroundWorker/Desktop；栈缓冲优先路径查询、仅在存在 Claude 候选时构建父子进程树、PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE + NtQueryInformationProcess(ProcessCommandLineInformation = 60) 零 VM_READ + (pid, created) 缓存 + 交互式 CLI 存活子 Shell 树采样）、node/bun 与带 (pid, created_100ns) 进程级缓存及单快照批量托管资料探活（running_chrome_profiles）的浏览器参数识别、创建时间/所有权复核后的同步等待结束（1500ms 句柄排空），及以文件句柄标识匹配关闭与只读可见窗口采样。
+// [POS]: Windows 进程边界；原生二进制与受管浏览器免 PROCESS_VM_READ/ReadProcessMemory；参数仅用于角色分类与 node/bun/chrome 判定，原始命令行不返回 UI。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{current_sid, input, process_sid, response};
-use crate::cleaner::ClaudeProcess;
+use crate::cleaner::{ClaudeProcess, ClaudeProcessRole};
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     ffi::c_char,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
 use windows_sys::Win32::{
     Foundation::{
-        CloseHandle, LocalFree, FILETIME, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM, STILL_ACTIVE,
-        WAIT_OBJECT_0, WAIT_TIMEOUT,
+        CloseHandle, GetLastError, LocalFree, ERROR_INSUFFICIENT_BUFFER, FILETIME, HANDLE, HWND,
+        INVALID_HANDLE_VALUE, LPARAM, STILL_ACTIVE, WAIT_OBJECT_0, WAIT_TIMEOUT,
     },
     System::{
         Diagnostics::{
@@ -105,6 +105,15 @@ impl Handle {
         }
     }
     fn image(&self) -> Option<String> {
+        // Stack buffer covers ordinary paths; only ERROR_INSUFFICIENT_BUFFER falls back to the heap.
+        let mut stack = [0u16; 1024];
+        let mut size = stack.len() as u32;
+        if unsafe { QueryFullProcessImageNameW(self.0, 0, stack.as_mut_ptr(), &mut size) } != 0 {
+            return Some(String::from_utf16_lossy(&stack[..size as usize]));
+        }
+        if unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER {
+            return None;
+        }
         let mut buffer = vec![0u16; 32768];
         let mut size = buffer.len() as u32;
         if unsafe { QueryFullProcessImageNameW(self.0, 0, buffer.as_mut_ptr(), &mut size) } == 0 {
@@ -423,14 +432,144 @@ fn version_name(name: &str) -> bool {
             .iter()
             .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
 }
-static CLAUDE_PROC_CACHE: OnceLock<Mutex<HashMap<(u32, u64), Option<(&'static str, String)>>>> =
-    OnceLock::new();
+type CachedClaudeProc = Option<(&'static str, String, ClaudeProcessRole, bool)>;
 
-fn claude_proc_cache() -> &'static Mutex<HashMap<(u32, u64), Option<(&'static str, String)>>> {
+static CLAUDE_PROC_CACHE: OnceLock<Mutex<HashMap<(u32, u64), CachedClaudeProc>>> = OnceLock::new();
+
+fn claude_proc_cache() -> &'static Mutex<HashMap<(u32, u64), CachedClaudeProc>> {
     CLAUDE_PROC_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn claude_candidate_pids() -> Result<Vec<(u32, String)>, String> {
+const CHILD_SHELL_EXES: &[&str] = &[
+    "pwsh.exe",
+    "powershell.exe",
+    "cmd.exe",
+    "bash.exe",
+    "sh.exe",
+    "zsh.exe",
+    "python.exe",
+    "python3.exe",
+    "node.exe",
+    "bun.exe",
+];
+
+fn classify_cli_role(cli_args: &[String]) -> (ClaudeProcessRole, bool) {
+    let mut has_fork_session = false;
+    let mut has_daemon = false;
+    for arg in cli_args.iter().take_while(|a| a.as_str() != "--") {
+        let s = arg.as_str();
+        if s == "--bg-pty-host" || s.starts_with("--bg-pty-host=") {
+            return (ClaudeProcessRole::BackgroundPtyHost, false);
+        }
+        if s == "--bg-spare"
+            || s.starts_with("--bg-spare=")
+            || s == "--daemon-worker"
+            || s.starts_with("--daemon-worker=")
+        {
+            return (ClaudeProcessRole::BackgroundWorker, false);
+        }
+        if s == "daemon" {
+            has_daemon = true;
+        }
+        if s == "--fork-session" || s.starts_with("--fork-session=") {
+            has_fork_session = true;
+        }
+    }
+    if has_daemon {
+        return (ClaudeProcessRole::BackgroundDaemon, false);
+    }
+    (ClaudeProcessRole::InteractiveCli, has_fork_session)
+}
+
+fn has_background_host_ancestor(
+    pid: u32,
+    ppid_by_pid: &HashMap<u32, u32>,
+    bg_host_pids: &HashSet<u32>,
+) -> bool {
+    if bg_host_pids.is_empty() {
+        return false;
+    }
+    let mut visited = HashSet::with_capacity(6);
+    visited.insert(pid);
+    let mut cur = pid;
+    for _ in 0..4 {
+        let Some(&parent) = ppid_by_pid.get(&cur) else {
+            break;
+        };
+        if parent <= 1 || !visited.insert(parent) {
+            break;
+        }
+        if bg_host_pids.contains(&parent) {
+            return true;
+        }
+        cur = parent;
+    }
+    false
+}
+
+fn collect_child_shells_from_tree<F>(
+    root_pid: u32,
+    claude_pids: &HashSet<u32>,
+    children_by_ppid: &HashMap<u32, Vec<(u32, String)>>,
+    mut is_pid_alive: F,
+) -> Vec<String>
+where
+    F: FnMut(u32) -> bool,
+{
+    let mut out = Vec::new();
+    let mut visited = HashSet::new();
+    visited.insert(root_pid);
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back((root_pid, 0usize));
+    while let Some((cur_pid, depth)) = queue.pop_front() {
+        if depth >= 4 {
+            continue;
+        }
+        let Some(children) = children_by_ppid.get(&cur_pid) else {
+            continue;
+        };
+        for (child_pid, child_name) in children {
+            if *child_pid <= 1 || !visited.insert(*child_pid) || claude_pids.contains(child_pid) {
+                continue;
+            }
+            if matches!(child_name.as_str(), "conhost.exe" | "openconsole.exe") {
+                continue;
+            }
+            if CHILD_SHELL_EXES.contains(&child_name.as_str()) && is_pid_alive(*child_pid) {
+                if !out.contains(child_name) && out.len() < 8 {
+                    out.push(child_name.clone());
+                }
+            }
+            if depth + 1 < 4 {
+                queue.push_back((*child_pid, depth + 1));
+            }
+        }
+    }
+    out
+}
+
+/// One Toolhelp snapshot: every `(pid, ppid, lowercase exe)` entry plus indices of Claude candidates.
+/// Parent/child maps are derived lazily by the caller only when a candidate needs them.
+struct ProcessSnapshotScan {
+    entries: Vec<(u32, u32, String)>,
+    candidates: Vec<usize>,
+}
+
+fn is_claude_candidate_name(name: &str) -> bool {
+    [
+        "claude.exe",
+        "claude-code-helper.exe",
+        "cowork-svc.exe",
+        "claude-ssh-askpass.exe",
+        "claude-ssh-proxy.exe",
+        "node.exe",
+        "bun.exe",
+    ]
+    .contains(&name)
+        || version_name(name)
+}
+
+fn scan_process_snapshot() -> Result<ProcessSnapshotScan, String> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
         return Err("无法检查 Windows 进程。".into());
@@ -438,35 +577,52 @@ fn claude_candidate_pids() -> Result<Vec<(u32, String)>, String> {
     let snapshot = Handle(snapshot);
     let mut entry = unsafe { std::mem::zeroed::<PROCESSENTRY32W>() };
     entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-    let mut result = vec![];
+    let mut scan = ProcessSnapshotScan {
+        entries: Vec::with_capacity(256),
+        candidates: vec![],
+    };
     let mut has = unsafe { Process32FirstW(snapshot.0, &mut entry) };
     while has != 0 {
-        let name = String::from_utf16_lossy(&entry.szExeFile)
-            .trim_end_matches('\0')
-            .to_lowercase();
-        if ([
-            "claude.exe",
-            "claude-code-helper.exe",
-            "cowork-svc.exe",
-            "claude-ssh-askpass.exe",
-            "claude-ssh-proxy.exe",
-            "node.exe",
-            "bun.exe",
-        ]
-        .contains(&name.as_str())
-            || version_name(&name))
-            && entry.th32ProcessID > 1
-        {
-            result.push((entry.th32ProcessID, name));
+        let pid = entry.th32ProcessID;
+        let ppid = entry.th32ParentProcessID;
+        if pid > 1 {
+            let name = String::from_utf16_lossy(&entry.szExeFile)
+                .trim_end_matches('\0')
+                .to_lowercase();
+            if is_claude_candidate_name(&name) {
+                scan.candidates.push(scan.entries.len());
+            }
+            scan.entries.push((pid, ppid, name));
         }
         has = unsafe { Process32NextW(snapshot.0, &mut entry) };
     }
-    Ok(result)
+    Ok(scan)
+}
+
+fn ppid_map(entries: &[(u32, u32, String)]) -> HashMap<u32, u32> {
+    entries.iter().map(|(pid, ppid, _)| (*pid, *ppid)).collect()
+}
+
+fn children_map(entries: &[(u32, u32, String)]) -> HashMap<u32, Vec<(u32, String)>> {
+    let mut children_by_ppid: HashMap<u32, Vec<(u32, String)>> = HashMap::new();
+    for (pid, ppid, name) in entries {
+        children_by_ppid
+            .entry(*ppid)
+            .or_default()
+            .push((*pid, name.clone()));
+    }
+    children_by_ppid
 }
 
 pub fn claude_processes() -> Result<Vec<ClaudeProcess>, String> {
-    let candidates = claude_candidate_pids()?;
-    let mut found = vec![];
+    let scan = scan_process_snapshot()?;
+    let candidates: Vec<(u32, String)> = scan
+        .candidates
+        .iter()
+        .map(|&i| (scan.entries[i].0, scan.entries[i].2.clone()))
+        .collect();
+    let mut staged: Vec<(u32, &'static str, String, u64, ClaudeProcessRole, bool)> =
+        Vec::with_capacity(candidates.len());
     let mut active_keys = HashSet::with_capacity(candidates.len());
     for (pid, exe_name) in candidates {
         // Always open with PROCESS_QUERY_LIMITED_INFORMATION (+ PROCESS_SYNCHRONIZE) first (zero PROCESS_VM_READ).
@@ -483,13 +639,8 @@ pub fn claude_processes() -> Result<Vec<ClaudeProcess>, String> {
         active_keys.insert(key);
         if let Ok(cache) = claude_proc_cache().lock() {
             if let Some(cached) = cache.get(&key) {
-                if let Some((kind, image)) = cached {
-                    found.push(ClaudeProcess {
-                        pid: pid as i32,
-                        name: (*kind).into(),
-                        executable: image.clone(),
-                        created,
-                    });
+                if let Some((kind, image, base_role, has_fork)) = cached {
+                    staged.push((pid, *kind, image.clone(), created, *base_role, *has_fork));
                 }
                 continue;
             }
@@ -497,29 +648,94 @@ pub fn claude_processes() -> Result<Vec<ClaudeProcess>, String> {
         let Some(image) = limited.image() else {
             continue;
         };
-        let kind = if limited.packaged_claude() {
-            Some("Claude Desktop")
+        let resolved: CachedClaudeProc = if limited.packaged_claude() {
+            Some(("Claude Desktop", image, ClaudeProcessRole::Desktop, false))
         } else if needs_vm_arguments(&exe_name) {
             let args = browser_arguments(pid, &limited, created).unwrap_or_default();
-            claude_kind(&image, &args)
+            claude_kind(&image, &args).map(|kind| {
+                if kind == "Claude Desktop" {
+                    (kind, image, ClaudeProcessRole::Desktop, false)
+                } else {
+                    let cli_args = args.get(2..).unwrap_or(&[]);
+                    let (role, has_fork) = classify_cli_role(cli_args);
+                    (kind, image, role, has_fork)
+                }
+            })
         } else {
-            claude_kind(&image, &[])
+            claude_kind(&image, &[]).map(|kind| {
+                if kind == "Claude Desktop" {
+                    (kind, image, ClaudeProcessRole::Desktop, false)
+                } else {
+                    // Query command line strictly via limited handle (ProcessCommandLineInformation = 60, zero PROCESS_VM_READ).
+                    let args = query_command_line_limited(limited.0)
+                        .filter(|_| limited.is_alive() && limited.created() == Some(created))
+                        .unwrap_or_default();
+                    let cli_args = args.get(1..).unwrap_or(&[]);
+                    let (role, has_fork) = classify_cli_role(cli_args);
+                    (kind, image, role, has_fork)
+                }
+            })
         };
-        let resolved = kind.map(|k| (k, image));
         if let Ok(mut cache) = claude_proc_cache().lock() {
             cache.insert(key, resolved.clone());
         }
-        if let Some((kind, executable)) = resolved {
-            found.push(ClaudeProcess {
-                pid: pid as i32,
-                name: kind.into(),
-                executable,
-                created,
-            });
+        if let Some((kind, executable, base_role, has_fork)) = resolved {
+            staged.push((pid, kind, executable, created, base_role, has_fork));
         }
     }
     if let Ok(mut cache) = claude_proc_cache().lock() {
         cache.retain(|key, _| active_keys.contains(key));
+    }
+    if staged.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Parent/child maps are only built when at least one verified Claude process exists.
+    let ppid_by_pid = ppid_map(&scan.entries);
+    let children_by_ppid = if staged
+        .iter()
+        .any(|(_, _, _, _, role, _)| *role == ClaudeProcessRole::InteractiveCli)
+    {
+        children_map(&scan.entries)
+    } else {
+        HashMap::new()
+    };
+
+    let claude_pids: HashSet<u32> = staged.iter().map(|(pid, ..)| *pid).collect();
+    let bg_host_pids: HashSet<u32> = staged
+        .iter()
+        .filter(|(_, _, _, _, role, _)| {
+            matches!(
+                role,
+                ClaudeProcessRole::BackgroundPtyHost | ClaudeProcessRole::BackgroundDaemon
+            )
+        })
+        .map(|(pid, ..)| *pid)
+        .collect();
+
+    let mut found = Vec::with_capacity(staged.len());
+    for (pid, kind, executable, created, base_role, _has_fork) in staged {
+        let role = if base_role == ClaudeProcessRole::InteractiveCli
+            && has_background_host_ancestor(pid, &ppid_by_pid, &bg_host_pids)
+        {
+            ClaudeProcessRole::BackgroundWorker
+        } else {
+            base_role
+        };
+        let child_shells = if role == ClaudeProcessRole::InteractiveCli {
+            collect_child_shells_from_tree(pid, &claude_pids, &children_by_ppid, |cpid| {
+                Handle::open_limited(cpid).is_some_and(|h| h.is_alive())
+            })
+        } else {
+            Vec::new()
+        };
+        found.push(ClaudeProcess {
+            pid: pid as i32,
+            name: kind.into(),
+            executable,
+            created,
+            role,
+            child_shells,
+        });
     }
     Ok(found)
 }
@@ -583,6 +799,157 @@ fn browser_arguments(pid: u32, limited: &Handle, expected_created: u64) -> Optio
         return None;
     }
     arguments(&vm)
+}
+
+// ----- Chrome 进程画像缓存：(pid, created_100ns) 进程生命周期内只取一次镜像路径与命令行 -----
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ChromeProbe {
+    /// Image is not `...\chrome.exe` (e.g. another vendor's chrome.exe-named binary).
+    NotChrome,
+    Chrome { image: String, args: Vec<String> },
+}
+
+static CHROME_PROC_CACHE: OnceLock<Mutex<HashMap<(u32, u64), ChromeProbe>>> = OnceLock::new();
+
+fn chrome_proc_cache() -> &'static Mutex<HashMap<(u32, u64), ChromeProbe>> {
+    CHROME_PROC_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Memoized image/argument probe for a live, already-SID-verified chrome.exe handle.
+/// Transient failures (`Err`) are never cached, so callers keep their unknown/skip semantics.
+fn probe_chrome(pid: u32, limited: &Handle, created: u64) -> Result<ChromeProbe, ()> {
+    let key = (pid, created);
+    if let Some(hit) = chrome_proc_cache()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&key).cloned())
+    {
+        return Ok(hit);
+    }
+    let image = limited.image().ok_or(())?;
+    let probe = if normalized(&image).ends_with("\\chrome.exe") {
+        let args = browser_arguments(pid, limited, created).ok_or(())?;
+        ChromeProbe::Chrome { image, args }
+    } else {
+        ChromeProbe::NotChrome
+    };
+    if let Ok(mut cache) = chrome_proc_cache().lock() {
+        cache.insert(key, probe.clone());
+    }
+    Ok(probe)
+}
+
+/// Drop cache entries for processes that are no longer present in a complete snapshot.
+fn prune_chrome_cache(live: &HashSet<(u32, u64)>) {
+    if let Ok(mut cache) = chrome_proc_cache().lock() {
+        retain_live(&mut cache, live);
+    }
+}
+
+fn retain_live<V>(cache: &mut HashMap<(u32, u64), V>, live: &HashSet<(u32, u64)>) {
+    cache.retain(|key, _| live.contains(key));
+}
+
+#[cfg(test)]
+fn chrome_cache_contains(key: (u32, u64)) -> bool {
+    chrome_proc_cache()
+        .lock()
+        .map(|c| c.contains_key(&key))
+        .unwrap_or(false)
+}
+
+/// Match one `--user-data-dir` against precomputed profile identities (same rules as `profile_matches`).
+fn profile_index_matches(
+    selected: &str,
+    profiles: &[(Option<(u32, u64)>, String)],
+) -> Vec<usize> {
+    let selected_id = file_identity(Path::new(selected), true);
+    let mut selected_lex: Option<String> = None;
+    let mut hits = Vec::new();
+    for (index, (profile_id, profile_lex)) in profiles.iter().enumerate() {
+        let matched = match (selected_id, profile_id) {
+            (Some(a), Some(b)) => a == *b,
+            (None, None) => {
+                selected_lex.get_or_insert_with(|| lexical_normalized_path(selected)) == profile_lex
+            }
+            _ => false,
+        };
+        if matched {
+            hits.push(index);
+        }
+    }
+    hits
+}
+
+/// Batched managed-profile liveness: ONE Toolhelp snapshot for all `profiles`, cached Chrome probes,
+/// one file-identity open per profile and per running main Chrome process. Result aligns with input.
+pub(crate) fn running_chrome_profiles(profiles: &[PathBuf]) -> Result<Vec<bool>, String> {
+    let mut running = vec![false; profiles.len()];
+    let prepared: Vec<(Option<(u32, u64)>, String)> = profiles
+        .iter()
+        .map(|p| {
+            if !p.is_absolute() {
+                // Never matches: an impossible identity plus an empty lexical key.
+                return (Some((u32::MAX, u64::MAX)), String::new());
+            }
+            (
+                file_identity(p, true),
+                lexical_normalized_path(&p.to_string_lossy()),
+            )
+        })
+        .collect();
+    if profiles.is_empty() {
+        return Ok(running);
+    }
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err("无法检查正在运行的浏览器进程。".into());
+    }
+    let snapshot = Handle(snapshot);
+    let mut entry = unsafe { std::mem::zeroed::<PROCESSENTRY32W>() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut has = unsafe { Process32FirstW(snapshot.0, &mut entry) };
+    if has == 0 {
+        return Err("无法读取正在运行的浏览器进程。".into());
+    }
+    let mut live = HashSet::new();
+    while has != 0 {
+        let pid = entry.th32ProcessID;
+        if pid > 1 && is_chrome_entry(&entry.szExeFile) {
+            if let Some(limited) = Handle::open_limited(pid) {
+                if limited.is_alive() {
+                    if let Some(created) = limited.created() {
+                        live.insert((pid, created));
+                        if let Ok(ChromeProbe::Chrome { args, .. }) =
+                            probe_chrome(pid, &limited, created)
+                        {
+                            if !has_child_process_type(&args) {
+                                if let Some(selected) = profile_argument(&args) {
+                                    for index in profile_index_matches(selected, &prepared) {
+                                        running[index] = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        has = unsafe { Process32NextW(snapshot.0, &mut entry) };
+    }
+    prune_chrome_cache(&live);
+    Ok(running)
+}
+
+/// Case-insensitive `chrome.exe` check on the raw Toolhelp name without allocating for other processes.
+fn is_chrome_entry(raw: &[u16]) -> bool {
+    const CHROME: &[u8] = b"chrome.exe";
+    let len = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
+    len == CHROME.len()
+        && raw[..len]
+            .iter()
+            .zip(CHROME)
+            .all(|(&c, &b)| c < 128 && (c as u8).to_ascii_lowercase() == b)
 }
 
 fn has_child_process_type(args: &[String]) -> bool {
@@ -720,20 +1087,17 @@ fn browser(profile: &str, close: bool) -> Result<bool, String> {
         return Err("无法读取正在运行的浏览器进程。".into());
     }
     let mut found = false;
+    let mut live = HashSet::new();
     while has != 0 {
-        let name = String::from_utf16_lossy(&entry.szExeFile)
-            .trim_end_matches('\0')
-            .to_lowercase();
         let pid = entry.th32ProcessID;
-        if name == "chrome.exe" && pid > 1 {
+        if pid > 1 && is_chrome_entry(&entry.szExeFile) {
             if let Some(limited) = Handle::open_limited(pid) {
-                if limited.is_alive()
-                    && limited
-                        .image()
-                        .is_some_and(|image| normalized(&image).ends_with("\\chrome.exe"))
-                {
+                if limited.is_alive() {
                     if let Some(created) = limited.created() {
-                        if let Some(args) = browser_arguments(pid, &limited, created) {
+                        live.insert((pid, created));
+                        if let Ok(ChromeProbe::Chrome { args, .. }) =
+                            probe_chrome(pid, &limited, created)
+                        {
                             if !has_child_process_type(&args) && profile_matches(&args, profile) {
                                 found = true;
                                 if close {
@@ -749,6 +1113,7 @@ fn browser(profile: &str, close: bool) -> Result<bool, String> {
         }
         has = unsafe { Process32NextW(snapshot.0, &mut entry) };
     }
+    prune_chrome_cache(&live);
     Ok(found)
 }
 pub unsafe fn rf_browser_running(profile: *const c_char) -> *mut c_char {
@@ -828,11 +1193,9 @@ pub(crate) fn browser_runtime(profile: &Path) -> Result<(bool, bool), String> {
         visible: false,
         uncertain: false,
     };
+    let mut live = HashSet::new();
     while has != 0 {
-        let name = String::from_utf16_lossy(&entry.szExeFile)
-            .trim_end_matches('\0')
-            .to_lowercase();
-        if name == "chrome.exe" && entry.th32ProcessID > 1 {
+        if entry.th32ProcessID > 1 && is_chrome_entry(&entry.szExeFile) {
             let mut raw = unsafe {
                 OpenProcess(
                     PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
@@ -851,11 +1214,11 @@ pub(crate) fn browser_runtime(profile: &Path) -> Result<(bool, bool), String> {
             let limited = Handle(raw);
             let owner = unsafe { process_sid(limited.0) }.ok_or(UNKNOWN)?;
             if &owner == sid && limited.is_alive() {
-                let image = limited.image().ok_or(UNKNOWN)?;
-                if normalized(&image).ends_with("\\chrome.exe") {
-                    let created = limited.created().ok_or(UNKNOWN)?;
-                    let args =
-                        browser_arguments(entry.th32ProcessID, &limited, created).ok_or(UNKNOWN)?;
+                let created = limited.created().ok_or(UNKNOWN)?;
+                live.insert((entry.th32ProcessID, created));
+                if let ChromeProbe::Chrome { image, args } =
+                    probe_chrome(entry.th32ProcessID, &limited, created).map_err(|_| UNKNOWN)?
+                {
                     if !has_child_process_type(&args) && profile_matches(&args, profile) {
                         probe
                             .processes
@@ -866,6 +1229,7 @@ pub(crate) fn browser_runtime(profile: &Path) -> Result<(bool, bool), String> {
         }
         has = unsafe { Process32NextW(snapshot.0, &mut entry) };
     }
+    prune_chrome_cache(&live);
     if probe.processes.is_empty() {
         return Ok((false, false));
     }
@@ -917,7 +1281,72 @@ impl ChildJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn wide(name: &str) -> [u16; 260] {
+        let mut raw = [0u16; 260];
+        for (slot, unit) in raw.iter_mut().zip(name.encode_utf16()) {
+            *slot = unit;
+        }
+        raw
+    }
     #[test]
+    fn chrome_probe_cache_prunes_exited_processes_and_batched_scan_matches_profiles() {
+        assert!(is_chrome_entry(&wide("chrome.exe")));
+        assert!(is_chrome_entry(&wide("CHROME.EXE")));
+        assert!(!is_chrome_entry(&wide("chrome.exe.bak")));
+        assert!(!is_chrome_entry(&wide("xchrome.exe")));
+        assert!(!is_chrome_entry(&wide("chrome.ex")));
+
+        // (pid, created) keying: a reused PID with a new creation time is a different process.
+        let mut cache: HashMap<(u32, u64), ChromeProbe> = HashMap::new();
+        cache.insert((41, 1), ChromeProbe::NotChrome);
+        cache.insert(
+            (41, 2),
+            ChromeProbe::Chrome {
+                image: "C:\\synthetic\\chrome.exe".into(),
+                args: vec!["--user-data-dir=C:\\synthetic\\profile".into()],
+            },
+        );
+        cache.insert((42, 3), ChromeProbe::NotChrome);
+        let live: HashSet<(u32, u64)> = [(41, 2)].into_iter().collect();
+        retain_live(&mut cache, &live);
+        assert_eq!(cache.len(), 1);
+        assert!(matches!(cache.get(&(41, 2)), Some(ChromeProbe::Chrome { .. })));
+        let synthetic = (u32::MAX - 7, 11u64);
+        assert!(!chrome_cache_contains(synthetic));
+        let base = std::env::temp_dir().join(format!(
+            "claude-local-chrome-batch-{}",
+            std::process::id()
+        ));
+        let a = base.join("contexts").join("a").join("profile");
+        let b = base.join("contexts").join("b").join("profile");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let missing = base.join("missing").join("profile");
+        let prepared: Vec<(Option<(u32, u64)>, String)> = [&a, &b, &missing]
+            .iter()
+            .map(|p| {
+                (
+                    file_identity(p, true),
+                    lexical_normalized_path(&p.to_string_lossy()),
+                )
+            })
+            .collect();
+        assert_eq!(profile_index_matches(&a.to_string_lossy(), &prepared), vec![0]);
+        assert_eq!(
+            profile_index_matches(&format!("{}\\.", b.to_string_lossy()), &prepared),
+            vec![1]
+        );
+        assert_eq!(
+            profile_index_matches(&missing.to_string_lossy().to_uppercase(), &prepared),
+            vec![2]
+        );
+        // Synthetic, never-launched profiles: one read-only snapshot reports none running.
+        let flags =
+            running_chrome_profiles(&[a.clone(), b.clone(), PathBuf::from("relative")]).unwrap();
+        assert_eq!(flags, vec![false, false, false]);
+        assert!(running_chrome_profiles(&[]).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&base);
+    }    #[test]
     fn runtime_window_requires_visibility_and_proven_profile_pid() {
         let selected_profile_pids = [101, 103];
         assert!(visible_profile_window(101, true, selected_profile_pids));
@@ -1091,8 +1520,100 @@ mod tests {
             name: "Claude Code".into(),
             executable: reopened.image().unwrap_or_default(),
             created: reopened.created().unwrap_or(0),
+            role: ClaudeProcessRole::InteractiveCli,
+            child_shells: Vec::new(),
         };
         assert_eq!(kill_process(&dummy_target), Ok(()));
         let _ = child.wait();
+    }
+
+    #[test]
+    fn background_daemon_roles_and_child_shell_tree_are_classified_safely() {
+        assert_eq!(
+            classify_cli_role(&[
+                "daemon".into(),
+                "run".into(),
+                "--origin".into(),
+                "transient".into()
+            ]),
+            (ClaudeProcessRole::BackgroundDaemon, false)
+        );
+        assert!(ClaudeProcessRole::BackgroundDaemon.is_background());
+        assert_eq!(
+            classify_cli_role(&["--bg-pty-host".into(), "\\\\.\\pipe\\claude-pty".into()]),
+            (ClaudeProcessRole::BackgroundPtyHost, false)
+        );
+        assert!(ClaudeProcessRole::BackgroundPtyHost.is_background());
+        assert_eq!(
+            classify_cli_role(&["--bg-spare".into(), "\\\\.\\pipe\\claude-claim".into()]),
+            (ClaudeProcessRole::BackgroundWorker, false)
+        );
+        assert_eq!(
+            classify_cli_role(&["--daemon-worker".into()]),
+            (ClaudeProcessRole::BackgroundWorker, false)
+        );
+        assert!(ClaudeProcessRole::BackgroundWorker.is_background());
+        assert_eq!(
+            classify_cli_role(&[
+                "--session-id".into(),
+                "s-bg".into(),
+                "--fork-session".into(),
+                "--resume".into(),
+                "s-orig".into()
+            ]),
+            (ClaudeProcessRole::InteractiveCli, true)
+        );
+        assert_eq!(
+            classify_cli_role(&["--resume".into(), "s-orig".into()]),
+            (ClaudeProcessRole::InteractiveCli, false)
+        );
+        assert_eq!(
+            classify_cli_role(&["--verbose".into(), "daemon".into(), "start".into()]),
+            (ClaudeProcessRole::BackgroundDaemon, false)
+        );
+        assert_eq!(
+            classify_cli_role(&[
+                "--debug".into(),
+                "--bg-pty-host=\\\\.\\pipe\\claude-pty".into()
+            ]),
+            (ClaudeProcessRole::BackgroundPtyHost, false)
+        );
+        assert_eq!(
+            classify_cli_role(&["--".into(), "daemon".into()]),
+            (ClaudeProcessRole::InteractiveCli, false)
+        );
+        assert!(!ClaudeProcessRole::InteractiveCli.is_background());
+        assert!(!ClaudeProcessRole::Desktop.is_background());
+
+        let mut ppid_by_pid = HashMap::new();
+        ppid_by_pid.insert(200, 100); // pty-host under daemon
+        ppid_by_pid.insert(300, 200); // forked worker under pty-host
+        ppid_by_pid.insert(400, 50); // standalone interactive claude under terminal
+        // Cycle guard check
+        ppid_by_pid.insert(900, 901);
+        ppid_by_pid.insert(901, 900);
+        let bg_hosts: HashSet<u32> = [100u32, 200u32].into_iter().collect();
+        assert!(has_background_host_ancestor(300, &ppid_by_pid, &bg_hosts));
+        assert!(!has_background_host_ancestor(400, &ppid_by_pid, &bg_hosts));
+        assert!(!has_background_host_ancestor(900, &ppid_by_pid, &bg_hosts));
+
+        let mut children: HashMap<u32, Vec<(u32, String)>> = HashMap::new();
+        children.insert(
+            400,
+            vec![
+                (401, "conhost.exe".into()),
+                (402, "pwsh.exe".into()),
+                (403, "claude.exe".into()), // nested subagent claude: must NOT traverse
+            ],
+        );
+        children.insert(402, vec![(404, "python.exe".into()), (405, "pwsh.exe".into())]);
+        children.insert(403, vec![(406, "bash.exe".into())]); // under nested claude: excluded
+        children.insert(404, vec![(407, "cmd.exe".into())]); // depth 3
+        children.insert(407, vec![(408, "node.exe".into())]); // depth 4
+        children.insert(408, vec![(409, "sh.exe".into())]); // depth 5 (>4): excluded
+        let claude_pids: HashSet<u32> = [400u32, 403u32].into_iter().collect();
+        let shells =
+            collect_child_shells_from_tree(400, &claude_pids, &children, |pid| pid != 40700);
+        assert_eq!(shells, vec!["pwsh.exe", "python.exe", "cmd.exe", "node.exe"]);
     }
 }

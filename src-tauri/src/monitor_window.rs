@@ -1,6 +1,6 @@
-// [INPUT]: Tauri AppHandle、共享用量账本当前已验证账号统计、当前配额快照、零侵入进程检测状态与私有持久化偏好（monitor-window-state.json）。
-// [OUTPUT]: monitor 窗口生命周期控制（静态声明/启动隐式预热、Windows 共享主窗 WebView2 Environment、置顶、锁定、鼠标穿透与托盘/主窗防困死恢复、磁吸、贴边隐藏、跨显示器工作区坐标夹持、三态尺寸与私有 ACL 持久化）及当前账号5h四类Token/去重响应、固定近10分钟均值速率和最近实际模型的零网络快照。
-// [POS]: 悬浮小窗与本地遥测边界；复用 identities::usage 增量采集和严格账号查询，不独立扫描会话、不猜成本/上下文上限，不发起 OAuth 轮询或跨进程内存读取。
+// [INPUT]: Tauri AppHandle、共享用量账本当前已验证账号统计、当前配额与套餐/手动订阅快照、SmartRelay/cli-slots 原生编排遥测、零侵入进程检测状态与私有持久化偏好（monitor-window-state.json）。
+// [OUTPUT]: monitor 窗口生命周期控制（create:false 按需创建、关闭即 destroy 释放 WebView2、Windows 共享主窗 WebView2 Environment、置顶、锁定、鼠标穿透与托盘/主窗防困死恢复、磁吸、贴边隐藏、跨显示器工作区坐标夹持、三态尺寸与私有 ACL 持久化）及单次去重后的当前账号5h四类Token/去重响应、固定近10分钟均值速率、最近实际模型、过滤 cli-slots 后的真实主会话状态与 SmartRelay/Reset-Card/活跃槽位只读遥测快照。
+// [POS]: 悬浮小窗与本地遥测边界；复用 identities::{usage,orchestrator} 增量采集和严格账号查询，不独立扫描会话、不猜成本/上下文上限，不发起 OAuth 轮询或跨进程内存读取。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 use serde::{Deserialize, Serialize};
@@ -173,11 +173,21 @@ pub struct MonitorLiveTelemetry {
     pub observed_at_ms: u64,
     pub running: bool,
     pub session_count: usize,
+    pub active_slot_count: usize,
     pub client_label: Option<String>,
     pub active_id: String,
     pub active_name: Option<String>,
     pub current: crate::identities::profile::Current,
     pub metrics: LiveTokenMetrics,
+    pub manual_resets_remaining: u32,
+    pub pool_manual_resets_remaining: u32,
+    pub awaiting_reset_count: usize,
+    pub relay_enabled: bool,
+    pub relay_strategy: String,
+    pub next_relay_name: Option<String>,
+    pub next_relay_email: Option<String>,
+    pub next_relay_rem_pct: Option<u8>,
+    pub should_relay_now: bool,
     pub route_protected: bool,
     pub window: MonitorWindowState,
 }
@@ -356,11 +366,16 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         return;
     }
     match event {
-        tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed => {
+        tauri::WindowEvent::CloseRequested { .. } => {
+            // 不 prevent_close：系统关闭直接销毁 monitor WebView2，先记住位置。
+            let pos = window.outer_position().ok();
             let _ = update_window_state(window.app_handle(), |mem| {
-                mem.state.open = false;
-                mem.state.click_through = false;
+                remember_closing_position(mem, pos);
+                reset_closed_memory(mem);
             });
+        }
+        tauri::WindowEvent::Destroyed => {
+            let _ = update_window_state(window.app_handle(), reset_closed_memory);
         }
         tauri::WindowEvent::Resized(_) => {
             if window.is_maximized().unwrap_or(false) {
@@ -713,46 +728,48 @@ fn build_monitor_window(
 }
 
 pub fn setup(app: &tauri::AppHandle) {
-    let mut saved_pos = None;
-    let mut has_persisted = false;
+    // 启动只恢复持久化偏好与位置记忆；monitor WebView2 改为首次打开时按需创建（create:false）。
     if let Some(persisted) = load_persisted_state_for_app(app) {
-        has_persisted = true;
         if let Some(managed) = app.try_state::<ManagedMonitorState>() {
             let mut guard = managed
                 .0
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             guard.apply_persisted(persisted);
-            saved_pos = guard.last_pos.or(guard.saved_expanded_pos);
+            guard.initialized_position = false;
         }
     }
-    let current = current_window_state(app);
-    let win = app
-        .get_webview_window(MONITOR_LABEL)
-        .or_else(|| build_monitor_window_on_main_thread(app, &current).ok());
-    if let Some(win) = win {
-        enforce_monitor_geometry(&win, &current);
-        let _ = win.set_skip_taskbar(true);
-        let _ = win.set_always_on_top(current.always_on_top);
+}
+
+/// 关闭 monitor 时销毁窗口与 WebView2，并复位运行时状态，下次打开重新定位。
+fn destroy_monitor_window(app: &tauri::AppHandle) -> MonitorWindowState {
+    let mut closing_pos = None;
+    if let Some(win) = app.get_webview_window(MONITOR_LABEL) {
+        closing_pos = win.outer_position().ok();
         let _ = win.set_ignore_cursor_events(false);
-        let applied_pos = position_saved_or_top_right(app, &win, &current, saved_pos);
-        if let Some(managed) = app.try_state::<ManagedMonitorState>() {
-            let mut guard = managed
-                .0
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            guard.initialized_position = true;
-            if let Some(pos) = applied_pos {
-                guard.last_pos = Some(pos);
-                if guard.saved_expanded_pos.is_none() {
-                    guard.saved_expanded_pos = Some(pos);
-                }
-            }
-            if !has_persisted && saved_pos.is_none() {
-                guard.state.docked_edge = Some(MonitorDockEdge::Right);
-            }
+        let _ = win.destroy();
+    }
+    update_window_state(app, |mem| {
+        remember_closing_position(mem, closing_pos);
+        reset_closed_memory(mem);
+    })
+}
+
+fn remember_closing_position(mem: &mut MonitorRuntimeMemory, pos: Option<PhysicalPosition<i32>>) {
+    if let Some(pos) = pos.filter(|_| mem.state.open) {
+        if mem.state.collapsed {
+            mem.last_pos = mem.saved_expanded_pos.or(mem.last_pos);
+        } else {
+            mem.last_pos = Some(pos);
+            mem.saved_expanded_pos = Some(pos);
         }
     }
+}
+
+fn reset_closed_memory(mem: &mut MonitorRuntimeMemory) {
+    mem.state.open = false;
+    mem.state.click_through = false;
+    mem.initialized_position = false;
 }
 
 pub fn toggle_open_from_tray(app: &tauri::AppHandle) {
@@ -767,14 +784,7 @@ pub fn toggle_open_from_tray(app: &tauri::AppHandle) {
             mem.state.click_through = false;
         });
     } else if current.open {
-        if let Some(win) = app.get_webview_window(MONITOR_LABEL) {
-            let _ = win.set_ignore_cursor_events(false);
-            let _ = win.hide();
-        }
-        let _ = update_window_state(app, |mem| {
-            mem.state.open = false;
-            mem.state.click_through = false;
-        });
+        let _ = destroy_monitor_window(app);
     } else {
         let mut next_target = current;
         next_target.open = true;
@@ -910,14 +920,7 @@ pub async fn monitor_window_set_open(
             }))
         }
     } else {
-        if let Some(existing) = app.get_webview_window(MONITOR_LABEL) {
-            let _ = existing.set_ignore_cursor_events(false);
-            let _ = existing.hide();
-        }
-        Ok(update_window_state(&app, |mem| {
-            mem.state.open = false;
-            mem.state.click_through = false;
-        }))
+        Ok(destroy_monitor_window(&app))
     }
 }
 
@@ -1053,44 +1056,67 @@ pub async fn monitor_window_start_drag(app: tauri::AppHandle) -> Result<(), Stri
 #[tauri::command]
 pub async fn monitor_live_telemetry(app: tauri::AppHandle) -> Result<MonitorLiveTelemetry, String> {
     let window = current_window_state(&app);
-    let vault_path = app
+    let app_data_dir = app
         .path()
         .app_data_dir()
-        .map_err(|_| "身份保险库无法定位。".to_string())?
-        .join("identity-vault");
+        .map_err(|_| "身份保险库无法定位。".to_string())?;
+    let vault_path = app_data_dir.join("identity-vault");
     tauri::async_runtime::spawn_blocking(move || {
         let root_path = crate::cleaner::identity::root()?;
         let observed_at_ms = now_ms();
         let now_sec = observed_at_ms / 1000;
-        let procs = crate::cleaner::identity::running_processes();
-        let running = !procs.is_empty();
-        let sessions = crate::identities::profile::active_sessions_from_processes(&root_path, &procs);
+        // One process snapshot, one SQLite open, one ledger/metadata parse and one live read per tick.
+        let all_procs = crate::cleaner::identity::running_processes();
+        let expected_account = crate::identities::usage::live_account_key(&vault_path, &root_path);
+        let mut ctx = crate::identities::orchestrator::monitor_relay_snapshot_with_context(
+            &app_data_dir,
+            &vault_path,
+            &root_path,
+            now_sec,
+            &all_procs,
+        );
+        let active_id = ctx.active_id.clone();
+        let active_name = ctx.active_name.clone();
+        let (current, sessions, running) = match ctx.pool.take() {
+            Some(pool) => (pool.current, pool.default_sessions, pool.default_running),
+            None => {
+                // Evaluation failed (e.g. vault unavailable): fall back to a single live read.
+                let primary_procs = crate::cleaner::identity::filter_non_slot_processes(
+                    Some(&app_data_dir),
+                    all_procs.clone(),
+                );
+                let sessions = crate::identities::profile::active_sessions_from_processes(
+                    &root_path,
+                    &primary_procs,
+                );
+                let manual_subs = crate::identities::subscription::read_store(&vault_path);
+                let mut current = crate::identities::profile::read_live(&root_path, &vault_path);
+                crate::identities::online::apply_metadata(
+                    &vault_path,
+                    current.quota_identity.as_deref(),
+                    &mut current.web,
+                );
+                crate::identities::profile::apply_web_plan_tier(&mut current.plan, &current.web);
+                crate::identities::profile::enforce_plan_quota_limits(
+                    current.plan.as_deref(),
+                    &mut current.quota_no_5h_limit,
+                );
+                crate::identities::subscription::apply_manual_with_plan(
+                    &manual_subs,
+                    current.quota_identity.as_deref(),
+                    None,
+                    &mut current.plan,
+                    &mut current.quota_no_5h_limit,
+                    &mut current.web,
+                    &mut current.subscription_expires_at,
+                );
+                ctx.fill_fallback_cards(&current.web, now_sec);
+                (current, sessions, !primary_procs.is_empty())
+            }
+        };
         let session_count = sessions.len();
         let client_label = sessions.first().map(|s| s.entrypoint.clone());
-        let expected_account = crate::identities::usage::live_account_key(&vault_path, &root_path);
-
-        let mut active_id = "current".to_string();
-        let mut active_name = None;
-        if let Ok(db) = crate::identities::database::Database::open(&vault_path) {
-            if let Ok(Some(id)) =
-                crate::identities::catalog::current_id(&vault_path, &root_path, &db)
-            {
-                active_id = id.clone();
-                if let Ok(records) = db.records() {
-                    active_name = records
-                        .into_iter()
-                        .find(|r| r.id == id && !r.empty)
-                        .map(|r| r.name);
-                }
-            }
-        }
-
-        let mut current = crate::identities::profile::read_live(&root_path, &vault_path);
-        crate::identities::online::apply_metadata(
-            &vault_path,
-            current.quota_identity.as_deref(),
-            &mut current.web,
-        );
+        let relay_snap = ctx.relay;
 
         // No monitor/collector lock is held while usage acquires its shared lock.
         // Unknown accounts stay unavailable; never borrow another account or a fallback.
@@ -1103,12 +1129,22 @@ pub async fn monitor_live_telemetry(app: tauri::AppHandle) -> Result<MonitorLive
             observed_at_ms,
             running: running || session_count > 0,
             session_count,
+            active_slot_count: relay_snap.active_slot_count,
             client_label,
             active_id,
             active_name,
-            route_protected: true,
             current,
             metrics,
+            manual_resets_remaining: relay_snap.manual_resets_remaining,
+            pool_manual_resets_remaining: relay_snap.pool_manual_resets_remaining,
+            awaiting_reset_count: relay_snap.awaiting_reset_count,
+            relay_enabled: relay_snap.relay_enabled,
+            relay_strategy: relay_snap.relay_strategy,
+            next_relay_name: relay_snap.next_relay_name,
+            next_relay_email: relay_snap.next_relay_email,
+            next_relay_rem_pct: relay_snap.next_relay_rem_pct,
+            should_relay_now: relay_snap.should_relay_now,
+            route_protected: true,
             window,
         })
     })

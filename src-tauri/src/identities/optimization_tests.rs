@@ -158,13 +158,30 @@ fn s13_legacy_68_key_archive_reads_without_restoring_device_or_ui_state() {
         s.switch(&record.id, "B", &p, &r).unwrap();
         let restored: serde_json::Value =
             serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
-        for (key, expected) in stable.as_object().unwrap() {
+        for key in [
+            "remoteControlMachineId",
+            "tipsHistory",
+            "cachedExperimentData",
+            "numStartups",
+        ] {
             assert_eq!(
                 restored.get(key),
-                Some(expected),
+                stable.get(key),
                 "preserve {key}, settings={keep_settings}"
             );
         }
+        assert_eq!(
+            restored["userID"].as_str(),
+            Some(orchestrator::derive_slot_user_id(&s.key, &record.id).as_str())
+        );
+        assert_eq!(
+            restored["machineID"].as_str(),
+            Some(orchestrator::derive_slot_machine_id(&s.key, &record.id).as_str())
+        );
+        assert_eq!(
+            restored["anonymousId"].as_str(),
+            Some(orchestrator::derive_slot_anonymous_id(&s.key, &record.id).as_str())
+        );
         assert_eq!(restored["oauthAccount"]["accountUuid"], "A");
         assert_eq!(f.token(), "fictional-a-login");
         assert_eq!(
@@ -745,7 +762,7 @@ fn store_open_is_read_only_for_workspace_and_explicit_cache_maintenance_is_narro
     assert!(cfg["modelAccessCache"].get(active_org).is_some());
     assert!(cfg["modelAccessCache"].get(foreign_org).is_none());
     assert!(cfg.get("clientDataCache").is_none());
-    assert!(f
+    assert!(!f
         .home
         .join(".claude/telemetry/1p_failed_events.active.1.json")
         .exists());
@@ -857,7 +874,7 @@ fn per_identity_proxy_and_repo_paths_and_oauth_lock_are_isolated_across_switches
     );
     f.write(
         ".claude/settings.json",
-        br#"{"theme":"dark","env":{"HTTPS_PROXY":"http://127.0.0.1:10801","NO_PROXY":"localhost,127.0.0.1","SHARED_FLAG":"1"}}"#,
+        br#"{"theme":"dark","apiKeyHelper":"helper-a","env":{"ANTHROPIC_AUTH_TOKEN":"sk-a","HTTPS_PROXY":"http://127.0.0.1:10801","NO_PROXY":"localhost,127.0.0.1","SHARED_FLAG":"1"}}"#,
     );
     f.write(
         ".claude/.oauth_refresh.lock.owner",
@@ -879,15 +896,20 @@ fn per_identity_proxy_and_repo_paths_and_oauth_lock_are_isolated_across_switches
     assert_eq!(empty_claude["changelogLastFetched"], 1791955499521u64);
     assert_eq!(empty_claude["lastClawdEntranceVersion"], "2.1.299");
     assert!(empty_claude.get("githubRepoPaths").is_none());
-    // 3. Account A's proxy is removed from settings.json while shared theme & SHARED_FLAG remain
+    // 3. Under policy.settings = true, HTTPS_PROXY / NO_PROXY stay machine-sticky while auth secrets are cleared
     let empty_settings: serde_json::Value =
         serde_json::from_slice(&fs::read(f.home.join(".claude/settings.json")).unwrap()).unwrap();
     assert_eq!(empty_settings["theme"], "dark");
     assert_eq!(empty_settings["env"]["SHARED_FLAG"], "1");
-    assert!(empty_settings["env"].get("HTTPS_PROXY").is_none());
-    assert!(empty_settings["env"].get("NO_PROXY").is_none());
+    assert_eq!(
+        empty_settings["env"]["HTTPS_PROXY"],
+        "http://127.0.0.1:10801"
+    );
+    assert_eq!(empty_settings["env"]["NO_PROXY"], "localhost,127.0.0.1");
+    assert!(empty_settings.get("apiKeyHelper").is_none());
+    assert!(empty_settings["env"].get("ANTHROPIC_AUTH_TOKEN").is_none());
 
-    // Now configure Account B with a different proxy and switch back to Account A
+    // Now configure Account B with its own auth secrets + updated machine proxy and switch back to Account A
     f.write(
         ".claude.json",
         &serde_json::to_vec(&serde_json::json!({
@@ -902,18 +924,19 @@ fn per_identity_proxy_and_repo_paths_and_oauth_lock_are_isolated_across_switches
     );
     f.write(
         ".claude/settings.json",
-        br#"{"theme":"dark","env":{"HTTPS_PROXY":"http://127.0.0.1:10802","SHARED_FLAG":"1"}}"#,
+        br#"{"theme":"dark","apiKeyHelper":"helper-b","env":{"ANTHROPIC_AUTH_TOKEN":"sk-b","HTTPS_PROXY":"http://127.0.0.1:10802","SHARED_FLAG":"1"}}"#,
     );
     let a_id = s.records().into_iter().find(|rec| !rec.empty).unwrap().id;
     s.switch(&a_id, "Account B", &policy, &r).unwrap();
 
     let restored_settings: serde_json::Value =
         serde_json::from_slice(&fs::read(f.home.join(".claude/settings.json")).unwrap()).unwrap();
+    assert_eq!(restored_settings["apiKeyHelper"], "helper-a");
+    assert_eq!(restored_settings["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
     assert_eq!(
         restored_settings["env"]["HTTPS_PROXY"],
-        "http://127.0.0.1:10801"
+        "http://127.0.0.1:10802"
     );
-    assert_eq!(restored_settings["env"]["NO_PROXY"], "localhost,127.0.0.1");
     let restored_claude: serde_json::Value =
         serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
     assert!(restored_claude["githubRepoPaths"]
@@ -922,6 +945,37 @@ fn per_identity_proxy_and_repo_paths_and_oauth_lock_are_isolated_across_switches
     assert!(restored_claude["githubRepoPaths"]
         .get("owner-b/repo")
         .is_none());
+
+    // Under policy.settings = false, per-account HTTPS_PROXY moves with each identity
+    let full_policy = Policy {
+        settings: false,
+        projects: false,
+        ..Policy::default()
+    };
+    let b_id = s
+        .records()
+        .into_iter()
+        .find(|rec| !rec.empty && rec.id != a_id)
+        .unwrap()
+        .id;
+    f.write(
+        ".claude/settings.json",
+        br#"{"theme":"dark","env":{"HTTPS_PROXY":"http://127.0.0.1:10801","NO_PROXY":"localhost,127.0.0.1","SHARED_FLAG":"1"}}"#,
+    );
+    s.switch(&b_id, "Account A", &full_policy, &r).unwrap();
+    f.write(
+        ".claude/settings.json",
+        br#"{"theme":"dark","env":{"HTTPS_PROXY":"http://127.0.0.1:10802","SHARED_FLAG":"1"}}"#,
+    );
+    s.switch(&a_id, "Account B", &full_policy, &r).unwrap();
+    let per_acct_a: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude/settings.json")).unwrap()).unwrap();
+    assert_eq!(per_acct_a["env"]["HTTPS_PROXY"], "http://127.0.0.1:10801");
+    assert_eq!(per_acct_a["env"]["NO_PROXY"], "localhost,127.0.0.1");
+    s.switch(&b_id, "Account A", &full_policy, &r).unwrap();
+    let per_acct_b: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude/settings.json")).unwrap()).unwrap();
+    assert_eq!(per_acct_b["env"]["HTTPS_PROXY"], "http://127.0.0.1:10802");
 }
 
 #[test]
@@ -1020,8 +1074,13 @@ fn in_place_save_and_summary_backfill_leave_default_workspace_untouched() {
     assert_eq!(sum.quota_7d_used, Some(40));
     assert_eq!(sum.quota_checked, Some(true));
 
-    // 3. Simulate a legacy archive without a summary and confirm open backfills only private index data.
+    // 3. Simulate a legacy archive (carrying full settings.json) without a summary and confirm open backfills only private index data.
     let rec_id = rec.id.clone();
+    let legacy_policy = Policy {
+        settings: false,
+        ..Policy::default()
+    };
+    s.save_current("主力 Max 20x", &legacy_policy, &r).unwrap();
     s.db.connection
         .execute("DELETE FROM identity_summaries WHERE id=?1", [&rec_id])
         .unwrap();
@@ -1361,7 +1420,17 @@ fn switch_to_empty_and_delete_current_purge_cleanroom_caches_while_preserving_us
 
     let empty_cfg: serde_json::Value =
         serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
-    assert_eq!(empty_cfg["userID"], "device-user-stable-001");
+    let empty_uid = empty_cfg["userID"].as_str().unwrap();
+    assert_ne!(empty_uid, "device-user-stable-001");
+    assert_eq!(empty_uid.len(), 64);
+    assert!(empty_cfg["anonymousId"]
+        .as_str()
+        .is_some_and(|s| s.starts_with("claude-cli-v1-")));
+    assert_eq!(
+        empty_cfg["machineID"].as_str().map(str::len),
+        Some(64)
+    );
+    assert!(empty_cfg["firstStartTime"].as_str().is_some_and(|s| !s.is_empty()));
     assert!(empty_cfg.get("oauthAccount").is_none());
     assert!(empty_cfg.get("metricsStatusCacheByPrincipal").is_none());
     assert!(empty_cfg.get("groveConfigCache").is_none());
@@ -1386,7 +1455,20 @@ fn switch_to_empty_and_delete_current_purge_cleanroom_caches_while_preserving_us
 
     let deleted_cfg: serde_json::Value =
         serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
-    assert_eq!(deleted_cfg["userID"], "device-user-stable-001");
+    let deleted_uid = deleted_cfg["userID"].as_str().unwrap();
+    assert_ne!(deleted_uid, "device-user-stable-001");
+    assert_ne!(deleted_uid, empty_uid);
+    assert_eq!(deleted_uid.len(), 64);
+    assert!(deleted_cfg["anonymousId"]
+        .as_str()
+        .is_some_and(|s| s.starts_with("claude-cli-v1-")));
+    assert_eq!(
+        deleted_cfg["machineID"].as_str().map(str::len),
+        Some(64)
+    );
+    assert!(deleted_cfg["firstStartTime"]
+        .as_str()
+        .is_some_and(|s| !s.is_empty()));
     assert!(deleted_cfg.get("oauthAccount").is_none());
     assert!(deleted_cfg.get("metricsStatusCacheByPrincipal").is_none());
     assert!(deleted_cfg.get("groveConfigCache").is_none());
@@ -1556,3 +1638,376 @@ fn windows_transient_share_lock_retry_and_handle_drain_wait_succeed() {
     holder3.join().unwrap();
     assert!(!settings_path.exists());
 }
+
+#[test]
+fn todos_preserved_while_remote_settings_isolated_skills_synced_and_slot_proxy_aligned() {
+    let f = Fixture::new();
+    let active_acct = "acct-alpha";
+    let active_org = "org-alpha";
+    private::directory(&f.home.join(".claude/todos")).unwrap();
+    private::directory(&f.home.join(".claude/skills/synced/foreign-org_foreign-acct")).unwrap();
+    private::directory(&f.home.join(format!(
+        ".claude/skills/synced/{active_org}_{active_acct}"
+    )))
+    .unwrap();
+    private::write(
+        &f.home.join(".claude/todos/session-todo.json"),
+        br#"{"todos":[{"id":"t1","status":"pending"}]}"#,
+    )
+    .unwrap();
+    private::write(
+        &f.home.join(".claude/remote-settings.json"),
+        br#"{"orgFeatureFlag":"org-alpha-only"}"#,
+    )
+    .unwrap();
+    private::write(
+        &f.home.join(".claude/skills/synced/foreign-org_foreign-acct/skill.md"),
+        b"foreign",
+    )
+    .unwrap();
+    private::write(
+        &f.home.join(format!(
+            ".claude/skills/synced/{active_org}_{active_acct}/keep.md"
+        )),
+        b"keep",
+    )
+    .unwrap();
+
+    f.write(
+        ".claude.json",
+        &serde_json::to_vec(&serde_json::json!({
+            "oauthAccount": {"accountUuid": active_acct, "organizationUuid": active_org}
+        }))
+        .unwrap(),
+    );
+
+    // `session-owner` JSONL marker recognition & sanitization.
+    private::directory(&f.home.join(".claude/projects/proj-owner")).unwrap();
+    let sess_owner_file = f.home.join(".claude/projects/proj-owner/s-owner.jsonl");
+    private::write(
+        &sess_owner_file,
+        br#"{"type":"session-owner","accountUuid":"foreign-uuid","organizationUuid":"foreign-org"}
+{"type":"user","message":{"role":"user","content":"hello"}}"#,
+    )
+    .unwrap();
+    crate::cleaner::identity::sanitize_cross_account_residue(&f.home).unwrap();
+    let sanitized_text = fs::read_to_string(&sess_owner_file).unwrap();
+    assert!(!sanitized_text.contains("session-owner"));
+    assert!(sanitized_text.contains("\"hello\""));
+
+    // Verify maintain_account_caches_report scrubs skills/synced foreign dirs + all telemetry.
+    let cache_report = crate::cleaner::identity::maintain_account_caches_report(&f.home).unwrap();
+    assert!(cache_report.caches_removed >= 1);
+    assert!(!f
+        .home
+        .join(".claude/skills/synced/foreign-org_foreign-acct")
+        .exists());
+    assert!(f
+        .home
+        .join(format!(
+            ".claude/skills/synced/{active_org}_{active_acct}/keep.md"
+        ))
+        .exists());
+
+    // Prepare Account A (with remote-settings + todos + local proxy) and Account B (empty proxy).
+    f.write(
+        ".claude.json",
+        br#"{"oauthAccount":{"accountUuid":"acct-a","organizationUuid":"org-a"}}"#,
+    );
+    f.write(
+        ".claude/.credentials.json",
+        br#"{"claudeAiOauth":{"accessToken":"tok-a"}}"#,
+    );
+    f.write(
+        ".claude/settings.local.json",
+        br#"{"env":{"HTTPS_PROXY":"http://127.0.0.1:18080"}}"#,
+    );
+    let mut store = store::Store::open(&f.vault, &f.home).unwrap();
+    let r = Reporter::channel(None);
+    store.save_current("Acct A", &Policy::default(), &r).unwrap();
+    let rec_a = store
+        .records()
+        .into_iter()
+        .find(|rec| rec.name == "Acct A")
+        .unwrap();
+
+    // Switch to Acct B (`empty` -> save Acct B) with todos + remote-settings.json present.
+    store.switch("empty", "Acct A", &Policy::default(), &r).unwrap();
+    assert!(
+        f.home.join(".claude/todos/session-todo.json").is_file(),
+        "todos must move to history so Policy::default() preserves them"
+    );
+    assert!(
+        !f.home.join(".claude/remote-settings.json").exists(),
+        "remote-settings.json must be wiped on switch as cache"
+    );
+
+    // Configure slotProxies[rec_a.id] in smart_relay_v1.json and verify settings.json alignment.
+    f.write(
+        ".claude.json",
+        br#"{"oauthAccount":{"accountUuid":"acct-b","organizationUuid":"org-b"}}"#,
+    );
+    f.write(
+        ".claude/.credentials.json",
+        br#"{"claudeAiOauth":{"accessToken":"tok-b"}}"#,
+    );
+    f.write(
+        ".claude/settings.local.json",
+        br#"{"env":{"HTTPS_PROXY":"http://127.0.0.1:18080"}}"#,
+    );
+    let mut relay_cfg = crate::identities::orchestrator::config::SmartRelayConfig::default();
+    relay_cfg
+        .slot_proxies
+        .insert(rec_a.id.clone(), "http://127.0.0.1:19090".into());
+    crate::identities::orchestrator::config::save_config(&f.root, &relay_cfg).unwrap();
+
+    store.switch(&rec_a.id, "Acct B", &Policy::default(), &r).unwrap();
+    let aligned_settings: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude/settings.json")).unwrap()).unwrap();
+    assert_eq!(
+        aligned_settings["env"]["HTTPS_PROXY"],
+        "http://127.0.0.1:19090"
+    );
+    assert_eq!(
+        aligned_settings["env"]["HTTP_PROXY"],
+        "http://127.0.0.1:19090"
+    );
+    let aligned_local: serde_json::Value = serde_json::from_slice(
+        &fs::read(f.home.join(".claude/settings.local.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        aligned_local["env"]["HTTPS_PROXY"],
+        "http://127.0.0.1:19090"
+    );
+}
+
+#[test]
+fn pending_device_id_adopted_across_empty_switch_and_save_current_collision_guard() {
+    let f = Fixture::new();
+    let r = Reporter::channel(None);
+    let p = Policy::default();
+    let mut s = store::Store::open(&f.vault, &f.home).unwrap();
+
+    f.login("acct-one", "org-one", "tok-one");
+    s.save_current("Account One", &p, &r).unwrap();
+    let rec_one = s.records().into_iter().find(|r| r.name == "Account One").unwrap();
+
+    // Switching to "empty" with browser linkage disabled uses pending_device_id directly.
+    s.db.configure_browser(false, false, None).unwrap();
+    s.switch("empty", "Account One", &p, &r).unwrap();
+    let empty_cfg: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    let pending_uid = empty_cfg["userID"].as_str().unwrap().to_string();
+    let pending_id = s.db.get("pending_device_id").unwrap().expect("pending_device_id");
+    assert_eq!(
+        pending_uid,
+        orchestrator::derive_slot_user_id(&s.key, &pending_id)
+    );
+
+    // Log into a brand-new Account Two on that empty slot and save_current -> adopts pending_id.
+    let mut next_cfg = empty_cfg.clone();
+    next_cfg["oauthAccount"] = serde_json::json!({
+        "accountUuid": "acct-two",
+        "organizationUuid": "org-two",
+        "emailAddress": "two@example.invalid"
+    });
+    f.write(".claude.json", &serde_json::to_vec(&next_cfg).unwrap());
+    f.write(
+        ".claude/.credentials.json",
+        br#"{"claudeAiOauth":{"accessToken":"tok-two"}}"#,
+    );
+    s.save_current("Account Two", &p, &r).unwrap();
+    let rec_two = s.records().into_iter().find(|r| r.name == "Account Two").unwrap();
+    assert_eq!(rec_two.id, pending_id);
+    assert!(s.db.get("pending_device_id").unwrap().is_none());
+
+    // Switching to "empty" with browser linkage enabled also stamps matching browser_draft ID.
+    s.db.configure_browser(true, false, None).unwrap();
+    s.switch("empty", "Account Two", &p, &r).unwrap();
+    let linked_empty_cfg: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    let linked_draft = s.db.browser_draft().unwrap().expect("browser draft");
+    assert_eq!(
+        linked_empty_cfg["userID"].as_str(),
+        Some(orchestrator::derive_slot_user_id(&s.key, &linked_draft).as_str())
+    );
+
+    // Now simulate an external /logout + /login while live .claude.json still carries rec_one's userID.
+    let rec_one_uid = orchestrator::derive_slot_user_id(&s.key, &rec_one.id);
+    f.write(
+        ".claude.json",
+        &serde_json::to_vec(&serde_json::json!({
+            "userID": rec_one_uid,
+            "oauthAccount": {
+                "accountUuid": "acct-three",
+                "organizationUuid": "org-three",
+                "emailAddress": "three@example.invalid"
+            }
+        }))
+        .unwrap(),
+    );
+    f.write(
+        ".claude/.credentials.json",
+        br#"{"claudeAiOauth":{"accessToken":"tok-three"}}"#,
+    );
+    s.save_current("Account Three", &p, &r).unwrap();
+    let rec_three = s
+        .records()
+        .into_iter()
+        .find(|r| r.name == "Account Three")
+        .unwrap();
+    let live_after: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(
+        live_after["userID"].as_str(),
+        Some(orchestrator::derive_slot_user_id(&s.key, &rec_three.id).as_str())
+    );
+}
+
+#[test]
+fn desktop_config_teams_growthbook_and_switch_handoff_isolation() {
+    let f = Fixture::new();
+    let r = Reporter::channel(None);
+    let p = Policy::default();
+    let mut s = store::Store::open(&f.vault, &f.home).unwrap();
+
+    f.login("acct-a", "org-a", "tok-a");
+    let mut cfg_a: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    cfg_a["cachedGrowthBookFeatures"] = serde_json::json!({"flag_a": true});
+    cfg_a["cachedGrowthBookFeaturesTimestamp"] = serde_json::json!(1700000000000u64);
+    cfg_a["cachedStatsigGates"] = serde_json::json!({"gate_a": true});
+    cfg_a["cachedDynamicConfigs"] = serde_json::json!({"cfg_a": 1});
+    cfg_a["summonSidKey"] = serde_json::json!("sid-a");
+    cfg_a["hasCompletedOnboarding"] = serde_json::json!(true);
+    cfg_a["numStartups"] = serde_json::json!(17);
+    f.write(".claude.json", &serde_json::to_vec(&cfg_a).unwrap());
+
+    // Teams + Desktop artifacts + keyed Desktop config.json
+    f.write(".claude/teams/team-a/config.json", br#"{"name":"team-a"}"#);
+    #[cfg(windows)]
+    let desktop_rel = "AppData/Roaming/Claude";
+    #[cfg(not(windows))]
+    let desktop_rel = "Library/Application Support/Claude";
+    f.write(&format!("{desktop_rel}/ant-did"), b"stable-ant-did");
+    f.write(
+        &format!("{desktop_rel}/ant-device-registry.json"),
+        br#"{"device":"stable"}"#,
+    );
+    f.write(
+        &format!("{desktop_rel}/config.json"),
+        &serde_json::to_vec(&serde_json::json!({
+            "theme": "dark",
+            "windowSize": {"width": 1200},
+            "lastKnownAccountUuid": "acct-a",
+            "oauth:tokenCache": {"t": "a"},
+            "oauth:tokenCacheV2": {"t": "a2"},
+            "dxt:allowlist:org-a": true,
+            "remote_uploads_migration_done_v1_acct_a": true
+        }))
+        .unwrap(),
+    );
+    f.write(&format!("{desktop_rel}/fcache/flag.json"), b"{}");
+    f.write(
+        &format!("{desktop_rel}/cowork-enabled-cli-ops.json"),
+        br#"{"ownerAccountId":"acct-a"}"#,
+    );
+
+    // Recent session for handoff capture on switch
+    let sess_id = "dddd1111-2222-4333-8444-555555555555";
+    f.write(
+        &format!(".claude/projects/proj-a/{sess_id}.jsonl"),
+        br#"{"type":"user","message":{"role":"user","content":"Build handoff test"}}
+"#,
+    );
+
+    s.switch("empty", "Acct A", &p, &r).unwrap();
+
+    // GrowthBook / Statsig / DynamicConfigs / summonSidKey stripped; s13 invariants preserved.
+    let after_empty: serde_json::Value =
+        serde_json::from_slice(&fs::read(f.home.join(".claude.json")).unwrap()).unwrap();
+    for removed in [
+        "cachedGrowthBookFeatures",
+        "cachedGrowthBookFeaturesTimestamp",
+        "cachedStatsigGates",
+        "cachedDynamicConfigs",
+        "summonSidKey",
+    ] {
+        assert!(after_empty.get(removed).is_none(), "{removed} must be purged");
+    }
+    assert_eq!(after_empty["hasCompletedOnboarding"], true);
+    assert_eq!(after_empty["numStartups"], 17);
+
+    // Teams preserved under history=true; Desktop account keys stripped while UI prefs & s13 preserved.
+    assert!(f.home.join(".claude/teams/team-a/config.json").is_file());
+    assert_eq!(
+        fs::read(f.home.join(desktop_rel).join("ant-did")).unwrap(),
+        b"stable-ant-did"
+    );
+    assert!(!f
+        .home
+        .join(desktop_rel)
+        .join("cowork-enabled-cli-ops.json")
+        .exists());
+    let desktop_cfg: serde_json::Value = serde_json::from_slice(
+        &fs::read(f.home.join(desktop_rel).join("config.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(desktop_cfg["theme"], "dark");
+    assert_eq!(desktop_cfg["windowSize"]["width"], 1200);
+    assert!(desktop_cfg.get("lastKnownAccountUuid").is_none());
+    assert!(desktop_cfg.get("oauth:tokenCache").is_none());
+    assert!(desktop_cfg.get("oauth:tokenCacheV2").is_none());
+    assert!(desktop_cfg.get("dxt:allowlist:org-a").is_none());
+    assert!(desktop_cfg
+        .get("remote_uploads_migration_done_v1_acct_a")
+        .is_none());
+
+    // Handoff committed after switch("empty")
+    let handoff = super::handoff::latest_handoff_in(
+        &f.root,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap()
+    .expect("handoff created on switch");
+    assert_eq!(handoff.session_count, 1);
+
+    // Same-account no-op early return must NOT overwrite/re-commit handoff after dismiss.
+    super::handoff::dismiss_handoff_in(&f.root).unwrap();
+    let rec_a = s.records().into_iter().find(|r| r.name == "Acct A").unwrap();
+    s.switch(&rec_a.id, "Empty", &p, &r).unwrap();
+    // Switch back to rec_a again (same-account no-op): dismiss handoff first, then call same-account switch.
+    super::handoff::dismiss_handoff_in(&f.root).unwrap();
+    s.switch(&rec_a.id, "Acct A", &p, &r).unwrap();
+    assert!(super::handoff::latest_handoff_in(
+        &f.root,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap()
+    .is_none());
+
+    // Pre-clear abort (`!mutated`) preserves workspace and does NOT commit a new handoff.
+    super::handoff::dismiss_handoff_in(&f.root).unwrap();
+    f.write(".claude/.credentials.json", br#"{"claudeAiOauth":{"accessToken":"tok-a"}}"#);
+    s.fail_before_clear = true;
+    assert!(s.switch("empty", "Acct A", &p, &r).is_err());
+    s.fail_before_clear = false;
+    assert_eq!(s.live_account_key(), rec_a.account_key);
+    assert!(super::handoff::latest_handoff_in(
+        &f.root,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap()
+    .is_none());
+}
+

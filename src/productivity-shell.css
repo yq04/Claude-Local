@@ -1,18 +1,41 @@
 /* [INPUT]: Shell and handoff component states plus the unified desktop chrome tokens. */
-/* [OUTPUT]: Clean desktop command palette and bounded handoff dialog layouts with neutral hover vs semantic active highlight and theme-adaptive alert contrast. */
+/* [OUTPUT]: Clean desktop command palette (grouped sections, page icons, plan/quota badges, keyboard kbd caps) and bounded handoff dialog layouts with neutral hover vs semantic active highlight and theme-adaptive alert contrast. */
 /* [POS]: Productivity surface styling; shares panel/line/shadow tokens without new control or animation primitive. */
 /* [PROTOCOL]: Update this header and src/CLAUDE.md with changes. */
 
+.command-palette-kbds kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 4.5px;
+  border-radius: 4px;
+  border: 1px solid var(--landing-line);
+  background: var(--background);
+  color: var(--muted-foreground);
+  font: 550 9.5px/1 var(--font-mono);
+}
+
 .command-palette { display: grid; gap: 10px; min-width: 0; }
 .command-palette > input { height: 36px; border-radius: 8px; }
-.command-palette-list { display: grid; gap: 3px; max-height: min(48vh, 390px); overflow: auto; padding: 4px; border: 1px solid var(--landing-line); border-radius: 12px; background: var(--panel); box-shadow: var(--card-shadow); }
-.command-palette-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; padding: 6px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--foreground); text-align: left; font: inherit; font-size: 12px; cursor: pointer; transition: background-color 140ms ease, color 140ms ease; }
+.command-palette-list { display: grid; gap: 2px; max-height: min(50vh, 410px); overflow: auto; padding: 5px; border: 1px solid var(--landing-line); border-radius: 12px; background: var(--panel); box-shadow: var(--card-shadow); }
+.command-palette-group-label { margin: 4px 6px 2px; font-size: 10px; font-weight: 650; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted-foreground); }
+.command-palette-group-label:first-child { margin-top: 1px; }
+.command-palette-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; padding: 5px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--foreground); text-align: left; font: inherit; font-size: 12px; cursor: pointer; transition: background-color 140ms ease, color 140ms ease; }
 .command-palette-option:hover:not(:disabled) { background: var(--muted); color: var(--foreground); }
 .command-palette-option[aria-selected="true"]:not(:disabled) { background: var(--local-accent-soft); color: var(--local-accent-ink); font-weight: 550; }
-.command-palette-option:disabled { opacity: .48; cursor: not-allowed; }
-.command-palette-option small { color: var(--muted-foreground); font-size: 10px; white-space: nowrap; }
+.command-palette-option:disabled { opacity: .55; cursor: not-allowed; }
+.command-palette-option-main { display: inline-flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; }
+.command-palette-option-icon { display: inline-grid; place-items: center; width: 18px; height: 18px; flex-shrink: 0; color: var(--muted-foreground); }
+.command-palette-option[aria-selected="true"]:not(:disabled) .command-palette-option-icon { color: var(--local-accent-ink); }
+.command-palette-option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.command-palette-option-meta { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.command-palette-option small { color: var(--muted-foreground); font-size: 10.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.command-palette-badge { padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 600; border: 1px solid var(--landing-line); background: var(--muted); color: var(--muted-foreground); white-space: nowrap; }
+.command-palette-badge.is-current { border-color: rgba(16, 185, 129, 0.3); background: rgba(16, 185, 129, 0.12); color: #059669; }
+:root.dark .command-palette-badge.is-current { border-color: rgba(52, 211, 153, 0.36); background: rgba(52, 211, 153, 0.16); color: #6ee7b7; }
 .command-palette-empty, .command-palette-hint { margin: 0; padding: 6px 8px; color: var(--muted-foreground); font-size: 11px; }
-.command-palette-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted-foreground); font-size: 10px; }
+.command-palette-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted-foreground); font-size: 10.5px; flex-wrap: wrap; }
+.command-palette-kbds { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 
 .task-handoff { display: grid; gap: 11px; min-width: 0; }
 .task-handoff > p { margin: 0; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; }

@@ -1,12 +1,13 @@
 /**
  * [INPUT]: The currently rendered aggregate snapshot, selected scope and privacy-safe display aliases.
- * [OUTPUT]: Formula-safe TSV (with summary and per-account blended USD cost & cache savings) and privacy-masked Markdown summary card containing scoped usage totals, per-request token/cost averages, per-session cost/depth efficiency, cache efficiency, top models, and elapsed time buckets.
+ * [OUTPUT]: Formula-safe TSV (with summary and per-account blended USD cost, cache savings, plan tier, prorated Subscription ROI multiplier & live subagent slot state) and privacy-masked Markdown summary card containing scoped usage totals, plan/ROI/slot badges, per-request token/cost averages, per-session cost/depth efficiency, cache efficiency, top models, and per-account ROI table.
  * [POS]: Pure export formatter; never reads files, identities, paths or request content.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
 import {maskDisplayName, maskEmailAddress} from './settings-model';
 import {
   cacheHitRate,
+  computeSubscriptionRoi,
   estimateSnapshotCostUsd,
   estimateTotalsCostUsd,
   formatTurnsPerSession,
@@ -32,6 +33,7 @@ export interface UsageExportOptions {
   privacyMask?: boolean;
   privacy?: boolean;
   days?: UsageDay[];
+  roiPeriodDays?: number;
   generatedLabel?: string;
   coverageLabel?: string;
   productLabel?: string;
@@ -90,6 +92,24 @@ function resolveMarkdownScopeLabel(
   return maskEmbeddedEmails(masked || defaultSingle);
 }
 
+function resolveRoiPeriodDays(
+  period: UsagePeriod | undefined,
+  report: Pick<UsageSnapshot, 'generated_at' | 'tracking_since'>,
+  explicitDays?: number,
+): number {
+  if (typeof explicitDays === 'number' && Number.isFinite(explicitDays) && explicitDays > 0) {
+    return explicitDays;
+  }
+  if (period === 'today' || period === 'yesterday') return 1;
+  if (period === 'week') return 7;
+  if (period === 'month') return 30;
+  const spanFromTracking =
+    report.tracking_since != null && report.generated_at > report.tracking_since
+      ? Math.ceil((report.generated_at - report.tracking_since) / 86_400)
+      : 0;
+  return Math.max(30, spanFromTracking);
+}
+
 export function formatUsageMarkdownSummary(
   report: UsageReport | null | undefined,
   options: UsageExportOptions & {
@@ -103,6 +123,7 @@ export function formatUsageMarkdownSummary(
   if (!report) return '';
   const locale: 'zh' | 'en' = options.locale === 'en' ? 'en' : 'zh';
   const isEn = locale === 'en';
+  const privacyMask = Boolean(options.privacyMask ?? options.privacy ?? false);
   const totals = report.totals;
   const models = [...(report.models ?? [])].sort(
     (a, b) => b.totals.total_tokens - a.totals.total_tokens,
@@ -118,7 +139,36 @@ export function formatUsageMarkdownSummary(
     options.cacheMultiplier ||
     (costEst.cacheReuseRatio != null ? `${costEst.cacheReuseRatio.toFixed(1)}×` : '');
 
+  const isAll =
+    options.accountIsAll ??
+    (!options.accountId || options.accountId === 'all');
+  const matchedAccount =
+    !isAll && options.accountId
+      ? report.accounts?.find(acc => acc.id === options.accountId)
+      : undefined;
+  const roiDays = resolveRoiPeriodDays(options.period, report, options.roiPeriodDays);
+  const singleAccountRoi =
+    matchedAccount && costEst.costUsd > 0
+      ? computeSubscriptionRoi(matchedAccount.plan, costEst.costUsd, roiDays)
+      : null;
+
   const scopeLabel = resolveMarkdownScopeLabel(report, options, locale);
+  const planMeta = matchedAccount?.plan
+    ? isEn
+      ? ` · **Plan**: ${matchedAccount.plan}`
+      : ` · **套餐**：${matchedAccount.plan}`
+    : '';
+  const slotMeta = matchedAccount?.slot_active
+    ? isEn
+      ? ' · **Slot**: Active'
+      : ' · **槽位**：子代理活跃'
+    : '';
+  const roiMeta = singleAccountRoi
+    ? isEn
+      ? ` · **Plan Value**: **${singleAccountRoi.multiplier.toFixed(1)}x**`
+      : ` · **订阅回本**：**${singleAccountRoi.multiplier.toFixed(1)}×**`
+    : '';
+
   const periodText =
     options.rangeLabel && options.periodLabel
       ? `${options.periodLabel} (${options.rangeLabel})`
@@ -142,8 +192,8 @@ export function formatUsageMarkdownSummary(
     isEn ? '### Claude-Local Usage Summary' : '### Claude-Local 用量统计简报',
     '',
     isEn
-      ? `- **Scope**: ${scopeLabel} · **Period**: ${periodText} · **Timezone**: ${tzText}`
-      : `- **统计范围**：${scopeLabel} · **统计周期**：${periodText} · **时区**：${tzText}`,
+      ? `- **Scope**: ${scopeLabel}${planMeta}${slotMeta} · **Period**: ${periodText} · **Timezone**: ${tzText}`
+      : `- **统计范围**：${scopeLabel}${planMeta}${slotMeta} · **统计周期**：${periodText} · **时区**：${tzText}`,
     isEn
       ? `- **Total Tokens**: **${fmtCompact(totals.total_tokens)}** (${fmtInt(totals.total_tokens)}) · **Requests**: ${fmtInt(totals.requests)}${avgTokensPerReq != null ? ` · **Avg/Req**: ${fmtCompact(avgTokensPerReq)} tok/req` : ''}`
       : `- **总 Token**：**${fmtCompact(totals.total_tokens)}**（${fmtInt(totals.total_tokens)}） · **去重响应**：${fmtInt(totals.requests)}${avgTokensPerReq != null ? ` · **单次均值**：${fmtCompact(avgTokensPerReq)} tok/次` : ''}`,
@@ -151,8 +201,8 @@ export function formatUsageMarkdownSummary(
       ? `- **Token Breakdown**: Input ${fmtCompact(totals.input_tokens)} (${fmtShare(totals.input_tokens, totals.total_tokens)}) · Output ${fmtCompact(totals.output_tokens)} (${fmtShare(totals.output_tokens, totals.total_tokens)}) · Cache Write ${fmtCompact(totals.cache_creation_tokens)} (${fmtShare(totals.cache_creation_tokens, totals.total_tokens)}) · Cache Read ${fmtCompact(totals.cache_read_tokens)} (${fmtShare(totals.cache_read_tokens, totals.total_tokens)})`
       : `- **四类构成**：未缓存输入 ${fmtCompact(totals.input_tokens)} (${fmtShare(totals.input_tokens, totals.total_tokens)}) · 输出 ${fmtCompact(totals.output_tokens)} (${fmtShare(totals.output_tokens, totals.total_tokens)}) · 缓存写入 ${fmtCompact(totals.cache_creation_tokens)} (${fmtShare(totals.cache_creation_tokens, totals.total_tokens)}) · 缓存读取 ${fmtCompact(totals.cache_read_tokens)} (${fmtShare(totals.cache_read_tokens, totals.total_tokens)})`,
     isEn
-      ? `- **Est. API Cost**: **${costText}**${avgCostPerReq != null ? ` (${avgCostPerReq}/req)` : ''}${avgSessionText ? ` · **Avg. Session Cost**: **${avgSessionText}** (${formatTurnsPerSession(sessionEff.avgTurnsPerSession, 'en')} turns/sess)` : ''} · **Cache Savings**: **${savedText}** · **Cache Hit Rate**: **${hitText}**${reuseText ? ` (${reuseText})` : ''}`
-      : `- **API 等效花费**：**${costText}**${avgCostPerReq != null ? `（单次 ${avgCostPerReq}/次）` : ''}${avgSessionText ? ` · **单会话均耗**：**${avgSessionText}**（均 ${formatTurnsPerSession(sessionEff.avgTurnsPerSession, 'zh')} 轮/会话）` : ''} · **缓存节省**：**${savedText}** · **缓存命中率**：**${hitText}**${reuseText ? `（复用 ${reuseText}）` : ''}`,
+      ? `- **Est. API Cost**: **${costText}**${avgCostPerReq != null ? ` (${avgCostPerReq}/req)` : ''}${roiMeta}${avgSessionText ? ` · **Avg. Session Cost**: **${avgSessionText}** (${formatTurnsPerSession(sessionEff.avgTurnsPerSession, 'en')} turns/sess)` : ''} · **Cache Savings**: **${savedText}** · **Cache Hit Rate**: **${hitText}**${reuseText ? ` (${reuseText})` : ''}`
+      : `- **API 等效花费**：**${costText}**${avgCostPerReq != null ? `（单次 ${avgCostPerReq}/次）` : ''}${roiMeta}${avgSessionText ? ` · **单会话均耗**：**${avgSessionText}**（均 ${formatTurnsPerSession(sessionEff.avgTurnsPerSession, 'zh')} 轮/会话）` : ''} · **缓存节省**：**${savedText}** · **缓存命中率**：**${hitText}**${reuseText ? `（复用 ${reuseText}）` : ''}`,
   ];
 
   if (models.length > 0) {
@@ -178,16 +228,47 @@ export function formatUsageMarkdownSummary(
     }
   }
 
+  if (isAll && (report.accounts?.length ?? 0) > 0 && report.accounts.some(a => a.plan || a.slot_active)) {
+    const primaryModel = models[0]?.model;
+    lines.push('');
+    lines.push(
+      isEn
+        ? '| Account | Plan | Est. Cost | Plan Value | Slot |'
+        : '| 账号 | 套餐 | 等效花费 | 订阅回本 | 槽位 |',
+    );
+    lines.push('| :--- | :--- | ---: | ---: | :--- |');
+    for (const acc of report.accounts) {
+      const accCost =
+        acc.models && acc.models.length > 0
+          ? estimateSnapshotCostUsd(acc.totals, acc.models)
+          : estimateTotalsCostUsd(acc.totals, primaryModel);
+      const accRoi =
+        accCost.costUsd > 0 ? computeSubscriptionRoi(acc.plan, accCost.costUsd, roiDays) : null;
+      const rawName = acc.name || acc.email || (isEn ? 'Account' : '账号');
+      const shownName = privacyMask
+        ? maskEmbeddedEmails(maskDisplayName(rawName, acc.email, true) || (isEn ? 'Account' : '账号'))
+        : rawName;
+      const slotText = acc.slot_active ? (isEn ? 'Slot active' : '子代理活跃') : '—';
+      lines.push(
+        `| ${shownName.replace(/\|/g, '\\|')} | ${acc.plan || '—'} | ${formatUsdCost(accCost.costUsd)} | ${accRoi ? `${accRoi.multiplier.toFixed(1)}×` : '—'} | ${slotText} |`,
+      );
+    }
+  }
+
   return lines.join('\n');
 }
 
-export function buildUsageTsv(input: {snapshot: UsageSnapshot; period: UsagePeriod; periodLabel: string; accountLabel: string; accountIsAll: boolean; timezone: string; privacy: boolean; days: UsageDay[]; generatedLabel: string; coverageLabel: string; productLabel: string; labels: {metadata: string; summary: string; daily: string; time: string; total: string; input: string; output: string; cacheWrite: string; cacheRead: string; requests: string; sessions?: string; activeDays?: string; estimatedCost?: string; cacheSavings?: string; accounts?: string; account: string; period: string; timezone: string; generated: string; coverage: string}}): string {
+export function buildUsageTsv(input: {snapshot: UsageSnapshot; period: UsagePeriod; periodLabel: string; accountLabel: string; accountIsAll: boolean; timezone: string; privacy: boolean; days: UsageDay[]; roiPeriodDays?: number; generatedLabel: string; coverageLabel: string; productLabel: string; labels: {metadata: string; summary: string; daily: string; time: string; total: string; input: string; output: string; cacheWrite: string; cacheRead: string; requests: string; sessions?: string; activeDays?: string; estimatedCost?: string; cacheSavings?: string; plan?: string; roi?: string; slotActive?: string; accounts?: string; account: string; period: string; timezone: string; generated: string; coverage: string}}): string {
   const {snapshot, labels} = input;
   const models = [...(snapshot.models ?? [])].sort((a, b) => b.totals.total_tokens - a.totals.total_tokens);
   const primaryModel = models[0]?.model;
   const summaryCost = estimateSnapshotCostUsd(snapshot.totals, models);
   const costHeader = labels.estimatedCost ?? 'estimated_cost_usd';
   const savingsHeader = labels.cacheSavings ?? 'cache_savings_usd';
+  const planHeader = labels.plan ?? 'plan';
+  const roiHeader = labels.roi ?? 'roi_multiplier';
+  const slotHeader = labels.slotActive ?? 'slot_active';
+  const roiDays = resolveRoiPeriodDays(input.period, snapshot, input.roiPeriodDays);
   const out = [
     row([input.productLabel, labels.metadata]),
     row([labels.generated, input.generatedLabel]),
@@ -203,13 +284,15 @@ export function buildUsageTsv(input: {snapshot: UsageSnapshot; period: UsagePeri
     const accountsSection = labels.accounts ?? '# accounts';
     out.push(
       '',
-      row([accountsSection, labels.account, labels.total, labels.input, labels.output, labels.cacheWrite, labels.cacheRead, labels.requests, costHeader, savingsHeader]),
+      row([accountsSection, labels.account, labels.total, labels.input, labels.output, labels.cacheWrite, labels.cacheRead, labels.requests, costHeader, savingsHeader, planHeader, roiHeader, slotHeader]),
     );
     for (const acc of snapshot.accounts) {
       const accCost =
         acc.models && acc.models.length > 0
           ? estimateSnapshotCostUsd(acc.totals, acc.models)
           : estimateTotalsCostUsd(acc.totals, primaryModel);
+      const accRoi =
+        accCost.costUsd > 0 ? computeSubscriptionRoi(acc.plan, accCost.costUsd, roiDays) : null;
       const accName = input.privacy
         ? maskEmbeddedEmails(maskDisplayName(acc.name, acc.email, true) || labels.account)
         : acc.name;
@@ -225,6 +308,9 @@ export function buildUsageTsv(input: {snapshot: UsageSnapshot; period: UsagePeri
           acc.totals.requests,
           accCost.costUsd.toFixed(4),
           accCost.cacheSavingsUsd.toFixed(4),
+          acc.plan ?? '',
+          accRoi ? accRoi.multiplier.toFixed(2) : '',
+          acc.slot_active ? 'true' : 'false',
         ]),
       );
     }

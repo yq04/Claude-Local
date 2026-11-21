@@ -105,6 +105,7 @@ fn operation_progress_tracks_completed_sources_and_explicit_rollback() {
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
 #[test]
 fn database_metadata_and_recovery_are_transactional() {
     let folder = canonicalize(std::env::temp_dir())
@@ -204,6 +205,7 @@ fn empty_identity_and_saved_identity_preserve_user_choices() {
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
 #[test]
 fn interrupted_switch_can_recover_and_preserves_pre_recovery_state() {
     let folder = canonicalize(std::env::temp_dir())
@@ -295,6 +297,7 @@ fn interrupted_switch_can_recover_and_preserves_pre_recovery_state() {
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
 #[test]
 fn damaged_saved_archive_never_changes_live_identity() {
     let folder = canonicalize(std::env::temp_dir())
@@ -337,6 +340,7 @@ fn damaged_saved_archive_never_changes_live_identity() {
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
 #[cfg(unix)]
 #[test]
 fn selected_symlink_is_refused_without_changing_source() {
@@ -367,6 +371,7 @@ fn selected_symlink_is_refused_without_changing_source() {
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
 
 #[test]
 fn direct_delete_respects_kept_data_and_removes_only_selected_archive() {
@@ -421,6 +426,7 @@ fn direct_delete_respects_kept_data_and_removes_only_selected_archive() {
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
 #[test]
 fn restoring_full_settings_preserves_newer_shared_settings_when_requested() {
     let folder = canonicalize(std::env::temp_dir())
@@ -471,6 +477,7 @@ fn restoring_full_settings_preserves_newer_shared_settings_when_requested() {
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
 
 #[test]
 fn missing_master_key_never_replaces_a_retired_registered_archive() {
@@ -589,6 +596,7 @@ fn standard_fs_written_files_are_accepted_by_profile_catalog_and_switch() {
     std::fs::remove_dir_all(folder).unwrap();
 }
 
+
 #[test]
 fn switching_from_unauthenticated_workspace_with_cache_or_projects_never_creates_blank_identity_card() {
     let folder = canonicalize(std::env::temp_dir())
@@ -653,6 +661,7 @@ fn switching_from_unauthenticated_workspace_with_cache_or_projects_never_creates
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
 
 #[test]
 fn unsaved_current_switch_failure_rolls_back_cleanly_without_spawning_transient_card() {
@@ -766,6 +775,7 @@ fn unsaved_current_switch_failure_rolls_back_cleanly_without_spawning_transient_
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
 
 #[test]
 fn recover_clean_restores_interrupted_switch_without_spawning_checkpoint_card_and_rescues_distinct_login()
@@ -887,3 +897,191 @@ fn recover_clean_restores_interrupted_switch_without_spawning_checkpoint_card_an
     drop(store);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
+
+#[test]
+fn stream_verify_cleanroom_verify_stage_and_rollback_device_id() {
+    let folder = canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("baga-stream-cleanroom-{}", new_id().unwrap()));
+    let home = folder.join("home");
+    let vault = folder.join("vault");
+    private::directory(&home.join(".claude")).unwrap();
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"acct-one","organizationUuid":"org-one","emailAddress":"one@example.invalid"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"tok-one","refreshToken":"ref-one"}}"#,
+    )
+    .unwrap();
+
+    let mut store = store::Store::open(&vault, &home).unwrap();
+    let r_save = Reporter::channel(None);
+    store
+        .save_current("Account One", &Policy::default(), &r_save)
+        .unwrap();
+    let rec_one = store
+        .records()
+        .into_iter()
+        .find(|r| r.name == "Account One")
+        .unwrap();
+
+    // Happy-path save_verified leaves ZERO `.stage-*` directories behind in vault.
+    let leftover_stages: Vec<_> = std::fs::read_dir(&vault)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".stage-"))
+        .collect();
+    assert!(
+        leftover_stages.is_empty(),
+        "verify_archive_stream must not extract .stage-* directories on happy path"
+    );
+
+    // Direct verify_archive_stream rejects truncated archive without creating .stage-* dirs.
+    let bad_name = format!("{}.baga", new_id().unwrap());
+    let bad_path = vault.join(&bad_name);
+    let mut bad_bytes = std::fs::read(vault.join(&rec_one.archive)).unwrap();
+    bad_bytes.truncate(bad_bytes.len().saturating_sub(8));
+    private::write(&bad_path, &bad_bytes).unwrap();
+    let mut bad_rec = rec_one.clone();
+    bad_rec.archive = bad_name;
+    assert!(store
+        .verify_archive_stream(&bad_rec, crate::identities::archive_limits::Limits::default())
+        .is_err());
+    let _ = std::fs::remove_file(&bad_path);
+    assert!(std::fs::read_dir(&vault)
+        .unwrap()
+        .flatten()
+        .all(|e| !e.file_name().to_string_lossy().starts_with(".stage-")));
+
+    // Prepare Account Two and switch to Account One.
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"acct-two","organizationUuid":"org-two","emailAddress":"two@example.invalid"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"tok-two","refreshToken":"ref-two"}}"#,
+    )
+    .unwrap();
+
+    let r_switch = Reporter::channel(None);
+    store
+        .switch(&rec_one.id, "Account Two", &Policy::default(), &r_switch)
+        .unwrap();
+    let events: Vec<_> = r_switch
+        .events()
+        .into_iter()
+        .map(|e| serde_json::to_value(e).unwrap())
+        .collect();
+    let validate_count = events.iter().filter(|e| e["stage"] == "validate").count();
+    assert!(
+        validate_count <= 4,
+        "validate stage should not spam per-source lines, saw {validate_count}"
+    );
+    assert!(events
+        .iter()
+        .any(|e| e["stage"] == "archive" && e["message"] == "已暂存 .claude.json。"));
+    assert!(events
+        .iter()
+        .any(|e| e["stage"] == "cleanroom" && e["status"] == "ok"));
+    assert!(events
+        .iter()
+        .any(|e| e["stage"] == "verify" && e["status"] == "ok"));
+    #[cfg(not(target_os = "macos"))]
+    assert!(
+        !events.iter().any(|e| e["stage"] == "credentials"),
+        "Windows switch with empty keychain items must skip no-op credentials progress"
+    );
+
+    // Rollback after clear restores isolated device identity onto the outgoing account.
+    let rec_two = store
+        .records()
+        .into_iter()
+        .find(|r| r.name == "Account Two")
+        .unwrap();
+    store.fail_after_clear = true;
+    assert!(store
+        .switch(&rec_two.id, "Account One", &Policy::default(), &Reporter::channel(None))
+        .is_err());
+    store.fail_after_clear = false;
+    let rolled_back_cj: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(
+        rolled_back_cj["userID"].as_str(),
+        Some(orchestrator::derive_slot_user_id(&store.key, &rec_one.id).as_str())
+    );
+    assert_eq!(
+        rolled_back_cj["machineID"].as_str(),
+        Some(orchestrator::derive_slot_machine_id(&store.key, &rec_one.id).as_str())
+    );
+
+    // Store::recover() also re-stamps isolated device identity on the recovered record.
+    let (ckpt, stage_one) = store
+        .save("Account One", &Policy::default(), &Reporter::channel(None))
+        .unwrap();
+    store.db.pending(&ckpt, &rec_two.id).unwrap();
+    drop(stage_one);
+    store
+        .recover("Account One", &Reporter::channel(None))
+        .unwrap();
+    let recovered_cj: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(
+        recovered_cj["userID"].as_str(),
+        Some(orchestrator::derive_slot_user_id(&store.key, &rec_one.id).as_str())
+    );
+    assert_eq!(
+        recovered_cj["machineID"].as_str(),
+        Some(orchestrator::derive_slot_machine_id(&store.key, &rec_one.id).as_str())
+    );
+
+    drop(store);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn database_acl_cache_and_archive_stream_ram_cap_enforced() {
+    let folder = canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("baga-acl-cap-{}", new_id().unwrap()));
+    let home = folder.join("home");
+    let vault = folder.join("vault");
+    private::directory(&home).unwrap();
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"acct-cap"}}"#,
+    )
+    .unwrap();
+    let store = store::Store::open(&vault, &home).unwrap();
+    let (record, stage) = store
+        .save("CapTest", &Policy::default(), &Reporter::channel(None))
+        .unwrap();
+    drop(stage);
+
+    // Re-opening existing protected DB succeeds cleanly via DB_PROTECTED cache.
+    let db2 = database::Database::open(&vault).unwrap();
+    assert_eq!(db2.records().unwrap().len(), 0);
+    drop(db2);
+
+    // verify_archive_stream enforces Limits::config_bytes / RAM cap without panicking.
+    let mut tight_limits = archive_limits::Limits::default();
+    tight_limits.config_bytes = 4;
+    let err = store
+        .verify_archive_stream(&record, tight_limits)
+        .err()
+        .unwrap();
+    assert_eq!(err, archive_limits::ERROR);
+
+    assert!(store
+        .verify_archive_stream(&record, archive_limits::Limits::default())
+        .is_ok());
+
+    drop(store);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+

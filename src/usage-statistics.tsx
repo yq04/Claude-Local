@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Native numeric usage aggregates, shared locale and display/privacy preferences.
- * [OUTPUT]: Token-first overview with four-part composition and per-bucket USD cost, per-request token/cost telemetry, top-aligned 2x2 equivalent API USD cost & per-session efficiency cards with atomic nowrap sub-items, one-click Retina Token consumption screenshots (overview & trend) plus export menu, full model distribution with aligned 2x2 micro-metric stats and effort popovers, per-account blended cost breakdown and responsive trend/data views.
+ * [OUTPUT]: Token-first overview with four-part composition and per-bucket USD cost, per-request token/cost telemetry, top-aligned 2x2 equivalent API USD cost & per-session efficiency cards with atomic nowrap sub-items, compact label-fit account filter, one-click Retina Token consumption screenshots (overview & trend) plus export menu, full model distribution with aligned 2x2 micro-metric stats and effort popovers, 5-column per-account breakdown (two-line account cell with plan tier, Subscription ROI multiplier, live slot badge & card quick-jump; total tokens, output, Est. API cost & cache hit rate) & concise earlier-log scope summary, and responsive trend/data views.
  * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh with a per-query session snapshot cache (instant revisit, background revalidation), no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -12,8 +12,10 @@ import {Refresh} from 'cromma-ui/pika';
 import {useI18n} from './i18n';
 import {usePageRefresh} from './app-events';
 import {maskDisplayName, maskEmailAddress, usePreferences} from './settings-model';
+import {normalizePlanSlug} from './smart-relay-model';
 import {
   cacheHitRate,
+  computeSubscriptionRoi,
   dailySeries,
   detectModelFamily,
   estimateSnapshotCostUsd,
@@ -120,9 +122,9 @@ function TokenComposition({
   </div>;
 }
 
-type AccountSortField = 'total_tokens' | 'cost' | 'avg_cost' | 'cache_hit' | 'requests';
+type AccountSortField = 'total_tokens' | 'output' | 'cost' | 'cache_hit';
 
-export function UsageStatisticsPanel() {
+export function UsageStatisticsPanel({onFocusAccount}: {onFocusAccount?: (accountId: string) => void} = {}) {
   const {t, locale} = useI18n();
   const prefs = usePreferences();
   const [period, setPeriod] = useState<UsagePeriod>('all');
@@ -185,7 +187,7 @@ export function UsageStatisticsPanel() {
   }, [period, account, revision, queryKey, timezone]);
 
   const totals = snapshot?.totals;
-  const accounts = result?.value.accounts ?? [];
+  const accounts = (result?.value.accounts ?? snapshot?.accounts) ?? [];
   const days = dailySeries(snapshot?.daily ?? [], period, snapshot ? new Date(snapshot.generated_at * 1000) : new Date(), snapshot?.generated_at);
   const models = sortUsageModels(snapshot?.models ?? []);
   const dominantModel = [...(snapshot?.models ?? [])].sort((a, b) => b.totals.total_tokens - a.totals.total_tokens)[0]?.model;
@@ -228,21 +230,17 @@ export function UsageStatisticsPanel() {
     return {
       ...row,
       cost: est.costUsd,
-      avgTurnCost: row.totals.requests > 0 ? est.costUsd / row.totals.requests : 0,
       cacheHit: cacheHitRate(row.totals),
-      requests: row.totals.requests,
     };
   }).sort((a, b) => {
     const cmp =
       accountSortBy === 'total_tokens'
         ? a.totals.total_tokens - b.totals.total_tokens
-        : accountSortBy === 'cost'
-          ? a.cost - b.cost
-          : accountSortBy === 'avg_cost'
-            ? a.avgTurnCost - b.avgTurnCost
-            : accountSortBy === 'cache_hit'
-              ? (a.cacheHit ?? -1) - (b.cacheHit ?? -1)
-              : a.requests - b.requests;
+        : accountSortBy === 'output'
+          ? a.totals.output_tokens - b.totals.output_tokens
+          : accountSortBy === 'cost'
+            ? a.cost - b.cost
+            : (a.cacheHit ?? -1) - (b.cacheHit ?? -1);
     if (cmp !== 0) return cmp * (accountSortDir === 'desc' ? -1 : 1);
     return Number(b.current) - Number(a.current) || b.totals.total_tokens - a.totals.total_tokens || a.id.localeCompare(b.id);
   });
@@ -283,8 +281,24 @@ export function UsageStatisticsPanel() {
   const avgBucketCostUsd = totals && elapsedUnits > 0 ? costSummary.costUsd / elapsedUnits : null;
   const peakBucketCostUsd = trend.peak ? estimateTotalsCostUsd(trend.peak.totals, primaryModel).costUsd : null;
   const avgOutputTokens = totals && elapsedUnits > 0 ? totals.output_tokens / elapsedUnits : null;
+  const roiPeriodDays = (() => {
+    if (period === 'today' || period === 'yesterday') return 1;
+    if (period === 'week') return 7;
+    if (period === 'month') return 30;
+    const spanFromTracking =
+      snapshot && snapshot.tracking_since != null && snapshot.generated_at > snapshot.tracking_since
+        ? Math.ceil((snapshot.generated_at - snapshot.tracking_since) / 86_400)
+        : 0;
+    return Math.max(30, elapsedBuckets.length, spanFromTracking);
+  })();
 
-  const makeExport = () => snapshot ? buildUsageTsv({snapshot, period, periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'), accountLabel: selectedAccount, accountIsAll: account === 'all', timezone: snapshot.timezone || timezone || offsetZone, privacy: prefs.privacyMask, days, generatedLabel: new Date(snapshot.generated_at * 1000).toISOString(), coverageLabel: snapshot.tracking_since == null ? t('usage.exportCoverageUnknown') : `${new Date(snapshot.tracking_since * 1000).toISOString()} – ${new Date(snapshot.generated_at * 1000).toISOString()}`, productLabel: 'Claude-Local', labels: {metadata: t('usage.exportTitle'), summary: t('usage.exportSummary'), daily: t('usage.exportBuckets'), time: t('usage.exportTime'), total: t('usage.total'), input: t('usage.input'), output: t('usage.output'), cacheWrite: t('usage.cacheWrite'), cacheRead: t('usage.cacheRead'), requests: t('usage.requests'), sessions: t('usage.sessions'), activeDays: t('usage.activeDays'), account: t('usage.account'), period: t('usage.periodFilter'), timezone: t('usage.exportTimezone'), generated: t('usage.exportGenerated'), coverage: t('usage.exportCoverage')}}) : '';
+  const selectedAccountRow = account !== 'all' ? accounts.find(item => item.id === account) ?? null : null;
+  const selectedAccountRoi =
+    selectedAccountRow && totals && costSummary.costUsd > 0
+      ? computeSubscriptionRoi(selectedAccountRow.plan, costSummary.costUsd, roiPeriodDays)
+      : null;
+
+  const makeExport = () => snapshot ? buildUsageTsv({snapshot, period, periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'), accountLabel: selectedAccount, accountIsAll: account === 'all', timezone: snapshot.timezone || timezone || offsetZone, privacy: prefs.privacyMask, days, roiPeriodDays, generatedLabel: new Date(snapshot.generated_at * 1000).toISOString(), coverageLabel: snapshot.tracking_since == null ? t('usage.exportCoverageUnknown') : `${new Date(snapshot.tracking_since * 1000).toISOString()} – ${new Date(snapshot.generated_at * 1000).toISOString()}`, productLabel: 'Claude-Local', labels: {metadata: t('usage.exportTitle'), summary: t('usage.exportSummary'), daily: t('usage.exportBuckets'), time: t('usage.exportTime'), total: t('usage.total'), input: t('usage.input'), output: t('usage.output'), cacheWrite: t('usage.cacheWrite'), cacheRead: t('usage.cacheRead'), requests: t('usage.requests'), sessions: t('usage.sessions'), activeDays: t('usage.activeDays'), account: t('usage.account'), period: t('usage.periodFilter'), timezone: t('usage.exportTimezone'), generated: t('usage.exportGenerated'), coverage: t('usage.exportCoverage')}}) : '';
   const exportTsv = async (download: boolean) => {
     if (!snapshot || busy) return;
     setExportStatus('');
@@ -310,6 +324,7 @@ export function UsageStatisticsPanel() {
       accountIsAll: account === 'all',
       timezone: snapshot.timezone || timezone || offsetZone,
       privacyMask: prefs.privacyMask,
+      roiPeriodDays,
       locale,
       costUsd: totals ? formatUsdCost(costSummary.costUsd) : '—',
       cacheSavedUsd: totals ? formatUsdCost(costSummary.cacheSavingsUsd, true) : '—',
@@ -333,7 +348,9 @@ export function UsageStatisticsPanel() {
         period,
         periodLabel: t(periods.find(([value]) => value === period)?.[1] ?? 'usage.allTime'),
         rangeLabel: range !== '—' ? range : null,
+        accountId: account,
         accountLabel: selectedAccount,
+        roiPeriodDays,
         locale: locale === 'en' ? 'en' : 'zh',
         t,
       });
@@ -488,6 +505,12 @@ export function UsageStatisticsPanel() {
                       <>
                         {' '}
                         <span className="usage-metric-sub-item">{t('usage.avgCostPerRequest', {cost: formatUsdCost(avgCostPerReq)})}</span>
+                      </>
+                    )}
+                    {selectedAccountRoi && (
+                      <>
+                        {' '}
+                        <span className="usage-roi-pill usage-roi-badge">{t('usage.roiBadge', {multiplier: selectedAccountRoi.multiplier.toFixed(1)})}</span>
                       </>
                     )}
                   </>
@@ -657,11 +680,110 @@ export function UsageStatisticsPanel() {
           <section className="settings-card usage-accounts-card">
             <div className="usage-panel-header"><div><GroupTitle aside={String(accountRows.length)}>{t('usage.accounts')}</GroupTitle></div></div>
             <div className="usage-table-wrap" role="region" aria-label={t('usage.accounts')} tabIndex={0}>
-              <table className="usage-table" aria-label={t('usage.accounts')}><thead><tr><th scope="col">{t('usage.account')}</th>{accountSortHeader('total_tokens', t('usage.total'))}{accountSortHeader('cost', t('usage.estimatedCost'))}{accountSortHeader('avg_cost', t('usage.avgTurnCost'))}<th scope="col">{t('usage.input')}</th><th scope="col">{t('usage.output')}</th><th scope="col">{t('usage.cacheWrite')}</th><th scope="col">{t('usage.cacheRead')}</th>{accountSortHeader('cache_hit', t('usage.cacheHit'))}{accountSortHeader('requests', t('usage.requests'))}</tr></thead>
-                <tbody>{accountRows.map(row => <tr key={row.id} className={account === row.id ? 'usage-row-selected' : ''}><th scope="row"><button type="button" className="usage-account-name" onClick={() => setAccount(row.id)}><span>{maskDisplayName(row.name, row.email, prefs.privacyMask)}{row.current && <em>{t('usage.current')}</em>}</span>{row.email && <small>{maskEmailAddress(row.email, prefs.privacyMask)}</small>}</button></th><td title={num(row.totals.total_tokens)}>{num(row.totals.total_tokens, true)}</td><td title={formatUsdCost(row.cost)}>{formatUsdCost(row.cost)}</td><td title={row.requests > 0 ? formatUsdCost(row.avgTurnCost) : '$0.00'}>{row.requests > 0 ? formatUsdCost(row.avgTurnCost, row.avgTurnCost >= 10_000) : '$0.00'}</td><td title={num(row.totals.input_tokens)}>{num(row.totals.input_tokens, true)}</td><td title={num(row.totals.output_tokens)}>{num(row.totals.output_tokens, true)}</td><td title={num(row.totals.cache_creation_tokens)}>{num(row.totals.cache_creation_tokens, true)}</td><td title={num(row.totals.cache_read_tokens)}>{num(row.totals.cache_read_tokens, true)}</td><td>{rate(row.totals)}</td><td title={num(row.requests)}>{num(row.requests, true)}</td></tr>)}
+              <table className="usage-table" aria-label={t('usage.accounts')}>
+                <thead>
+                  <tr>
+                    <th scope="col">{t('usage.account')}</th>
+                    {accountSortHeader('total_tokens', t('usage.total'))}
+                    {accountSortHeader('output', t('usage.output'))}
+                    {accountSortHeader('cost', t('usage.estimatedCost'))}
+                    {accountSortHeader('cache_hit', t('usage.cacheHit'))}
+                  </tr>
+                </thead>
+                <tbody>{accountRows.map(row => {
+                  const roi = computeSubscriptionRoi(row.plan, row.cost, roiPeriodDays);
+                  const roiBaselineUsd = roi ? (roi.monthlyPriceUsd * roiPeriodDays) / 30 : 0;
+                  const roiTooltip = roi
+                    ? roiPeriodDays === 30
+                      ? t('usage.roiTooltip', {
+                          plan: row.plan!,
+                          price: roi.monthlyPriceUsd,
+                          cost: formatUsdCost(row.cost),
+                          multiplier: roi.multiplier.toFixed(1),
+                        })
+                      : t('usage.roiPeriodTooltip', {
+                          plan: row.plan!,
+                          price: roi.monthlyPriceUsd,
+                          days: roiPeriodDays,
+                          baseline: formatUsdCost(roiBaselineUsd),
+                          cost: formatUsdCost(row.cost),
+                          multiplier: roi.multiplier.toFixed(1),
+                        })
+                    : undefined;
+                  return (
+                    <tr key={row.id} className={account === row.id ? 'usage-row-selected' : ''}>
+                      <th scope="row">
+                        <div className="usage-account-cell">
+                          <button type="button" className="usage-account-name" onClick={() => setAccount(row.id)}>
+                            <span className="usage-account-title-row">
+                              <strong className="usage-account-title-text" title={prefs.privacyMask ? undefined : row.name}>
+                                {maskDisplayName(row.name, row.email, prefs.privacyMask)}
+                              </strong>
+                              {row.current && <em className="usage-current-pill">{t('usage.current')}</em>}
+                              {row.plan && (
+                                <span className="identity-plan-pill" data-plan-tier={normalizePlanSlug(row.plan)}>
+                                  {row.plan}
+                                </span>
+                              )}
+                              {roi && row.cost > 0 && (
+                                <span
+                                  className="usage-roi-pill"
+                                  data-usage-roi
+                                  title={roiTooltip}
+                                >
+                                  {t('usage.roiBadge', {multiplier: roi.multiplier.toFixed(1)})}
+                                </span>
+                              )}
+                              {row.slot_active && (
+                                <span className="usage-slot-pill" data-usage-slot-active>
+                                  {t('usage.slotActiveBadge')}
+                                </span>
+                              )}
+                            </span>
+                            {row.email && (
+                              <small className="usage-account-email" title={prefs.privacyMask ? undefined : row.email}>
+                                {maskEmailAddress(row.email, prefs.privacyMask)}
+                              </small>
+                            )}
+                          </button>
+                          {onFocusAccount && (
+                            <button
+                              type="button"
+                              className="usage-locate-btn"
+                              data-usage-locate-account={row.id}
+                              title={t('usage.focusCardHint')}
+                              onClick={() => onFocusAccount(row.id)}
+                            >
+                              {t('usage.focusCardBtn')}
+                            </button>
+                          )}
+                        </div>
+                      </th>
+                      <td
+                        className="usage-num-strong"
+                        title={`${num(row.totals.total_tokens)} · ${t('usage.input')} ${num(row.totals.input_tokens, true)} · ${t('usage.output')} ${num(row.totals.output_tokens, true)} · ${t('usage.cacheWrite')} ${num(row.totals.cache_creation_tokens, true)} · ${t('usage.cacheRead')} ${num(row.totals.cache_read_tokens, true)}`}
+                      >
+                        {num(row.totals.total_tokens, true)}
+                      </td>
+                      <td title={num(row.totals.output_tokens)}>{num(row.totals.output_tokens, true)}</td>
+                      <td className="usage-num-strong" title={formatUsdCost(row.cost)}>{formatUsdCost(row.cost)}</td>
+                      <td title={`${t('usage.cacheWrite')}: ${num(row.totals.cache_creation_tokens, true)} · ${t('usage.cacheRead')}: ${num(row.totals.cache_read_tokens, true)}`}>
+                        {rate(row.totals)}
+                      </td>
+                    </tr>
+                  );
+                })}
                 </tbody>
               </table>
               {!accountRows.length && <p className="usage-model-empty">{t('usage.noAccounts')}</p>}
+              {account === 'all' && accountRows.length > 0 && (snapshot.unattributed?.total_tokens ?? 0) > 0 && (
+                <p className="usage-scope-summary-note" data-usage-early-logs-note>
+                  {t('usage.earlyLogsScopeNote', {
+                    tokens: num(snapshot.unattributed.total_tokens, true),
+                    requests: num(snapshot.unattributed.requests, true),
+                  })}
+                </p>
+              )}
             </div>
           </section>
         </>}

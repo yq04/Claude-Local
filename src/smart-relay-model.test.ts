@@ -1,20 +1,51 @@
 import {expect, test} from 'bun:test';
+import {summarizeCleanroomPipelineStages, type Progress} from './cleaner-activity';
+import {evaluateQuota} from './identity-quota';
+import {computeSubscriptionRoi} from './usage-model';
 import {
+  CANONICAL_MANUAL_PLANS,
+  RELAY_CLI_EFFORTS,
+  RELAY_CLI_MODELS,
+  RELAY_HANDOFF_MODES,
+  RELAY_STRATEGIES,
+  buildSubagentMarkdownTemplate,
+  canSyncNativeSmartRelay,
   clearAccountCooldown,
+  clearRelayLaunchDirs,
   computeDynamicSwitchMarginPct,
+  computeResetCardExpiryUrgency,
+  computeWindowBurnEta,
   computeWindowPaceDelta,
   defaultSmartRelayConfig,
   evaluateSmartRelay,
+  extractResetCardInfo,
+  flushNativeSmartRelaySync,
+  formatLaunchDirChip,
+  formatRelayCliModelEffortArgs,
   formatTruthfulPercent,
+  getLastNativeSmartRelaySyncError,
+  getRelayLaunchDirs,
   getSmartRelayConfig,
+  hydrateSmartRelayConfig,
   isAccountInCooldown,
   meetsDynamicSwitchMargin,
+  normalizePlanSlug,
   noteRelayAccountRateLimited,
   noteRelayAccountSwitch,
+  recordRelayLaunchDir,
+  removeRelayLaunchDir,
   resetSmartRelayConfig,
+  sanitizeRelayCliEffort,
+  sanitizeRelayCliModel,
+  sanitizeSmartRelayConfig,
   setAccountCooldown,
+  subscribeSmartRelayConfig,
   summarizeRelayPool,
+  syncNativeSmartRelayConfigIfLive,
   updateSmartRelayConfig,
+  validateSlotHttpProxy,
+  type HandoffItem,
+  type HandoffSummary,
   type RelayAccountInput,
 } from './smart-relay-model';
 
@@ -546,4 +577,1061 @@ test('SoonReset (<=24h) harvest bonus prioritizes accounts with >=15% 7d and >10
     NOW,
   );
   expect(evalTie.recommended?.id).toBe('soon-24h');
+});
+
+test('RELAY_STRATEGIES includes reset_harvest and config extends autoContinueOnRelay, maxSameExitConcurrency, slotProxies', () => {
+  expect(RELAY_STRATEGIES).toEqual(['smart', 'reset_harvest', 'pace', 'least_used', 'ordered', 'rotate']);
+  expect(defaultSmartRelayConfig.autoContinueOnRelay).toBe(false);
+  expect(defaultSmartRelayConfig.maxSameExitConcurrency).toBe(2);
+  expect(defaultSmartRelayConfig.slotProxies).toEqual({});
+
+  const sanitized = sanitizeSmartRelayConfig({
+    strategy: 'reset_harvest',
+    autoContinueOnRelay: true,
+    maxSameExitConcurrency: 4,
+    slotProxies: {
+      'acc-ok': ' HTTP://LOCALHOST:7901/ ',
+      'acc-socks': 'socks5://127.0.0.1:7899',
+      'acc-bad': 'not-a-url',
+      'acc-empty': '   ',
+    },
+  });
+  expect(sanitized.strategy).toBe('reset_harvest');
+  expect(sanitized.autoContinueOnRelay).toBe(true);
+  expect(sanitized.maxSameExitConcurrency).toBe(4);
+  expect(sanitized.slotProxies).toEqual({'acc-ok': 'http://localhost:7901'});
+
+  const invalidConcurrency = sanitizeSmartRelayConfig({maxSameExitConcurrency: 99});
+  expect(invalidConcurrency.maxSameExitConcurrency).toBe(2);
+
+  resetSmartRelayConfig();
+  const hydrated = hydrateSmartRelayConfig({
+    enabled: true,
+    strategy: 'reset_harvest',
+    autoContinueOnRelay: true,
+    maxSameExitConcurrency: 3,
+    slotProxies: {'acc-1': 'http://127.0.0.1:7905'},
+  });
+  expect(getSmartRelayConfig()).toEqual(hydrated);
+  resetSmartRelayConfig();
+});
+
+test('validateSlotHttpProxy enforces strict http://host:port and rejects socks5:// or control characters', () => {
+  expect(validateSlotHttpProxy('')).toEqual({ok: true, normalized: ''});
+  expect(validateSlotHttpProxy('   ')).toEqual({ok: true, normalized: ''});
+  expect(validateSlotHttpProxy('http://127.0.0.1:7899')).toEqual({
+    ok: true,
+    normalized: 'http://127.0.0.1:7899',
+  });
+  expect(validateSlotHttpProxy('  HTTP://LOCALHOST:80/  ')).toEqual({
+    ok: true,
+    normalized: 'http://localhost:80',
+  });
+  expect(validateSlotHttpProxy('http://[::1]:7902')).toEqual({
+    ok: true,
+    normalized: 'http://[::1]:7902',
+  });
+
+  expect(validateSlotHttpProxy('socks5://127.0.0.1:7899')).toEqual({
+    ok: false,
+    normalized: '',
+    errorKey: 'relay.proxy.socks5Forbidden',
+  });
+  expect(validateSlotHttpProxy('SOCKS5H://127.0.0.1:7899')).toEqual({
+    ok: false,
+    normalized: '',
+    errorKey: 'relay.proxy.socks5Forbidden',
+  });
+
+  for (const invalid of [
+    'https://127.0.0.1:7899',
+    '127.0.0.1:7899',
+    'http://127.0.0.1',
+    'http://127.0.0.1:0',
+    'http://127.0.0.1:65536',
+    'http://127.0.0.1:7899/path',
+    'http://user:pass@127.0.0.1:7899',
+    'http://127.0.0.1:7899\n',
+  ]) {
+    expect(validateSlotHttpProxy(invalid)).toEqual({
+      ok: false,
+      normalized: '',
+      errorKey: 'relay.proxy.invalidHttp',
+    });
+  }
+});
+
+test('reset_harvest strategy prioritizes positive reset cards by earliest deadline, urgency, and smart fallback', () => {
+  const accounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 50, 2, 4, true),
+    makeAccount('no-card-soon', 1, 10, 20, 2, 1, false),
+    {
+      ...makeAccount('grant-72h-1card', 2, 15, 25, 4, 6, false),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 15,
+        quota_5h_reset_at: NOW + 4 * HOUR,
+        quota_7d_used: 25,
+        quota_7d_reset_at: NOW + 6 * DAY,
+        manual_resets_remaining: 1,
+        manual_resets_grants: [
+          {resets_left: 1, ends_at: NOW + 72 * HOUR},
+          {resets_left: 0, ends_at: NOW + 10 * HOUR}, // depleted grant ignored
+        ],
+      },
+    },
+    {
+      ...makeAccount('grant-48h-1card', 3, 20, 40, 4, 6, false),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 20,
+        quota_5h_reset_at: NOW + 4 * HOUR,
+        quota_7d_used: 40,
+        quota_7d_reset_at: NOW + 6 * DAY,
+        manual_resets_remaining: 1,
+        manual_resets_grant_ends_at: NOW + 48 * HOUR, // fallback field
+      },
+    },
+    {
+      ...makeAccount('grant-48h-2cards', 4, 20, 40, 4, 6, false),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 20,
+        quota_5h_reset_at: NOW + 4 * HOUR,
+        quota_7d_used: 40,
+        quota_7d_reset_at: NOW + 6 * DAY,
+        manual_resets_remaining: 2,
+        manual_resets_grants: [{resets_left: 2, ends_at: NOW + 48 * HOUR}], // same deadline hour, higher resetHarvestUrgency!
+      },
+    },
+  ];
+
+  const evalHarvest = evaluateSmartRelay(
+    accounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'reset_harvest'},
+    NOW,
+  );
+  const c2 = evalHarvest.candidates.find(c => c.id === 'grant-48h-2cards')!;
+  const c1 = evalHarvest.candidates.find(c => c.id === 'grant-48h-1card')!;
+  const c3 = evalHarvest.candidates.find(c => c.id === 'grant-72h-1card')!;
+  const cNo = evalHarvest.candidates.find(c => c.id === 'no-card-soon')!;
+
+  expect(c2.manualResetsRemaining).toBe(2);
+  expect(c2.effectiveWeeklyPoolRemPct).toBe(260);
+  expect(c1.earliestResetGrantEndsAt).toBe(NOW + 48 * HOUR);
+  expect(c2.resetHarvestUrgency).toBeGreaterThan(c1.resetHarvestUrgency);
+  expect(cNo.manualResetsRemaining).toBe(0);
+  expect(cNo.resetHarvestUrgency).toBe(0);
+
+  // Ranking: grant-48h-2cards -> grant-48h-1card -> grant-72h-1card -> no-card-soon
+  expect(evalHarvest.recommended?.id).toBe('grant-48h-2cards');
+  expect(evalHarvest.recommended?.reasonKey).toBe('relay.reason.resetHarvest');
+  const savedOrder = evalHarvest.candidates.filter(c => !c.isCurrent).map(c => c.id);
+  expect(savedOrder).toEqual(['grant-48h-2cards', 'grant-48h-1card', 'grant-72h-1card', 'no-card-soon']);
+
+  // Fallback to smart ordering when neither candidate holds reset cards
+  const noCardAccounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    makeAccount('later-6d', 1, 10, 10, 3, 6, false),
+    makeAccount('sooner-2d', 2, 20, 20, 3, 2, false),
+  ];
+  const evalFallback = evaluateSmartRelay(
+    noCardAccounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'reset_harvest'},
+    NOW,
+  );
+  expect(evalFallback.recommended?.id).toBe('sooner-2d');
+});
+
+test('awaitingManualReset demotes >=98% 7d accounts with Reset Cards out of auto-relay and summarizes pool counts', () => {
+  const accounts: RelayAccountInput[] = [
+    {
+      ...makeAccount('current-awaiting-98', 0, 40, 98, 3, 5, true),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 40,
+        quota_5h_reset_at: NOW + 3 * HOUR,
+        quota_7d_used: 98,
+        quota_7d_reset_at: NOW + 5 * DAY,
+        manual_resets_remaining: 2,
+        manual_resets_grants: [{resets_left: 2, ends_at: NOW + 72 * HOUR}],
+      },
+    },
+    {
+      ...makeAccount('saved-awaiting-100', 1, 10, 100, 4, 4, false),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 10,
+        quota_5h_reset_at: NOW + 4 * HOUR,
+        quota_7d_used: 100,
+        quota_7d_reset_at: NOW + 4 * DAY,
+        manual_resets_remaining: 1,
+      },
+    },
+    makeAccount('ready-backup', 2, 15, 20, 3, 5, false),
+  ];
+
+  // Even with spentThresholdPct = 100 and session affinity, awaitingManualReset rotates OFF at >=98% 7d
+  const evalAwaiting = evaluateSmartRelay(
+    accounts,
+    {
+      ...defaultSmartRelayConfig,
+      enabled: true,
+      strategy: 'reset_harvest',
+      spentThresholdPct: 100,
+      affinityMode: 'session',
+    },
+    NOW,
+  );
+
+  const cur = evalAwaiting.candidates.find(c => c.id === 'current-awaiting-98')!;
+  const saved100 = evalAwaiting.candidates.find(c => c.id === 'saved-awaiting-100')!;
+
+  expect(cur.awaitingManualReset).toBe(true);
+  expect(cur.tier).toBe(2);
+  expect(cur.reasonKey).toBe('relay.reason.awaitingManualReset');
+  expect(cur.reasonParams).toEqual({count: 2});
+
+  expect(saved100.awaitingManualReset).toBe(true);
+  expect(saved100.tier).toBe(3);
+  expect(saved100.reasonKey).toBe('relay.reason.awaitingManualReset');
+  expect(saved100.reasonParams).toEqual({count: 1});
+
+  expect(evalAwaiting.shouldRelayNow).toBe(true);
+  expect(evalAwaiting.relayTriggerKind).toBe('current_spent');
+  expect(evalAwaiting.recommended?.id).toBe('ready-backup');
+  expect(evalAwaiting.awaitingResetCandidates.map(c => c.id)).toEqual([
+    'current-awaiting-98',
+    'saved-awaiting-100',
+  ]);
+
+  const pool = summarizeRelayPool(evalAwaiting.candidates, NOW);
+  expect(pool.totalManualResetsRemaining).toBe(3);
+  expect(pool.awaitingResetCount).toBe(2);
+});
+
+test('smart and pace break ties and 72h expiring grants in favor of manualResetsRemaining > 0', () => {
+  // 1. Tie-break when r7/r5/effectiveRem are equal (distant/unbounded grant)
+  const tieAccounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    makeAccount('plain-tie', 1, 20, 20, 3, 5, false),
+    {
+      ...makeAccount('reset-tie', 2, 20, 20, 3, 5, false),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 20,
+        quota_5h_reset_at: NOW + 3 * HOUR,
+        quota_7d_used: 20,
+        quota_7d_reset_at: NOW + 5 * DAY,
+        manual_resets_remaining: 1,
+        manual_resets_grants: [{resets_left: 1, ends_at: null}],
+      },
+    },
+  ];
+  expect(
+    evaluateSmartRelay(tieAccounts, {...defaultSmartRelayConfig, enabled: true, strategy: 'smart'}, NOW)
+      .recommended?.id,
+  ).toBe('reset-tie');
+  expect(
+    evaluateSmartRelay(tieAccounts, {...defaultSmartRelayConfig, enabled: true, strategy: 'pace'}, NOW)
+      .recommended?.id,
+  ).toBe('reset-tie');
+
+  // 2. Grant expiring within 72h wins in both smart & pace over an earlier 7d reset / higher pace without grant
+  const exp72Accounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    makeAccount('plain-sooner-r7', 1, 15, 50, 3, 2, false), // r7 = 2d, pace = 25%/d
+    {
+      ...makeAccount('expiring-grant-60h', 2, 20, 10, 4, 6, false), // r7 = 6d, pace = 15%/d, grant <= 72h!
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 20,
+        quota_5h_reset_at: NOW + 4 * HOUR,
+        quota_7d_used: 10,
+        quota_7d_reset_at: NOW + 6 * DAY,
+        manual_resets_remaining: 1,
+        manual_resets_grants: [{resets_left: 1, ends_at: NOW + 60 * HOUR}],
+      },
+    },
+  ];
+  expect(
+    evaluateSmartRelay(exp72Accounts, {...defaultSmartRelayConfig, enabled: true, strategy: 'smart'}, NOW)
+      .recommended?.id,
+  ).toBe('expiring-grant-60h');
+  expect(
+    evaluateSmartRelay(exp72Accounts, {...defaultSmartRelayConfig, enabled: true, strategy: 'pace'}, NOW)
+      .recommended?.id,
+  ).toBe('expiring-grant-60h');
+});
+
+test('buildSubagentMarkdownTemplate returns a copy-ready pro-pool-worker definition calling claude-subagent.ps1', () => {
+  const tpl = buildSubagentMarkdownTemplate();
+  expect(tpl).toContain('name: pro-pool-worker');
+  expect(tpl).toContain('~/.local/bin/claude-subagent.ps1');
+  expect(tpl).toContain('-PromptFile');
+  expect(tpl).toContain('-ReadOnly');
+  expect(tpl).toContain('-Status');
+  expect(tpl).toContain('waves of 2');
+});
+
+test('awaitingManualReset honors Math.min(spentThresholdPct, 98) without triggering on 5h-only exhaustion', () => {
+  const accounts: RelayAccountInput[] = [
+    {
+      ...makeAccount('card-at-92-7d', 0, 30, 92, 3, 5, true),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 30,
+        quota_5h_reset_at: NOW + 3 * HOUR,
+        quota_7d_used: 92,
+        quota_7d_reset_at: NOW + 5 * DAY,
+        manual_resets_remaining: 2,
+      },
+    },
+    {
+      ...makeAccount('card-5h-100-only', 1, 100, 40, 1, 5, false),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 100,
+        quota_5h_reset_at: NOW + 1 * HOUR,
+        quota_7d_used: 40,
+        quota_7d_reset_at: NOW + 5 * DAY,
+        manual_resets_remaining: 2,
+      },
+    },
+    makeAccount('healthy-backup', 2, 10, 20, 4, 5, false),
+  ];
+
+  // With spentThresholdPct = 90, 92% 7d >= min(90, 98) -> awaitingManualReset is true (no deadlock!)
+  const eval90 = evaluateSmartRelay(
+    accounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'reset_harvest', spentThresholdPct: 90},
+    NOW,
+  );
+  expect(eval90.candidates.find(c => c.id === 'card-at-92-7d')?.awaitingManualReset).toBe(true);
+  // 5h-only limit (used5h=100, used7d=40) MUST NOT mark awaitingManualReset!
+  expect(eval90.candidates.find(c => c.id === 'card-5h-100-only')?.awaitingManualReset).toBe(false);
+
+  // With spentThresholdPct = 98, 92% 7d keeps harvesting (< 98%)
+  const eval98 = evaluateSmartRelay(
+    accounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'reset_harvest', spentThresholdPct: 98},
+    NOW,
+  );
+  expect(eval98.candidates.find(c => c.id === 'card-at-92-7d')?.awaitingManualReset).toBe(false);
+  expect(eval98.candidates.find(c => c.id === 'card-at-92-7d')?.tier).toBe(0);
+});
+
+test('smart promotes multi-card accounts (manualResetsRemaining >= 2) while yielding to soonReset24h, and computes 3-tier reset urgency', () => {
+  const accounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    makeAccount('plain-r7-3d', 1, 15, 25, 3, 3, false),
+    {
+      ...makeAccount('two-cards-r7-6d', 2, 20, 20, 3, 6, false),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 20,
+        quota_5h_reset_at: NOW + 3 * HOUR,
+        quota_7d_used: 20,
+        quota_7d_reset_at: NOW + 6 * DAY,
+        manual_resets_remaining: 2,
+        manual_resets_grants: [{resets_left: 2, ends_at: NOW + 5 * DAY}],
+      },
+    },
+  ];
+
+  const evalSmart = evaluateSmartRelay(
+    accounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'smart'},
+    NOW,
+  );
+  expect(evalSmart.recommended?.id).toBe('two-cards-r7-6d');
+
+  expect(computeResetCardExpiryUrgency(null, 0, NOW)).toBeNull();
+  expect(computeResetCardExpiryUrgency(null, 2, NOW)).toBe('normal');
+  expect(computeResetCardExpiryUrgency(NOW + 5 * DAY, 2, NOW)).toBe('normal');
+  expect(computeResetCardExpiryUrgency(NOW + 48 * HOUR, 1, NOW)).toBe('warning');
+  expect(computeResetCardExpiryUrgency(NOW + 12 * HOUR, 1, NOW)).toBe('critical');
+});
+
+test('5-item MRU recent launch directories store deduplicates case-insensitively and formats labels', () => {
+  clearRelayLaunchDirs();
+  expect(getRelayLaunchDirs()).toEqual([]);
+
+  recordRelayLaunchDir('D:\\Repos\\Alpha\\');
+  recordRelayLaunchDir('D:\\Repos\\Beta');
+  recordRelayLaunchDir('d:/repos/alpha'); // moves Alpha to top without duplicating
+  expect(getRelayLaunchDirs()).toEqual(['d:/repos/alpha', 'D:\\Repos\\Beta']);
+
+  recordRelayLaunchDir('C:\\Work\\One');
+  recordRelayLaunchDir('C:\\Work\\Two');
+  recordRelayLaunchDir('C:\\Work\\Three');
+  recordRelayLaunchDir('C:\\Work\\Four'); // 6th distinct entry evicts oldest ('Beta')
+  expect(getRelayLaunchDirs()).toHaveLength(5);
+  expect(getRelayLaunchDirs()[0]).toBe('C:\\Work\\Four');
+  expect(getRelayLaunchDirs()).not.toContain('D:\\Repos\\Beta');
+
+  removeRelayLaunchDir('c:\\work\\two\\');
+  expect(getRelayLaunchDirs()).toHaveLength(4);
+  expect(formatLaunchDirChip('D:\\Projects\\DemoWorkspace\\Claude-Local')).toEqual({
+    leaf: 'Claude-Local',
+    parent: 'D:\\Projects\\DemoWorkspace',
+  });
+  expect(formatLaunchDirChip('C:\\')).toEqual({leaf: 'C:\\', parent: ''});
+
+  clearRelayLaunchDirs();
+});
+
+test('canSyncNativeSmartRelay and syncNativeSmartRelayConfigIfLive stay silent in non-Tauri and synthetic fixtures', async () => {
+  expect(canSyncNativeSmartRelay()).toBe(false);
+  expect(await syncNativeSmartRelayConfigIfLive()).toBeNull();
+});
+
+test('normalizePlanSlug, CANONICAL_MANUAL_PLANS, and computeSubscriptionRoi map Free/Pro/Max/Ultra/Team cleanly', () => {
+  expect(CANONICAL_MANUAL_PLANS).toEqual(['Free', 'Pro', 'Max 5x', 'Max 20x', 'Ultra', 'Team']);
+  expect(normalizePlanSlug(null)).toBe('unknown');
+  expect(normalizePlanSlug('  ')).toBe('unknown');
+  expect(normalizePlanSlug('Free')).toBe('free');
+  expect(normalizePlanSlug('Pro')).toBe('pro');
+  expect(normalizePlanSlug('Pro / Max')).toBe('pro');
+  expect(normalizePlanSlug('Max')).toBe('max');
+  expect(normalizePlanSlug('Max 5x')).toBe('max');
+  expect(normalizePlanSlug('Max 20x')).toBe('max');
+  expect(normalizePlanSlug('Ultra')).toBe('ultra');
+  expect(normalizePlanSlug('Team')).toBe('team');
+  expect(normalizePlanSlug('Enterprise')).toBe('team');
+
+  expect(computeSubscriptionRoi('Free', 50)).toBeNull();
+  expect(computeSubscriptionRoi(null, 50)).toBeNull();
+  expect(computeSubscriptionRoi('Pro', 186)).toEqual({monthlyPriceUsd: 20, multiplier: 9.3});
+  expect(computeSubscriptionRoi('Team', 90)).toEqual({monthlyPriceUsd: 30, multiplier: 3});
+  expect(computeSubscriptionRoi('Enterprise', 60)).toEqual({monthlyPriceUsd: 30, multiplier: 2});
+  expect(computeSubscriptionRoi('Max 5x', 250)).toEqual({monthlyPriceUsd: 100, multiplier: 2.5});
+  expect(computeSubscriptionRoi('Max 20x', 500)).toEqual({monthlyPriceUsd: 200, multiplier: 2.5});
+  expect(computeSubscriptionRoi('Ultra', 800)).toEqual({monthlyPriceUsd: 200, multiplier: 4});
+  // Period-prorated ROI: $3 today on Pro ($20/30 = $0.6667/day) -> 4.5x; $14 over 7d -> 3x; $180 over 90d -> 3x
+  expect(computeSubscriptionRoi('Pro', 3, 1)).toEqual({monthlyPriceUsd: 20, multiplier: 4.5});
+  expect(computeSubscriptionRoi('Pro', 14, 7)).toEqual({monthlyPriceUsd: 20, multiplier: 3});
+  expect(computeSubscriptionRoi('Pro', 180, 90)).toEqual({monthlyPriceUsd: 20, multiplier: 3});
+});
+
+test('evaluateQuota enforces non-Ultra no5hLimit downgrade guard and restedNoActive5h parity', () => {
+  // Downgraded Pro/Free/Max with stale quota_no_5h_limit=true must NOT retain Unlimited 5h
+  const downgradedPro = evaluateQuota(
+    {
+      plan: 'Pro',
+      quota_no_5h_limit: true,
+      quota_7d_source: 'server_anchor',
+      quota_7d_used: 30,
+      quota_7d_reset_at: NOW + 4 * DAY,
+      quota_5h_source: 'server_anchor',
+      quota_5h_used: 40,
+      quota_5h_reset_at: NOW + 2 * HOUR,
+    },
+    NOW,
+  )!;
+  expect(downgradedPro.no5hLimit).toBe(false);
+  expect(downgradedPro.rem5h).toBe(60);
+
+  // Fresh/rested Pro with active 7d and unstarted 5h (null used + null reset_at, non-explicit-unknown source) is Tier 0 Ready
+  const restedPro = evaluateQuota(
+    {
+      plan: 'Pro',
+      quota_7d_source: 'server_anchor',
+      quota_7d_used: 25,
+      quota_7d_reset_at: NOW + 5 * DAY,
+      quota_5h_used: null,
+      quota_5h_reset_at: null,
+    },
+    NOW,
+  )!;
+  expect(restedPro.known5h).toBe(true);
+  expect(restedPro.used5h).toBe(0);
+  expect(restedPro.rem5h).toBe(100);
+  expect(restedPro.effectiveRem).toBe(75);
+
+  // Explicit quota_5h_source === 'unknown' without rested marker stays unknown (known5h === false)
+  const explicitUnknown5h = evaluateQuota(
+    {
+      plan: 'Pro',
+      quota_7d_source: 'server_anchor',
+      quota_7d_used: 25,
+      quota_7d_reset_at: NOW + 5 * DAY,
+      quota_5h_source: 'unknown',
+      quota_5h_used: null,
+      quota_5h_reset_at: null,
+    },
+    NOW,
+  )!;
+  expect(explicitUnknown5h.known5h).toBe(false);
+
+  // Real Tauri Summary/Current with quota_5h_source === 'unknown' + quota_5h_rested === true promotes cleanly
+  const tauriRestedPro = evaluateQuota(
+    {
+      plan: 'Pro',
+      quota_7d_source: 'server_anchor',
+      quota_7d_used: 25,
+      quota_7d_reset_at: NOW + 5 * DAY,
+      quota_5h_source: 'unknown',
+      quota_5h_rested: true,
+      quota_5h_used: null,
+      quota_5h_reset_at: null,
+    },
+    NOW,
+  )!;
+  expect(tauriRestedPro.known5h).toBe(true);
+  expect(tauriRestedPro.rem5h).toBe(100);
+  expect(tauriRestedPro.effectiveRem).toBe(75);
+});
+
+test('Strategy A1 extractResetCardInfo preserves positive remaining on elapsed clock while capping mixed expired slices', () => {
+  // Legacy grant_ends_at <= nowSec keeps positive remaining (Strategy A1) and clears finite end
+  expect(
+    extractResetCardInfo(
+      {manual_resets_remaining: 3, manual_resets_grant_ends_at: NOW - 60},
+      NOW,
+    ),
+  ).toEqual({manualResetsRemaining: 3, earliestResetGrantEndsAt: null});
+
+  // All-expired grants array keeps positive remaining (Strategy A1) and clears finite end
+  expect(
+    extractResetCardInfo(
+      {
+        manual_resets_remaining: 2,
+        manual_resets_grants: [{resets_left: 2, ends_at: NOW - 300}],
+      },
+      NOW,
+    ),
+  ).toEqual({manualResetsRemaining: 2, earliestResetGrantEndsAt: null});
+
+  // Mixed expired + future grants caps inflated rawRemaining at futureSum
+  expect(
+    extractResetCardInfo(
+      {
+        manual_resets_remaining: 3,
+        manual_resets_grants: [
+          {resets_left: 1, ends_at: NOW - 300},
+          {resets_left: 2, ends_at: NOW + 3600},
+        ],
+      },
+      NOW,
+    ),
+  ).toEqual({manualResetsRemaining: 2, earliestResetGrantEndsAt: NOW + 3600});
+
+  // clearAccountCooldown(id, true) clears both cooldownUntilSec and matching noReturnAccountId
+  resetSmartRelayConfig();
+  setAccountCooldown('acc-reset', NOW + 900);
+  noteRelayAccountSwitch('acc-reset', 'acc-other', NOW + 3600);
+  expect(getSmartRelayConfig().noReturnAccountId).toBe('acc-reset');
+  const cleared = clearAccountCooldown('acc-reset', true);
+  expect(cleared.cooldownUntilSec['acc-reset']).toBeUndefined();
+  expect(cleared.noReturnAccountId).toBeNull();
+  expect(cleared.noReturnUntilSec).toBe(0);
+});
+
+test('evaluateSmartRelay demotes expired access_until/manual subscriptions to Tier 3 while keeping auto-renewing next_renewal Ready', () => {
+  const accounts: RelayAccountInput[] = [
+    makeAccount('current', 0, 99, 40, 2, 4, true),
+    {
+      ...makeAccount('expired-cancelled', 1, 10, 10, 4, 5, false),
+      subscription_expires_at: NOW - 60,
+      billingDateKind: 'access_until',
+    },
+    {
+      ...makeAccount('auto-renewal-rollover', 2, 15, 20, 4, 5, false),
+      subscription_expires_at: NOW - 3600,
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 15,
+        quota_5h_reset_at: NOW + 4 * HOUR,
+        quota_7d_used: 20,
+        quota_7d_reset_at: NOW + 5 * DAY,
+        billing_date_kind: 'next_renewal',
+        subscription_date_source: 'browser',
+      },
+    },
+  ];
+
+  const evaluation = evaluateSmartRelay(
+    accounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'least_used'},
+    NOW,
+  );
+  const expiredCand = evaluation.candidates.find(c => c.id === 'expired-cancelled')!;
+  const autoRenewCand = evaluation.candidates.find(c => c.id === 'auto-renewal-rollover')!;
+
+  expect(expiredCand.tier).toBe(3);
+  expect(expiredCand.reasonKey).toBe('relay.reason.authExpired');
+  expect(autoRenewCand.tier).toBe(0);
+  expect(evaluation.recommended?.id).toBe('auto-renewal-rollover');
+});
+
+test('computeWindowBurnEta guards <15m or <10% noise and computes exhaustion ETA before reset', () => {
+  // Too early (< 900s elapsed: 4h50m remaining -> 600s elapsed) -> null
+  expect(computeWindowBurnEta(25, NOW + 5 * HOUR - 600, NOW, 5)).toBeNull();
+  // Too little usage (< 10%) -> null
+  expect(computeWindowBurnEta(8, NOW + 3 * HOUR, NOW, 5)).toBeNull();
+
+  // 5h window: 1h elapsed (4h = 14400s remaining), 50% used -> 50%/h -> hits 98% in (48 / 50) * 3600 = 3456s (< 14400s)
+  const fast = computeWindowBurnEta(50, NOW + 4 * HOUR, NOW, 5, 98)!;
+  expect(fast.ratePerHour).toBe(50);
+  expect(fast.hitsBeforeReset).toBe(true);
+  expect(fast.etaToTargetSec).toBe(3456);
+  expect(fast.projectedEndPct).toBe(100);
+
+  // 5h window: 3h elapsed (2h = 7200s remaining), 30% used -> 10%/h -> projected end 50% (< 98%) -> hitsBeforeReset = false
+  const safe = computeWindowBurnEta(30, NOW + 2 * HOUR, NOW, 5, 98)!;
+  expect(safe.ratePerHour).toBe(10);
+  expect(safe.hitsBeforeReset).toBe(false);
+  expect(safe.etaToTargetSec).toBeNull();
+  expect(safe.projectedEndPct).toBe(50);
+});
+
+test('noteRelayAccountRateLimited atomically updates cooldownUntilSec and sunkOrder in a single notification', () => {
+  resetSmartRelayConfig();
+  updateSmartRelayConfig({enabled: true, rateLimitMode: 'sink_to_end'});
+  let notifications = 0;
+  const unsub = subscribeSmartRelayConfig(() => {
+    notifications += 1;
+  });
+  try {
+    const updated = noteRelayAccountRateLimited('acc-rate', (NOW + 300) * 1000, NOW);
+    expect(notifications).toBe(1);
+    expect(updated.cooldownUntilSec['acc-rate']).toBe(NOW + 300);
+    expect(updated.sunkOrder['acc-rate']).toBe(1);
+  } finally {
+    unsub();
+    resetSmartRelayConfig();
+  }
+});
+
+test('defaultCliModel and defaultCliEffort sanitize aliases and format --model/--effort args', () => {
+  expect(RELAY_CLI_MODELS).toContain('claude-opus-5-5');
+  expect(RELAY_CLI_EFFORTS).toContain('max');
+
+  expect(sanitizeRelayCliModel('opus')).toBe('claude-opus-5-5');
+  expect(sanitizeRelayCliModel('  CLAUDE-OPUS-5-5 ')).toBe('claude-opus-5-5');
+  expect(sanitizeRelayCliModel('fable')).toBe('claude-fable-5-2');
+  expect(sanitizeRelayCliModel('sonnet')).toBe('claude-sonnet-5-5');
+  expect(sanitizeRelayCliModel('haiku')).toBe('claude-haiku-5-5');
+  expect(sanitizeRelayCliModel('opusplan')).toBe('opusplan');
+  expect(sanitizeRelayCliModel('unknown-model')).toBe('');
+
+  expect(sanitizeRelayCliEffort(' MAX ')).toBe('max');
+  expect(sanitizeRelayCliEffort('xhigh')).toBe('xhigh');
+  expect(sanitizeRelayCliEffort('invalid')).toBe('');
+
+  const cfg = sanitizeSmartRelayConfig({
+    default_cli_model: 'opus',
+    default_cli_effort: 'max',
+  });
+  expect(cfg.defaultCliModel).toBe('claude-opus-5-5');
+  expect(cfg.defaultCliEffort).toBe('max');
+  expect(formatRelayCliModelEffortArgs(cfg)).toEqual(['--model', 'claude-opus-5-5', '--effort', 'max']);
+  expect(formatRelayCliModelEffortArgs(defaultSmartRelayConfig)).toEqual([]);
+});
+
+test('syncNativeSmartRelayConfigIfLive discards stale in-flight native reads when a local edit lands mid-flight', async () => {
+  resetSmartRelayConfig();
+  const prevWin = (globalThis as {window?: unknown}).window;
+  const stateDeferred: {resolve: ((val: unknown) => void) | null} = {resolve: null};
+  const invokeCalls: string[] = [];
+  (globalThis as {window?: unknown}).window = {
+    localStorage: {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    },
+    __TAURI_INTERNALS__: {
+      metadata: {currentWindow: {label: 'main'}},
+      invoke: (cmd: string) => {
+        invokeCalls.push(cmd);
+        if (cmd === 'identities_orchestrator_state') {
+          return new Promise(resolve => {
+            stateDeferred.resolve = resolve;
+          });
+        }
+        if (cmd === 'identities_orchestrator_configure') {
+          return Promise.resolve({
+            config_persisted: true,
+            config: getSmartRelayConfig(),
+          });
+        }
+        return Promise.resolve(null);
+      },
+    },
+  };
+
+  try {
+    expect(canSyncNativeSmartRelay()).toBe(true);
+    const pendingRead = syncNativeSmartRelayConfigIfLive();
+    // Wait a microtask so dynamic import('@tauri-apps/api/core') invokes identities_orchestrator_state
+    for (let i = 0; i < 10 && !stateDeferred.resolve; i++) {
+      await new Promise(r => setTimeout(r, 5));
+    }
+    expect(invokeCalls).toContain('identities_orchestrator_state');
+
+    // User makes a fresh edit in Smart Relay modal while the older state read is still in flight
+    updateSmartRelayConfig({enabled: true, strategy: 'reset_harvest', spentThresholdPct: 95});
+    expect(getSmartRelayConfig().strategy).toBe('reset_harvest');
+
+    // Older native read resolves afterward with stale strategy ('smart', enabled: false)
+    stateDeferred.resolve?.({
+      config_persisted: true,
+      config: {...defaultSmartRelayConfig, enabled: false, strategy: 'smart'},
+    });
+    await pendingRead;
+
+    // Fresh local edit must NOT be overwritten by the stale read
+    expect(getSmartRelayConfig().enabled).toBe(true);
+    expect(getSmartRelayConfig().strategy).toBe('reset_harvest');
+    expect(getSmartRelayConfig().spentThresholdPct).toBe(95);
+  } finally {
+    if (prevWin === undefined) {
+      delete (globalThis as {window?: unknown}).window;
+    } else {
+      (globalThis as {window?: unknown}).window = prevWin;
+    }
+    resetSmartRelayConfig();
+  }
+});
+
+test('defaultCliModel and defaultCliEffort sanitize aliases and format --model/--effort args', () => {
+  expect(RELAY_CLI_MODELS).toContain('claude-opus-5-5');
+  expect(RELAY_CLI_EFFORTS).toContain('max');
+
+  expect(sanitizeRelayCliModel('opus')).toBe('claude-opus-5-5');
+  expect(sanitizeRelayCliModel('  CLAUDE-OPUS-5-5 ')).toBe('claude-opus-5-5');
+  expect(sanitizeRelayCliModel('fable')).toBe('claude-fable-5-2');
+  expect(sanitizeRelayCliModel('sonnet')).toBe('claude-sonnet-5-5');
+  expect(sanitizeRelayCliModel('haiku')).toBe('claude-haiku-5-5');
+  expect(sanitizeRelayCliModel('opusplan')).toBe('opusplan');
+  expect(sanitizeRelayCliModel('unknown-model')).toBe('');
+
+  expect(sanitizeRelayCliEffort(' MAX ')).toBe('max');
+  expect(sanitizeRelayCliEffort('xhigh')).toBe('xhigh');
+  expect(sanitizeRelayCliEffort('invalid')).toBe('');
+
+  const cfg = sanitizeSmartRelayConfig({
+    default_cli_model: 'opus',
+    default_cli_effort: 'max',
+  });
+  expect(cfg.defaultCliModel).toBe('claude-opus-5-5');
+  expect(cfg.defaultCliEffort).toBe('max');
+  expect(formatRelayCliModelEffortArgs(cfg)).toEqual(['--model', 'claude-opus-5-5', '--effort', 'max']);
+  expect(formatRelayCliModelEffortArgs(defaultSmartRelayConfig)).toEqual([]);
+});
+
+test('current_spent beats preferred_recovered when current is 5h 0% while still recommending the recovered preferred account', () => {
+  const accounts: RelayAccountInput[] = [
+    makeAccount('exhausted-current', 0, 100, 45, 2, 4, true), // 5h 0% remaining!
+    makeAccount('preferred-star', 1, 15, 25, 4, 5, false), // Recovered (< 90%)
+    makeAccount('other-spare', 2, 5, 10, 4, 6, false),
+  ];
+
+  const evaluation = evaluateSmartRelay(
+    accounts,
+    {
+      ...defaultSmartRelayConfig,
+      enabled: true,
+      strategy: 'least_used',
+      preferredAccountId: 'preferred-star',
+      returnToPreferred: true,
+      preferredReturnThresholdPct: 90,
+    },
+    NOW,
+  );
+
+  expect(evaluation.shouldRelayNow).toBe(true);
+  expect(evaluation.relayTriggerKind).toBe('current_spent');
+  expect(evaluation.recommended?.id).toBe('preferred-star');
+  expect(evaluation.recommended?.isPreferred).toBe(true);
+});
+
+test('0% remaining with valid auth and known quota classifies as Tier 2 spent and feeds avg5hRemainingPct and soonestResetSec', () => {
+  const accounts: RelayAccountInput[] = [
+    makeAccount('zero-5h', 0, 100, 40, 2, 5, true), // rem5h = 0, rem7d = 60, r5 = NOW + 2h
+    makeAccount('healthy-1', 1, 20, 20, 4, 6, false), // rem5h = 80, rem7d = 80
+    makeAccount('cooling-1', 2, 10, 10, 1, 4, false), // inCooldown -> tier 3, r5 = NOW + 1h
+  ];
+
+  const evaluation = evaluateSmartRelay(
+    accounts,
+    {
+      ...defaultSmartRelayConfig,
+      enabled: true,
+      cooldownUntilSec: {'cooling-1': NOW + 900},
+    },
+    NOW,
+  );
+
+  const zeroCand = evaluation.candidates.find(c => c.id === 'zero-5h')!;
+  expect(zeroCand.tier).toBe(2);
+
+  const pool = summarizeRelayPool(evaluation.candidates, NOW);
+  expect(pool.spentCount).toBe(1);
+  expect(pool.unavailableCount).toBe(1); // cooling-1 only
+  expect(pool.cooldownCount).toBe(1);
+  // avg5hRemainingPct includes zero-5h (0%) + healthy-1 (80%) -> 40%
+  expect(pool.avg5hRemainingPct).toBe(40);
+  // soonestResetSec includes tier 2 (NOW + 2h) AND inCooldown (NOW + 1h) -> NOW + 1h
+  expect(pool.soonestResetSec).toBe(NOW + 1 * HOUR);
+});
+
+test('inferred5h on preferred account blocks premature preferred_recovered when current is healthy', () => {
+  const accounts: RelayAccountInput[] = [
+    makeAccount('healthy-current', 0, 35, 35, 3, 4, true),
+    {
+      id: 'preferred-inferred-5h',
+      name: 'Preferred Inferred 5h',
+      email: 'pref5h@example.invalid',
+      plan: 'pro',
+      auth_status: 'valid',
+      isCurrent: false,
+      listIndex: 1,
+      summary: {
+        quota_source: 'server_anchor',
+        quota_observed_at_ms: (NOW - 6 * HOUR) * 1000,
+        quota_5h_used: 95,
+        quota_5h_reset_at: NOW - HOUR, // 5h elapsed -> inferred5h = true
+        quota_7d_used: 30,
+        quota_7d_reset_at: NOW + 4 * DAY, // 7d active -> inferred = false
+      },
+    },
+  ];
+
+  const evaluation = evaluateSmartRelay(
+    accounts,
+    {
+      ...defaultSmartRelayConfig,
+      enabled: true,
+      preferredAccountId: 'preferred-inferred-5h',
+      returnToPreferred: true,
+      preferredReturnThresholdPct: 90,
+    },
+    NOW,
+  );
+
+  const prefCand = evaluation.candidates.find(c => c.id === 'preferred-inferred-5h')!;
+  expect(prefCand.inferred5h).toBe(true);
+  expect(prefCand.inferred).toBe(false);
+  expect(evaluation.relayTriggerKind).not.toBe('preferred_recovered');
+  expect(evaluation.shouldRelayNow).toBe(false);
+});
+
+test('buildSubagentMarkdownTemplate enforces haiku/low/PowerShell+Bash frontmatter and single-line command without backticks', () => {
+  const tpl = buildSubagentMarkdownTemplate();
+  expect(tpl).toContain('model: claude-haiku-5-5');
+  expect(tpl).toContain('effort: low');
+  expect(tpl).toContain('tools: PowerShell, Bash, Read, Grep, Glob');
+  expect(tpl).toContain(
+    'pwsh -NoProfile -ExecutionPolicy Bypass -File "$HOME/.local/bin/claude-subagent.ps1" -PromptFile "<path-to-task.md>" -SessionTag "<task-tag>" -ReadOnly',
+  );
+  // No PowerShell backtick line continuations inside the code block
+  expect(tpl).not.toContain(' `\n');
+});
+
+test('flushNativeSmartRelaySync awaits inflight configure writes and handles errors cleanly without throwing', async () => {
+  resetSmartRelayConfig();
+  // Offline/non-Tauri resolves immediately
+  await expect(flushNativeSmartRelaySync()).resolves.toBeUndefined();
+
+  const prevWin = (globalThis as {window?: unknown}).window;
+  const writeDeferred: {resolve: ((v: unknown) => void) | null} = {resolve: null};
+  let rejectNext = false;
+  (globalThis as {window?: unknown}).window = {
+    localStorage: {getItem: () => null, setItem: () => {}, removeItem: () => {}},
+    __TAURI_INTERNALS__: {
+      metadata: {currentWindow: {label: 'main'}},
+      invoke: (cmd: string) => {
+        if (cmd === 'identities_orchestrator_configure') {
+          if (rejectNext) return Promise.reject(new Error('mock-sync-fail'));
+          return new Promise(resolve => {
+            writeDeferred.resolve = resolve;
+          });
+        }
+        return Promise.resolve(null);
+      },
+    },
+  };
+
+  try {
+    updateSmartRelayConfig({enabled: true, strategy: 'pace'});
+    let flushed = false;
+    const flushPromise = flushNativeSmartRelaySync().then(() => {
+      flushed = true;
+    });
+    for (let i = 0; i < 10 && !writeDeferred.resolve; i++) {
+      await new Promise(r => setTimeout(r, 5));
+    }
+    expect(flushed).toBe(false);
+    writeDeferred.resolve?.({config_persisted: true, config: getSmartRelayConfig()});
+    await flushPromise;
+    expect(flushed).toBe(true);
+    expect(getLastNativeSmartRelaySyncError()).toBeNull();
+
+    // Sync failure should be caught/recorded cleanly without throwing
+    rejectNext = true;
+    updateSmartRelayConfig({strategy: 'smart'});
+    await expect(flushNativeSmartRelaySync()).resolves.toBeUndefined();
+    expect(getLastNativeSmartRelaySyncError()).toContain('mock-sync-fail');
+  } finally {
+    if (prevWin === undefined) delete (globalThis as {window?: unknown}).window;
+    else (globalThis as {window?: unknown}).window = prevWin;
+    resetSmartRelayConfig();
+  }
+});
+
+test('summarizeCleanroomPipelineStages reports truthful skipped, warning, error, and ok statuses without greenwashing', () => {
+  const mk = (stage: string, status: Progress['status']): Progress => ({
+    stage,
+    status,
+    message: `${stage}:${status}`,
+    current: 1,
+    total: 1,
+    elapsed_ms: 10,
+  });
+
+  // 1. Unlinked browser switch (no browser event) -> exit_align MUST be 'skipped', NOT 'ok'
+  const unlinked = summarizeCleanroomPipelineStages(
+    [
+      mk('stop', 'ok'),
+      mk('validate', 'ok'),
+      mk('archive', 'ok'),
+      mk('cleanroom', 'ok'),
+      mk('commit', 'ok'),
+      mk('verify', 'ok'),
+      mk('done', 'ok'),
+    ],
+    false,
+    false,
+  );
+  expect(unlinked.map(s => [s.id, s.status])).toEqual([
+    ['lock_guard', 'ok'],
+    ['cleanroom_vault', 'ok'],
+    ['exit_align', 'skipped'],
+  ]);
+
+  // 2. Warning in cleanroom / verify + browser warning -> truthful 'warning' badges
+  const warned = summarizeCleanroomPipelineStages(
+    [
+      mk('stop', 'ok'),
+      mk('cleanroom', 'warning'),
+      mk('commit', 'ok'),
+      mk('verify', 'ok'),
+      mk('browser', 'warning'),
+      mk('done', 'ok'),
+    ],
+    false,
+    false,
+  );
+  expect(warned.map(s => [s.id, s.status])).toEqual([
+    ['lock_guard', 'ok'],
+    ['cleanroom_vault', 'warning'],
+    ['exit_align', 'warning'],
+  ]);
+
+  // 3. Rollback occurred (even if rollback itself logged 'ok') -> cleanroom_vault MUST be 'error'
+  const rolledBack = summarizeCleanroomPipelineStages(
+    [
+      mk('stop', 'ok'),
+      mk('archive', 'error'),
+      mk('rollback', 'running'),
+      mk('rollback', 'ok'),
+      mk('done', 'error'),
+    ],
+    false,
+    true,
+  );
+  expect(rolledBack.map(s => [s.id, s.status])).toEqual([
+    ['lock_guard', 'ok'],
+    ['cleanroom_vault', 'error'],
+    ['exit_align', 'skipped'],
+  ]);
+
+  // 4. Full happy path with post-commit browser ok -> all three 'ok'
+  const fullOk = summarizeCleanroomPipelineStages(
+    [
+      mk('stop', 'ok'),
+      mk('validate', 'ok'),
+      mk('cleanroom', 'ok'),
+      mk('commit', 'ok'),
+      mk('verify', 'ok'),
+      mk('browser', 'running'),
+      mk('browser', 'ok'),
+      mk('done', 'ok'),
+    ],
+    false,
+    false,
+  );
+  expect(fullOk.map(s => [s.id, s.status])).toEqual([
+    ['lock_guard', 'ok'],
+    ['cleanroom_vault', 'ok'],
+    ['exit_align', 'ok'],
+  ]);
+
+  // 5. Neither stop nor validate ran -> lock_guard MUST be 'skipped' on finish
+  const noLock = summarizeCleanroomPipelineStages(
+    [mk('cleanroom', 'ok'), mk('commit', 'ok'), mk('done', 'ok')],
+    false,
+    false,
+  );
+  expect(noLock.map(s => [s.id, s.status])).toEqual([
+    ['lock_guard', 'skipped'],
+    ['cleanroom_vault', 'ok'],
+    ['exit_align', 'skipped'],
+  ]);
+});
+
+test('relayHandoffMode defaults to clean_handoff, accepts snake_case alias, rejects unknown values and round-trips through native payload sanitize', () => {
+  expect(RELAY_HANDOFF_MODES).toEqual(['clean_handoff', 'fork_resume']);
+  expect(defaultSmartRelayConfig.relayHandoffMode).toBe('clean_handoff');
+  expect(sanitizeSmartRelayConfig(null).relayHandoffMode).toBe('clean_handoff');
+  expect(sanitizeSmartRelayConfig({}).relayHandoffMode).toBe('clean_handoff');
+  expect(sanitizeSmartRelayConfig({relayHandoffMode: 'fork_resume'}).relayHandoffMode).toBe('fork_resume');
+  expect(sanitizeSmartRelayConfig({relay_handoff_mode: 'fork_resume'}).relayHandoffMode).toBe('fork_resume');
+  expect(sanitizeSmartRelayConfig({relayHandoffMode: 'resume_everything'}).relayHandoffMode).toBe('clean_handoff');
+  expect(sanitizeSmartRelayConfig({relayHandoffMode: 7}).relayHandoffMode).toBe('clean_handoff');
+
+  resetSmartRelayConfig();
+  const updated = updateSmartRelayConfig({relayHandoffMode: 'fork_resume'});
+  expect(updated.relayHandoffMode).toBe('fork_resume');
+  const payload = JSON.parse(JSON.stringify(getSmartRelayConfig())) as Record<string, unknown>;
+  expect(payload.relayHandoffMode).toBe('fork_resume');
+  expect(sanitizeSmartRelayConfig(payload).relayHandoffMode).toBe('fork_resume');
+  resetSmartRelayConfig();
+  expect(getSmartRelayConfig().relayHandoffMode).toBe('clean_handoff');
+});
+
+test('HandoffSummary and HandoffItem match the camelCase native checkpoint contract', () => {
+  const summary: HandoffSummary = {
+    createdAtSec: NOW,
+    dismissed: false,
+    handoffMdPath: 'handoff/latest-handoff.md',
+    handoffDir: 'handoff',
+    sessionCount: 2,
+    outputReadyCount: 1,
+    interruptedCount: 1,
+    externalRunningCount: 0,
+    copyPrompt: 'Read handoff/latest-handoff.md first.',
+    items: [
+      {id: 'sub-01', status: 'output_ready', title: 'Explore', outputPath: 'handoff/subagent-outputs/sub-01.md'},
+      {id: 'sub-02', status: 'interrupted_429', title: 'Plan'},
+    ],
+  };
+  const item: HandoffItem = summary.items[1];
+  expect(item.outputPath ?? null).toBeNull();
+  expect(Object.keys(summary).sort()).toEqual(
+    [
+      'copyPrompt',
+      'createdAtSec',
+      'dismissed',
+      'externalRunningCount',
+      'handoffDir',
+      'handoffMdPath',
+      'interruptedCount',
+      'items',
+      'outputReadyCount',
+      'sessionCount',
+    ].sort(),
+  );
 });

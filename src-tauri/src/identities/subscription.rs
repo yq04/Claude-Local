@@ -1,6 +1,6 @@
-// [INPUT]: 私有 manual_subscriptions.json、账号 HMAC 指纹或归档/养号卡 ID、ASCII YYYY-MM-DD 充值/到期日历与 Cleaner 短事务门。
-// [OUTPUT]: 独立于 SQLite user_version=3 与 Python quota_ledger 的手动订阅到期/充值日原子存储、按 +1 自然月安全推算到期日、UTC 正午跨时区无偏移时间戳及自动网页账单较新优先合并。
-// [POS]: 身份卡片订阅到期（MM/DD）的本地补充层；绝不终止运行中的 claude.exe，绝不修改 .claude.json 或抢占 Python 账本锁。
+// [INPUT]: 私有 manual_subscriptions.json、账号 HMAC 指纹或归档/养号卡 ID、ASCII YYYY-MM-DD 充值/到期日历、可选手动套餐校准与 Cleaner 短事务门。
+// [OUTPUT]: 独立于 SQLite user_version=3 与 Python quota_ledger 的手动订阅到期/充值日与套餐层级原子存储、按 +1 自然月安全推算到期日、跨时区日末宽限到期判定、自动续费 next_renewal 不误判过期及手动套餐覆盖自动清除非 Ultra 无限 5h 标记。
+// [POS]: 身份卡片订阅到期（MM/DD）与套餐升降级校准的本地补充层；绝不终止运行中的 claude.exe，绝不修改 .claude.json 或抢占 Python 账本锁。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use chrono::{NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,19 @@ use tauri::{Emitter, Manager};
 
 pub const FILE_NAME: &str = "manual_subscriptions.json";
 const MAX_STORE_BYTES: u64 = 256 * 1024;
+/// End-of-day grace relative to 12:00:00 UTC (`+19h59m59s` = `23:59:59 PST` on `expiry_ymd`),
+/// preventing manual YYYY-MM-DD dates from expiring mid-day in US or Asian timezones.
+pub const MANUAL_EXPIRY_EOD_GRACE_SEC: u64 = 20 * 3600 - 1;
+pub const CANONICAL_MANUAL_PLANS: &[&str] = &[
+    "Free",
+    "Pro",
+    "Max",
+    "Max 5x",
+    "Max 20x",
+    "Ultra",
+    "Team",
+    "Enterprise",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManualSubscriptionEntry {
@@ -19,12 +32,22 @@ pub struct ManualSubscriptionEntry {
     pub updated_at_ms: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManualPlanEntry {
+    pub manual_plan: String,
+    pub updated_at_ms: u64,
+}
+
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ManualSubscriptionsFile {
     pub version: u32,
     pub by_identity: BTreeMap<String, ManualSubscriptionEntry>,
     pub by_record: BTreeMap<String, ManualSubscriptionEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plan_by_identity: BTreeMap<String, ManualPlanEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plan_by_record: BTreeMap<String, ManualPlanEntry>,
 }
 
 fn now_ms() -> u64 {
@@ -111,6 +134,19 @@ pub fn ymd_to_utc_noon_sec(raw: &str) -> Result<u64, String> {
     u64::try_from(dt.timestamp()).map_err(|_| "identityCard.invalidSubscriptionDate".into())
 }
 
+pub fn normalize_manual_plan(raw: &str) -> Result<Option<String>, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
+        return Ok(None);
+    }
+    for &canonical in CANONICAL_MANUAL_PLANS {
+        if trimmed.eq_ignore_ascii_case(canonical) {
+            return Ok(Some(canonical.to_string()));
+        }
+    }
+    Err("订阅到期设置无效。".into())
+}
+
 fn sanitize_entry(mut entry: ManualSubscriptionEntry) -> Option<ManualSubscriptionEntry> {
     let expiry_ymd = normalize_ymd(&entry.expiry_ymd).ok()?;
     let expiry_epoch_sec = ymd_to_utc_noon_sec(&expiry_ymd).ok()?;
@@ -125,6 +161,17 @@ fn sanitize_entry(mut entry: ManualSubscriptionEntry) -> Option<ManualSubscripti
         expiry_ymd,
         recharge_ymd,
         expiry_epoch_sec,
+        updated_at_ms: entry.updated_at_ms,
+    })
+}
+
+fn sanitize_plan_entry(entry: ManualPlanEntry) -> Option<ManualPlanEntry> {
+    if entry.updated_at_ms == 0 {
+        return None;
+    }
+    let manual_plan = normalize_manual_plan(&entry.manual_plan).ok().flatten()?;
+    Some(ManualPlanEntry {
+        manual_plan,
         updated_at_ms: entry.updated_at_ms,
     })
 }
@@ -181,6 +228,8 @@ pub fn read_store(vault: &Path) -> ManualSubscriptionsFile {
         version: 1,
         by_identity: BTreeMap::new(),
         by_record: BTreeMap::new(),
+        plan_by_identity: BTreeMap::new(),
+        plan_by_record: BTreeMap::new(),
     };
     for (k, v) in parsed.by_identity {
         if valid_fingerprint(&k) {
@@ -193,6 +242,20 @@ pub fn read_store(vault: &Path) -> ManualSubscriptionsFile {
         if super::valid_id(&k) {
             if let Some(entry) = sanitize_entry(v) {
                 clean.by_record.insert(k, entry);
+            }
+        }
+    }
+    for (k, v) in parsed.plan_by_identity {
+        if valid_fingerprint(&k) {
+            if let Some(entry) = sanitize_plan_entry(v) {
+                clean.plan_by_identity.insert(k, entry);
+            }
+        }
+    }
+    for (k, v) in parsed.plan_by_record {
+        if super::valid_id(&k) {
+            if let Some(entry) = sanitize_plan_entry(v) {
+                clean.plan_by_record.insert(k, entry);
             }
         }
     }
@@ -245,6 +308,12 @@ pub(crate) fn read_store_checked(vault: &Path) -> Result<ManualSubscriptionsFile
         || store.by_record.iter().any(|(id, entry)| {
             !super::valid_id(id) || sanitize_entry(entry.clone()).as_ref() != Some(entry)
         })
+        || store.plan_by_identity.iter().any(|(id, entry)| {
+            !valid_fingerprint(id) || sanitize_plan_entry(entry.clone()).as_ref() != Some(entry)
+        })
+        || store.plan_by_record.iter().any(|(id, entry)| {
+            !super::valid_id(id) || sanitize_plan_entry(entry.clone()).as_ref() != Some(entry)
+        })
     {
         return Err("订阅到期设置无效。".into());
     }
@@ -256,25 +325,25 @@ pub fn remove_record_entry(vault: &Path, record_id: &str) {
         return;
     }
     let mut store = read_store(vault);
-    if store.by_record.remove(record_id).is_some() {
+    let removed_date = store.by_record.remove(record_id).is_some();
+    let removed_plan = store.plan_by_record.remove(record_id).is_some();
+    if removed_date || removed_plan {
         let _ = write_store(vault, &store);
     }
 }
 
-pub fn apply_manual(
-    store: &ManualSubscriptionsFile,
+fn lookup_manual_entry<'a>(
+    store: &'a ManualSubscriptionsFile,
     quota_identity: Option<&str>,
     record_id: Option<&str>,
-    web: &mut super::online::WebMetadata,
-    subscription_expires_at: &mut Option<u64>,
-) {
+) -> Option<&'a ManualSubscriptionEntry> {
     let by_qi = quota_identity
         .filter(|qi| valid_fingerprint(qi))
         .and_then(|qi| store.by_identity.get(qi));
     let by_rec = record_id
         .filter(|id| super::valid_id(id))
         .and_then(|id| store.by_record.get(id));
-    let manual = match (by_qi, by_rec) {
+    match (by_qi, by_rec) {
         (Some(a), Some(b)) => {
             if a.updated_at_ms >= b.updated_at_ms {
                 Some(a)
@@ -285,13 +354,50 @@ pub fn apply_manual(
         (Some(a), None) => Some(a),
         (None, Some(b)) => Some(b),
         (None, None) => None,
-    };
+    }
+}
 
+fn lookup_manual_plan_entry<'a>(
+    store: &'a ManualSubscriptionsFile,
+    quota_identity: Option<&str>,
+    record_id: Option<&str>,
+) -> Option<&'a ManualPlanEntry> {
+    let by_qi = quota_identity
+        .filter(|qi| valid_fingerprint(qi))
+        .and_then(|qi| store.plan_by_identity.get(qi));
+    let by_rec = record_id
+        .filter(|id| super::valid_id(id))
+        .and_then(|id| store.plan_by_record.get(id));
+    match (by_qi, by_rec) {
+        (Some(a), Some(b)) => {
+            if a.updated_at_ms >= b.updated_at_ms {
+                Some(a)
+            } else {
+                Some(b)
+            }
+        }
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+pub fn apply_manual_with_plan(
+    store: &ManualSubscriptionsFile,
+    quota_identity: Option<&str>,
+    record_id: Option<&str>,
+    plan: &mut Option<String>,
+    quota_no_5h_limit: &mut bool,
+    web: &mut super::online::WebMetadata,
+    subscription_expires_at: &mut Option<u64>,
+) {
+    let manual = lookup_manual_entry(store, quota_identity, record_id);
+    let manual_plan_entry = lookup_manual_plan_entry(store, quota_identity, record_id);
     let browser_ms = web.billing_date.and_then(|_| web.billing_observed_at_ms);
     match manual {
         Some(entry) if browser_ms.is_none_or(|b_ms| entry.updated_at_ms >= b_ms) => {
             web.billing_date = Some(entry.expiry_epoch_sec);
-            web.billing_date_kind = Some("next_renewal".into());
+            web.billing_date_kind = Some("access_until".into());
             web.billing_observed_at_ms = Some(entry.updated_at_ms);
             web.metadata_observed_at_ms = web
                 .billing_observed_at_ms
@@ -299,21 +405,59 @@ pub fn apply_manual(
             web.subscription_expiry_ymd = Some(entry.expiry_ymd.clone());
             web.subscription_recharge_ymd = entry.recharge_ymd.clone();
             web.subscription_date_source = Some("manual".into());
-            *subscription_expires_at = Some(entry.expiry_epoch_sec);
+            web.subscription_renews_at = None;
+            *subscription_expires_at =
+                Some(entry.expiry_epoch_sec.saturating_add(MANUAL_EXPIRY_EOD_GRACE_SEC));
         }
         _ => {
             if let Some(browser_date) = web.billing_date {
                 web.subscription_expiry_ymd = None;
                 web.subscription_recharge_ymd = None;
                 web.subscription_date_source = Some("browser".into());
-                *subscription_expires_at = Some(browser_date);
+                if web.billing_date_kind.as_deref() == Some("next_renewal") {
+                    web.subscription_renews_at = Some(browser_date);
+                    *subscription_expires_at = None;
+                } else {
+                    web.subscription_renews_at = None;
+                    *subscription_expires_at = Some(browser_date);
+                }
             } else {
                 web.subscription_expiry_ymd = None;
                 web.subscription_recharge_ymd = None;
                 web.subscription_date_source = None;
+                web.subscription_renews_at = None;
+                *subscription_expires_at = None;
             }
         }
     }
+
+    if let Some(mp) = manual_plan_entry.map(|e| e.manual_plan.as_str()) {
+        web.manual_plan = Some(mp.to_string());
+        *plan = Some(mp.to_string());
+    } else {
+        web.manual_plan = None;
+    }
+    super::profile::enforce_plan_quota_limits(plan.as_deref(), quota_no_5h_limit);
+}
+
+pub fn apply_manual(
+    store: &ManualSubscriptionsFile,
+    quota_identity: Option<&str>,
+    record_id: Option<&str>,
+    web: &mut super::online::WebMetadata,
+    subscription_expires_at: &mut Option<u64>,
+) {
+    let mut dummy_plan = None;
+    let mut dummy_no_5h = false;
+    apply_manual_with_plan(
+        store,
+        quota_identity,
+        record_id,
+        &mut dummy_plan,
+        &mut dummy_no_5h,
+        web,
+        subscription_expires_at,
+    );
 }
 
 #[tauri::command]
@@ -323,6 +467,7 @@ pub async fn identities_set_subscription_expiry(
     expected_identity: Option<String>,
     expiry_ymd: Option<String>,
     recharge_ymd: Option<String>,
+    manual_plan: Option<String>,
 ) -> Result<super::State, String> {
     if account_id != "current" && !super::valid_id(&account_id) {
         return Err("身份编号无效。".into());
@@ -333,6 +478,10 @@ pub async fn identities_set_subscription_expiry(
         }
     }
 
+    let parsed_plan_arg: Option<Option<String>> = match manual_plan.as_deref() {
+        Some(raw) => Some(normalize_manual_plan(raw)?),
+        None => None,
+    };
     let expiry_trimmed = expiry_ymd
         .as_deref()
         .map(str::trim)
@@ -343,35 +492,25 @@ pub async fn identities_set_subscription_expiry(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-
-    let resolved_entry = match (&expiry_trimmed, &recharge_trimmed) {
-        (None, None) => None,
-        (Some(exp_raw), rec_opt) => {
-            let exp = normalize_ymd(exp_raw)?;
-            let rec = match rec_opt {
-                Some(r) => Some(normalize_ymd(r)?),
-                None => None,
-            };
-            let expiry_epoch_sec = ymd_to_utc_noon_sec(&exp)?;
-            Some(ManualSubscriptionEntry {
-                expiry_ymd: exp,
-                recharge_ymd: rec,
-                expiry_epoch_sec,
-                updated_at_ms: now_ms().max(1),
-            })
-        }
-        (None, Some(rec_raw)) => {
-            let rec = normalize_ymd(rec_raw)?;
-            let exp = add_one_month_ymd(&rec)?;
-            let expiry_epoch_sec = ymd_to_utc_noon_sec(&exp)?;
-            Some(ManualSubscriptionEntry {
-                expiry_ymd: exp,
-                recharge_ymd: Some(rec),
-                expiry_epoch_sec,
-                updated_at_ms: now_ms().max(1),
-            })
-        }
-    };
+    let parsed_dates: Option<(String, Option<String>, u64)> =
+        match (&expiry_trimmed, &recharge_trimmed) {
+            (None, None) => None,
+            (Some(exp_raw), rec_opt) => {
+                let exp = normalize_ymd(exp_raw)?;
+                let rec = match rec_opt {
+                    Some(r) => Some(normalize_ymd(r)?),
+                    None => None,
+                };
+                let expiry_epoch_sec = ymd_to_utc_noon_sec(&exp)?;
+                Some((exp, rec, expiry_epoch_sec))
+            }
+            (None, Some(rec_raw)) => {
+                let rec = normalize_ymd(rec_raw)?;
+                let exp = add_one_month_ymd(&rec)?;
+                let expiry_epoch_sec = ymd_to_utc_noon_sec(&exp)?;
+                Some((exp, Some(rec), expiry_epoch_sec))
+            }
+        };
 
     let cleaner = app.state::<crate::cleaner::Cleaner>();
     cleaner.enter()?;
@@ -422,16 +561,23 @@ pub async fn identities_set_subscription_expiry(
 
         let vault_path = super::vault(&worker)?;
         let mut store = read_store_checked(&vault_path)?;
+        let stamp_ms = now_ms().max(1);
 
-        match resolved_entry {
-            Some(entry) => {
+        match parsed_dates {
+            Some((exp, rec, sec)) => {
+                let entry = ManualSubscriptionEntry {
+                    expiry_ymd: exp,
+                    recharge_ymd: rec,
+                    expiry_epoch_sec: sec,
+                    updated_at_ms: stamp_ms,
+                };
                 if let Some(ref qi) = actual_qi.as_ref().filter(|q| valid_fingerprint(q)) {
-                    store.by_identity.insert((*qi).clone(), entry.clone());
+                    store.by_identity.insert((*qi).clone(), entry);
                     if let Some(ref rid) = target_record_id {
                         store.by_record.remove(rid);
                     }
-                } else if let Some(rid) = target_record_id {
-                    store.by_record.insert(rid, entry);
+                } else if let Some(ref rid) = target_record_id {
+                    store.by_record.insert(rid.clone(), entry);
                 } else {
                     return Err("quotaOnline.accountMismatch".into());
                 }
@@ -442,6 +588,36 @@ pub async fn identities_set_subscription_expiry(
                 }
                 if let Some(ref rid) = target_record_id {
                     store.by_record.remove(rid);
+                }
+            }
+        }
+
+        // Plan mutation: applied whenever caller passed manualPlan
+        if let Some(plan_opt) = parsed_plan_arg {
+            match plan_opt {
+                Some(canonical) => {
+                    let plan_entry = ManualPlanEntry {
+                        manual_plan: canonical,
+                        updated_at_ms: stamp_ms,
+                    };
+                    if let Some(ref qi) = actual_qi.as_ref().filter(|q| valid_fingerprint(q)) {
+                        store.plan_by_identity.insert((*qi).clone(), plan_entry);
+                        if let Some(ref rid) = target_record_id {
+                            store.plan_by_record.remove(rid);
+                        }
+                    } else if let Some(ref rid) = target_record_id {
+                        store.plan_by_record.insert(rid.clone(), plan_entry);
+                    } else {
+                        return Err("quotaOnline.accountMismatch".into());
+                    }
+                }
+                None => {
+                    if let Some(ref qi) = actual_qi {
+                        store.plan_by_identity.remove(qi);
+                    }
+                    if let Some(ref rid) = target_record_id {
+                        store.plan_by_record.remove(rid);
+                    }
                 }
             }
         }
@@ -464,10 +640,12 @@ mod tests {
     struct TempVault(std::path::PathBuf);
     impl TempVault {
         fn new() -> Self {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
             let dir = std::env::temp_dir().join(format!(
-                "claude-local-manual-sub-{}-{}",
+                "claude-local-manual-sub-{}-{}-{}",
                 std::process::id(),
-                now_ms()
+                now_ms(),
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));
             super::super::private::directory(&dir).unwrap();
             Self(dir)
@@ -526,7 +704,7 @@ mod tests {
             "2026-11-15"
         );
 
-        // Manual newer than browser (or no browser observation): manual wins
+        // Manual newer than browser (or no browser observation): manual wins with EOD grace
         let mut web = super::super::online::WebMetadata {
             billing_date_kind: Some("next_renewal".into()),
             billing_date: Some(1_700_000_000),
@@ -536,19 +714,21 @@ mod tests {
         let mut sub_exp = None;
         apply_manual(&reloaded, Some(&qi), None, &mut web, &mut sub_exp);
         assert_eq!(web.billing_date, Some(exp_sec));
+        assert_eq!(web.billing_date_kind.as_deref(), Some("access_until"));
         assert_eq!(web.subscription_expiry_ymd.as_deref(), Some("2026-11-15"));
         assert_eq!(web.subscription_recharge_ymd.as_deref(), Some("2026-10-15"));
         assert_eq!(web.subscription_date_source.as_deref(), Some("manual"));
-        assert_eq!(sub_exp, Some(exp_sec));
+        assert_eq!(web.subscription_renews_at, None);
+        assert_eq!(sub_exp, Some(exp_sec + MANUAL_EXPIRY_EOD_GRACE_SEC));
 
-        // Newer browser sync observation supersedes older manual override
+        // Newer browser next_renewal supersedes older manual override WITHOUT setting subscription_expires_at!
         let mut newer_browser = super::super::online::WebMetadata {
             billing_date_kind: Some("next_renewal".into()),
             billing_date: Some(1_800_000_000),
             billing_observed_at_ms: Some(9_000),
             ..Default::default()
         };
-        let mut sub_exp_browser = None;
+        let mut sub_exp_browser = Some(999);
         apply_manual(
             &reloaded,
             Some(&qi),
@@ -562,6 +742,77 @@ mod tests {
             newer_browser.subscription_date_source.as_deref(),
             Some("browser")
         );
-        assert_eq!(sub_exp_browser, Some(1_800_000_000));
+        assert_eq!(newer_browser.subscription_renews_at, Some(1_800_000_000));
+        assert_eq!(sub_exp_browser, None);
+
+        // Cancelled browser subscription (access_until) DOES set subscription_expires_at
+        let mut cancelled_browser = super::super::online::WebMetadata {
+            billing_date_kind: Some("access_until".into()),
+            billing_date: Some(1_800_000_000),
+            billing_observed_at_ms: Some(9_500),
+            ..Default::default()
+        };
+        let mut sub_exp_cancelled = None;
+        apply_manual(
+            &reloaded,
+            Some(&qi),
+            None,
+            &mut cancelled_browser,
+            &mut sub_exp_cancelled,
+        );
+        assert_eq!(cancelled_browser.subscription_renews_at, None);
+        assert_eq!(sub_exp_cancelled, Some(1_800_000_000));
+    }
+
+    #[test]
+    fn manual_plan_only_override_roundtrips_and_clears_non_ultra_unlimited_5h() {
+        let vault = TempVault::new();
+        let qi = "b".repeat(64);
+        assert_eq!(normalize_manual_plan("pro").unwrap().as_deref(), Some("Pro"));
+        assert_eq!(
+            normalize_manual_plan("MAX 20X").unwrap().as_deref(),
+            Some("Max 20x")
+        );
+        assert_eq!(normalize_manual_plan("auto").unwrap(), None);
+        assert_eq!(normalize_manual_plan("  ").unwrap(), None);
+        assert!(normalize_manual_plan("Platinum").is_err());
+
+        let mut store = read_store(&vault.0);
+        store.plan_by_identity.insert(
+            qi.clone(),
+            ManualPlanEntry {
+                manual_plan: "Pro".into(),
+                updated_at_ms: 12_000,
+            },
+        );
+        write_store(&vault.0, &store).unwrap();
+        let reloaded = read_store_checked(&vault.0).unwrap();
+        assert_eq!(
+            reloaded
+                .plan_by_identity
+                .get(&qi)
+                .unwrap()
+                .manual_plan
+                .as_str(),
+            "Pro"
+        );
+
+        let mut plan = Some("Ultra".to_string());
+        let mut no_5h = true;
+        let mut web = super::super::online::WebMetadata::default();
+        let mut sub_exp = None;
+        apply_manual_with_plan(
+            &reloaded,
+            Some(&qi),
+            None,
+            &mut plan,
+            &mut no_5h,
+            &mut web,
+            &mut sub_exp,
+        );
+        assert_eq!(plan.as_deref(), Some("Pro"));
+        assert_eq!(web.manual_plan.as_deref(), Some("Pro"));
+        assert!(!no_5h);
+        assert_eq!(sub_exp, None);
     }
 }

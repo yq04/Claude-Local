@@ -145,10 +145,98 @@ def _scan_stream(stream, wanted, deadline):
     return selected
 
 
-def _scan(compressed, wanted, deadline):
+def _resolve_manifest_targets(manifest):
+    sources, home = manifest.get("sources"), manifest.get("home")
+    if (manifest.get("version") != 1 or not isinstance(home, str)
+            or not isinstance(sources, list) or len(sources) > MAX_SOURCES):
+        raise ValueError("invalid archive manifest")
+    home = home.replace("\\", "/").rstrip("/").casefold()
+    names = {home + suffix: kind for suffix, kind in (
+        ("/.claude.json", "account"), ("/.claude/.credentials.json", "credential"),
+        ("/.claude/settings.json", "settings"), ("/.claude/settings.local.json", "local"))}
+    targets, kinds = {}, set()
+    for index, source in enumerate(sources):
+        if not isinstance(source, dict) or not isinstance(source.get("path"), str):
+            raise ValueError("invalid archive source")
+        kind = names.get(source["path"].replace("\\", "/").casefold())
+        if kind:
+            if kind in kinds:
+                raise ValueError("duplicate archive source mapping")
+            kinds.add(kind)
+            targets[f"data/{index}"] = kind
+    return targets
+
+
+def _parse_json_object_bytes(raw):
+    if raw is None or len(raw) > MAX_JSON:
+        raise ValueError("archive configuration exceeds limit")
+    value = json.loads(raw.decode("utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("archive configuration is not an object")
+    return value
+
+
+def _scan_online_stream(stream, deadline):
+    bounded = _BoundedReader(stream, deadline)
+    manifest = None
+    targets = None
+    selected = {}
+    early_candidates = {}
+    early_bytes = 0
+    seen = set()
+    data_member_re = re.compile(r"data/\d{1,4}")
+    with tarfile.open(fileobj=bounded, mode="r|", bufsize=65536, tarinfo=_BoundedTarInfo) as archive:
+        for member in archive:
+            _check(deadline)
+            name = _member_name(member)
+            if name in seen or len(seen) >= MAX_MEMBERS:
+                raise ValueError("duplicate or excessive archive members")
+            seen.add(name)
+            if name == "manifest.json":
+                if not member.isfile() or member.size > MAX_JSON:
+                    raise ValueError("archive configuration exceeds limit")
+                manifest = _parse_json_object_bytes(archive.extractfile(member).read(MAX_JSON + 1))
+                targets = _resolve_manifest_targets(manifest)
+                for t_name in targets:
+                    if t_name in early_candidates:
+                        is_reg, raw_data = early_candidates.pop(t_name)
+                        if not is_reg or raw_data is None:
+                            raise ValueError("archive configuration exceeds limit")
+                        selected[t_name] = _parse_json_object_bytes(raw_data)
+                early_candidates.clear()
+                early_bytes = 0
+            elif targets is not None:
+                if name in targets:
+                    if not member.isfile() or member.size > MAX_JSON:
+                        raise ValueError("archive configuration exceeds limit")
+                    selected[name] = _parse_json_object_bytes(archive.extractfile(member).read(MAX_JSON + 1))
+            elif data_member_re.fullmatch(name):
+                idx = int(name[5:])
+                if idx < MAX_SOURCES:
+                    if not member.isfile() or member.size > MAX_JSON:
+                        early_candidates[name] = (False, None)
+                    elif early_bytes + member.size <= 16 * 1024 * 1024:
+                        raw = archive.extractfile(member).read(MAX_JSON + 1)
+                        if len(raw) > MAX_JSON:
+                            early_candidates[name] = (False, None)
+                        else:
+                            early_bytes += len(raw)
+                            early_candidates[name] = (True, raw)
+                    else:
+                        early_candidates[name] = (False, None)
+    while bounded.read(65536):
+        pass
+    if manifest is None or targets is None:
+        raise ValueError("invalid archive manifest")
+    if set(selected) != set(targets):
+        raise ValueError("missing archive configuration")
+    return manifest, targets, selected
+
+
+def _scan_with_tar_stream(compressed, runner, deadline):
     if compressed.startswith(b"\x1f\x8b"):
         with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as stream:
-            return _scan_stream(stream, wanted, deadline)
+            return runner(stream, deadline)
     if not compressed.startswith(b"\x28\xb5\x2f\xfd"):
         raise ValueError("unsupported archive compression")
     # Windows libarchive supports Zstd. @- converts stdin to an uncompressed tar
@@ -189,7 +277,7 @@ def _scan(compressed, wanted, deadline):
     timer = threading.Timer(max(0.001, deadline - time.monotonic()), process.kill)
     timer.start()
     try:
-        result = _scan_stream(process.stdout, wanted, deadline)
+        result = runner(process.stdout, deadline)
         process.wait(timeout=max(0.001, deadline - time.monotonic()))
         for thread in threads:
             thread.join(timeout=max(0.001, deadline - time.monotonic()))
@@ -212,6 +300,10 @@ def _scan(compressed, wanted, deadline):
             pipe.close()
         for thread in threads:
             thread.join(timeout=1)
+
+
+def _scan(compressed, wanted, deadline):
+    return _scan_with_tar_stream(compressed, lambda s, dl: _scan_stream(s, wanted, dl), deadline)
 
 
 def proxy_fields(settings):
@@ -243,27 +335,7 @@ def _read_online_identity(vault, archive, master_key=None):
     deadline = time.monotonic() + TIME_LIMIT
     with path.open("rb") as stream:
         compressed = b"".join(authenticated_chunks(stream, master_key, limit=MAX_COMPRESSED, deadline=deadline))
-    manifest = _scan(compressed, {"manifest.json"}, deadline).get("manifest.json", {})
-    sources, home = manifest.get("sources"), manifest.get("home")
-    if manifest.get("version") != 1 or not isinstance(home, str) or not isinstance(sources, list) or len(sources) > MAX_SOURCES:
-        raise ValueError("invalid archive manifest")
-    home = home.replace("\\", "/").rstrip("/").casefold()
-    names = {home + suffix: kind for suffix, kind in (
-        ("/.claude.json", "account"), ("/.claude/.credentials.json", "credential"),
-        ("/.claude/settings.json", "settings"), ("/.claude/settings.local.json", "local"))}
-    targets, kinds = {}, set()
-    for index, source in enumerate(sources):
-        if not isinstance(source, dict) or not isinstance(source.get("path"), str):
-            raise ValueError("invalid archive source")
-        kind = names.get(source["path"].replace("\\", "/").casefold())
-        if kind:
-            if kind in kinds:
-                raise ValueError("duplicate archive source mapping")
-            kinds.add(kind)
-            targets[f"data/{index}"] = kind
-    selected = _scan(compressed, set(targets), deadline)
-    if set(selected) != set(targets):
-        raise ValueError("missing archive configuration")
+    manifest, targets, selected = _scan_with_tar_stream(compressed, _scan_online_stream, deadline)
     result = {kind: selected.get(member, {}) for member, kind in targets.items()}
     credentials = result.get("credential", {})
     # Preserve the existing cross-platform keychain representation, when present.

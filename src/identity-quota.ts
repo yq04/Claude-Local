@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Bounded local quota values (including Claude Ultra no-5h-limit metadata), independent window evidence/reset timestamps and an explicit clock.
- * [OUTPUT]: Independent quota-window presentation, Ultra Unlimited 5h semantics, truthful percentage badge/detail formatting, explicit trusted-reset inference, elapsed reset duration, 7d linear burn pace and conservative recommendations.
+ * [OUTPUT]: Independent quota-window presentation, Ultra Unlimited 5h semantics (with explicit non-Ultra downgrade guard), rested no-active-5h parity with native orchestrator, truthful percentage badge/detail formatting, explicit trusted-reset inference, elapsed reset duration, 7d linear burn pace and conservative recommendations.
  * [POS]: Pure frontend quota model; no network, ledger writes or account operations.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -78,14 +78,33 @@ export function evaluateQuota(item: QuotaInput | null | undefined, nowSec: numbe
     typeof observed === 'number' && Number.isFinite(observed) && observed > 0 && observed < reset * 1000;
   const inferred7d = inferred(source7d, item.quota_7d_used, item.quota_7d_reset_at, item.quota_7d_source != null ? item.quota_7d_observed_at_ms : item.quota_observed_at_ms);
   const known7d = inferred7d || (source7d !== 'unknown' && source7d !== 'reset_inferred' && typeof item.quota_7d_used === 'number' && Number.isFinite(item.quota_7d_used) && !expired7d);
-  const isUltraNo5h = typeof item.plan === 'string' && item.plan.trim().toLowerCase() === 'ultra' && item.quota_5h_used == null && known7d;
-  const no5hLimit = Boolean(item.quota_no_5h_limit || isUltraNo5h);
+  const trimmedPlan = typeof item.plan === 'string' ? item.plan.trim() : '';
+  const planDisallowsUnlimited5h =
+    trimmedPlan === 'Free' ||
+    trimmedPlan === 'Pro' ||
+    trimmedPlan === 'Team' ||
+    trimmedPlan === 'Enterprise' ||
+    trimmedPlan.startsWith('Max') ||
+    /^(free|pro|team|enterprise|max\b|pro\s*\/\s*max)$/i.test(trimmedPlan);
+  const isUltraNo5h = trimmedPlan.toLowerCase() === 'ultra' && item.quota_5h_used == null && known7d;
+  const no5hLimit = planDisallowsUnlimited5h ? false : Boolean(item.quota_no_5h_limit || isUltraNo5h);
   const rawInferred5h = !no5hLimit && inferred(source5h, item.quota_5h_used, item.quota_5h_reset_at, item.quota_5h_source != null ? item.quota_5h_observed_at_ms : item.quota_observed_at_ms);
   const inferred5h = rawInferred5h;
+  const restedNoActive5h =
+    !no5hLimit &&
+    known7d &&
+    source7d === 'server_anchor' &&
+    item.quota_5h_used == null &&
+    item.quota_5h_reset_at == null &&
+    (item.quota_5h_rested === true || item.quota_5h_source !== 'unknown');
   const inferredReset5h = inferred5h ? (item.quota_5h_reset_at ?? null) : null;
   const inferredReset7d = inferred7d ? (item.quota_7d_reset_at ?? null) : null;
-  const known5h = no5hLimit || inferred5h || (source5h !== 'unknown' && source5h !== 'reset_inferred' && typeof item.quota_5h_used === 'number' && Number.isFinite(item.quota_5h_used) && !expired5h);
-  const used5h = !no5hLimit && known5h && !inferred5h ? Math.max(0, Math.min(100, item.quota_5h_used!)) : 0;
+  const known5h =
+    no5hLimit ||
+    inferred5h ||
+    restedNoActive5h ||
+    (source5h !== 'unknown' && source5h !== 'reset_inferred' && typeof item.quota_5h_used === 'number' && Number.isFinite(item.quota_5h_used) && !expired5h);
+  const used5h = !no5hLimit && known5h && !inferred5h && !restedNoActive5h ? Math.max(0, Math.min(100, item.quota_5h_used!)) : 0;
   const used7d = known7d && !inferred7d ? Math.max(0, Math.min(100, item.quota_7d_used!)) : 0;
   const rem5h = no5hLimit ? 100 : known5h ? 100 - used5h : 0;
   const rem7d = known7d ? 100 - used7d : 0;

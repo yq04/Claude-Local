@@ -1,11 +1,31 @@
 // [INPUT]: rusqlite/内嵌 SQLite、私有保险库目录和脱敏身份元数据与本机加盐的账号索引。
-// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、SQLite v3 浏览器绑定、切换前目录快照与无残留回滚撤销（abort_pending / finish_transient_recovery）及身份移除事务；已初始化 v3 库的无写锁快速打开与首开/迁移的进程内串行化。
+// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、`pending_device_id` 事务管理、进程内 `DB_PROTECTED` ACL 缓存、SQLite v3 浏览器绑定、切换前目录快照与无残留回滚撤销（abort_pending / finish_transient_recovery）及身份移除事务；已初始化 v3 库的无写锁快速打开与首开/迁移的进程内串行化。
 // [POS]: 保险库的索引事务；短期 Mutex 保护打开边界，v3 已就绪时跳过写事务与重复 DDL，未初始化或旧版本时以 IMMEDIATE 事务保护跨连接版本迁移与默认状态，凭据和会话正文仅进入加密归档。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, sync::Mutex, time::Duration};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::Mutex,
+    time::Duration,
+};
 static DATABASE_OPEN: Mutex<()> = Mutex::new(());
+static DB_PROTECTED: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+fn is_protected_cached(path: &Path) -> bool {
+    DB_PROTECTED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|set| set.contains(path))
+}
+fn mark_protected_cached(path: &Path) {
+    DB_PROTECTED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashSet::new)
+        .insert(path.to_path_buf());
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
     pub id: String,
@@ -32,6 +52,7 @@ pub(super) struct PreSwitchSnapshot {
     pub(super) prior_browser_enabled: Option<String>,
     pub(super) prior_browser_draft: Option<String>,
     pub(super) prior_browser_promotion: Option<String>,
+    pub(super) prior_pending_device_id: Option<String>,
 }
 pub(super) fn error(_: rusqlite::Error) -> String {
     "身份数据库无法读写；未提交身份切换。".into()
@@ -45,6 +66,7 @@ impl Database {
         let _open_guard = DATABASE_OPEN
             .lock()
             .map_err(|_| "身份数据库初始化锁不可用；未提交身份切换。")?;
+        let dir_existed = root.exists();
         if let Err(error) = super::private::directory(root) {
             // Another opener may have won the same create_new directory race.
             // Accept only the same safe, owned directory after validating it again.
@@ -55,18 +77,35 @@ impl Database {
                 _ => return Err(error),
             }
         }
-        super::private::protect(root)?;
+        if !dir_existed || !is_protected_cached(root) {
+            super::private::protect(root)?;
+            mark_protected_cached(root);
+        } else {
+            super::private::parents(root)?;
+            super::private::safe(root)?;
+        }
         let path = root.join("identities.sqlite");
+        let mut created_fresh = false;
         if !path.exists() {
             match super::private::create(&path) {
-                Ok(file) => file.sync_all().map_err(|_| "无法创建身份数据库。")?,
+                Ok(file) => {
+                    file.sync_all().map_err(|_| "无法创建身份数据库。")?;
+                    created_fresh = true;
+                }
                 // A concurrent opener can win the exclusive create between exists() and create_new().
-                Err(_error) if path.exists() => super::private::protect(&path)?,
+                Err(_error) if path.exists() => {
+                    created_fresh = true;
+                }
                 Err(error) => return Err(error),
             }
         }
         super::private::parents(root)?;
-        super::private::protect(&path)?;
+        if created_fresh || !is_protected_cached(&path) {
+            super::private::protect(&path)?;
+            mark_protected_cached(&path);
+        } else {
+            super::private::safe(&path)?;
+        }
         let mut connection = Connection::open_with_flags(
             &path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -273,6 +312,15 @@ impl Database {
             .optional()
             .map_err(error)
     }
+    pub(super) fn set_state(&self, key: &str, value: &str) -> Result<(), String> {
+        self.connection
+            .execute(
+                "INSERT OR REPLACE INTO state VALUES(?1,?2)",
+                params![key, value],
+            )
+            .map_err(error)?;
+        Ok(())
+    }
     pub fn remember(&self, record: &Record) -> Result<(), String> {
         let saved_at = i64::try_from(record.saved_at).map_err(|_| "身份元数据无效。")?;
         let bytes = i64::try_from(record.bytes).map_err(|_| "身份元数据无效。")?;
@@ -336,6 +384,7 @@ impl Database {
             prior_browser_enabled: self.get("browser.enabled")?,
             prior_browser_draft: self.get("browser.draft")?,
             prior_browser_promotion: self.get("browser.promotion")?,
+            prior_pending_device_id: self.get("pending_device_id")?,
         })
     }
     pub fn pending(&mut self, record: &Record, target: &str) -> Result<(), String> {
@@ -440,7 +489,7 @@ impl Database {
                 .map_err(error)?;
         }
         tx.execute(
-            "DELETE FROM state WHERE key IN ('recovery','target','recovery_transient','browser.previous','browser.next')",
+            "DELETE FROM state WHERE key IN ('recovery','target','recovery_transient','pending_device_id','browser.previous','browser.next')",
             [],
         )
         .map_err(error)?;
@@ -460,6 +509,7 @@ impl Database {
         restore_key("browser.active", &snap.prior_browser_active)?;
         restore_key("browser.enabled", &snap.prior_browser_enabled)?;
         restore_key("browser.draft", &snap.prior_browser_draft)?;
+        restore_key("pending_device_id", &snap.prior_pending_device_id)?;
         if snap.prior_browser_promotion.is_some() {
             super::browser_link::abort_promotion(&tx)?;
         }
@@ -488,7 +538,7 @@ impl Database {
         }
         super::browser_link::abort_promotion(&tx)?;
         tx.execute(
-            "DELETE FROM state WHERE key IN ('recovery','target','recovery_transient','browser.previous','browser.next')",
+            "DELETE FROM state WHERE key IN ('recovery','target','recovery_transient','pending_device_id','browser.previous','browser.next')",
             [],
         )
         .map_err(error)?;
@@ -524,6 +574,13 @@ impl Database {
         tx.commit().map_err(error)
     }
     pub fn complete(&mut self, active: &str) -> Result<(), String> {
+        self.complete_with_pending(active, None)
+    }
+    pub(super) fn complete_with_pending(
+        &mut self,
+        active: &str,
+        pending_device_id: Option<&str>,
+    ) -> Result<(), String> {
         let tx = self.connection.transaction().map_err(error)?;
         super::browser_link::complete(&tx, active)?;
         let pending_target: Option<String> = tx
@@ -553,10 +610,19 @@ impl Database {
         tx.execute("INSERT OR REPLACE INTO state VALUES('active',?1)", [active])
             .map_err(error)?;
         tx.execute(
-            "DELETE FROM state WHERE key IN ('recovery','target','recovery_transient')",
+            "DELETE FROM state WHERE key IN ('recovery','target','recovery_transient','pending_device_id')",
             [],
         )
         .map_err(error)?;
+        if active == "empty" {
+            if let Some(pid) = pending_device_id.filter(|id| super::valid_id(id)) {
+                tx.execute(
+                    "INSERT OR REPLACE INTO state VALUES('pending_device_id',?1)",
+                    [pid],
+                )
+                .map_err(error)?;
+            }
+        }
         tx.commit().map_err(error)
     }
     pub fn forget(&mut self, id: &str) -> Result<(), String> {

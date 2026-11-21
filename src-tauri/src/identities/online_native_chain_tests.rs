@@ -48,6 +48,8 @@ impl Fixture {
             "subscriptionType":"pro"
         }});
         super::super::private::write(&root.join("claude-home/.claude/.credentials.json"), &serde_json::to_vec(&credentials).unwrap()).unwrap();
+        let settings = json!({"env": {"HTTPS_PROXY": "http://127.0.0.1:17899"}});
+        super::super::private::write(&root.join("claude-home/.claude/settings.json"), &serde_json::to_vec(&settings).unwrap()).unwrap();
         Self { root, cleaner: Arc::new(crate::cleaner::Cleaner::default()), grants: AtomicUsize::new(0) }
     }
 

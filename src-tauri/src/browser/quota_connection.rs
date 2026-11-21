@@ -1,5 +1,5 @@
 // [INPUT]: Explicit user remedy click, frozen account ID, expected 64-hex identity and managed browser profile storage.
-// [OUTPUT]: Safe isolated fixed-URL launch (usage or claude.ai) with on-demand slot materialization for explicit user opens; current CLI uses bounded live account proof, without changing global slot/session or reading credentials.
+// [OUTPUT]: Safe isolated fixed-URL launch (usage or claude.ai) with on-demand slot materialization and loopback proxy 300ms TCP preflight for explicit user opens; current CLI uses bounded live account proof, without changing global slot/session or reading credentials.
 // [POS]: Isolated browser connection launcher for multi-account simultaneous profiles and remedy queue; opens only pinned URLs, never executes arbitrary URLs or loops.
 // [PROTOCOL]: Update header on change and check CLAUDE.md.
 use super::*;
@@ -204,7 +204,9 @@ pub(crate) fn launch_scope_url_locked(
     let config = super::config::load(scope)?;
     let machine = super::config::machine()?;
     config.validate(&machine)?;
-    if !super::profile::running(&profile)? {
+    let running = super::profile::running(&profile)?;
+    super::config::preflight_browser_launch_policy(&config, &machine, !running)?;
+    if !running {
         super::profile::preferences(&profile, &config, &machine)?;
     }
 
@@ -248,6 +250,7 @@ pub(crate) fn launch_scope_url_locked(
         .spawn()
         .map_err(|_| "无法启动已绑定的浏览器资料。")?;
     super::kill_switch::clear_alert(app);
+    super::kill_switch::notify_browser_activity();
     std::thread::spawn(move || {
         let _ = child.wait();
     });

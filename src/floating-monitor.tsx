@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生 monitor_live_telemetry 零轮询本地遥测、monitor-window-state 原生事件、当前外观/壁纸/玻璃/字体/隐私偏好与 BroadcastChannel 跨窗同步消息。
- * [OUTPUT]: 无边框置顶多态「实时额度悬浮监控窗」（FloatingMonitorApp），支持隐藏态零轮询休眠、无 IPC 本地偏好/接力提示同步、置顶固定、位置锁定、鼠标穿透幽灵模式、边缘磁吸、键盘无障碍贴边胶囊及 Ultra/5h/7d 额度与时间步调刻度线；共享账本展示当前已确认账号的Token构成、10分钟均值速率、去重响应及最近实际模型。
+ * [OUTPUT]: 无边框置顶多态「实时额度悬浮监控窗」（FloatingMonitorApp），支持隐藏态零轮询休眠、原生智能接力/子代理槽位/重置卡遥测与本地后备同步、置顶固定、位置锁定、鼠标穿透幽灵模式、边缘磁吸、键盘无障碍贴边胶囊及 Ultra/5h/7d 额度与时间步调刻度线；共享账本展示当前已确认账号的Token构成、10分钟均值速率、去重响应及最近实际模型。
  * [POS]: 独立桌面悬浮 HUD 视图（?window=monitor）；100% 本地只读遥测，零后台 OAuth 请求，零跨进程内存读取。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -57,10 +57,26 @@ import {
 } from './wallpaper-store';
 import './floating-monitor.css';
 
+type ExtendedMonitorLiveTelemetry = MonitorLiveTelemetry & {
+  activeSlotCount?: number;
+  manualResetsRemaining?: number;
+  poolManualResetsRemaining?: number;
+  awaitingResetCount?: number;
+  relayEnabled?: boolean;
+  relayStrategy?: string;
+  nextRelayName?: string | null;
+  nextRelayEmail?: string | null;
+  nextRelayRemPct?: number | null;
+  shouldRelayNow?: boolean;
+  current: MonitorLiveTelemetry['current'] & {
+    manual_resets_remaining?: number;
+  };
+};
+
 export function FloatingMonitorApp() {
   const {t, locale} = useI18n();
   const prefs = usePreferences();
-  const [telemetry, setTelemetry] = useState<MonitorLiveTelemetry | null>(null);
+  const [telemetry, setTelemetry] = useState<ExtendedMonitorLiveTelemetry | null>(null);
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   const [windowOpen, setWindowOpen] = useState(false);
   const [alwaysOnTop, setAlwaysOnTop] = useState(true);
@@ -69,15 +85,22 @@ export function FloatingMonitorApp() {
   const [clickThrough, setClickThrough] = useState(false);
   const [autoHide, setAutoHide] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [dockedEdge, setDockedEdge] = useState<MonitorDockEdge | null>('right');
+  const [dockedEdge, setDockedEdge] = useState<MonitorDockEdge | null>(null);
   const [opacityPct, setOpacityPct] = useState<number>(readMonitorOpacityPct);
   const [opacityMenuOpen, setOpacityMenuOpen] = useState(false);
   const [relayHint, setRelayHint] = useState<MonitorRelayStandbyHint | null>(readMonitorRelayStandbyHint);
   const collapseTimerRef = useRef<number | null>(null);
   const telemetryPendingRef = useRef(false);
+  const windowOpenRef = useRef(windowOpen);
+
+  useEffect(() => {
+    windowOpenRef.current = windowOpen;
+  }, [windowOpen]);
 
   const applyWindowState = useCallback((w: MonitorWindowState) => {
-    setWindowOpen(Boolean(w.open));
+    const nextOpen = Boolean(w.open);
+    windowOpenRef.current = nextOpen;
+    setWindowOpen(nextOpen);
     setAlwaysOnTop(w.alwaysOnTop);
     setCompact(w.compact);
     if (typeof w.locked === 'boolean') setLocked(w.locked);
@@ -91,7 +114,7 @@ export function FloatingMonitorApp() {
     if (telemetryPendingRef.current) return;
     telemetryPendingRef.current = true;
     try {
-      const snap = await invoke<MonitorLiveTelemetry>('monitor_live_telemetry');
+      const snap = await invoke<ExtendedMonitorLiveTelemetry>('monitor_live_telemetry');
       setTelemetry(snap);
       applyWindowState(snap.window);
       setNowSec(Math.floor(Date.now() / 1000));
@@ -187,7 +210,9 @@ export function FloatingMonitorApp() {
             msg.type === 'identity-switched' ||
             msg.type === 'telemetry-updated'
           ) {
-            void fetchTelemetry();
+            if (windowOpenRef.current) {
+              void fetchTelemetry();
+            }
           }
         };
       } catch {
@@ -526,6 +551,57 @@ export function FloatingMonitorApp() {
   const partLabel = (kind: typeof composition[number]['kind']) => t(`monitor.${kind}Short`);
   const usageScopeTitle = t('monitor.localUsageScope');
 
+  const activeSlotCount =
+    typeof telemetry?.activeSlotCount === 'number' && telemetry.activeSlotCount > 0
+      ? Math.floor(telemetry.activeSlotCount)
+      : 0;
+  const awaitingResetCount =
+    typeof telemetry?.awaitingResetCount === 'number' && telemetry.awaitingResetCount > 0
+      ? Math.floor(telemetry.awaitingResetCount)
+      : 0;
+  const rawResets =
+    telemetry?.poolManualResetsRemaining ??
+    telemetry?.manualResetsRemaining ??
+    current?.manual_resets_remaining ??
+    0;
+  const effectiveResetCards =
+    typeof rawResets === 'number' && Number.isFinite(rawResets) && rawResets > 0
+      ? Math.floor(rawResets)
+      : 0;
+
+  const resolvedRelay = (() => {
+    if (typeof telemetry?.relayEnabled === 'boolean') {
+      const candName =
+        typeof telemetry.nextRelayName === 'string' && telemetry.nextRelayName.trim()
+          ? telemetry.nextRelayName.trim()
+          : null;
+      return {
+        enabled: telemetry.relayEnabled,
+        candidateName: candName,
+        candidateEmail: telemetry.nextRelayEmail ?? null,
+        effectiveRemPct:
+          typeof telemetry.nextRelayRemPct === 'number' && Number.isFinite(telemetry.nextRelayRemPct)
+            ? telemetry.nextRelayRemPct
+            : null,
+        shouldRelayNow: Boolean(telemetry.shouldRelayNow),
+      };
+    }
+    if (relayHint?.enabled && relayHint.candidateName) {
+      const normCand = relayHint.candidateName.trim().toLowerCase();
+      const normActive = (telemetry?.activeName || '').trim().toLowerCase();
+      const normDisp = (current?.display_name || '').trim().toLowerCase();
+      if (normCand && normCand !== normActive && normCand !== normDisp) {
+        return relayHint;
+      }
+    }
+    return null;
+  })();
+  const showRelayStandby = Boolean(resolvedRelay?.enabled && resolvedRelay.candidateName);
+  const maskedStandbyName =
+    showRelayStandby && resolvedRelay?.candidateName
+      ? maskDisplayName(resolvedRelay.candidateName, resolvedRelay.candidateEmail, hideAccount)
+      : null;
+
   const shellStyle = {
     '--monitor-opacity': String(opacityPct / 100),
   } as React.CSSProperties;
@@ -586,6 +662,7 @@ export function FloatingMonitorApp() {
     <div
       className={`monitor-hud-shell fm-viewport fm-shell${locked ? ' is-locked' : ''}${clickThrough ? ' is-click-through' : ''}${dockedEdge ? ` dock-${dockedEdge}` : ''}`}
       data-compact={compact ? 'true' : 'false'}
+      data-has-relay={!compact && showRelayStandby ? 'true' : undefined}
       style={shellStyle}
       onMouseEnter={handleShellMouseEnter}
       onMouseLeave={handleShellMouseLeave}
@@ -597,16 +674,18 @@ export function FloatingMonitorApp() {
         onDoubleClick={handleBlockDoubleClick}
       >
         <div className="monitor-hud-status">
-          <span className="monitor-hud-brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none">
-              <path
-                d="M8 1.25v13.5M1.25 8h13.5M3.22 3.22l9.56 9.56M12.78 3.22L3.22 12.78M5.42 1.76l5.16 12.48M1.76 10.58l12.48-5.16"
-                stroke="currentColor"
-                strokeWidth="1.45"
-                strokeLinecap="round"
-              />
-            </svg>
-          </span>
+          {!dockedEdge && (
+            <span className="monitor-hud-brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none">
+                <path
+                  d="M8 1.25v13.5M1.25 8h13.5M3.22 3.22l9.56 9.56M12.78 3.22L3.22 12.78M5.42 1.76l5.16 12.48M1.76 10.58l12.48-5.16"
+                  stroke="currentColor"
+                  strokeWidth="1.45"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </span>
+          )}
           <span
             className={`monitor-hud-dot${activityMode === 'active' ? ' is-active' : ''}`}
             aria-hidden="true"
@@ -837,6 +916,32 @@ export function FloatingMonitorApp() {
           {current?.plan && <span className="monitor-hud-badge">{current.plan}</span>}
         </div>
         <div className="monitor-hud-badges">
+          {activeSlotCount > 0 && (
+            <span
+              className="monitor-hud-micro-pill is-slot"
+              data-monitor-slot-count={activeSlotCount}
+              title={t('relay.slotLiveCount', {count: activeSlotCount})}
+            >
+              ⚡{activeSlotCount}
+            </span>
+          )}
+          {awaitingResetCount > 0 ? (
+            <span
+              className="monitor-hud-micro-pill is-awaiting"
+              data-monitor-awaiting-reset={awaitingResetCount}
+              title={t('relay.awaitingResetBadge')}
+            >
+              {t('monitor.awaitingResetShort', {count: awaitingResetCount})}
+            </span>
+          ) : effectiveResetCards > 0 ? (
+            <span
+              className="monitor-hud-micro-pill is-reset"
+              data-monitor-reset-cards={effectiveResetCards}
+              title={t('relay.resetCardBadge', {count: effectiveResetCards})}
+            >
+              ↻{effectiveResetCards}
+            </span>
+          ) : null}
           {maskedEmail ? (
             <span className="monitor-hud-account-email" title={maskedEmail}>
               {maskedEmail}
@@ -922,20 +1027,20 @@ export function FloatingMonitorApp() {
         </div>
       </section>
 
-      {relayHint?.enabled && relayHint.candidateName && (
+      {!compact && showRelayStandby && maskedStandbyName && (
         <div
-          className={`monitor-relay-standby-pill${relayHint.shouldRelayNow ? ' is-urgent' : ''}`}
+          className={`monitor-relay-standby-pill${resolvedRelay?.shouldRelayNow ? ' is-urgent' : ''}`}
           data-monitor-relay-standby
         >
           <span className="monitor-relay-standby-label">
             {t('monitor.nextRelay')}
           </span>
           <strong className="monitor-relay-standby-name">
-            {maskDisplayName(relayHint.candidateName, relayHint.candidateEmail, hideAccount)}
+            {maskedStandbyName}
           </strong>
-          {relayHint.effectiveRemPct !== null && (
+          {resolvedRelay?.effectiveRemPct !== null && resolvedRelay?.effectiveRemPct !== undefined && (
             <span className="monitor-relay-standby-rem">
-              {formatTruthfulPercent(relayHint.effectiveRemPct)}
+              {formatTruthfulPercent(resolvedRelay.effectiveRemPct)}
             </span>
           )}
         </div>
@@ -995,11 +1100,20 @@ export function FloatingMonitorApp() {
         </div>
       ) : (
         <div className="monitor-hud-compact-footer" title={usageScopeTitle}>
-          <span className="monitor-compact-shield" title={sessionModelLabel}>
+          <span
+            className="monitor-compact-shield"
+            title={
+              maskedStandbyName
+                ? `${sessionModelLabel} · ${t('monitor.compactNextRelay', {name: maskedStandbyName})}`
+                : sessionModelLabel
+            }
+          >
             <span className={`monitor-session-glyph${activityMode === 'active' ? ' is-active' : ''}`}>
               {activityMode === 'active' ? '✻' : '⊙'}
             </span>{' '}
-            {sessionModelLabel}
+            {maskedStandbyName
+              ? `${t('monitor.compactNextRelay', {name: maskedStandbyName})}${resolvedRelay?.effectiveRemPct != null ? ` ${formatTruthfulPercent(resolvedRelay.effectiveRemPct)}` : ''}`
+              : sessionModelLabel}
           </span>
           <span className="monitor-compact-velocity">
             5h {totalText} · {velocityText}

@@ -493,7 +493,170 @@ fn schema_rejects_invalid_scope_config_and_unbounded_migration() {
     s.config.start_minute = 1500;
     assert!(!s.valid());
     s.config.start_minute = 480;
+    let mut route_blocked = Account::default();
+    route_blocked.capability = "route_required".into();
+    route_blocked.decision = "capability_blocked".into();
+    s.accounts.insert("b".repeat(64), route_blocked);
+    assert!(s.valid());
     s.targets = vec!["not-an-identity".into()];
     assert!(!s.valid());
     assert!(serde_json::from_value::<Migration>(serde_json::json!({"schema":1,"config":Config::default(),"state":{"lastGlobalWakeupAtMs":0,"accounts":{}},"url":"https://invalid.example"})).is_err());
+}
+
+#[test]
+fn route_unavailable_marks_route_required_and_preserves_recovery_grant() {
+    let route_req = result(serde_json::json!({
+        "status": "route_unavailable",
+        "reason": "route_required",
+        "stage": "route"
+    }));
+    assert!(local_preparation_failed(route_req.as_ref().unwrap()));
+
+    let mut s = enabled();
+    let c = item();
+    finish(&mut s, &c.identity, c.reset, 200_000, &route_req);
+    let acct = &s.accounts[&c.identity];
+    assert!(!acct.unknown);
+    assert_eq!(acct.capability, "route_required");
+    assert_eq!(acct.decision, "capability_blocked");
+    assert_eq!(acct.last_status.as_deref(), Some("route_unavailable"));
+    assert!(s.valid());
+}
+
+fn parking_pair(enabled: bool, writable: bool, active: bool) -> Arc<(Mutex<Inner>, Condvar)> {
+    let mut snapshot = Snapshot::default();
+    snapshot.config.enabled = enabled;
+    Arc::new((
+        Mutex::new(Inner {
+            snapshot,
+            active,
+            stopped: false,
+            writable,
+        }),
+        Condvar::new(),
+    ))
+}
+
+fn spawn_parker(
+    pair: &Arc<(Mutex<Inner>, Condvar)>,
+) -> (
+    std::sync::mpsc::Receiver<(bool, bool, usize)>,
+    std::thread::JoinHandle<()>,
+) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = pair.clone();
+    let handle = std::thread::spawn(move || {
+        let (lock, cv) = &*worker;
+        let (guard, wakeups) = park_until_runnable(cv, lock.lock().unwrap());
+        let _ = tx.send((guard.stopped, worker_runnable(&guard), wakeups));
+    });
+    (rx, handle)
+}
+
+#[test]
+fn disabled_owner_parks_without_periodic_wakeups_until_configured() {
+    let pair = parking_pair(false, true, false);
+    assert!(!worker_runnable(&pair.0.lock().unwrap()));
+    let (rx, handle) = spawn_parker(&pair);
+    // No timeout-driven polling: a disabled owner stays parked indefinitely.
+    assert!(rx.recv_timeout(Duration::from_millis(400)).is_err());
+    // A notify that does not change readiness is consumed and the owner parks again.
+    pair.1.notify_all();
+    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+    pair.0.lock().unwrap().snapshot.config.enabled = true;
+    pair.1.notify_all();
+    let (stopped, runnable, wakeups) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(!stopped);
+    assert!(runnable);
+    assert!((1..10).contains(&wakeups));
+    handle.join().unwrap();
+}
+
+#[test]
+fn busy_or_unwritable_owner_parks_and_stop_releases_it() {
+    for (writable, active) in [(false, false), (true, true)] {
+        let pair = parking_pair(true, writable, active);
+        assert!(!worker_runnable(&pair.0.lock().unwrap()));
+        let (rx, handle) = spawn_parker(&pair);
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+        pair.0.lock().unwrap().stopped = true;
+        pair.1.notify_all();
+        let (stopped, runnable, _) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(stopped);
+        assert!(!runnable);
+        handle.join().unwrap();
+    }
+    // An enabled, writable, idle owner never parks.
+    let pair = parking_pair(true, true, false);
+    let (lock, cv) = &*pair;
+    let (_guard, wakeups) = park_until_runnable(cv, lock.lock().unwrap());
+    assert_eq!(wakeups, 0);
+}
+
+fn route_context(app_data_dir: Option<PathBuf>) -> ProxyContext {
+    let mut relay_cfg: crate::identities::orchestrator::config::SmartRelayConfig =
+        Default::default();
+    relay_cfg
+        .slot_proxies
+        .insert("slot-b".into(), "http://slot.invalid:8080".into());
+    relay_cfg.max_same_exit_concurrency = 1;
+    ProxyContext {
+        app_data_dir,
+        relay_cfg,
+        claude_dir_proxy: Some("http://home.invalid:8080".into()),
+    }
+}
+
+#[test]
+fn candidate_route_projection_never_scans_browsers_and_dispatch_scans_once() {
+    let dir = std::env::temp_dir().join(format!(
+        "claude-local-wakeup-route-{}-{}",
+        std::process::id(),
+        now_ms()
+    ));
+    std::fs::create_dir_all(dir.join("browser")).unwrap();
+    let ctx = route_context(Some(dir.clone()));
+    let scans = std::cell::Cell::new(0usize);
+    let mut scan = |_: &Path| {
+        scans.set(scans.get() + 1);
+        Vec::<(String, PathBuf)>::new()
+    };
+    // Readiness projection for N candidates is pure: slot > summary > ~/.claude.
+    assert_eq!(
+        effective_route(&ctx, "current", "slot-b", Some("http://summary.invalid:8080")),
+        ("http://slot.invalid:8080".to_string(), false)
+    );
+    assert_eq!(
+        effective_route(&ctx, "current", "slot-c", Some(" http://summary.invalid:8080 ")),
+        ("http://summary.invalid:8080".to_string(), false)
+    );
+    assert_eq!(
+        effective_route(&ctx, "current", "current", None),
+        ("http://home.invalid:8080".to_string(), false)
+    );
+    assert_eq!(
+        effective_route(&ctx, "slot-b", "current", None),
+        ("http://slot.invalid:8080".to_string(), false)
+    );
+    assert_eq!(scans.get(), 0);
+    // Dispatch-time cap check performs exactly one browser snapshot.
+    let idle = RouteView {
+        cli_running: false,
+        current_proxy: None,
+        busy_slots: vec![],
+    };
+    assert!(!exit_capped(&ctx, &idle, "http://slot.invalid:8080", &mut scan));
+    assert_eq!(scans.get(), 1);
+    let busy = RouteView {
+        cli_running: true,
+        current_proxy: None,
+        busy_slots: vec![("slot-b", None)],
+    };
+    assert!(exit_capped(&ctx, &busy, "http://home.invalid:8080", &mut scan));
+    assert_eq!(scans.get(), 2);
+    // Without a browser root there is nothing to scan at all.
+    let no_root = route_context(None);
+    assert!(!exit_capped(&no_root, &idle, "http://slot.invalid:8080", &mut scan));
+    assert_eq!(scans.get(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
 }

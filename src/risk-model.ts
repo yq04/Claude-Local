@@ -1,10 +1,10 @@
 /**
  * [INPUT]: 原生只读环境快照（浏览器远程 DNS 锁、Mihomo 结构特征、Claude CLI 遥测护盾/MCP 供应链审计、网卡 RFC1918 候选）与三路边缘 trace 一致性实测结果。
- * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属、严格 RFC1918 校验、Mihomo strict-route 覆写片段、桌面/移动端全量 Claude+Datadog+GrowthBook+Persona 防漏分流规则、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段与安全边界纯函数审计（含统一护盾与 MCP 边界判定）、安全随机源缺失即失败的内存桥接凭据与双语提示词。
+ * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属、多信号机房优先拦截与美区/主流地区家宽 ASN/ISP 分类（classifyRiskExitIsp / formatExitIspLabel）、因果对齐的顶栏态势文案路由（resolveRiskBanner）、严格 RFC1918 校验、Mihomo strict-route 覆写片段、桌面/移动端全量 Claude+Datadog+GrowthBook+Persona 防漏分流规则、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段与安全边界纯函数审计（含统一护盾与 MCP 边界判定）、安全随机源缺失即失败的内存桥接凭据与双语提示词。
  * [POS]: 风控验证纯模型层；不持有上游家宽密码、不落盘临时口令、不向公网暴露任何监听配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {classifyExitIsp, type Exit} from './browser-model';
+import {classifyBrowserExitIsp, extractCanonicalAsn, type Exit} from './browser-model';
 import type {Locale} from './i18n';
 
 export type BrowserDnsGuard = {
@@ -49,6 +49,7 @@ export type CliSecurityAudit = {
   nonessential_traffic_blocked?: boolean;
   proxy_env_complete: boolean;
   socks5_in_cli_env: boolean;
+  non_english_language?: boolean;
   unpinned_npx_count: number;
   remote_http_mcp_count: number;
   windows_bare_npx_count: number;
@@ -222,6 +223,145 @@ export function summarizeRiskChecks(checks: readonly RiskCheckItem[]): RiskCheck
   if (checks.every(item => item.status === 'pending')) return 'pending';
   if (checks.some(item => item.status === 'warn' || item.status === 'pending')) return 'warn';
   return 'ok';
+}
+
+export function classifyRiskExitIsp(
+  exit?: Pick<Exit, 'isp' | 'asn' | 'hosting'> | null,
+): 'isp' | 'hosting' | 'unknown' {
+  return classifyBrowserExitIsp(exit);
+}
+
+export function formatExitIspLabel(exit?: Pick<Exit, 'isp' | 'asn'> | null): string {
+  const isp = exit?.isp?.trim() || '';
+  const asn = extractCanonicalAsn(exit);
+  if (!isp && !asn) return '—';
+  if (!isp) return asn!;
+  if (asn && !new RegExp(`\\b${asn}\\b`, 'i').test(isp)) {
+    return `${isp} · ${asn}`;
+  }
+  return isp;
+}
+
+export function resolveRiskBanner(
+  local: LocalRiskSnapshot | null,
+  probe: ConsistencyProbeReport | null,
+  checks: readonly RiskCheckItem[],
+): {status: RiskCheckStatus; titleKey: string; descKey: string} {
+  if (!local) {
+    return {
+      status: 'pending',
+      titleKey: 'risk.auditStatus.pendingTitle',
+      descKey: 'risk.auditStatus.pendingDesc',
+    };
+  }
+  const staticChecks = checks.filter(
+    item =>
+      item.id === 'browser_dns_lock' ||
+      item.id === 'mihomo_dns_leak' ||
+      item.id === 'kyc_routing_rules',
+  );
+  const staticAllOk =
+    staticChecks.length === 3 && staticChecks.every(item => item.status === 'ok');
+  const staticHasWarnOrFail = staticChecks.some(
+    item => item.status === 'warn' || item.status === 'fail',
+  );
+  const strictRouteNeedsFix = Boolean(
+    local.mihomo.tun_enabled === true && local.mihomo.tun_strict_route === false,
+  );
+  const overall = summarizeRiskChecks(checks);
+
+  if (!probe) {
+    if (staticAllOk) {
+      return {
+        status: 'ok',
+        titleKey: 'risk.auditStatus.localReadyTitle',
+        descKey: 'risk.auditStatus.localReadyDesc',
+      };
+    }
+    if (staticHasWarnOrFail) {
+      return {
+        status: overall === 'fail' ? 'fail' : 'warn',
+        titleKey: 'risk.auditStatus.warnTitle',
+        descKey: strictRouteNeedsFix
+          ? 'risk.auditStatus.warnDesc'
+          : 'risk.auditStatus.warnStaticNoStrictDesc',
+      };
+    }
+    return {
+      status: overall === 'pending' ? 'pending' : 'warn',
+      titleKey:
+        overall === 'pending'
+          ? 'risk.auditStatus.pendingTitle'
+          : 'risk.auditStatus.staticPendingTitle',
+      descKey:
+        overall === 'pending'
+          ? 'risk.auditStatus.pendingDesc'
+          : 'risk.auditStatus.staticPendingDesc',
+    };
+  }
+
+  if (overall === 'ok') {
+    return {
+      status: 'ok',
+      titleKey: 'risk.auditStatus.okTitle',
+      descKey: 'risk.auditStatus.okDesc',
+    };
+  }
+
+  const claudeCheck = checks.find(item => item.id === 'claude_exit');
+  const personaCheck = checks.find(item => item.id === 'persona_consistency');
+  const ispCheck = checks.find(item => item.id === 'exit_isp_kind');
+  const staticHasFail = staticChecks.some(item => item.status === 'fail');
+
+  if (
+    ispCheck?.status === 'fail' &&
+    claudeCheck?.status !== 'fail' &&
+    personaCheck?.status !== 'fail' &&
+    !staticHasFail
+  ) {
+    return {
+      status: 'fail',
+      titleKey: 'risk.auditStatus.ispHostingTitle',
+      descKey: 'risk.auditStatus.ispHostingDesc',
+    };
+  }
+
+  if (staticAllOk) {
+    if (claudeCheck?.status === 'ok' && personaCheck?.status === 'ok') {
+      return {
+        status: 'warn',
+        titleKey: 'risk.auditStatus.ispPendingTitle',
+        descKey: 'risk.auditStatus.ispPendingDesc',
+      };
+    }
+    if (overall === 'fail') {
+      return {
+        status: 'fail',
+        titleKey: 'risk.auditStatus.failTitle',
+        descKey: 'risk.auditStatus.failDesc',
+      };
+    }
+    return {
+      status: 'warn',
+      titleKey: 'risk.auditStatus.probeWarnTitle',
+      descKey: 'risk.auditStatus.probeWarnDesc',
+    };
+  }
+
+  if (overall === 'fail') {
+    return {
+      status: 'fail',
+      titleKey: 'risk.auditStatus.failTitle',
+      descKey: 'risk.auditStatus.failDesc',
+    };
+  }
+  return {
+    status: 'warn',
+    titleKey: 'risk.auditStatus.warnTitle',
+    descKey: strictRouteNeedsFix
+      ? 'risk.auditStatus.warnDesc'
+      : 'risk.auditStatus.warnStaticNoStrictDesc',
+  };
 }
 
 export function evaluateRiskChecks(
@@ -474,8 +614,8 @@ export function evaluateRiskChecks(
       summaryKey: 'risk.check.exitIspKind.pending',
     });
   } else {
-    const kind = classifyExitIsp(probe.exit_isp);
-    const ispLabel = probe.exit_isp?.isp || probe.exit_isp?.asn || '—';
+    const kind = classifyRiskExitIsp(probe.exit_isp);
+    const ispLabel = formatExitIspLabel(probe.exit_isp);
     if (kind === 'isp') {
       checks.push({
         id: 'exit_isp_kind',
@@ -548,13 +688,23 @@ const MOBILE_ANTI_LEAK_DOMAIN_SUFFIXES = [
   'claude.ai',
   'claude.com',
   'anthropic.com',
+  'clau.de',
+  'ant.dev',
+  'antspace.dev',
+  'anthropic.dev',
+  'anthropic.team',
   'claude.app',
   'claude.dev',
+  'claude.new',
   'claude.site',
-  'ant.dev',
-  'anthropic.dev',
   'claudeusercontent.com',
+  'claudemcpclient.com',
   'claudemcpcontent.com',
+  'claudepages.dev',
+  'claudestudio.com',
+  'claudeacademy.com',
+  'chatbotclaude.com',
+  'http-intake.logs.us5.datadoghq.com',
   'datadoghq.com',
   'browser-intake-us5-datadoghq.com',
   'browser-intake-datadoghq.com',
@@ -564,18 +714,37 @@ const MOBILE_ANTI_LEAK_DOMAIN_SUFFIXES = [
   'statsig.com',
   'statsigapi.net',
   'featuregates.org',
+  'prodregistryv2.org',
+  'beyondwickedmapping.org',
   'growthbook.io',
   'sentry.io',
   'segment.io',
   'intercom.io',
+  'intercomcdn.com',
+  'intercomassets.com',
   'storage.googleapis.com',
   'withpersona.com',
   'persona.com',
   'persona.org',
+  'personacustomer.com',
+  'persona-cdn.com',
   'stripe.com',
   'stripe.network',
+  'stripecdn.com',
+  'stripe.global',
+  'paypal.com',
+  'paypalobjects.com',
+  'paypal-mktg.com',
+  'braintreegateway.com',
+  'braintree-api.com',
   'hcaptcha.com',
+  'challenges.cloudflare.com',
   'arkoselabs.com',
+  'funcaptcha.com',
+  'workos.com',
+  'authkit.app',
+  'sift.com',
+  'siftscience.com',
   'cloudflare.com',
 ] as const;
 
@@ -690,6 +859,8 @@ export function buildMobileBridgeConfig(opts: {
       '    - 10.0.0.0/8',
       '    - 172.16.0.0/12',
       '    - 192.168.0.0/16',
+      '  inet6-route-exclude-address:',
+      '    - ::1/128',
       '  dns-hijack:',
       '    - any:53',
       '    - tcp://any:53',
@@ -877,7 +1048,7 @@ export function buildDesktopDnsFixPrompt(opts: {
     return [
       `Please inspect and harden my local ${clientName} configuration to eliminate WebRTC leaks, DNS leaks, and KYC split-routing between claude.ai and withpersona.com.`,
       '1. Back Up & Persist Across Subscription Updates: Back up the active profile and place all changes in the persistent Global Extend Config (Merge) or Extend Script so subscription refreshes never overwrite them, preserving all existing nodes and subscriptions.',
-      '2. Unified KYC & Anti-Fraud Residential Routing: Route ALL of the following domains and DoH resolver IPs to the EXACT SAME static residential exit used by claude.ai (never transit/fallback nodes): claude.ai, claude.com, anthropic.com, clau.de, claude.app, claude.dev, claude.site, ant.dev, anthropic.dev, claudeusercontent.com, claudemcpcontent.com, datadoghq.com, browser-intake-us5-datadoghq.com, browser-intake-datadoghq.com, datadoghq.eu, ddog-gov.com (plus DOMAIN-KEYWORD,datadoghq), growthbook.io, storage.googleapis.com, withpersona.com, persona.com, persona.org, personacustomer.com, persona-cdn.com, stripe.com, stripe.network, stripecdn.com, stripe.global, paypal.com, paypalobjects.com, paypal-mktg.com, braintreegateway.com, braintree-api.com, hcaptcha.com, challenges.cloudflare.com, arkoselabs.com, funcaptcha.com, workos.com, authkit.app, sift.com, siftscience.com, sentry.io, intercom.io, intercomcdn.com, intercomassets.com, statsig.com, statsigapi.net, featuregates.org, prodregistryv2.org, openai.com, chatgpt.com, oaistatic.com, oaiusercontent.com, auth0.com, ipquery.io, ippure.com, plus IP-CIDR 1.1.1.1/32, 1.0.0.1/32, 8.8.8.8/32, 8.8.4.4/32 (no-resolve) and Fake-IP leak guard IP-CIDR,198.18.0.0/15,REJECT,no-resolve. Keep localhost, 127.0.0.1 and ::1 DIRECT.',
+      '2. Unified KYC & Anti-Fraud Residential Routing: Route ALL of the following domains and DoH resolver IPs at highest priority to the EXACT SAME static residential exit used by claude.ai (never transit/fallback nodes, and never place IP-CIDR/GEOIP rules without `no-resolve` above them): claude.ai, claude.com, anthropic.com, clau.de, ant.dev, antspace.dev, anthropic.dev, anthropic.team, claude.app, claude.dev, claude.new, claude.site, claudeusercontent.com, claudemcpclient.com, claudemcpcontent.com, claudepages.dev, claudestudio.com, claudeacademy.com, chatbotclaude.com (plus GEOSITE,anthropic when GeoSite is enabled), http-intake.logs.us5.datadoghq.com, datadoghq.com, browser-intake-us5-datadoghq.com, browser-intake-datadoghq.com, datadoghq.eu, ddog-gov.com (plus DOMAIN-KEYWORD,datadoghq), growthbook.io, storage.googleapis.com, withpersona.com, persona.com, persona.org, personacustomer.com, persona-cdn.com, stripe.com, stripe.network, stripecdn.com, stripe.global, paypal.com, paypalobjects.com, paypal-mktg.com, braintreegateway.com, braintree-api.com, hcaptcha.com, challenges.cloudflare.com, arkoselabs.com, funcaptcha.com, workos.com, authkit.app, sift.com, siftscience.com, sentry.io, intercom.io, intercomcdn.com, intercomassets.com, statsig.anthropic.com, statsig.com, statsigapi.net, featuregates.org, prodregistryv2.org, beyondwickedmapping.org, openai.com, chatgpt.com, oaistatic.com, oaiusercontent.com, auth0.com, ipquery.io, ippure.com, plus IP-CIDR 1.1.1.1/32, 1.0.0.1/32, 8.8.8.8/32, 8.8.4.4/32 (no-resolve) and Fake-IP leak guard IP-CIDR,198.18.0.0/15,REJECT,no-resolve. Keep localhost, 127.0.0.1 and ::1 DIRECT.',
       '3. Block WebRTC STUN/TURN, QUIC UDP & Dual-Stack IPv6 Leaks: Set top-level `ipv6: false` and `dns.ipv6: false` (preventing native IPv6 bypass when the residential SOCKS5 exit is IPv4-only), and add explicit rules rejecting UDP ports 443 (QUIC), 3478, 19302 and 5349 (WebRTC STUN/TURN) plus `DOMAIN-KEYWORD,stun,REJECT` (`AND,((NETWORK,UDP),(DST-PORT,443)),REJECT`, `AND,((NETWORK,UDP),(DST-PORT,3478)),REJECT`, `AND,((NETWORK,UDP),(DST-PORT,19302)),REJECT`, `AND,((NETWORK,UDP),(DST-PORT,5349)),REJECT`) so neither TUN nor system browsers can leak real ISP UDP/WebRTC candidates.',
       '4. Eliminate Domestic Plaintext DNS Leaks (Campus/Enterprise Safe): Enable `sniffer.enable: true` (`parse-pure-ip: true`), `dns.respect-rules: true`, and `dns.direct-nameserver-follow-policy: true`; configure `proxy-server-nameserver` (`system`, `https://223.5.5.5/dns-query`, `https://1.12.12.12/dns-query`) strictly for resolving proxy server hostnames; use IP-literal encrypted remote DoH (`https://1.1.1.1/dns-query`, `https://8.8.8.8/dns-query` — avoids campus UDP:53 bootstrap hangs) for non-CN / Claude / Persona domains while keeping `geosite:cn,private` on `system` + domestic DoH via `nameserver-policy`; and set `tun.strict-route: true` with `inet4-route-exclude-address: [127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` and `dns-hijack: [any:53, tcp://any:53]` so multi-homed Windows adapters never leak DNS while intranet/domestic traffic stays fast.',
       listenerLine,
@@ -895,7 +1066,7 @@ export function buildDesktopDnsFixPrompt(opts: {
   return [
     `请检查并加固我本机的 ${clientName} 配置，彻底根治 WebRTC 穿透泄露、DNS 抢答泄露以及 claude.ai 与 KYC 核验服务 withpersona.com 跨域名分流不一致的问题：`,
     '1. 先备份并写入持久化覆写层：先完整备份当前生效配置文件与全局扩展覆写配置/脚本（Merge / Script），将修改写入不会被订阅刷新冲掉的扩展覆写层，保留原有订阅、节点与无关分流规则。',
-    '2. 补齐 KYC 与风控全链路同源家宽分流：将以下域名与远程 DoH 解析器 IP 全部强制指向与 claude.ai 完全相同的静态住宅出口策略组（严禁漏入默认中转节点或直连）：claude.ai、claude.com、anthropic.com、clau.de、claude.app、claude.dev、claude.site、ant.dev、anthropic.dev、claudeusercontent.com、claudemcpcontent.com、datadoghq.com、browser-intake-us5-datadoghq.com、browser-intake-datadoghq.com、datadoghq.eu、ddog-gov.com（及 DOMAIN-KEYWORD,datadoghq）、growthbook.io、storage.googleapis.com、withpersona.com、persona.com、persona.org、personacustomer.com、persona-cdn.com、stripe.com、stripe.network、stripecdn.com、stripe.global、paypal.com、paypalobjects.com、paypal-mktg.com、braintreegateway.com、braintree-api.com、hcaptcha.com、challenges.cloudflare.com、arkoselabs.com、funcaptcha.com、workos.com、authkit.app、sift.com、siftscience.com、sentry.io、intercom.io、intercomcdn.com、intercomassets.com、statsig.com、statsigapi.net、featuregates.org、prodregistryv2.org、openai.com、chatgpt.com、oaistatic.com、oaiusercontent.com、auth0.com、ipquery.io、ippure.com，以及 `IP-CIDR,1.1.1.1/32`、`IP-CIDR,1.0.0.1/32`、`IP-CIDR,8.8.8.8/32`、`IP-CIDR,8.8.4.4/32`（`no-resolve`）和防 Fake-IP 漏出规则 `IP-CIDR,198.18.0.0/15,REJECT,no-resolve`；同时确保 localhost、127.0.0.1、::1 本地回调保持 DIRECT。',
+    '2. 补齐 KYC 与风控全链路同源家宽分流：将以下域名与远程 DoH 解析器 IP 以最高优先级全部强制指向与 claude.ai 完全相同的静态住宅出口策略组（严禁漏入默认中转节点或直连，且严禁在上方放置缺少 `no-resolve` 的 IP-CIDR/GEOIP 规则）：claude.ai、claude.com、anthropic.com、clau.de、ant.dev、antspace.dev、anthropic.dev、anthropic.team、claude.app、claude.dev、claude.new、claude.site、claudeusercontent.com、claudemcpclient.com、claudemcpcontent.com、claudepages.dev、claudestudio.com、claudeacademy.com、chatbotclaude.com（若内核已启用 GeoSite 可同步添加 GEOSITE,anthropic）、http-intake.logs.us5.datadoghq.com、datadoghq.com、browser-intake-us5-datadoghq.com、browser-intake-datadoghq.com、datadoghq.eu、ddog-gov.com（及 DOMAIN-KEYWORD,datadoghq）、growthbook.io、storage.googleapis.com、withpersona.com、persona.com、persona.org、personacustomer.com、persona-cdn.com、stripe.com、stripe.network、stripecdn.com、stripe.global、paypal.com、paypalobjects.com、paypal-mktg.com、braintreegateway.com、braintree-api.com、hcaptcha.com、challenges.cloudflare.com、arkoselabs.com、funcaptcha.com、workos.com、authkit.app、sift.com、siftscience.com、sentry.io、intercom.io、intercomcdn.com、intercomassets.com、statsig.anthropic.com、statsig.com、statsigapi.net、featuregates.org、prodregistryv2.org、beyondwickedmapping.org、openai.com、chatgpt.com、oaistatic.com、oaiusercontent.com、auth0.com、ipquery.io、ippure.com，以及 `IP-CIDR,1.1.1.1/32`、`IP-CIDR,1.0.0.1/32`、`IP-CIDR,8.8.8.8/32`、`IP-CIDR,8.8.4.4/32`（`no-resolve`）和防 Fake-IP 漏出规则 `IP-CIDR,198.18.0.0/15,REJECT,no-resolve`；同时确保 localhost、127.0.0.1、::1 本地回调保持 DIRECT。',
     '3. 阻断 WebRTC STUN/TURN 穿透、QUIC UDP 旁路与双栈 IPv6 泄露：显式设置顶层 `ipv6: false` 与 `dns.ipv6: false`（防止纯 IPv4 静态家宽下本地运营商原生 IPv6 旁路抢答），并添加 `AND,((NETWORK,UDP),(DST-PORT,443)),REJECT`（阻断 HTTP/3 QUIC）以及 `AND,((NETWORK,UDP),(DST-PORT,3478)),REJECT`、`AND,((NETWORK,UDP),(DST-PORT,19302)),REJECT`、`AND,((NETWORK,UDP),(DST-PORT,5349)),REJECT`、`DOMAIN-KEYWORD,stun,REJECT`（阻断 WebRTC STUN/TURN 探测），防止浏览器在 TUN 或直连下通过 UDP 暴露本机运营商真实公网 IP。',
     '4. 根治国内明文 DNS 抢答泄露（兼容校园网/企业内网）：开启 `sniffer.enable: true`（`parse-pure-ip: true`）、`dns.respect-rules: true` 与 `dns.direct-nameserver-follow-policy: true`；配置 `proxy-server-nameserver`（`system`、`https://223.5.5.5/dns-query`、`https://1.12.12.12/dns-query`）仅用于解析节点服务器域名；将海外及 Claude/Persona 域名的 `nameserver` 切换至纯 IP 远程加密 DoH（`https://1.1.1.1/dns-query`、`https://8.8.8.8/dns-query`，规避校园网封锁 UDP:53 导致的域名 DoH 引导死锁），并在 `nameserver-policy` 中让 `geosite:cn,private` 保留 `system` + 国内 DoH；若启用了 TUN，开启 `strict-route: true` 并配置 `inet4-route-exclude-address: [127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` 与 `dns-hijack: [any:53, tcp://any:53]`，既阻断双网卡明文 DNS 泄露又确保内网与国内直连秒开。',
     listenerLineZh,
@@ -983,6 +1154,8 @@ export function buildDesktopMihomoAntiLeakYaml(port = DEFAULT_DEDICATED_LISTENER
       '    - 10.0.0.0/8',
       '    - 172.16.0.0/12',
       '    - 192.168.0.0/16',
+      '  inet6-route-exclude-address:',
+      '    - ::1/128',
       '',
       'sniffer:',
       '  enable: true',
@@ -1026,7 +1199,8 @@ export function buildDesktopMihomoAntiLeakYaml(port = DEFAULT_DEDICATED_LISTENER
       '    proxy: "<你的静态家宽节点名称>"',
       '',
       'prepend-rules:',
-      '  # 1. 阻断 QUIC (UDP 443) 与 WebRTC STUN/TURN (UDP 3478/19302/5349)，根除 WebRTC 穿透暴露真实 IP',
+      '  # 注意：prepend-rules 置顶生效，切勿在此段上方放置缺少 no-resolve 的 IP-CIDR / GEOIP 规则（防 104.16.0.0/13 抢劫）',
+      '  # 1. 阻断 TUN 下全域名 QUIC (UDP 443) 与 WebRTC STUN/TURN (UDP 3478/19302/5349)，根除 HTTP/3 与 UDP 穿透泄露',
       '  - AND,((NETWORK,UDP),(DST-PORT,443)),REJECT',
       '  - AND,((NETWORK,UDP),(DST-PORT,3478)),REJECT',
       '  - AND,((NETWORK,UDP),(DST-PORT,19302)),REJECT',
@@ -1038,19 +1212,30 @@ export function buildDesktopMihomoAntiLeakYaml(port = DEFAULT_DEDICATED_LISTENER
       '  - IP-CIDR,1.0.0.1/32,<你的静态家宽节点名称>,no-resolve',
       '  - IP-CIDR,8.8.8.8/32,<你的静态家宽节点名称>,no-resolve',
       '  - IP-CIDR,8.8.4.4/32,<你的静态家宽节点名称>,no-resolve',
-      '  # 3. Claude 主站 + Persona KYC + Stripe / PayPal 支付 + 风控探针全链路同源家宽',
+      '  # 3. Claude / Anthropic 全矩阵 19 域名 + Datadog 日志/RUM 遥测 + Persona KYC + Stripe / PayPal 支付 + 风控探针同源家宽',
+      '  # （若 Mihomo 已启用 GeoSite 库，亦可额外取消下一行注释启用 GEOSITE,anthropic 兜底）',
+      '  # - GEOSITE,anthropic,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,claude.ai,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,claude.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,anthropic.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,clau.de,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,ant.dev,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,antspace.dev,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,anthropic.dev,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,anthropic.team,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,claude.app,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,claude.dev,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,claude.new,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,claude.site,<你的静态家宽节点名称>',
-      '  - DOMAIN-SUFFIX,ant.dev,<你的静态家宽节点名称>',
-      '  - DOMAIN-SUFFIX,anthropic.dev,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,claudeusercontent.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,claudemcpclient.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,claudemcpcontent.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,claudepages.dev,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,claudestudio.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,claudeacademy.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,chatbotclaude.com,<你的静态家宽节点名称>',
       '  - DOMAIN-KEYWORD,datadoghq,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,http-intake.logs.us5.datadoghq.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,datadoghq.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,browser-intake-us5-datadoghq.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,browser-intake-datadoghq.com,<你的静态家宽节点名称>',
@@ -1084,10 +1269,12 @@ export function buildDesktopMihomoAntiLeakYaml(port = DEFAULT_DEDICATED_LISTENER
       '  - DOMAIN-SUFFIX,intercom.io,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,intercomcdn.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,intercomassets.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,statsig.anthropic.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,statsig.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,statsigapi.net,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,featuregates.org,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,prodregistryv2.org,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,beyondwickedmapping.org,<你的静态家宽节点名称>',
       '  # 4. Claude Code 协同调用 Codex / OpenAI 时的同源出口防割裂',
       '  - DOMAIN-SUFFIX,openai.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,chatgpt.com,<你的静态家宽节点名称>',
@@ -1195,34 +1382,96 @@ export function buildClaudeCliAntiLeakSettingsJson(port = DEFAULT_DEDICATED_LIST
 function isPinnedPackageSpec(pkgSpec: string): boolean {
   const s = pkgSpec.trim();
   if (!s) return false;
-  if (s.startsWith('@')) {
-    const rest = s.slice(1);
-    const atIdx = rest.indexOf('@');
-    return atIdx > 0 && rest.slice(atIdx + 1).trim().length > 0 && !rest.endsWith('@latest');
-  }
-  const atIdx = s.indexOf('@');
-  return atIdx > 0 && s.slice(atIdx + 1).trim().length > 0 && !s.endsWith('@latest');
+  const withoutScope = s.startsWith('@')
+    ? (() => {
+        const rest = s.slice(1);
+        const slashIdx = rest.indexOf('/');
+        return slashIdx > 0 ? rest.slice(slashIdx + 1) : '';
+      })()
+    : s;
+  if (!withoutScope) return false;
+  const atIdx = withoutScope.lastIndexOf('@');
+  if (atIdx <= 0) return false;
+  const ver = withoutScope.slice(atIdx + 1).trim();
+  return ver.length > 0 && ver.toLowerCase() !== 'latest';
 }
 
 function isLoopbackHostUrl(rawUrl: string): boolean {
   try {
     const parsed = new URL(rawUrl.trim());
+    const proto = parsed.protocol.toLowerCase();
+    if (proto !== 'http:' && proto !== 'https:' && proto !== 'ws:' && proto !== 'wss:') {
+      return false;
+    }
     const h = parsed.hostname.toLowerCase();
-    return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1';
+    return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1' || h === '0.0.0.0';
   } catch {
     return false;
   }
 }
 
-function isValidHttpProxyUrl(rawUrl: string): boolean {
+function normalizeHttpProxyHostPort(rawUrl: string): string | null {
   const trimmed = rawUrl.trim();
-  if (!trimmed) return false;
+  if (!trimmed) return null;
   try {
     const parsed = new URL(trimmed);
-    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname.length > 0;
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    const rawHost = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (!rawHost) return null;
+    const host = rawHost === 'localhost' ? '127.0.0.1' : rawHost;
+    const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+    const portNum = Number(port);
+    if (!Number.isInteger(portNum) || portNum <= 0 || portNum > 65535) return null;
+    return `${host}:${portNum}`;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isSafeNoProxyValue(rawValue: string): boolean {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return false;
+  let hasEntry = false;
+  for (const part of trimmed.split(',')) {
+    const token = part.trim().toLowerCase();
+    if (!token) continue;
+    hasEntry = true;
+    if (token === '*') return false;
+    const hostPart = token.startsWith('[')
+      ? token.split(']')[0].slice(1)
+      : token.split(':')[0];
+    const clean = hostPart.replace(/^\*\./, '').replace(/^\./, '');
+    for (const domain of [
+      'claude.ai',
+      'anthropic.com',
+      'claude.com',
+      'claudeusercontent.com',
+      'claudemcpclient.com',
+      'claudemcpcontent.com',
+      'claudepages.dev',
+      'claude.site',
+      'claude.app',
+      'claude.dev',
+      'claude.new',
+      'claudestudio.com',
+      'ant.dev',
+      'antspace.dev',
+      'anthropic.dev',
+      'anthropic.team',
+      'clau.de',
+      'datadoghq.com',
+    ]) {
+      if (clean === domain || clean.endsWith(`.${domain}`)) {
+        return false;
+      }
+    }
+  }
+  return hasEntry;
+}
+
+function isEnglishLanguagePref(rawLang: string): boolean {
+  const s = rawLang.trim().toLowerCase();
+  return !s || s === 'en' || s.startsWith('en-') || s.startsWith('en_') || s.startsWith('english');
 }
 
 export function auditClaudeCliSecurityBoundary(input: {
@@ -1242,6 +1491,7 @@ export function auditClaudeCliSecurityBoundary(input: {
   let nonessential_traffic_blocked = false;
   let proxy_env_complete = false;
   let socks5_in_cli_env = false;
+  let non_english_language = false;
   let has_custom_hooks_or_helpers = false;
   const isWin = input.isWindows !== false;
 
@@ -1268,8 +1518,19 @@ export function auditClaudeCliSecurityBoundary(input: {
       if (!rawCfg || typeof rawCfg !== 'object' || Array.isArray(rawCfg)) continue;
       const cfg = rawCfg as Record<string, unknown>;
       const url = typeof cfg.url === 'string' ? cfg.url.trim() : '';
+      const urlLower = url.toLowerCase();
       const type = typeof cfg.type === 'string' ? cfg.type.trim().toLowerCase() : '';
-      const isHttpOrSse = Boolean(url || type === 'http' || type === 'sse');
+      const isHttpOrSse = Boolean(
+        urlLower.startsWith('http://') ||
+          urlLower.startsWith('https://') ||
+          urlLower.startsWith('ws://') ||
+          urlLower.startsWith('wss://') ||
+          type === 'http' ||
+          type === 'sse' ||
+          type === 'ws' ||
+          type === 'websocket' ||
+          url,
+      );
       if (isHttpOrSse && (!url || !isLoopbackHostUrl(url))) {
         remote_http_mcp_count++;
       }
@@ -1335,10 +1596,14 @@ export function auditClaudeCliSecurityBoundary(input: {
   const parsedSettings = parseOrObj(input.settingsJsonText, input.settingsJson);
   const parsedSettingsLocal = parseOrObj(input.settingsLocalJsonText, input.settingsLocalJson);
   const mergedEnv: Record<string, unknown> = {};
+  let effectiveLanguage: string | null = null;
 
   for (const doc of [parsedSettings, parsedSettingsLocal]) {
     if (doc) {
       settings_present = true;
+      if (Object.prototype.hasOwnProperty.call(doc, 'language')) {
+        effectiveLanguage = typeof doc.language === 'string' ? doc.language.trim() : '';
+      }
       inspectSettingsDoc(doc);
       if (doc.env && typeof doc.env === 'object' && !Array.isArray(doc.env)) {
         Object.assign(mergedEnv, doc.env as Record<string, unknown>);
@@ -1347,6 +1612,9 @@ export function auditClaudeCliSecurityBoundary(input: {
   }
 
   if (settings_present) {
+    if (effectiveLanguage !== null && !isEnglishLanguagePref(effectiveLanguage)) {
+      non_english_language = true;
+    }
     const truthy = (v: unknown) => {
       if (v === true || v === 1) return true;
       if (typeof v === 'string') {
@@ -1359,8 +1627,10 @@ export function auditClaudeCliSecurityBoundary(input: {
     telemetry_shield_active =
       truthy(mergedEnv.DISABLE_TELEMETRY) &&
       truthy(mergedEnv.DISABLE_ERROR_REPORTING) &&
+      truthy(mergedEnv.DO_NOT_TRACK) &&
       !nonessential_traffic_blocked;
 
+    const hasKey = (key: string) => Object.prototype.hasOwnProperty.call(mergedEnv, key);
     const strVal = (key: string) => (typeof mergedEnv[key] === 'string' ? (mergedEnv[key] as string).trim() : '');
     const canonicalProxyPairs: Array<[string, string]> = [
       ['HTTP_PROXY', 'http_proxy'],
@@ -1373,16 +1643,33 @@ export function auditClaudeCliSecurityBoundary(input: {
       strVal(upper).toLowerCase().startsWith('socks') || strVal(lower).toLowerCase().startsWith('socks'),
     );
 
+    let sharedHostPort: string | null = null;
     const allProxyPairsOk = canonicalProxyPairs.every(([upper, lower]) => {
-      const u = strVal(upper);
-      const l = strVal(lower);
-      return (
-        !u.toLowerCase().startsWith('socks') &&
-        !l.toLowerCase().startsWith('socks') &&
-        (isValidHttpProxyUrl(u) || isValidHttpProxyUrl(l))
-      );
+      const hasU = hasKey(upper);
+      const hasL = hasKey(lower);
+      if (!hasU && !hasL) return false;
+      for (const [present, raw] of [
+        [hasU, strVal(upper)],
+        [hasL, strVal(lower)],
+      ] as const) {
+        if (!present) continue;
+        if (raw.toLowerCase().startsWith('socks')) return false;
+        const ep = normalizeHttpProxyHostPort(raw);
+        if (!ep) return false;
+        if (sharedHostPort === null) {
+          sharedHostPort = ep;
+        } else if (sharedHostPort !== ep) {
+          return false;
+        }
+      }
+      return true;
     });
-    const noProxyOk = strVal('NO_PROXY').length > 0 || strVal('no_proxy').length > 0;
+    const hasNpU = hasKey('NO_PROXY');
+    const hasNpL = hasKey('no_proxy');
+    const noProxyOk =
+      (hasNpU || hasNpL) &&
+      (!hasNpU || isSafeNoProxyValue(strVal('NO_PROXY'))) &&
+      (!hasNpL || isSafeNoProxyValue(strVal('no_proxy')));
     proxy_env_complete = !socks5_in_cli_env && allProxyPairsOk && noProxyOk;
   }
 
@@ -1393,7 +1680,13 @@ export function auditClaudeCliSecurityBoundary(input: {
     if (doc) {
       inspectMcpServers(doc.mcpServers);
       if (doc.projects && typeof doc.projects === 'object' && !Array.isArray(doc.projects)) {
-        for (const proj of Object.values(doc.projects as Record<string, unknown>).slice(0, 256)) {
+        const seenProjPaths = new Set<string>();
+        for (const [projKey, proj] of Object.entries(doc.projects as Record<string, unknown>).slice(0, 256)) {
+          const normKey = isWin
+            ? projKey.trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+            : projKey.trim();
+          if (seenProjPaths.has(normKey)) continue;
+          seenProjPaths.add(normKey);
           if (proj && typeof proj === 'object' && !Array.isArray(proj)) {
             inspectMcpServers((proj as Record<string, unknown>).mcpServers);
           }
@@ -1408,6 +1701,7 @@ export function auditClaudeCliSecurityBoundary(input: {
     nonessential_traffic_blocked,
     proxy_env_complete,
     socks5_in_cli_env,
+    non_english_language,
     unpinned_npx_count,
     remote_http_mcp_count,
     windows_bare_npx_count,

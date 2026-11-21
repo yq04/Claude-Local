@@ -35,7 +35,7 @@ async function supplementHosting(exit:Exit,service:string,request:(address:strin
   if(service!==CLASSIFICATION_SERVICE)return {...exit,hosting_error:'invalid_response'};
   let error:HostingError='network_error';
   try{
-    const response=await request(`${service}${exit.ip}?format=json`,{cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',redirect:'error',signal:AbortSignal.timeout(3000)});
+    const response=await request(`${service}${exit.ip}?format=json`,{cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',redirect:'error',signal:AbortSignal.timeout(6000)});
     if(!response.ok)return {...exit,hosting_error:response.status===429?'rate_limited':'http_error'};
     const reader=response.body?.getReader();
     if(!reader)return {...exit,hosting_error:'invalid_response'};

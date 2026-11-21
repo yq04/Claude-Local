@@ -1,5 +1,5 @@
-// [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt/refreshTokenExpiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话流式账单增量、本地 settings.json 代理环境变量、只读有界外部账本服务端锚点、活动会话 PID 元数据及白名单桌面工作区元数据。
-// [OUTPUT]: 当前/保存身份的脱敏摘要与一致的 OAuth 有效期/refreshToken 过期时间投影、逐窗额度（含 Ultra 无 5h 限制标记与 Fable 周池）、有界活动会话；共享纯账号指纹派生供浏览器绑定复核，不输出令牌、不联网验证账号。
+// [INPUT]: 默认 .claude.json 的 oauthAccount 显示字段与 cachedUsageUtilization 快照、本地 .credentials.json 的 OAuth 凭据元数据（expiresAt/refreshTokenExpiresAt 仅作为 OAuth 凭据有效期）、.claude/projects 会话流式账单增量、本地 settings.json 代理环境变量、只读有界外部账本服务端锚点、活动会话 PID/角色/子 Shell 元数据、`.claude/jobs/<short>` 后台待接管作业目录及白名单桌面工作区元数据。
+// [OUTPUT]: 当前/保存身份的脱敏摘要（单次解析 .claude.json，且双窗均持新鲜账本 ServerAnchor 时跳过递归 .claude/projects 扫描）与一致的 OAuth 有效期/refreshToken 过期时间投影、逐窗额度（含 Ultra 无 5h 限制标记与 Fable 周池）、有界活动会话（区分后台守护进程与交互式子 Shell）与有界后台待接管作业 ID；共享纯账号指纹派生供浏览器绑定复核，不输出令牌、不联网验证账号。
 // [POS]: 身份卡片的只读展示边界；账号匹配与旧格式适配留在此处，逐窗合并/过期/推定恢复/聚合复用 quota_core；归档时间不代表额度新鲜度，账本单次安全有界读取且不匹配项不污染摘要。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub use crate::quota_core::QuotaSource;
@@ -69,6 +69,8 @@ pub struct Current {
     pub quota_7d_reset_at: Option<u64>,
     #[serde(default)]
     pub quota_no_5h_limit: bool,
+    #[serde(default)]
+    pub quota_5h_rested: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_7d_fable_used: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,6 +119,8 @@ pub struct Summary {
     pub quota_7d_reset_at: Option<u64>,
     #[serde(default)]
     pub quota_no_5h_limit: bool,
+    #[serde(default)]
+    pub quota_5h_rested: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_7d_fable_used: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,6 +170,7 @@ impl Summary {
         );
         if self.quota_5h_used.is_some() {
             self.quota_no_5h_limit = false;
+            self.quota_5h_rested = false;
         }
         if self
             .quota_7d_fable_reset_at
@@ -220,6 +225,7 @@ impl Summary {
             quota_7d_used: cur.quota_7d_used,
             quota_7d_reset_at: cur.quota_7d_reset_at,
             quota_no_5h_limit: cur.quota_no_5h_limit,
+            quota_5h_rested: cur.quota_5h_rested,
             quota_7d_fable_used: cur.quota_7d_fable_used,
             quota_7d_fable_reset_at: cur.quota_7d_fable_reset_at,
             quota_checked: Some(true),
@@ -231,12 +237,23 @@ impl Summary {
         }
     }
 }
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveSession {
     pub pid: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
     pub entrypoint: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveSession {
+    pub pid: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    pub entrypoint: String,
+    #[serde(default)]
+    pub background: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub child_shells: Vec<String>,
 }
 fn now_epoch_sec() -> u64 {
     std::time::SystemTime::now()
@@ -1193,6 +1210,14 @@ fn set_quota_evidence(cj: &Value, result: &ExtractedQuota, now_sec: u64, current
             current.quota_7d_observed_at_ms = Some(observed);
         }
     }
+    if current.quota_7d_source == Some(QuotaSource::ServerAnchor)
+        && current.quota_5h_used.is_none()
+        && !cj
+            .pointer("/cachedUsageUtilization/utilization/five_hour")
+            .is_some_and(|v| !v.is_null())
+    {
+        current.quota_5h_rested = true;
+    }
     current.quota_source = aggregate_source(current.quota_5h_source, current.quota_7d_source);
     current.quota_observed_at_ms = max_observation(
         current.quota_5h_observed_at_ms,
@@ -1250,6 +1275,14 @@ fn set_summary_quota_evidence(
             summary.quota_7d_source = Some(QuotaSource::ResetInferred);
             summary.quota_7d_observed_at_ms = Some(observed);
         }
+    }
+    if summary.quota_7d_source == Some(QuotaSource::ServerAnchor)
+        && summary.quota_5h_used.is_none()
+        && !cj
+            .pointer("/cachedUsageUtilization/utilization/five_hour")
+            .is_some_and(|v| !v.is_null())
+    {
+        summary.quota_5h_rested = true;
     }
     summary.quota_source = aggregate_source(summary.quota_5h_source, summary.quota_7d_source);
     summary.quota_observed_at_ms = max_observation(
@@ -1587,16 +1620,18 @@ fn apply_anchor_scoped_extras(
     now_sec: u64,
     has_5h: bool,
     no_5h_limit: &mut bool,
+    rested_5h: &mut bool,
     fable_used: &mut Option<f64>,
     fable_reset: &mut Option<i64>,
 ) -> bool {
-    let before = (*no_5h_limit, *fable_used, *fable_reset);
+    let before = (*no_5h_limit, *rested_5h, *fable_used, *fable_reset);
     if has_5h
         || anchor
             .and_then(|a| a.pointer("/utilization/five_hour"))
             .is_some_and(Value::is_object)
     {
         *no_5h_limit = false;
+        *rested_5h = false;
     } else if anchor
         .and_then(|a| a.get("no_five_hour"))
         .and_then(Value::as_bool)
@@ -1605,8 +1640,13 @@ fn apply_anchor_scoped_extras(
             .and_then(|e| e.get("quota_no_5h_limit"))
             .and_then(Value::as_bool)
             == Some(true)
+        || entry
+            .and_then(|e| e.get("quota_5h_rested"))
+            .and_then(Value::as_bool)
+            == Some(true)
     {
         *no_5h_limit = true;
+        *rested_5h = true;
     }
     let anchor_sf = anchor.and_then(|a| a.get("scoped_fable_7d"));
     let parsed_sf = anchor_sf
@@ -1634,12 +1674,30 @@ fn apply_anchor_scoped_extras(
         *fable_used = None;
         *fable_reset = None;
     }
-    (*no_5h_limit, *fable_used, *fable_reset) != before
+    (*no_5h_limit, *rested_5h, *fable_used, *fable_reset) != before
 }
 
-pub(super) fn apply_web_plan_tier(plan: &mut Option<String>, web: &super::online::WebMetadata) {
+pub(crate) fn enforce_plan_quota_limits(plan: Option<&str>, quota_no_5h_limit: &mut bool) {
+    if let Some(raw) = plan.map(str::trim).filter(|p| !p.is_empty()) {
+        let lower = raw.to_ascii_lowercase();
+        if lower == "free"
+            || lower == "pro"
+            || lower.starts_with("max")
+            || lower == "team"
+            || lower == "enterprise"
+        {
+            *quota_no_5h_limit = false;
+        }
+    }
+}
+
+pub(crate) fn apply_web_plan_tier(plan: &mut Option<String>, web: &super::online::WebMetadata) {
     match web.plan_tier.as_deref() {
-        Some("Ultra") => {
+        Some("Ultra")
+            if plan
+                .as_deref()
+                .is_none_or(|p| !matches!(p, "Free" | "Pro" | "Team" | "Enterprise")) =>
+        {
             *plan = Some("Ultra".into());
         }
         Some(tier @ ("Team" | "Enterprise"))
@@ -1754,6 +1812,7 @@ pub(super) fn apply_parsed_ledger_to_summary(
         now_sec,
         summary.quota_5h_used.is_some(),
         &mut summary.quota_no_5h_limit,
+        &mut summary.quota_5h_rested,
         &mut summary.quota_7d_fable_used,
         &mut summary.quota_7d_fable_reset_at,
     );
@@ -1764,9 +1823,15 @@ pub(super) fn apply_parsed_ledger_to_summary(
             .filter(|&v| v > 0)
             .map(normalize_epoch_sec);
     }
-    if entry.get("plan").and_then(Value::as_str) == Some("Ultra") {
+    if entry.get("plan").and_then(Value::as_str) == Some("Ultra")
+        && summary
+            .plan
+            .as_deref()
+            .is_none_or(|p| matches!(p, "Max" | "Max 5x" | "Max 20x" | "Pro / Max" | "Ultra"))
+    {
         summary.plan = Some("Ultra".into());
     }
+    enforce_plan_quota_limits(summary.plan.as_deref(), &mut summary.quota_no_5h_limit);
     if merged_5h || merged_7d || merged_extras {
         summary.quota_checked = Some(true);
         summary.quota_version = Some(CURRENT_QUOTA_VERSION);
@@ -1791,20 +1856,25 @@ fn display(value: Option<String>, limit: usize) -> Option<String> {
         .map(|v| v.chars().take(limit).collect())
 }
 fn format_plan(sub: Option<&str>, tier: Option<&str>, billing: Option<&str>) -> Option<String> {
+    let sub_norm = sub
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty());
     let tier_lower = tier.unwrap_or("").to_ascii_lowercase();
-    if tier_lower.contains("20x") {
-        return Some("Max 20x".into());
+    if sub_norm.as_deref().is_none_or(|s| s == "max") {
+        if tier_lower.contains("20x") {
+            return Some("Max 20x".into());
+        }
+        if tier_lower.contains("5x") {
+            return Some("Max 5x".into());
+        }
     }
-    if tier_lower.contains("5x") {
-        return Some("Max 5x".into());
-    }
-    match sub.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+    match sub_norm.as_deref() {
         Some("max") => Some("Max".into()),
         Some("pro") => Some("Pro".into()),
         Some("team") => Some("Team".into()),
         Some("enterprise") => Some("Enterprise".into()),
         Some("free") => Some("Free".into()),
-        Some(other) if !other.is_empty() && !other.chars().any(char::is_control) => {
+        Some(other) if !other.chars().any(char::is_control) => {
             display(Some(other.to_uppercase()), 24)
         }
         _ => match billing.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
@@ -1955,9 +2025,14 @@ fn extract_settings_meta(value: &Value) -> (Option<String>, bool) {
         .is_some_and(|s| !s.trim().is_empty());
     (proxy, has_api_auth)
 }
+#[cfg(test)]
 fn parse(bytes: &[u8]) -> Result<Current, serde_json::Error> {
     let config: Config = serde_json::from_slice(bytes)?;
-    Ok(match config.account {
+    Ok(current_from_config(config))
+}
+/// Shared projection for `parse` and the single-parse live read (`Config` taken from one `Value`).
+fn current_from_config(config: Config) -> Current {
+    match config.account {
         Some(account) => Current {
             web: super::online::WebMetadata::default(),
             quota_identity: None,
@@ -1983,6 +2058,7 @@ fn parse(bytes: &[u8]) -> Result<Current, serde_json::Error> {
             quota_7d_used: None,
             quota_7d_reset_at: None,
             quota_no_5h_limit: false,
+            quota_5h_rested: false,
             quota_7d_fable_used: None,
             quota_7d_fable_reset_at: None,
             subscription_expires_at: None,
@@ -1991,6 +2067,32 @@ fn parse(bytes: &[u8]) -> Result<Current, serde_json::Error> {
             present: config.api_key.is_some(),
             ..Current::default()
         },
+    }
+}
+/// Freshness bound for skipping the local `~/.claude/projects` scan: within this many ms of a
+/// server observation, post-anchor local turns are negligible and the next anchor supersedes them.
+const FRESH_ANCHOR_SKIP_MS: u64 = 90_000;
+/// True when BOTH 5h and 7d windows in the (ledger-merged) `cachedUsageUtilization` are account-bound,
+/// current (reset in the future) server observations no older than `FRESH_ANCHOR_SKIP_MS`.
+fn fresh_server_anchors_cover_both_windows(cj: &Value, now_ms: u64) -> bool {
+    let now_sec = now_ms / 1000;
+    ["five_hour", "seven_day"].iter().all(|window| {
+        let observed = cj
+            .pointer("/cachedUsageUtilization/utilization")
+            .and_then(|u| u.get(*window));
+        let has_value = observed
+            .and_then(|w| w.get("utilization"))
+            .and_then(Value::as_f64)
+            .and_then(crate::quota_core::observed_percentage)
+            .is_some();
+        let reset_current = observed
+            .and_then(|w| w.get("resets_at"))
+            .and_then(parse_reset_value)
+            .is_some_and(|reset| now_sec < reset);
+        let fresh = quota_window_observed_at(cj, window).is_some_and(|ms| {
+            ms <= now_ms.saturating_add(5_000) && now_ms.saturating_sub(ms) <= FRESH_ANCHOR_SKIP_MS
+        });
+        has_value && reset_current && fresh
     })
 }
 pub fn read(home: &Path) -> Current {
@@ -2057,12 +2159,13 @@ fn read_with_ledger(
         if bytes.len() > 8 * 1024 * 1024 {
             return Err(());
         }
-        if let Ok(cfg) = serde_json::from_slice::<Config>(&bytes) {
-            billing_type = cfg.account.and_then(|a| a.billing_type);
-            has_primary_api_key = cfg.api_key.is_some();
-        }
-        claude_val = serde_json::from_slice::<Value>(&bytes).ok();
-        parse(&bytes).map_err(|_| ())
+        // `.claude.json` is parsed exactly once; `Config` is projected from the same `Value`.
+        let value = serde_json::from_slice::<Value>(&bytes).map_err(|_| ())?;
+        let cfg = Config::deserialize(&value).map_err(|_| ())?;
+        billing_type = cfg.account.as_ref().and_then(|a| a.billing_type.clone());
+        has_primary_api_key = cfg.api_key.is_some();
+        claude_val = Some(value);
+        Ok(current_from_config(cfg))
     })();
     let mut current = result.unwrap_or_else(|_| Current {
         present: true,
@@ -2101,9 +2204,13 @@ fn read_with_ledger(
         if let Some(ref cj) = claude_val {
             let now_sec = now_epoch_sec();
             let proj_dir = home.join(".claude/projects");
+            // Both windows already carry fresh ledger-merged server anchors: skip the recursive scan.
+            let skip_projects = app_dir.is_some()
+                && ledger_ref.is_some()
+                && fresh_server_anchors_cover_both_windows(cj, now_sec.saturating_mul(1000));
             let extracted = extract_quota(
                 cj,
-                proj_dir.is_dir().then_some(proj_dir.as_path()),
+                (!skip_projects && proj_dir.is_dir()).then_some(proj_dir.as_path()),
                 current.plan.as_deref(),
                 now_sec,
                 active_since,
@@ -2120,6 +2227,7 @@ fn read_with_ledger(
                 now_sec,
                 current.quota_5h_used.is_some(),
                 &mut current.quota_no_5h_limit,
+                &mut current.quota_5h_rested,
                 &mut current.quota_7d_fable_used,
                 &mut current.quota_7d_fable_reset_at,
             );
@@ -2132,6 +2240,7 @@ fn read_with_ledger(
                 current.quota_7d_used = effective.quota_7d_used;
                 current.quota_7d_reset_at = effective.quota_7d_reset_at;
                 current.quota_no_5h_limit = effective.quota_no_5h_limit;
+                current.quota_5h_rested = effective.quota_5h_rested;
                 current.quota_7d_fable_used = effective.quota_7d_fable_used;
                 current.quota_7d_fable_reset_at = effective.quota_7d_fable_reset_at;
                 current.refresh_token_expires_at = effective.refresh_token_expires_at;
@@ -2271,6 +2380,7 @@ pub(super) fn summarize_stage(stage: &super::archive::Stage) -> Summary {
             now_sec,
             summary.quota_5h_used.is_some(),
             &mut summary.quota_no_5h_limit,
+            &mut summary.quota_5h_rested,
             &mut summary.quota_7d_fable_used,
             &mut summary.quota_7d_fable_reset_at,
         );
@@ -2285,16 +2395,336 @@ pub(super) fn summarize_stage_with_ledger(
     apply_ledger_to_summary(vault_dir, &mut summary, 0, now_epoch_sec());
     summary
 }
+fn valid_adopt_job_id(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+fn adopt_pid_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    if pid == std::process::id() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        const STILL_ACTIVE: u32 = 259;
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return false;
+        }
+        let mut exit_code: u32 = 0;
+        let ok = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
+        unsafe { CloseHandle(handle) };
+        ok != 0 && exit_code == STILL_ACTIVE
+    }
+    #[cfg(not(windows))]
+    {
+        std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
+}
+
+fn resolve_adopt_agent_file(home: &Path, job_dir: &Path, raw: &str) -> Option<std::path::PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.len() > 1024 || trimmed.chars().any(char::is_control) {
+        return None;
+    }
+    let claude_root = dunce::canonicalize(&home.join(".claude")).ok()?;
+    let direct = std::path::PathBuf::from(trimmed);
+    let candidates = if direct.is_absolute() {
+        vec![direct]
+    } else {
+        vec![job_dir.join(trimmed), home.join(".claude").join(trimmed)]
+    };
+    for cand in candidates {
+        let Ok(meta) = fs::symlink_metadata(&cand) else {
+            continue;
+        };
+        if crate::cleaner::linked(&meta) || !meta.is_file() {
+            continue;
+        }
+        if let Ok(canon) = dunce::canonicalize(&cand) {
+            if canon.starts_with(&claude_root) {
+                return Some(canon);
+            }
+        }
+    }
+    None
+}
+
+fn find_session_file_by_id(home: &Path, session_id: &str) -> Option<std::path::PathBuf> {
+    let clean = session_id.trim();
+    if clean.is_empty()
+        || clean.len() > 128
+        || !clean
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return None;
+    }
+    let claude_root = dunce::canonicalize(&home.join(".claude")).ok()?;
+    let target_jsonl = format!("{clean}.jsonl");
+    let projects_dir = home.join(".claude/projects");
+    if let Ok(projects) = fs::read_dir(&projects_dir) {
+        for proj in projects.flatten() {
+            let p_path = proj.path();
+            if fs::symlink_metadata(&p_path).is_err_and(|_| true)
+                || crate::cleaner::linked(&fs::symlink_metadata(&p_path).ok()?)
+            {
+                continue;
+            }
+            for cand in [
+                p_path.join(&target_jsonl),
+                p_path.join("subagents").join(&target_jsonl),
+            ] {
+                if let Ok(meta) = fs::symlink_metadata(&cand) {
+                    if !crate::cleaner::linked(&meta) && meta.is_file() {
+                        if let Ok(canon) = dunce::canonicalize(&cand) {
+                            if canon.starts_with(&claude_root) {
+                                return Some(canon);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn inspect_job_adopt(home: &Path, job_dir: &Path) -> (bool, Vec<std::path::PathBuf>) {
+    let Ok(dir_meta) = fs::symlink_metadata(job_dir) else {
+        return (false, Vec::new());
+    };
+    if crate::cleaner::linked(&dir_meta) || !dir_meta.is_dir() {
+        return (false, Vec::new());
+    }
+    let adopt_path = job_dir.join("adopt.json");
+    let Ok(adopt_meta) = fs::symlink_metadata(&adopt_path) else {
+        return (false, Vec::new());
+    };
+    if crate::cleaner::linked(&adopt_meta)
+        || !adopt_meta.is_file()
+        || adopt_meta.len() == 0
+        || adopt_meta.len() > 512 * 1024
+    {
+        return (false, Vec::new());
+    }
+    let Ok(bytes) = fs::read(&adopt_path) else {
+        return (false, Vec::new());
+    };
+    let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return (false, Vec::new());
+    };
+
+    let state_stopped = {
+        let state_path = job_dir.join("state.json");
+        fs::symlink_metadata(&state_path)
+            .ok()
+            .filter(|m| !crate::cleaner::linked(m) && m.is_file() && m.len() <= 64 * 1024)
+            .and_then(|_| fs::read(&state_path).ok())
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|sv| {
+                sv.get("state")
+                    .or_else(|| sv.get("status"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.eq_ignore_ascii_case("stopped"))
+            })
+            .unwrap_or(false)
+    };
+
+    let mut has_live_shell = false;
+    if let Some(shells) = val.get("shells").and_then(|v| v.as_array()) {
+        for item in shells {
+            let pid_opt = item
+                .get("pid")
+                .and_then(|v| v.as_u64())
+                .or_else(|| item.as_u64())
+                .and_then(|p| u32::try_from(p).ok());
+            if pid_opt.is_some_and(adopt_pid_is_alive) {
+                has_live_shell = true;
+                break;
+            }
+        }
+    }
+
+    if state_stopped && !has_live_shell {
+        return (false, Vec::new());
+    }
+
+    let mut referenced_files: Vec<std::path::PathBuf> = Vec::new();
+    let mut has_live_agent = false;
+    if let Some(agents) = val.get("agents").and_then(|v| v.as_array()) {
+        for item in agents {
+            let ended = item
+                .get("status")
+                .or_else(|| item.get("state"))
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| {
+                    matches!(
+                        s.trim().to_ascii_lowercase().as_str(),
+                        "stopped" | "completed" | "failed" | "done" | "exited"
+                    )
+                });
+            if ended {
+                continue;
+            }
+            let mut matched = false;
+            for key in [
+                "transcriptPath",
+                "transcript_path",
+                "sessionPath",
+                "session_path",
+                "filePath",
+                "file_path",
+            ] {
+                if let Some(raw) = item.get(key).and_then(|v| v.as_str()) {
+                    if let Some(p) = resolve_adopt_agent_file(home, job_dir, raw) {
+                        if !referenced_files.contains(&p) {
+                            referenced_files.push(p);
+                        }
+                        matched = true;
+                    }
+                }
+            }
+            if !matched {
+                for key in ["sessionId", "session_id", "agentId", "agent_id"] {
+                    if let Some(id) = item.get(key).and_then(|v| v.as_str()) {
+                        if let Some(p) = find_session_file_by_id(home, id) {
+                            if !referenced_files.contains(&p) {
+                                referenced_files.push(p);
+                            }
+                            matched = true;
+                        }
+                    }
+                }
+            }
+            if matched {
+                has_live_agent = true;
+            }
+        }
+    }
+
+    if has_live_shell || has_live_agent {
+        (true, referenced_files)
+    } else {
+        (false, Vec::new())
+    }
+}
+
+pub(crate) fn job_dir_has_live_adopt(home: &Path, job_dir: &Path) -> bool {
+    inspect_job_adopt(home, job_dir).0
+}
+
+pub(crate) fn live_adopt_referenced_paths(home: &Path) -> Vec<std::path::PathBuf> {
+    let jobs_dir = home.join(".claude/jobs");
+    let Ok(dir_meta) = fs::symlink_metadata(&jobs_dir) else {
+        return Vec::new();
+    };
+    if crate::cleaner::linked(&dir_meta) || !dir_meta.is_dir() {
+        return Vec::new();
+    }
+    let Ok(entries) = fs::read_dir(&jobs_dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !valid_adopt_job_id(&name) {
+            continue;
+        }
+        let (live, refs) = inspect_job_adopt(home, &entry.path());
+        if live {
+            for p in refs {
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn active_adopt_jobs(home: &Path) -> Vec<String> {
+    let jobs_dir = home.join(".claude/jobs");
+    let Ok(dir_meta) = fs::symlink_metadata(&jobs_dir) else {
+        return Vec::new();
+    };
+    if crate::cleaner::linked(&dir_meta) || !dir_meta.is_dir() {
+        return Vec::new();
+    }
+    let Ok(entries) = fs::read_dir(&jobs_dir) else {
+        return Vec::new();
+    };
+    let mut ranked: Vec<(u8, String)> = Vec::new();
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !valid_adopt_job_id(&name) {
+            continue;
+        }
+        let job_path = entry.path();
+        let Ok(meta) = fs::symlink_metadata(&job_path) else {
+            continue;
+        };
+        if crate::cleaner::linked(&meta) || !meta.is_dir() {
+            continue;
+        }
+        let has_adopt_file = fs::symlink_metadata(job_path.join("adopt.json"))
+            .is_ok_and(|m| !crate::cleaner::linked(&m) && m.is_file());
+        if has_adopt_file {
+            if job_dir_has_live_adopt(home, &job_path) {
+                ranked.push((0, name));
+            }
+            continue;
+        }
+        let state_path = job_path.join("state.json");
+        let has_live_state = fs::symlink_metadata(&state_path)
+            .ok()
+            .filter(|m| !crate::cleaner::linked(m) && m.is_file() && m.len() <= 64 * 1024)
+            .is_some_and(|_| {
+                fs::read(&state_path)
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                    .and_then(|sv| {
+                        sv.get("state")
+                            .or_else(|| sv.get("status"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| !s.eq_ignore_ascii_case("stopped"))
+                    })
+                    .unwrap_or(true)
+            });
+        if has_live_state {
+            ranked.push((1, name));
+        }
+    }
+    ranked.sort();
+    ranked.truncate(8);
+    ranked.into_iter().map(|(_, name)| name).collect()
+}
+
 pub(crate) fn active_sessions_from_processes(
     home: &Path,
     running: &[crate::cleaner::ClaudeProcess],
-) -> Vec<ActiveSession> {
+) -> Vec<LiveSession> {
     if running.is_empty() {
         return Vec::new();
     }
     let sessions_dir = home.join(".claude/sessions");
     let mut out = Vec::with_capacity(running.len());
     for proc in running {
+        let background = proc.role().is_background();
         let mut workspace = None;
         let mut entrypoint = proc.name.clone();
         let session_file = sessions_dir.join(format!("{}.json", proc.pid));
@@ -2318,10 +2748,16 @@ pub(crate) fn active_sessions_from_processes(
                 };
             }
         }
-        out.push(ActiveSession {
+        out.push(LiveSession {
             pid: proc.pid,
             workspace,
             entrypoint,
+            background,
+            child_shells: if background {
+                Vec::new()
+            } else {
+                proc.child_shells().to_vec()
+            },
         });
     }
     out
@@ -2332,6 +2768,80 @@ mod quota_regression_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fresh_ledger_anchors_for_both_windows_skip_project_scan_only_when_current() {
+        let now_ms = 1_800_000_000_000u64;
+        let now_sec = now_ms / 1000;
+        let anchors = |five_ms: u64, seven_ms: u64, five_reset: u64, account: &str| {
+            serde_json::json!({
+                "oauthAccount": {"accountUuid": "u1"},
+                "cachedUsageUtilization": {"accountUuid": account, "utilization": {
+                    "five_hour": {"utilization": 20, "resets_at": five_reset, "fetchedAtMs": five_ms},
+                    "seven_day": {"utilization": 30, "resets_at": now_sec + 86_400, "fetchedAtMs": seven_ms}
+                }}
+            })
+        };
+        let fresh = now_ms - 30_000;
+        assert!(fresh_server_anchors_cover_both_windows(
+            &anchors(fresh, fresh, now_sec + 3_600, "u1"),
+            now_ms
+        ));
+        // A stale 7d observation keeps the local scan.
+        assert!(!fresh_server_anchors_cover_both_windows(
+            &anchors(fresh, now_ms - FRESH_ANCHOR_SKIP_MS - 1, now_sec + 3_600, "u1"),
+            now_ms
+        ));
+        // An elapsed 5h reset is not a current anchor.
+        assert!(!fresh_server_anchors_cover_both_windows(
+            &anchors(fresh, fresh, now_sec - 1, "u1"),
+            now_ms
+        ));
+        // Another account's cache never proves freshness.
+        assert!(!fresh_server_anchors_cover_both_windows(
+            &anchors(fresh, fresh, now_sec + 3_600, "u2"),
+            now_ms
+        ));
+        // Implausible future observations are rejected.
+        assert!(!fresh_server_anchors_cover_both_windows(
+            &anchors(now_ms + 60_000, fresh, now_sec + 3_600, "u1"),
+            now_ms
+        ));
+        // Missing 7d window keeps the scan.
+        let mut only_5h = anchors(fresh, fresh, now_sec + 3_600, "u1");
+        only_5h["cachedUsageUtilization"]["utilization"]
+            .as_object_mut()
+            .unwrap()
+            .remove("seven_day");
+        assert!(!fresh_server_anchors_cover_both_windows(&only_5h, now_ms));
+    }
+    #[test]
+    fn single_parse_live_read_keeps_display_billing_and_api_key_projection() {
+        let home = std::env::temp_dir().join(format!(
+            "claude-local-profile-single-parse-{}-{}",
+            std::process::id(),
+            now_epoch_sec()
+        ));
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::write(
+            home.join(".claude.json"),
+            r#"{"oauthAccount":{"accountUuid":"fixture-user","emailAddress":"single@example.invalid","displayName":"Single","organizationName":"Team","billingType":"stripe_subscription"},"primaryApiKey":"private"}"#,
+        )
+        .unwrap();
+        let current = read(&home);
+        assert!(current.present);
+        assert!(!current.unavailable);
+        assert_eq!(current.display_name.as_deref(), Some("Single"));
+        assert_eq!(current.email.as_deref(), Some("single@example.invalid"));
+        assert_eq!(current.organization.as_deref(), Some("Team"));
+        assert_eq!(current.auth_status.as_deref(), Some("api_key"));
+        assert!(current.quota_identity.is_some());
+        assert!(!serde_json::to_string(&current).unwrap().contains("private"));
+        // Malformed JSON stays unavailable (single parse failure path).
+        std::fs::write(home.join(".claude.json"), b"{not json").unwrap();
+        let broken = read(&home);
+        assert!(broken.unavailable);
+        let _ = std::fs::remove_dir_all(&home);
+    }
     #[test]
     fn latest_server_anchor_is_account_bound_and_only_merged_in_memory() {
         let official = serde_json::json!({
@@ -2449,5 +2959,34 @@ mod tests {
         let after = extract_quota(&cj, None, Some("Pro"), 1792320000, 0);
         assert_eq!(after.used_5h, None);
         assert_eq!(after.used_7d, None);
+    }
+    #[test]
+    fn plan_downgrade_gates_max_tier_suffix_and_clears_ultra_unlimited_5h() {
+        assert_eq!(
+            format_plan(Some("pro"), Some("default_claude_max_5x"), None).as_deref(),
+            Some("Pro")
+        );
+        assert_eq!(
+            format_plan(Some("free"), Some("default_claude_max_20x"), None).as_deref(),
+            Some("Free")
+        );
+        let mut plan = Some("Pro".to_string());
+        let web_ultra = super::super::online::WebMetadata {
+            plan_tier: Some("Ultra".into()),
+            ..Default::default()
+        };
+        apply_web_plan_tier(&mut plan, &web_ultra);
+        assert_eq!(plan.as_deref(), Some("Pro"));
+
+        let mut max_plan = Some("Pro / Max".to_string());
+        apply_web_plan_tier(&mut max_plan, &web_ultra);
+        assert_eq!(max_plan.as_deref(), Some("Ultra"));
+
+        let mut no_5h = true;
+        enforce_plan_quota_limits(Some("Pro"), &mut no_5h);
+        assert!(!no_5h);
+        let mut ultra_5h = true;
+        enforce_plan_quota_limits(Some("Ultra"), &mut ultra_5h);
+        assert!(ultra_5h);
     }
 }

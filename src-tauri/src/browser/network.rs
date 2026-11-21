@@ -1,5 +1,5 @@
-// [INPUT]: 冻结的显式代理、ipwho.is/ipapi.co 地理信息、可选固定 IPQuery 分类与版本化浏览器观测。
-// [OUTPUT]: 同 IP 布尔分类/受控失败诊断、本机与网页上报平台/CPU对比、去重有界 WebRTC 原因/耗时与探针核验；缺少观测保持 pending。
+// [INPUT]: 冻结的显式代理（SOCKS 自动升级 socks5h/socks4a 锁远程 DNS）、ipwho.is/ipapi.co 地理信息、可选固定 IPQuery 分类与版本化浏览器观测。
+// [OUTPUT]: 多信号住宅宽带 ISP / IDC 机房 ASN+关键词分类（含 RCN/Astound AS6079 等北美及主流地区家宽识别与机房硬阻断优先）、同 IP 布尔分类/受控失败诊断、本机与网页上报平台/CPU对比、去重有界 WebRTC 原因/耗时与探针核验；缺少观测保持 pending。
 // [POS]: 环境核验边界；WebRTC 仅为无 STUN 本地候选观察，不证明 DNS 或公网 STUN 状态。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -51,26 +51,58 @@ pub fn parse(data: &Value) -> Result<Exit, String> {
     };
     let hosting = data["hosting"]
         .as_bool()
-        .or_else(|| data["security"]["hosting"].as_bool());
-    Ok(Exit {
+        .or_else(|| data["security"]["hosting"].as_bool())
+        .or_else(|| data["risk"]["is_datacenter"].as_bool())
+        .or_else(|| {
+            let conn_type = data["connection"]["type"]
+                .as_str()
+                .or_else(|| data["asn"]["type"].as_str());
+            match conn_type.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+                Some("hosting" | "datacenter") => Some(true),
+                Some("isp") => Some(false),
+                _ => None,
+            }
+        });
+    let mut exit = Exit {
         ip: ip.into(),
         country: country.into(),
-        city: data["city"].as_str().unwrap_or("").into(),
+        city: data["city"]
+            .as_str()
+            .or_else(|| data["location"]["city"].as_str())
+            .unwrap_or("")
+            .into(),
         timezone: data["timezone"]
             .as_str()
             .or_else(|| data["timezone"]["id"].as_str())
+            .or_else(|| data["location"]["timezone"].as_str())
             .unwrap_or("")
             .into(),
         isp: data["org"]
             .as_str()
             .or_else(|| data["connection"]["isp"].as_str())
             .or_else(|| data["connection"]["org"].as_str())
+            .or_else(|| data["isp"]["isp"].as_str())
+            .or_else(|| data["isp"]["org"].as_str())
             .unwrap_or("")
             .into(),
-        asn,
+        asn: asn.or_else(|| {
+            data["isp"]["asn"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && s.len() < 60)
+                .map(|s| {
+                    if s.to_ascii_uppercase().starts_with("AS") {
+                        s.to_string()
+                    } else {
+                        format!("AS{s}")
+                    }
+                })
+        }),
         hosting,
         ..Default::default()
-    })
+    };
+    apply_builtin_classification(&mut exit);
+    Ok(exit)
 }
 pub async fn probe(proxy: &str) -> Result<Exit, String> {
     probe_with_classification(proxy, &SERVICES, Some(CLASSIFICATION_SERVICE)).await
@@ -89,8 +121,11 @@ pub(super) async fn probe_with_classification(
         .redirect(reqwest::redirect::Policy::none())
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
         .timeout(Duration::from_secs(8));
-    if !proxy.is_empty() {
-        client = client.proxy(reqwest::Proxy::all(proxy).map_err(|_| "代理格式无效。")?);
+    let normalized_proxy = super::config::normalize_reqwest_proxy(proxy);
+    if !normalized_proxy.is_empty() {
+        client = client.proxy(
+            reqwest::Proxy::all(&normalized_proxy).map_err(|_| "代理格式无效。")?,
+        );
     }
     let client = client.build().map_err(|_| "无法建立出口检查。")?;
     let mut errors = Vec::new();
@@ -148,6 +183,70 @@ pub(super) async fn probe_with_classification(
         errors.join("；")
     ))
 }
+pub(crate) async fn probe_ip_via_ipquery(proxy: &str, ip: &str) -> Result<Exit, String> {
+    let parsed_ip = ip
+        .trim()
+        .parse::<std::net::IpAddr>()
+        .map_err(|_| "出口 IP 无效。".to_string())?;
+    let mut client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+        .timeout(Duration::from_secs(6));
+    let normalized_proxy = super::config::normalize_reqwest_proxy(proxy);
+    if !normalized_proxy.is_empty() {
+        client = client.proxy(
+            reqwest::Proxy::all(&normalized_proxy).map_err(|_| "代理格式无效。".to_string())?,
+        );
+    }
+    let client = client.build().map_err(|_| "无法建立出口检查。".to_string())?;
+    let mut response = client
+        .get(format!("{CLASSIFICATION_SERVICE}{parsed_ip}?format=json"))
+        .send()
+        .await
+        .map_err(|_| "网络连接失败".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status().as_u16()));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "出口响应读取失败".to_string())?
+    {
+        if bytes.len() + chunk.len() > 32_768 {
+            return Err("出口响应过大".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let mut data: Value =
+        serde_json::from_slice(&bytes).map_err(|_| "出口响应格式错误".to_string())?;
+    if data.get("country_code").is_none() {
+        if let Some(cc) = data["location"]["country_code"]
+            .as_str()
+            .map(str::to_string)
+        {
+            data["country_code"] = Value::String(cc);
+        }
+    }
+    if let Some(returned) = data.get("ip").and_then(Value::as_str) {
+        let actual = returned
+            .trim()
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| "出口响应格式错误".to_string())?;
+        if actual != parsed_ip {
+            return Err("出口 IP 不一致".into());
+        }
+    } else {
+        data["ip"] = Value::String(parsed_ip.to_string());
+    }
+    let mut exit = parse(&data)?;
+    if exit.hosting.is_some() {
+        exit.hosting_source = Some("ipquery".into());
+    }
+    Ok(exit)
+}
+
 async fn supplement_hosting(
     client: &reqwest::Client,
     ip: &str,
@@ -155,7 +254,7 @@ async fn supplement_hosting(
 ) -> Result<bool, &'static str> {
     let mut response = client
         .get(format!("{service}{ip}?format=json"))
-        .timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(6))
         .send()
         .await
         .map_err(|e| {
@@ -336,6 +435,35 @@ impl Report {
                 .unwrap_or(true)
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExitKind {
+    ResidentialIsp,
+    Hosting,
+    Unknown,
+}
+
+fn parse_asn_number(raw: Option<&str>) -> Option<u32> {
+    let s = raw?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let rest = if s.len() >= 2 && s[..2].eq_ignore_ascii_case("as") {
+        &s[2..]
+    } else {
+        s
+    };
+    let digits: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse::<u32>().ok()
+    }
+}
+
 fn contains_ascii_word(haystack: &str, needle: &str) -> bool {
     let bytes = haystack.as_bytes();
     let nbytes = needle.as_bytes();
@@ -354,20 +482,164 @@ fn contains_ascii_word(haystack: &str, needle: &str) -> bool {
     }
     false
 }
+
+const HOSTING_ASNS: &[u32] = &[
+    174,    // Cogent
+    906,    // DMIT
+    3214,   // xTom
+    4785,   // xTom
+    6939,   // Hurricane Electric
+    8068,   // Microsoft
+    8075,   // Microsoft Azure
+    8100,   // QuadraNet
+    8987,   // Amazon AWS
+    9009,   // M247
+    11854,  // Internap
+    11878,  // Tzulo
+    12876,  // Scaleway / Online S.A.S.
+    13335,  // Cloudflare
+    14061,  // DigitalOcean
+    14618,  // Amazon AWS
+    15169,  // Google Cloud (distinct from Google Fiber AS16591)
+    16265,  // Leaseweb
+    16276,  // OVH
+    16509,  // Amazon AWS
+    16625,  // Akamai
+    20473,  // Vultr / Choopa / The Constant Company
+    20940,  // Akamai
+    21859,  // Zenlayer
+    24940,  // Hetzner
+    25820,  // IT7 Networks / Bandwagon
+    28753,  // Leaseweb
+    30633,  // Leaseweb US
+    31898,  // Oracle Cloud
+    32097,  // Wholesale Internet
+    33387,  // Nocix
+    35916,  // Multacom
+    36007,  // Kamatera
+    36351,  // HostPapa
+    36352,  // ColoCrossing / Velocity Servers
+    37963,  // Alibaba / Aliyun
+    38895,  // Amazon AWS
+    40021,  // Contabo
+    40065,  // CeraNetworks
+    40676,  // Psychz
+    42708,  // GleSYS
+    45090,  // Tencent
+    45102,  // Alibaba Cloud
+    46844,  // Sharktech
+    47583,  // Hostinger
+    51167,  // Contabo
+    53667,  // FranTech / BuyVM
+    54113,  // Fastly
+    54290,  // Hostwinds
+    54574,  // DMIT
+    60068,  // Datacamp / CDN77
+    60781,  // Leaseweb
+    62567,  // DigitalOcean
+    63949,  // Linode / Akamai Connected Cloud
+    132203, // Tencent Cloud
+    202053, // UpCloud
+    209242, // Cloudflare
+    212238, // Datacamp
+    213230, // Hetzner
+    396982, // Google Cloud
+    398101, // RackNerd / Sharktech
+    398493, // Hostwinds
+];
+
+const RESIDENTIAL_ASNS: &[u32] = &[
+    209,    // CenturyLink / Quantum Fiber / Qwest
+    577,    // Bell Canada
+    701,    // Verizon / Fios / MCI residential
+    702,    // Verizon Business / UUNET residential EMEA
+    812,    // Rogers
+    852,    // Telus
+    2516,   // KDDI
+    2527,   // So-net
+    2856,   // BT (British Telecom)
+    3215,   // Orange
+    3320,   // Deutsche Telekom
+    3462,   // Chunghwa Telecom / HiNet
+    3758,   // Singtel
+    4181,   // TDS Telecom
+    4657,   // StarHub
+    4713,   // NTT OCN
+    4760,   // HKT / PCCW / Netvigator
+    5089,   // Virgin Media
+    5607,   // Sky Broadband
+    5650,   // Frontier Communications
+    6079,   // RCN / RCN Corporation / Astound Broadband
+    6128,   // Cablevision / Optimum / Altice USA
+    6167,   // Verizon Cellco
+    6389,   // BellSouth / AT&T
+    7015,   // Comcast
+    7016,   // Comcast
+    7018,   // AT&T / SBC
+    7029,   // Windstream / Kinetic
+    7473,   // Singtel
+    7843,   // Time Warner Cable / Spectrum / Grande
+    7922,   // Comcast Cable / Xfinity
+    8047,   // GCI Communications
+    9269,   // HKBN
+    9506,   // Singtel
+    10796,  // Charter / Spectrum
+    10910,  // Altafiber / Cincinnati Bell
+    11232,  // Midco
+    11351,  // Charter / Spectrum
+    11404,  // Wave Broadband / Astound
+    11426,  // Charter / Spectrum
+    11427,  // Charter / Spectrum
+    11492,  // Sparklight / Cable One
+    11858,  // Hawaiian Telcom
+    12083,  // WideOpenWest / WOW! / Knology
+    12271,  // Charter / Spectrum
+    12322,  // Free SAS
+    13630,  // Armstrong
+    13977,  // Consolidated Communications / Fidium
+    14593,  // Starlink
+    14654,  // Ting Fiber
+    16591,  // Google Fiber (residential FTTH, distinct from Google Cloud)
+    17676,  // SoftBank Broadband
+    19108,  // Suddenlink / Optimum / Grande
+    20001,  // Charter / Spectrum
+    20055,  // Ziply Fiber
+    20057,  // AT&T Mobility / Broadband
+    20115,  // Charter / Spectrum
+    21707,  // Breezeline / Atlantic Broadband
+    21928,  // T-Mobile USA
+    22394,  // Cellco / Verizon Wireless
+    22561,  // CenturyLink
+    22773,  // Cox Communications
+    30036,  // Mediacom
+    30600,  // Metronet
+    33363,  // Bright House / Spectrum
+    33651,  // Comcast
+    33657,  // Comcast
+    33668,  // Comcast
+    40127,  // Brightspeed
+    46375,  // Sonic.net
+    394925, // Starry
+];
+
 pub fn is_hosting_exit(exit: &Exit) -> bool {
-    if exit.hosting == Some(true) {
-        return true;
+    let asn_num = parse_asn_number(exit.asn.as_deref()).or_else(|| parse_asn_number(Some(&exit.isp)));
+    if let Some(num) = asn_num {
+        if HOSTING_ASNS.contains(&num) {
+            return true;
+        }
     }
     let text = format!(
         " {} {} ",
         exit.isp.to_ascii_lowercase(),
         exit.asn.as_deref().unwrap_or("").to_ascii_lowercase()
     );
-    const WORD_KEYWORDS: [&str; 14] = [
+    let is_google_fiber = asn_num == Some(16591) || text.contains("google fiber") || contains_ascii_word(&text, "gfiber");
+    const WORD_KEYWORDS: [&str; 17] = [
         "aws", "gcp", "azure", "ovh", "m247", "vps", "idc", "xtom", "dmit", "cera", "kurun",
-        "nocix", "buyvm", "v.ps",
+        "nocix", "buyvm", "v.ps", "tzulo", "cogent", "ec2",
     ];
-    const SUBSTRING_KEYWORDS: [&str; 33] = [
+    const SUBSTRING_KEYWORDS: [&str; 44] = [
         "amazon",
         "google cloud",
         "microsoft",
@@ -385,6 +657,7 @@ pub fn is_hosting_exit(exit: &Exit) -> bool {
         "cloudflare",
         "fastly",
         "oracle cloud",
+        "ibm cloud",
         "alibaba",
         "aliyun",
         "tencent",
@@ -394,25 +667,240 @@ pub fn is_hosting_exit(exit: &Exit) -> bool {
         "psychz",
         "quadranet",
         "colocrossing",
+        "velocity servers",
+        "hurricane electric",
+        "hostpapa",
+        "hostinger",
         "scaleway",
+        "online s.a.s",
         "upcloud",
         "kamatera",
         "bandwagon",
         "it7 networks",
         "hostwinds",
         "racknerd",
+        "wholesale internet",
+        "data center",
+        "cloud network",
+        "hosting network",
+        "dedicated network",
     ];
-    const EXTRA_KEYWORDS: [&str; 6] = [
+    const EXTRA_KEYWORDS: [&str; 11] = [
         "frantech",
         "cloudie",
         "ceranetworks",
         "datacenter",
         "hosting",
+        "colocation",
+        "softlayer",
+        "glesys",
+        "internap",
         "server",
+        "servers",
     ];
-    WORD_KEYWORDS.iter().any(|kw| contains_ascii_word(&text, kw))
+    if WORD_KEYWORDS.iter().any(|kw| contains_ascii_word(&text, kw))
         || SUBSTRING_KEYWORDS.iter().any(|kw| text.contains(kw))
         || EXTRA_KEYWORDS.iter().any(|kw| contains_ascii_word(&text, kw))
+    {
+        return true;
+    }
+    if !is_google_fiber && text.contains("google llc") {
+        return true;
+    }
+    exit.hosting == Some(true)
+}
+
+pub fn is_residential_isp_exit(exit: &Exit) -> bool {
+    if is_hosting_exit(exit) {
+        return false;
+    }
+    let asn_num = parse_asn_number(exit.asn.as_deref()).or_else(|| parse_asn_number(Some(&exit.isp)));
+    if let Some(num) = asn_num {
+        if RESIDENTIAL_ASNS.contains(&num) {
+            return true;
+        }
+    }
+    let text = format!(" {} ", exit.isp.to_ascii_lowercase());
+    const RES_WORDS: &[&str] = &[
+        "rcn",
+        "astound",
+        "comcast",
+        "xfinity",
+        "charter",
+        "spectrum",
+        "verizon",
+        "fios",
+        "cellco",
+        "uunet",
+        "cox",
+        "optimum",
+        "altice",
+        "cablevision",
+        "suddenlink",
+        "frontier",
+        "centurylink",
+        "qwest",
+        "windstream",
+        "kinetic",
+        "mediacom",
+        "breezeline",
+        "wideopenwest",
+        "knology",
+        "sparklight",
+        "ziply",
+        "fidium",
+        "brightspeed",
+        "midco",
+        "armstrong",
+        "altafiber",
+        "metronet",
+        "starry",
+        "hinet",
+        "chunghwa",
+        "netvigator",
+        "hkbn",
+        "pccw",
+        "hkt",
+        "kddi",
+        "softbank",
+        "ocn",
+        "singtel",
+        "starhub",
+        "rogers",
+        "telus",
+        "starlink",
+    ];
+    const RES_PHRASES: &[&str] = &[
+        "rcn corporation",
+        "rcn telecom",
+        "astound broadband",
+        "wave broadband",
+        "grande communications",
+        "time warner cable",
+        "bright house",
+        "at&t",
+        "bellsouth",
+        "sbc internet",
+        "quantum fiber",
+        "atlantic broadband",
+        "wow! internet",
+        "cable one",
+        "google fiber",
+        "sonic.net",
+        "sonic telecom",
+        "consolidated communications",
+        "tds telecom",
+        "cincinnati bell",
+        "ting fiber",
+        "ting internet",
+        "hawaiian telcom",
+        "gci communications",
+        "gci communication",
+        "general communication",
+        "mci communications",
+        "t-mobile",
+        "ntt communications",
+        "ntt docomo",
+        "so-net",
+        "british telecom",
+        "bt group",
+        "virgin media",
+        "sky broadband",
+        "sky uk",
+        "deutsche telekom",
+        "free sas",
+        "proxad",
+        "bell canada",
+    ];
+    RES_WORDS.iter().any(|kw| contains_ascii_word(&text, kw))
+        || RES_PHRASES.iter().any(|kw| contains_ascii_word(&text, kw))
+}
+
+pub fn classify_exit(exit: &Exit) -> ExitKind {
+    if is_hosting_exit(exit) {
+        ExitKind::Hosting
+    } else if is_residential_isp_exit(exit) || exit.hosting == Some(false) {
+        ExitKind::ResidentialIsp
+    } else {
+        ExitKind::Unknown
+    }
+}
+
+fn canonical_residential_alias(isp_lower: &str, asn_num: Option<u32>) -> Option<&'static str> {
+    if (asn_num == Some(6079) || contains_ascii_word(isp_lower, "rcn"))
+        && !isp_lower.contains("astound")
+    {
+        return Some("Astound Broadband");
+    }
+    if (asn_num == Some(11404) || isp_lower.contains("wave broadband"))
+        && !isp_lower.contains("astound")
+    {
+        return Some("Astound");
+    }
+    if asn_num == Some(7922) && isp_lower.contains("comcast") && !isp_lower.contains("xfinity") {
+        return Some("Xfinity");
+    }
+    if matches!(asn_num, Some(20115 | 10796 | 11351 | 11426 | 11427 | 12271 | 20001 | 33363))
+        && (isp_lower.contains("charter") || isp_lower.contains("time warner") || isp_lower.contains("bright house"))
+        && !isp_lower.contains("spectrum")
+    {
+        return Some("Spectrum");
+    }
+    if asn_num == Some(701) && isp_lower.contains("verizon") && !isp_lower.contains("fios") {
+        return Some("Fios");
+    }
+    None
+}
+
+pub fn format_exit_isp_label(exit: &Exit) -> String {
+    let base = exit.isp.trim();
+    let asn_clean = exit
+        .asn
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let asn_num = parse_asn_number(asn_clean).or_else(|| parse_asn_number(Some(base)));
+    let padded_lower = format!(" {} ", base.to_ascii_lowercase());
+    let alias = canonical_residential_alias(&padded_lower, asn_num);
+    let has_asn_in_base = asn_clean.is_some_and(|a| {
+        base.to_ascii_uppercase()
+            .contains(&a.to_ascii_uppercase())
+    });
+
+    if base.is_empty() {
+        return match (alias, asn_clean) {
+            (Some(al), Some(a)) => format!("{al} ({a})"),
+            (Some(al), None) => al.to_string(),
+            (None, Some(a)) => a.to_string(),
+            (None, None) => String::new(),
+        };
+    }
+
+    let formatted = match (alias, asn_clean.filter(|_| !has_asn_in_base)) {
+        (Some(al), Some(a)) => format!("{base} ({al} · {a})"),
+        (Some(al), None) => format!("{base} ({al})"),
+        (None, Some(a)) => format!("{base} ({a})"),
+        (None, None) => base.to_string(),
+    };
+    if formatted.len() < 280 {
+        formatted
+    } else {
+        base.to_string()
+    }
+}
+
+pub fn apply_builtin_classification(exit: &mut Exit) {
+    if is_hosting_exit(exit) {
+        exit.hosting = Some(true);
+        exit.hosting_error = None;
+        exit.isp = format_exit_isp_label(exit);
+    } else if is_residential_isp_exit(exit) {
+        if exit.hosting.is_none() {
+            exit.hosting = Some(false);
+            exit.hosting_error = None;
+        }
+        exit.isp = format_exit_isp_label(exit);
+    }
 }
 #[derive(Serialize)]
 pub struct Check {
@@ -619,7 +1107,7 @@ pub fn checks(
                 let exit = r.exit.as_ref()?;
                 let isp_ok = if exit.hosting == Some(true) || is_hosting_exit(exit) {
                     Some(false)
-                } else if exit.hosting == Some(false) {
+                } else if exit.hosting == Some(false) || is_residential_isp_exit(exit) {
                     Some(true)
                 } else {
                     None
@@ -646,8 +1134,10 @@ pub fn checks(
             }),
             if let Some(r) = report {
                 if let Some(exit) = r.exit.as_ref() {
-                    let isp_tag = if is_hosting_exit(exit) {
+                    let isp_tag = if exit.hosting == Some(true) || is_hosting_exit(exit) {
                         "IDC 机房（高风控）"
+                    } else if is_residential_isp_exit(exit) {
+                        "住宅宽带 ISP"
                     } else if exit.hosting == Some(false) {
                         "分类数据源未标记为机房"
                     } else {

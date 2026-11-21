@@ -1,5 +1,5 @@
 // [INPUT]: 受管伴侣浏览器全部运行中资料目录（legacy/profile 与 contexts/*/profile）、各槽位独立 config.json 有效代理/预期国家、本机 TUN/DNS 快照及用户解警/开关动作。
-// [OUTPUT]: 按需激活的多槽位伴侣浏览器断线保护（任一运行槽位为空代理即启用 TUN 监控，逐槽位核验出口国家漂移）、全槽位浏览器关闭、红色告警托盘图标与零后续阻断恢复。
+// [OUTPUT]: 按需激活的多槽位伴侣浏览器断线保护（单快照批量探活受管资料，无受管浏览器时 60s 空闲退避并由 notify_browser_activity 即时唤醒、运行期保持 15s；任一运行槽位为空代理即启用 TUN 监控，逐槽位核验出口国家漂移与不受支持国家首轮即刻熔断，避免受限主机 follow_machine=true 误伤美区出口）、全槽位浏览器关闭、红色告警托盘图标与零后续阻断恢复。
 // [POS]: 伴侣浏览器运行期非阻断守护；无受管浏览器运行时零 ipconfig/HTTP 探测，绝不触碰 claude.exe，重开浏览器自动解警。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -118,13 +118,10 @@ pub(crate) fn clear_alert(app: &tauri::AppHandle) {
 }
 
 pub(crate) fn running_managed_profiles(root: &Path) -> Vec<(String, PathBuf)> {
-    let mut running = Vec::new();
+    let mut candidates = Vec::new();
     let legacy = root.join("profile");
-    if super::profile::check_path(root, &legacy).is_ok()
-        && legacy.is_dir()
-        && super::profile::running(&legacy).unwrap_or(false)
-    {
-        running.push(("legacy".to_string(), legacy));
+    if super::profile::check_path(root, &legacy).is_ok() && legacy.is_dir() {
+        candidates.push(("legacy".to_string(), legacy));
     }
     let contexts = root.join("contexts");
     if let Ok(entries) = fs::read_dir(&contexts) {
@@ -136,16 +133,72 @@ pub(crate) fn running_managed_profiles(root: &Path) -> Vec<(String, PathBuf)> {
                 continue;
             }
             let profile_dir = item.path().join("profile");
-            if super::profile::check_path(root, &profile_dir).is_ok()
-                && profile_dir.is_dir()
-                && super::profile::running(&profile_dir).unwrap_or(false)
-            {
-                running.push((slot, profile_dir));
+            if super::profile::check_path(root, &profile_dir).is_ok() && profile_dir.is_dir() {
+                candidates.push((slot, profile_dir));
             }
         }
     }
+    let mut running = filter_running_profiles(candidates);
     running.sort_by(|a, b| a.0.cmp(&b.0));
     running
+}
+
+/// Windows: one batched Toolhelp snapshot for every candidate profile (cached Chrome probes).
+#[cfg(windows)]
+fn filter_running_profiles(candidates: Vec<(String, PathBuf)>) -> Vec<(String, PathBuf)> {
+    if candidates.is_empty() {
+        return candidates;
+    }
+    let paths: Vec<PathBuf> = candidates.iter().map(|(_, p)| p.clone()).collect();
+    let Ok(flags) = crate::windows::running_chrome_profiles(&paths) else {
+        return Vec::new();
+    };
+    candidates
+        .into_iter()
+        .zip(flags)
+        .filter_map(|(item, running)| running.then_some(item))
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn filter_running_profiles(candidates: Vec<(String, PathBuf)>) -> Vec<(String, PathBuf)> {
+    candidates
+        .into_iter()
+        .filter(|(_, p)| super::profile::running(p).unwrap_or(false))
+        .collect()
+}
+
+// ----- 受管浏览器启动唤醒：空闲 60s 退避期间也能立即进入 15s 守护节奏 -----
+static BROWSER_ACTIVITY: std::sync::OnceLock<std::sync::Arc<tokio::sync::Notify>> =
+    std::sync::OnceLock::new();
+
+fn browser_activity() -> std::sync::Arc<tokio::sync::Notify> {
+    BROWSER_ACTIVITY
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Notify::new()))
+        .clone()
+}
+
+/// Call after launching any managed/companion browser so the idle monitor wakes immediately.
+pub(crate) fn notify_browser_activity() {
+    browser_activity().notify_one();
+}
+
+const ACTIVE_POLL: Duration = Duration::from_secs(15);
+const IDLE_POLL: Duration = Duration::from_secs(60);
+
+/// 15s while any managed browser runs; 60s backoff when none run.
+pub fn monitor_poll_interval(running_managed: usize) -> Duration {
+    if running_managed == 0 {
+        IDLE_POLL
+    } else {
+        ACTIVE_POLL
+    }
+}
+
+/// Sleep for `interval`, returning early when a browser launch is signalled.
+async fn wait_for_next_tick(interval: Duration) {
+    let notify = browser_activity();
+    let _ = tokio::time::timeout(interval, notify.notified()).await;
 }
 
 pub(crate) fn quit_all_managed_profiles(app: &tauri::AppHandle) -> Vec<String> {
@@ -325,10 +378,10 @@ impl MonitorTracker {
         probe_result: Result<&str, &str>,
         is_recheck: bool,
     ) -> ExitProbeAction {
-        let Some(expected) = expected_country.map(str::trim).filter(|s| !s.is_empty()) else {
-            *streak = 0;
-            return ExitProbeAction::Healthy;
-        };
+        let expected_clean = expected_country
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_ascii_uppercase);
         match probe_result {
             Err(_) => {
                 if is_recheck {
@@ -338,7 +391,17 @@ impl MonitorTracker {
             }
             Ok(observed) => {
                 let obs = observed.trim().to_ascii_uppercase();
-                let exp = expected.to_ascii_uppercase();
+                if crate::regions::is_unsupported_exit_country(&obs) {
+                    *streak = 2;
+                    return ExitProbeAction::TriggerCountryDrift {
+                        expected_country: expected_clean.unwrap_or_else(|| "US".into()),
+                        observed_country: obs,
+                    };
+                }
+                let Some(exp) = expected_clean else {
+                    *streak = 0;
+                    return ExitProbeAction::Healthy;
+                };
                 if !obs.is_empty() && obs != exp {
                     *streak = streak.saturating_add(1);
                     if *streak >= 2 {
@@ -379,8 +442,13 @@ fn resolve_slot_registered_country(root: &Path, slot: &str) -> Option<String> {
                 |row| row.get(0),
             )
             .ok();
-        if card_slot.as_deref() == Some(slot) && card.registered_country.is_some() {
-            return card.registered_country;
+        if card_slot.as_deref() == Some(slot) {
+            if let Some(cc) = card
+                .registered_country
+                .filter(|c| !c.trim().is_empty() && !crate::regions::is_unsupported_exit_country(c))
+            {
+                return Some(cc);
+            }
         }
     }
     None
@@ -405,9 +473,23 @@ pub(crate) fn inspect_slot_routes_for_profiles(
                 } else {
                     system_proxy.clone()
                 };
-                let fallback = machine
-                    .and_then(|m| cfg.region(m))
-                    .map(|r| r.country.to_string());
+                let fallback = if cfg.follow_machine {
+                    machine
+                        .and_then(|m| cfg.region(m))
+                        .map(|r| r.country.to_string())
+                        .or_else(|| {
+                            machine.and_then(|m| {
+                                crate::regions::timezone_country(&m.timezone).map(str::to_string)
+                            })
+                        })
+                        .filter(|cc| !crate::regions::is_unsupported_exit_country(cc))
+                } else {
+                    machine
+                        .and_then(|m| cfg.region(m))
+                        .map(|r| r.country.to_string())
+                        .or_else(|| crate::regions::timezone_country(&cfg.timezone).map(str::to_string))
+                        .filter(|cc| !crate::regions::is_unsupported_exit_country(cc))
+                };
                 (effective, fallback)
             }
             Err(_) => (system_proxy.clone(), None),
@@ -466,8 +548,11 @@ fn trigger_kill_switch(
 pub fn spawn_monitor(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut tracker = MonitorTracker::default();
+        // First tick keeps the historical 15s cadence; afterwards idle (0 managed browsers) backs off to 60s.
+        let mut next_interval = ACTIVE_POLL;
         loop {
-            tokio::time::sleep(Duration::from_secs(15)).await;
+            wait_for_next_tick(next_interval).await;
+            next_interval = IDLE_POLL;
 
             let enabled = app
                 .try_state::<super::Browser>()
@@ -479,27 +564,28 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
             }
 
             let snap_app = app.clone();
-            let Some((tun_active, secondary_dns, routes)) =
+            let Some((tun_active, secondary_dns, routes, running_count)) =
                 tauri::async_runtime::spawn_blocking(move || {
                     let Ok(root) = super::root(&snap_app) else {
-                        return (false, false, Vec::new());
+                        return (false, false, Vec::new(), 0);
                     };
                     let profiles = running_managed_profiles(&root);
                     if profiles.is_empty() {
-                        return (false, false, Vec::new());
+                        return (false, false, Vec::new(), 0);
                     }
                     let (tun_active, secondary_dns) =
                         crate::risk_check::system_tun_and_dns_status();
                     let machine = super::config::machine().ok();
                     let routes =
                         inspect_slot_routes_for_profiles(&root, &profiles, machine.as_ref());
-                    (tun_active, secondary_dns, routes)
+                    (tun_active, secondary_dns, routes, profiles.len())
                 })
                 .await
                 .ok()
             else {
                 continue;
             };
+            next_interval = monitor_poll_interval(running_count);
 
             if routes.is_empty() {
                 tracker.reset();
@@ -584,17 +670,12 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                     }
                 }
                 LocalCheckAction::Healthy { should_probe_exit } => {
-                    if should_probe_exit
-                        && routes.iter().any(|r| r.expected_country.is_some())
-                    {
+                    if should_probe_exit && !routes.is_empty() {
                         let mut probe_cache: std::collections::BTreeMap<
                             String,
                             Result<String, String>,
                         > = std::collections::BTreeMap::new();
                         for route in &routes {
-                            if route.expected_country.is_none() {
-                                continue;
-                            }
                             let key = route.effective_proxy.trim().to_string();
                             if !probe_cache.contains_key(&key) {
                                 let res = super::network::probe(&key)
@@ -607,9 +688,6 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                         let mut immediate_drift: Option<(String, String)> = None;
                         let mut recheck_slots: Vec<String> = Vec::new();
                         for route in &routes {
-                            let Some(ref exp_country) = route.expected_country else {
-                                continue;
-                            };
                             let key = route.effective_proxy.trim();
                             let Some(res) = probe_cache.get(key) else {
                                 continue;
@@ -617,7 +695,7 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                             let res_ref = res.as_deref().map_err(|e| e.as_str());
                             match tracker.on_slot_exit_probe(
                                 &route.slot,
-                                Some(exp_country.as_str()),
+                                route.expected_country.as_deref(),
                                 res_ref,
                                 false,
                             ) {
@@ -780,12 +858,48 @@ pub fn browser_kill_switch_set_enabled(
         ks.clone()
     };
     let _ = app.emit("kill-switch-state", &snapshot);
+    if enabled {
+        notify_browser_activity();
+    }
     snapshot
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_monitor_backs_off_and_browser_launch_wakes_it_immediately() {
+        assert_eq!(monitor_poll_interval(0), Duration::from_secs(60));
+        assert_eq!(monitor_poll_interval(1), Duration::from_secs(15));
+        assert_eq!(monitor_poll_interval(4), Duration::from_secs(15));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            // A launch signalled before the wait stores a permit: the 60s idle wait returns at once.
+            notify_browser_activity();
+            let started = std::time::Instant::now();
+            wait_for_next_tick(IDLE_POLL).await;
+            assert!(started.elapsed() < Duration::from_secs(5));
+            // Without a signal the wait honours its interval.
+            let started = std::time::Instant::now();
+            wait_for_next_tick(Duration::from_millis(120)).await;
+            assert!(started.elapsed() >= Duration::from_millis(100));
+        });
+    }
+
+    #[test]
+    fn managed_profile_scan_without_profiles_is_empty() {
+        let root = std::env::temp_dir().join(format!(
+            "claude-local-kill-switch-empty-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&root);
+        assert!(running_managed_profiles(&root).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn state_trigger_dismiss_and_auto_clear_never_block_relaunch() {
@@ -931,6 +1045,22 @@ mod tests {
                 expected_country: "US".into(),
                 observed_country: "DE".into(),
             }
+        );
+
+        // Unsupported exit countries (CN/HK/MO/RU/etc.) trigger immediately on first hit even when expected_country is None!
+        for unsupported in ["CN", "HK", "RU"] {
+            assert_eq!(
+                tracker.on_exit_probe(None, Ok(unsupported), false),
+                ExitProbeAction::TriggerCountryDrift {
+                    expected_country: "US".into(),
+                    observed_country: unsupported.into(),
+                }
+            );
+        }
+        // Supported US exit with expected_country == None (e.g. unaligned CN host with follow_machine=true) stays Healthy.
+        assert_eq!(
+            tracker.on_exit_probe(None, Ok("US"), false),
+            ExitProbeAction::Healthy
         );
     }
 

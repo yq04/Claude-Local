@@ -1,5 +1,5 @@
-// [INPUT]: Bounded Claude Code usage JSONL, identity HMAC keys, private SQLite ledger and optional IANA display timezone.
-// [OUTPUT]: Conserved scoped aggregates, per-account model/effort breakdowns, proven session/activity counts, live HMAC identity registration, historical-only fallback and account-isolated HUD telemetry.
+// [INPUT]: Bounded Claude Code usage JSONL (both `~/.claude/projects` and active/idle `cli-slots/<record_id>/projects`), identity HMAC keys, private SQLite ledger and optional IANA display timezone.
+// [OUTPUT]: Conserved scoped aggregates, per-account model/effort breakdowns, proven session/activity counts, live HMAC identity registration, historical-only fallback, live subagent slot usage attribution and account-isolated HUD telemetry (15s incremental project-ingest throttle).
 // [POS]: Read-only Claude source consumer and pre-switch collection boundary; never writes credentials, Claude configuration, archives or quota ledgers.
 // [PROTOCOL]: Complete-line offsets, zero-open unchanged cursor fast path (no per-file owner query before skip), damaged-cursor caching with warning replay, write-free empty scans, bounded prefix/tail hashes, validated in-process snapshot cache, and v3 object/string cursor effort context live only in the usage ledger; identity database user_version remains 3. See identities/CLAUDE.md.
 use super::{catalog, private};
@@ -29,7 +29,12 @@ mod perf_tests;
 
 const MAX_DEPTH: usize = 6;
 const MAX_LINE_BYTES: usize = 2 * 1024 * 1024;
+const MONITOR_INGEST_INTERVAL_SEC: u64 = 15;
 static USAGE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn monitor_scan_due(clock: u64, last_scan: u64) -> bool {
+    clock.saturating_sub(last_scan) >= MONITOR_INGEST_INTERVAL_SEC
+}
 
 #[derive(Clone, Default, Serialize)]
 pub struct UsageTotals {
@@ -58,6 +63,10 @@ pub struct UsageAccountSummary {
     pub name: String,
     pub email: Option<String>,
     pub current: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub slot_active: bool,
     pub totals: UsageTotals,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<UsageModel>,
@@ -469,6 +478,7 @@ fn bounded_line(reader: &mut BufReader<File>) -> io::Result<Option<(Vec<u8>, boo
     }
 }
 
+#[cfg(test)]
 pub(super) fn parse_file(
     path: &Path,
     file_tag: &str,
@@ -480,6 +490,7 @@ pub(super) fn parse_file(
     Some((size, mtime, complete && offset == size))
 }
 
+#[cfg(test)]
 pub(super) fn parse_file_from(
     path: &Path,
     file_tag: &str,
@@ -492,6 +503,7 @@ pub(super) fn parse_file_from(
     Some((size, mtime, offset, complete))
 }
 
+#[cfg(test)]
 pub(super) fn parse_file_from_with_context(
     path: &Path,
     file_tag: &str,
@@ -593,6 +605,21 @@ fn parse_file_core(
         if line.is_empty() {
             warnings.push("invalid_records".into());
             damaged = true;
+            continue;
+        }
+        let has_byte_seq = |haystack: &[u8], needle: &[u8]| {
+            haystack.windows(needle.len()).any(|w| w == needle)
+        };
+        if line.len() > 1024
+            && !has_byte_seq(&line, b"\"assistant\"")
+            && !has_byte_seq(&line, b"\"effort\"")
+            && !has_byte_seq(&line, b"\"effortLevel\"")
+            && !has_byte_seq(&line, b"\\u")
+        {
+            if serde_json::from_slice::<serde::de::IgnoredAny>(&line).is_err() {
+                warnings.push("invalid_records".into());
+                damaged = true;
+            }
             continue;
         }
         let Ok(obj) = serde_json::from_slice::<Value>(&line) else {
@@ -860,8 +887,9 @@ fn scan_dir(
     }
 }
 
-/// Incrementally ingest `~/.claude/projects` into the ledger. Shared by the statistics
-/// page, the HUD tick and the pre-switch collection; aggregation is left to the caller.
+/// Incrementally ingest `~/.claude/projects` and non-drifted `cli-slots/<record_id>/projects`
+/// into the ledger. Shared by the statistics page, the HUD tick and the pre-switch collection;
+/// aggregation is left to the caller.
 fn ingest_projects(
     conn: &Connection,
     vault: &Path,
@@ -872,12 +900,12 @@ fn ingest_projects(
     ensure_tracking_start(conn, vault, home);
     attribution::observe(conn, vault, home, clock);
     mark_external_gap(conn, vault, home);
+    let known = load_cursors(conn);
     let mut events = HashMap::new();
     let mut cache = Vec::new();
     let projects = home.join(".claude").join("projects");
     if let Ok(meta) = fs::symlink_metadata(&projects) {
-        if meta.is_dir() && private::safe(&projects).is_ok() {
-            let known = load_cursors(conn);
+        if meta.is_dir() && !crate::cleaner::linked(&meta) && private::safe(&projects).is_ok() {
             scan_dir(&projects, 0, &mut events, warnings, &mut cache, &known);
         }
     }
@@ -886,6 +914,96 @@ fn ingest_projects(
     let boundaries = load_boundaries(conn);
     if persist_scan(conn, events, boundaries.as_slice(), &cache).is_err() {
         warnings.push("partial_scan".into());
+    }
+    ingest_live_slots(conn, vault, &known, warnings);
+}
+
+fn ingest_live_slots(
+    conn: &Connection,
+    vault: &Path,
+    known: &HashMap<String, FileCursor>,
+    warnings: &mut Vec<String>,
+) {
+    let Some(slots_root) = vault.parent().map(|app_dir| app_dir.join("cli-slots")) else {
+        return;
+    };
+    let Ok(root_meta) = fs::symlink_metadata(&slots_root) else {
+        return;
+    };
+    if !root_meta.is_dir() || crate::cleaner::linked(&root_meta) || private::safe(&slots_root).is_err() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(&slots_root) else {
+        return;
+    };
+    let Ok(id_db) = identity_db_readonly(vault) else {
+        return;
+    };
+    let mut owner_by_record = HashMap::new();
+    if let Ok(mut stmt) = id_db.prepare(
+        "SELECT id, account_key FROM identities WHERE empty=0 AND account_key IS NOT NULL AND account_key!=''",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            owner_by_record.extend(rows.flatten());
+        }
+    }
+    if owner_by_record.is_empty() {
+        return;
+    }
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(id) = name.to_str() else {
+            continue;
+        };
+        if !super::valid_id(id) {
+            continue;
+        }
+        let Some(acct_key) = owner_by_record.get(id) else {
+            continue;
+        };
+        let slot_dir = entry.path();
+        let Ok(slot_meta) = fs::symlink_metadata(&slot_dir) else {
+            continue;
+        };
+        if !slot_meta.is_dir()
+            || crate::cleaner::linked(&slot_meta)
+            || private::safe(&slot_dir).is_err()
+            || slot_dir.join(".slot-drifted").exists()
+        {
+            continue;
+        }
+        let slot_projects = slot_dir.join("projects");
+        let Ok(proj_meta) = fs::symlink_metadata(&slot_projects) else {
+            continue;
+        };
+        if !proj_meta.is_dir()
+            || crate::cleaner::linked(&proj_meta)
+            || private::safe(&slot_projects).is_err()
+        {
+            continue;
+        }
+        let mut slot_events = HashMap::new();
+        let mut slot_cache = Vec::new();
+        scan_dir(
+            &slot_projects,
+            0,
+            &mut slot_events,
+            warnings,
+            &mut slot_cache,
+            known,
+        );
+        if slot_events.is_empty() && slot_cache.is_empty() {
+            continue;
+        }
+        if persist_scan_with_resolver(conn, slot_events, &slot_cache, false, |_, _| {
+            Some(acct_key.clone())
+        })
+        .is_err()
+        {
+            warnings.push("partial_scan".into());
+        }
     }
 }
 
@@ -1239,16 +1357,40 @@ pub(super) fn persist_scan(
     boundaries: &[(u64, Option<String>)],
     cache: &[CursorUpdate],
 ) -> Result<(), String> {
+    let mut bounds = boundaries.to_vec();
+    bounds.sort_by_key(|b| b.0);
+    persist_scan_with_resolver(conn, events, cache, true, |tx, e| {
+        // Last boundary at or before the event (same as a reverse linear search).
+        let index = bounds.partition_point(|(ts, _)| *ts <= e.ts);
+        let mut owner = index
+            .checked_sub(1)
+            .and_then(|i| bounds[i].1.clone());
+        if owner.is_none() {
+            owner = attribution::session_owner(tx, e);
+        }
+        owner
+    })
+}
+
+fn persist_scan_with_resolver(
+    conn: &Connection,
+    events: HashMap<String, Event>,
+    cache: &[CursorUpdate],
+    update_last_scan: bool,
+    mut resolve_owner: impl FnMut(&Connection, &Event) -> Option<String>,
+) -> Result<(), String> {
     let scanned_at = now();
     if events.is_empty() && cache.is_empty() {
         // Nothing new: avoid a durable (fsync) commit on every HUD tick or page refresh.
         // The in-process marker keeps gap cutoffs exact; the durable value is refreshed
         // at a bounded cadence so a restart only ever moves the cutoff earlier.
-        remember_scan(conn, scanned_at);
-        let stale = persisted_last_scan(conn)
-            .is_none_or(|at| scanned_at.saturating_sub(at) >= LAST_SCAN_PERSIST_SECS);
-        if stale {
-            conn.execute("INSERT INTO meta(key,value) VALUES('last_scan',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[scanned_at.to_string()]).map_err(|_|"usage scan timestamp write failed")?;
+        if update_last_scan {
+            remember_scan(conn, scanned_at);
+            let stale = persisted_last_scan(conn)
+                .is_none_or(|at| scanned_at.saturating_sub(at) >= LAST_SCAN_PERSIST_SECS);
+            if stale {
+                conn.execute("INSERT INTO meta(key,value) VALUES('last_scan',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[scanned_at.to_string()]).map_err(|_|"usage scan timestamp write failed")?;
+            }
         }
         return Ok(());
     }
@@ -1257,17 +1399,8 @@ pub(super) fn persist_scan(
         .map_err(|_| "usage ledger write failed")?;
     let mut sorted: Vec<_> = events.into_values().collect();
     sorted.sort_by_key(|e| e.ts);
-    let mut bounds = boundaries.to_vec();
-    bounds.sort_by_key(|b| b.0);
     for mut e in sorted {
-        // Last boundary at or before the event (same as a reverse linear search).
-        let index = bounds.partition_point(|(ts, _)| *ts <= e.ts);
-        e.account = index
-            .checked_sub(1)
-            .and_then(|i| bounds[i].1.clone());
-        if e.account.is_none() {
-            e.account = attribution::session_owner(&tx, &e);
-        }
+        e.account = resolve_owner(&tx, &e);
         if let Some(message_key) = e.message_key.as_ref() {
             let parent_exists: bool = tx
                 .query_row(
@@ -1305,9 +1438,13 @@ pub(super) fn persist_scan(
         )
         .map_err(|_| "usage cache write failed")?;
     }
-    tx.execute("INSERT INTO meta(key,value) VALUES('last_scan',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[scanned_at.to_string()]).map_err(|_|"usage scan timestamp write failed")?;
+    if update_last_scan {
+        tx.execute("INSERT INTO meta(key,value) VALUES('last_scan',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[scanned_at.to_string()]).map_err(|_|"usage scan timestamp write failed")?;
+    }
     tx.commit().map_err(|_| "usage ledger commit failed")?;
-    remember_scan(conn, scanned_at);
+    if update_last_scan {
+        remember_scan(conn, scanned_at);
+    }
     Ok(())
 }
 
@@ -1537,9 +1674,12 @@ pub(crate) fn monitor_usage(
         return Ok(None);
     };
     let conn = open_ledger(&vault.join("usage.sqlite"))?;
-    attribution::observe(&conn, vault, home, clock);
+    let observed = attribution::observe(&conn, vault, home, clock);
+    if observed.as_deref() != Some(owner.as_str()) {
+        return Ok(None);
+    }
     let scanned = effective_last_scan(&conn).unwrap_or(0);
-    if clock.saturating_sub(scanned) >= 5 {
+    if monitor_scan_due(clock, scanned) {
         // Same complete-line cursors as the statistics page, but ingestion only: the HUD
         // never pays for a full-history aggregation or identity catalog join.
         let mut warnings = Vec::new();
@@ -1548,9 +1688,9 @@ pub(crate) fn monitor_usage(
             "INSERT OR IGNORE INTO meta(key,value) VALUES('tracking_since',?1)",
             [now().to_string()],
         );
-    }
-    if live_account_key(vault, home).as_deref() != Some(owner.as_str()) {
-        return Ok(None);
+        if live_account_key(vault, home).as_deref() != Some(owner.as_str()) {
+            return Ok(None);
+        }
     }
     let mut totals = UsageTotals::default();
     let mut recent_tokens = 0u64;
@@ -1634,6 +1774,39 @@ pub(crate) fn collect_before_switch(vault: &Path, home: &Path, _account_key: Opt
     };
     let mut warnings = Vec::new();
     ingest_projects(&conn, vault, home, now(), &mut warnings);
+}
+
+pub(crate) fn collect_slot_usage(vault: &Path, slot_dir: &Path, account_key: &str) -> usize {
+    if account_key.is_empty() {
+        return 0;
+    }
+    let _guard = USAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let projects = slot_dir.join("projects");
+    let Ok(meta) = fs::symlink_metadata(&projects) else {
+        return 0;
+    };
+    if !meta.is_dir() || crate::cleaner::linked(&meta) || private::safe(&projects).is_err() {
+        return 0;
+    }
+    let ledger_path = vault.join("usage.sqlite");
+    let Ok(conn) = open_ledger(&ledger_path) else {
+        return 0;
+    };
+    let mut events = HashMap::new();
+    let mut warnings = Vec::new();
+    let mut cache = Vec::new();
+    let known = load_cursors(&conn);
+    scan_dir(&projects, 0, &mut events, &mut warnings, &mut cache, &known);
+    let event_count = events.len();
+    if persist_scan_with_resolver(&conn, events, &cache, false, |_, _| {
+        Some(account_key.to_string())
+    })
+    .is_ok()
+    {
+        event_count
+    } else {
+        0
+    }
 }
 
 pub(crate) fn commit_switch_boundary(vault: &Path, home: &Path, account_key: Option<&str>) {
@@ -2001,6 +2174,7 @@ pub(crate) fn read_attribution_config(vault: &Path) -> Result<UsageAttributionCo
     })
 }
 
+#[cfg(test)]
 pub(super) fn read_at(
     vault: &Path,
     home: &Path,
@@ -2011,6 +2185,7 @@ pub(super) fn read_at(
     read_at_with_fallback(vault, home, period, account_id, offset, None)
 }
 
+#[cfg(test)]
 pub(super) fn read_at_with_fallback(
     vault: &Path,
     home: &Path,
@@ -2498,16 +2673,101 @@ fn aggregate_snapshot(
     }
     let mut raw_accounts: Vec<_> = account_map.into_values().collect();
     raw_accounts.extend(unbound_accounts);
+    let manual_subs = super::subscription::read_store(vault);
+    let ledger_root = super::profile::read_ledger_root(vault);
+    let web_metadata_root = super::online::read_metadata_root(vault);
+    let active_slot_ids: HashSet<String> = vault
+        .parent()
+        .filter(|app_data| app_data.join("cli-slots").is_dir())
+        .map(|app_data| {
+            let slots_root = app_data.join("cli-slots");
+            let mut has_session_files = false;
+            let mut active_ids = HashSet::new();
+            if let Ok(entries) = fs::read_dir(&slots_root) {
+                for entry in entries.flatten() {
+                    let Some(id) = entry.file_name().to_str().map(str::to_string) else {
+                        continue;
+                    };
+                    if !super::valid_id(&id) {
+                        continue;
+                    }
+                    let slot_dir = entry.path();
+                    if super::orchestrator::slots::slot_lease_fresh_by_mtime(&slot_dir) {
+                        active_ids.insert(id.clone());
+                    }
+                    if !has_session_files
+                        && slot_dir
+                            .join("sessions")
+                            .read_dir()
+                            .ok()
+                            .is_some_and(|mut d| d.next().is_some())
+                    {
+                        has_session_files = true;
+                    }
+                }
+            }
+            if has_session_files {
+                #[cfg(target_os = "windows")]
+                let procs_res = crate::windows::claude_processes();
+                #[cfg(not(target_os = "windows"))]
+                let procs_res: Result<Vec<crate::cleaner::ClaudeProcess>, String> =
+                    Ok(crate::cleaner::identity::running_processes());
+                if let Ok(procs) = procs_res {
+                    for (id, sessions) in
+                        super::orchestrator::slots::slot_sessions_by_record(app_data, &procs)
+                    {
+                        if !sessions.is_empty() {
+                            active_ids.insert(id);
+                        }
+                    }
+                }
+            }
+            active_ids
+        })
+        .unwrap_or_default();
     let accounts: Vec<UsageAccountSummary> = raw_accounts
         .into_iter()
         .map(|acc| {
             let acc_models = account_models.remove(&acc.id).unwrap_or_default();
             let acc_efforts = account_model_efforts.remove(&acc.id).unwrap_or_default();
+            let plan = summaries.get(&acc.id).and_then(|val| {
+                let mut sum: super::profile::Summary = serde_json::from_value(val.clone()).ok()?;
+                super::profile::apply_parsed_ledger_to_summary(
+                    ledger_root.as_ref(),
+                    &mut sum,
+                    0,
+                    snapshot_now,
+                );
+                super::online::apply_parsed_metadata(
+                    web_metadata_root.as_ref(),
+                    sum.quota_identity.as_deref(),
+                    &mut sum.web,
+                );
+                super::profile::apply_web_plan_tier(&mut sum.plan, &sum.web);
+                super::profile::enforce_plan_quota_limits(
+                    sum.plan.as_deref(),
+                    &mut sum.quota_no_5h_limit,
+                );
+                let mut dummy_exp = None;
+                super::subscription::apply_manual_with_plan(
+                    &manual_subs,
+                    sum.quota_identity.as_deref(),
+                    Some(acc.id.as_str()),
+                    &mut sum.plan,
+                    &mut sum.quota_no_5h_limit,
+                    &mut sum.web,
+                    &mut dummy_exp,
+                );
+                sum.plan
+            });
+            let slot_active = active_slot_ids.contains(&acc.id);
             UsageAccountSummary {
                 id: acc.id,
                 name: acc.name,
                 email: acc.email,
                 current: acc.current,
+                plan,
+                slot_active,
                 totals: acc.totals,
                 models: build_usage_models(acc_models, acc_efforts),
             }
@@ -2597,4 +2857,115 @@ fn aggregate_snapshot(
         warnings,
         attribution,
     })
+}
+
+#[cfg(test)]
+mod bg_perf_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn monitor_usage_throttles_ingest_to_15s_and_single_parse_observe_keeps_projection() {
+        let dir = std::env::temp_dir().join(format!(
+            "claude-local-usage-throttle-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let vault = dir.join("vault");
+        let home = dir.join("home");
+        let project = home.join(".claude/projects/demo");
+        private::directory(&vault).unwrap();
+        private::directory(&project).unwrap();
+        private::write(&vault.join("key.bin"), &[42; 32]).unwrap();
+        fs::write(
+            home.join(".claude.json"),
+            serde_json::json!({
+                "oauthAccount": {
+                    "accountUuid": "synth-uuid-1",
+                    "organizationUuid": "synth-org-1",
+                    "displayName": "Synth User",
+                    "emailAddress": "synth@example.invalid"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let base = now();
+        // Prime the observed login window before the synthetic turns so attribution owns them.
+        let prime = monitor_usage(&vault, &home, base - 30).unwrap().unwrap();
+        assert_eq!(prime.totals.requests, 0);
+        let t0 = {
+            let conn = open_ledger(&vault.join("usage.sqlite")).unwrap();
+            effective_last_scan(&conn).unwrap()
+        };
+        let ts = DateTime::<Utc>::from_timestamp((base - 10) as i64, 0)
+            .unwrap()
+            .to_rfc3339();
+        let jsonl = project.join("sess-1.jsonl");
+        let mut f = File::create(&jsonl).unwrap();
+        writeln!(
+            f,
+            "{}",
+            serde_json::json!({"type":"user","sessionId":"sess-1","parentUuid":null,"timestamp":ts,"message":{"content":"hi"}})
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "{}",
+            serde_json::json!({"type":"assistant","sessionId":"sess-1","timestamp":ts,"requestId":"r1","isSidechain":false,"message":{"id":"m1","model":"claude-sonnet-5-5","usage":{"input_tokens":10,"output_tokens":20}}})
+        )
+        .unwrap();
+        drop(f);
+
+        assert!(!monitor_scan_due(t0 + 14, t0));
+        assert!(monitor_scan_due(t0 + 15, t0));
+
+        let first = monitor_usage(&vault, &home, t0 + 15).unwrap().unwrap();
+        assert_eq!(first.totals.requests, 1);
+        let t1 = {
+            let conn = open_ledger(&vault.join("usage.sqlite")).unwrap();
+            effective_last_scan(&conn).unwrap()
+        };
+
+        // Append a second turn; 5s and 14s after t1 are still within the 15s ingest throttle window.
+        let mut f = fs::OpenOptions::new().append(true).open(&jsonl).unwrap();
+        writeln!(
+            f,
+            "{}",
+            serde_json::json!({"type":"assistant","sessionId":"sess-1","timestamp":ts,"requestId":"r2","isSidechain":false,"message":{"id":"m2","model":"claude-sonnet-5-5","usage":{"input_tokens":30,"output_tokens":40}}})
+        )
+        .unwrap();
+        drop(f);
+
+        let at_5 = monitor_usage(&vault, &home, t1 + 5).unwrap().unwrap();
+        assert_eq!(at_5.totals.requests, 1);
+        let at_14 = monitor_usage(&vault, &home, t1 + 14).unwrap().unwrap();
+        assert_eq!(at_14.totals.requests, 1);
+        let at_15 = monitor_usage(&vault, &home, t1 + 15).unwrap().unwrap();
+        assert_eq!(at_15.totals.requests, 2);
+
+        // Verify single-parse attribution::observe populated display metadata and live_windows.
+        let conn = open_ledger(&vault.join("usage.sqlite")).unwrap();
+        let (name, email): (String, Option<String>) = conn
+            .query_row(
+                "SELECT name,email FROM usage_identities WHERE account_key=?1",
+                [&first.account_key],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Synth User");
+        assert_eq!(email.as_deref(), Some("synth@example.invalid"));
+
+        // Corrupt `.claude.json` drops live key and avoids dirtying usage_identities.
+        fs::write(home.join(".claude.json"), b"{bad json").unwrap();
+        assert!(attribution::observe(&conn, &vault, &home, t1 + 20).is_none());
+        assert!(monitor_usage(&vault, &home, t1 + 20).unwrap().is_none());
+
+        drop(conn);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

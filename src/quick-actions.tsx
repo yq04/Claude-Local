@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Independent identity/browser/system/CLI reads, page icons, locale and local refresh event.
- * [OUTPUT]: Horizontal telemetry strip, scoped failure feedback and compact 2-column workbench action grid across eight destinations.
+ * [OUTPUT]: Horizontal telemetry strip (including pure in-memory pool readiness, Reset Card count & active subagent slots from identities_read), scoped failure feedback and compact 2-column workbench action grid across eight destinations.
  * [POS]: Mounted only on the quick page; actions navigate or refresh guarded reads, never rotate fingerprints, start browsers or change system settings.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -14,6 +14,12 @@ import type {BrowserState} from './browser-model';
 import type {IdentityState} from './identity-model';
 import type {Page} from './navigation';
 import {pageIcons} from './page-icons';
+import {
+  evaluateSmartRelay,
+  getSmartRelayConfig,
+  summarizeRelayPool,
+  type RelayAccountInput,
+} from './smart-relay-model';
 import './quick-setup.css';
 
 type SystemSnapshot = {timezone: string; languages: string[]};
@@ -53,10 +59,67 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
   const browserStatus = t(browser.value?.engine_ready ? browser.value.running ? 'quick.browserRunning' : 'quick.browserReady' : 'quick.browserMissing');
   const cliStatus = t(cli.value?.method ? cli.value.running ? 'quick.cliRunning' : 'quick.cliInstalled' : 'quick.cliMissing');
   const linked = browser.value?.identity_linked ?? browser.value?.identity?.linked;
+  const identityDetail = (() => {
+    const idVal = identity.value;
+    if (!idVal) return '—';
+    const base = t('quick.savedCount', {n: idVal.records.length});
+    const nowSec = Math.floor(Date.now() / 1000);
+    const savedRows = idVal.records.filter(row => !idVal.current.present || row.id !== idVal.active);
+    const poolAccounts: RelayAccountInput[] = [
+      ...(idVal.current.present
+        ? [
+            {
+              id: idVal.active || 'current',
+              name: idVal.current.display_name || 'Current',
+              email: idVal.current.email,
+              plan: idVal.current.plan,
+              auth_status: idVal.current.auth_status,
+              subscription_expires_at: idVal.current.subscription_expires_at,
+              isCurrent: true,
+              listIndex: 0,
+              summary: idVal.current,
+            },
+          ]
+        : []),
+      ...savedRows.map((row, idx) => {
+        const sum = idVal.summaries?.[row.id];
+        return {
+          id: row.id,
+          name: row.name,
+          email: sum?.email,
+          plan: sum?.plan,
+          auth_status: sum?.auth_status,
+          subscription_expires_at: sum?.subscription_expires_at,
+          isCurrent: false,
+          listIndex: idx + 1,
+          summary: sum,
+        };
+      }),
+    ];
+    const poolSummary = summarizeRelayPool(
+      evaluateSmartRelay(poolAccounts, getSmartRelayConfig(), nowSec).candidates,
+      nowSec,
+    );
+    const activeSlotCount = Object.values(idVal.slot_sessions ?? {}).reduce(
+      (sum, list) => sum + (Array.isArray(list) ? list.length : 0),
+      0,
+    );
+    const extras: string[] = [];
+    if (poolAccounts.length > 1 && poolSummary.readyCount > 0) {
+      extras.push(t('quick.poolReadyShort', {ready: poolSummary.readyCount, total: poolSummary.includedCount}));
+    }
+    if (poolSummary.totalManualResetsRemaining > 0) {
+      extras.push(t('relay.resetCardBadge', {count: poolSummary.totalManualResetsRemaining}));
+    }
+    if (activeSlotCount > 0) {
+      extras.push(t('relay.slotLiveCount', {count: activeSlotCount}));
+    }
+    return extras.length > 0 ? `${base} · ${extras.join(' · ')}` : base;
+  })();
   const snapshots = [
     {key: 'browser', label: t('浏览环境'), state: browser, value: browserStatus, detail: t(linked == null ? 'quick.unknown' : linked ? 'quick.browserLinked' : 'quick.browserIndependent')},
     {key: 'system', label: t('电脑环境'), state: system, value: system.value?.timezone || t('quick.unknown'), detail: system.value?.languages.join(' · ') || '—'},
-    {key: 'identity', label: t('身份管理'), state: identity, value: identityStatus, detail: identity.value ? t('quick.savedCount', {n: identity.value.records.length}) : '—'},
+    {key: 'identity', label: t('身份管理'), state: identity, value: identityStatus, detail: identityDetail},
     {key: 'cli', label: 'Claude Code CLI', state: cli, value: cliStatus, detail: cli.value?.version || '—'},
   ];
   const failed = snapshots.filter(({state}) => state.error);
@@ -110,7 +173,8 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
               window.setTimeout(() => {
                 const el = document.querySelector('.claude-residue');
                 if (el instanceof HTMLElement) {
-                  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  const smooth = document.documentElement.dataset.reduceMotion !== 'true';
+                  el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
                   el.focus();
                 }
               }, 100);

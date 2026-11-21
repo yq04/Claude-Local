@@ -311,13 +311,12 @@ pub(super) fn running_core_configs() -> Discovery {
                     let owner_sid = crate::windows::process_sid(process);
                     let owner = core_owner(owner_sid.as_deref(), user);
                     if owner != CoreOwner::Unsupported {
-                        count += 1;
                         let [mut created, mut exited, mut kernel, mut user_time] = [FILETIME {
                             dwLowDateTime: 0,
                             dwHighDateTime: 0,
                         };
                             4];
-                        if GetProcessTimes(
+                        let alive = if GetProcessTimes(
                             process,
                             &mut created,
                             &mut exited,
@@ -325,25 +324,34 @@ pub(super) fn running_core_configs() -> Discovery {
                             &mut user_time,
                         ) != 0
                         {
-                            result.process_stamps.push((
-                                entry.th32ProcessID,
-                                ((created.dwHighDateTime as u64) << 32)
-                                    | created.dwLowDateTime as u64,
-                            ));
+                            if exited.dwLowDateTime == 0 && exited.dwHighDateTime == 0 {
+                                count += 1;
+                                result.process_stamps.push((
+                                    entry.th32ProcessID,
+                                    ((created.dwHighDateTime as u64) << 32)
+                                        | created.dwLowDateTime as u64,
+                                ));
+                                true
+                            } else {
+                                false
+                            }
                         } else {
+                            count += 1;
                             failed = true;
-                        }
+                            true
+                        };
                         // Class 60 copies the command line into our buffer; never reads the PEB/VM.
                         let mut buffer = vec![0usize; 8192];
                         let mut written = 0;
                         let bytes = buffer.len() * std::mem::size_of::<usize>();
-                        if NtQueryInformationProcess(
-                            process,
-                            60,
-                            buffer.as_mut_ptr().cast(),
-                            bytes as u32,
-                            &mut written,
-                        ) >= 0
+                        if alive
+                            && NtQueryInformationProcess(
+                                process,
+                                60,
+                                buffer.as_mut_ptr().cast(),
+                                bytes as u32,
+                                &mut written,
+                            ) >= 0
                         {
                             let command = &*(buffer.as_ptr() as *const Unicode);
                             let start = command.buffer as usize;

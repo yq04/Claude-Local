@@ -19,7 +19,7 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 #[path = "windows_process.rs"]
 mod processes;
-pub(crate) use processes::{browser_runtime, ChildJob};
+pub(crate) use processes::{browser_runtime, running_chrome_profiles, ChildJob};
 pub use processes::{claude_processes, kill_process, rf_browser_quit, rf_browser_running};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;

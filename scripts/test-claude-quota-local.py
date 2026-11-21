@@ -1,5 +1,5 @@
-# [INPUT]: Fictional statusLine payloads, temporary ledgers and bounded Rust subprocess fixtures.
-# [OUTPUT]: Percentage-input validation, independent window persistence and inferred-reset/bridge regressions.
+# [INPUT]: Fictional statusLine payloads, smart_relay_v1.json fixtures, temporary ledgers and bounded Rust subprocess fixtures.
+# [OUTPUT]: Percentage-input validation, independent window persistence, SmartRelay statusLine hints, and inferred-reset/bridge regressions.
 # [POS]: Synthetic quota tests; never open real Claude settings, account data or processes.
 # [PROTOCOL]: Keep scripts/CLAUDE.md aligned with the tested input and writer boundaries.
 """Synthetic ledger tests; never open the real Claude home or application data."""
@@ -951,6 +951,992 @@ class LocalQuotaTests(unittest.TestCase):
             self.assertEqual(synced["quota_7d_fable_used"], 37)
             self.assertEqual(synced["quota_7d_fable_reset_at"], now + 200_000)
             self.assertEqual(synced["refresh_token_expires_at"], now + 86400)
+
+    def test_statusline_harvests_managed_slot_and_honors_bar_flags(self):
+        slot_id = "0123456789abcdef0123456789abcdef"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            slot_dir = app / "cli-slots" / slot_id
+            home.mkdir()
+            slot_dir.mkdir(parents=True)
+            (home / ".claude.json").write_text(
+                json.dumps({"oauthAccount": {"accountUuid": "uuid-main", "emailAddress": "main@example.invalid", "displayName": "MainAcct"}}),
+                encoding="utf-8",
+            )
+            slot_cj_raw = json.dumps({
+                "oauthAccount": {
+                    "accountUuid": "uuid-slot",
+                    "emailAddress": "slot@example.invalid",
+                    "displayName": "SlotTwo",
+                }
+            })
+            (slot_dir / ".claude.json").write_text(slot_cj_raw, encoding="utf-8")
+            now = int(datetime.now(timezone.utc).timestamp())
+            payload = {
+                "model": {"display_name": "Opus 4.7"},
+                "effort": {"level": "high"},
+                "context_window": {"used_percentage": 42},
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 25, "resets_at": now + 3600},
+                    "seven_day": {"used_percentage": 40, "resets_at": now + 86400},
+                },
+            }
+
+            env = {"USERPROFILE": str(home), "APPDATA": str(appdata), "CLAUDE_CONFIG_DIR": str(slot_dir)}
+            buf = io.StringIO()
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                    contextlib.redirect_stdout(buf):
+                quota.handle_statusline()
+            out = buf.getvalue().strip()
+            self.assertEqual(out, "⚡ Slot·SlotTwo │ Opus 4.7 (Ctx 42%) │ 5h 25% · 7d 40%")
+
+            accounts = quota.load_ledger(str(app))["accounts"]
+            self.assertIn("slot@example.invalid", accounts)
+            self.assertNotIn("main@example.invalid", accounts)
+            self.assertEqual(accounts["slot@example.invalid"]["quota_5h_used"], 25)
+            self.assertEqual(accounts["slot@example.invalid"]["quota_7d_used"], 40)
+            self.assertEqual((slot_dir / ".claude.json").read_text(encoding="utf-8"), slot_cj_raw)
+
+            buf_nobar = io.StringIO()
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline", "--no-quota-bar"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                    contextlib.redirect_stdout(buf_nobar):
+                quota.handle_statusline()
+            nobar_out = buf_nobar.getvalue().strip()
+            self.assertEqual(nobar_out, "⚡ Slot·SlotTwo │ Opus 4.7 · High (Ctx 42%)")
+            self.assertNotIn("5h ", nobar_out)
+
+            buf_quiet = io.StringIO()
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline", "--quiet"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                    contextlib.redirect_stdout(buf_quiet):
+                quota.handle_statusline()
+            self.assertEqual(buf_quiet.getvalue(), "")
+
+    def test_managed_slot_preserves_manual_resets_grants_in_sqlite(self):
+        slot_id = "fedcba9876543210fedcba9876543210"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            vault = app / "identity-vault"
+            slot_dir = app / "cli-slots" / slot_id
+            home.mkdir()
+            vault.mkdir(parents=True)
+            slot_dir.mkdir(parents=True)
+
+            now = int(datetime.now(timezone.utc).timestamp())
+            acc_obj = {"accountUuid": "uuid-reset", "emailAddress": "reset-slot@example.invalid", "displayName": "ResetSlot"}
+            q_ident = quota.quota_identity(acc_obj)
+            (slot_dir / ".claude.json").write_text(json.dumps({"oauthAccount": acc_obj}), encoding="utf-8")
+
+            grants = [
+                {"resets_left": 2, "ends_at": now + 172800},
+                {"resets_left": 1, "ends_at": None},
+            ]
+            db_path = vault / "identities.sqlite"
+            conn = sqlite3.connect(str(db_path))
+            conn.executescript(
+                "CREATE TABLE identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, empty INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE identity_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);"
+            )
+            conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, 'Card-Reset', 0)", (slot_id,))
+            seeded = {
+                "display_name": "ResetSlot",
+                "email": "reset-slot@example.invalid",
+                "plan": "Pro",
+                "quota_identity": q_ident,
+                "proxy": "http://127.0.0.1:7899",
+                "manual_resets_remaining": 3,
+                "manual_resets_valid_until": now + 3600,
+                "manual_resets_grant_ends_at": now + 172800,
+                "manual_resets_grants": grants,
+                "manual_resets_observed_at_ms": now * 1000,
+            }
+            conn.execute("INSERT INTO identity_summaries(id, summary) VALUES(?, ?)", (slot_id, json.dumps(seeded)))
+            conn.commit()
+            conn.close()
+
+            payload = {
+                "model": {"display_name": "Sonnet 5.5"},
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 61, "resets_at": now + 7200},
+                    "seven_day": {"used_percentage": 88, "resets_at": now + 259200},
+                },
+            }
+            env = {"USERPROFILE": str(home), "APPDATA": str(appdata), "CLAUDE_CONFIG_DIR": str(slot_dir)}
+            buf = io.StringIO()
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                    contextlib.redirect_stdout(buf):
+                quota.handle_statusline()
+            self.assertEqual(buf.getvalue().strip(), "⚡ Slot·Card-Reset │ Sonnet 5.5 │ 5h 61% · 7d 88%")
+
+            conn = sqlite3.connect(str(db_path))
+            synced = json.loads(conn.execute("SELECT summary FROM identity_summaries WHERE id=?", (slot_id,)).fetchone()[0])
+            conn.close()
+            self.assertEqual(synced["quota_5h_used"], 61)
+            self.assertEqual(synced["quota_7d_used"], 88)
+            self.assertEqual(synced["manual_resets_remaining"], 3)
+            self.assertEqual(synced["manual_resets_valid_until"], now + 3600)
+            self.assertEqual(synced["manual_resets_grant_ends_at"], now + 172800)
+            self.assertEqual(synced["manual_resets_grants"], grants)
+            self.assertEqual(synced["manual_resets_observed_at_ms"], now * 1000)
+
+    def test_external_non_slot_relay_returns_early_without_writing_ledger(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            ext_dir = root / "external-relay"
+            bad_slot_dir = app / "cli-slots" / "NOT-A-HEX-ID"
+            home.mkdir()
+            app.mkdir(parents=True)
+            ext_dir.mkdir()
+            bad_slot_dir.mkdir(parents=True)
+            now = int(datetime.now(timezone.utc).timestamp())
+            payload = {
+                "model": {"display_name": "Opus 4.7"},
+                "context_window": {"used_percentage": 15},
+                "cost": {"total_cost_usd": 1.25},
+                "rate_limits": {"five_hour": {"used_percentage": 50, "resets_at": now + 3600}},
+            }
+            for target_dir in (ext_dir, bad_slot_dir):
+                with self.subTest(target_dir=target_dir.name):
+                    buf = io.StringIO()
+                    env = {"USERPROFILE": str(home), "APPDATA": str(appdata), "CLAUDE_CONFIG_DIR": str(target_dir)}
+                    with patch.dict(os.environ, env, clear=True), \
+                            patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                            patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                            contextlib.redirect_stdout(buf):
+                        quota.handle_statusline()
+                    self.assertEqual(buf.getvalue().strip(), "🔗 Relay │ Opus 4.7 │ Ctx 15% │ $1.25")
+                    self.assertFalse((app / "quota_ledger.json").exists())
+
+    def test_managed_slot_rejects_symlink_or_reparse_point(self):
+        slot_id = "0123456789abcdef0123456789abcdef"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            slots_root = app / "cli-slots"
+            slot_dir = slots_root / slot_id
+            home.mkdir()
+            slot_dir.mkdir(parents=True)
+            (home / ".claude.json").write_text(
+                json.dumps({"oauthAccount": {"accountUuid": "uuid-main", "emailAddress": "main@example.invalid"}}),
+                encoding="utf-8",
+            )
+            secret_target = root / "outside-claude.json"
+            secret_target.write_text(
+                json.dumps({"oauthAccount": {"accountUuid": "uuid-evil", "emailAddress": "evil@example.invalid"}}),
+                encoding="utf-8",
+            )
+
+            # 1. Reparse-point rejection via NTFS FILE_ATTRIBUTE_REPARSE_POINT on cli-slots and .claude.json
+            real_lstat = Path.lstat
+            for suspect in (slots_root, slot_dir / ".claude.json"):
+                if suspect.name == ".claude.json" and not suspect.exists():
+                    suspect.write_text(secret_target.read_text(encoding="utf-8"), encoding="utf-8")
+
+                class _FakeStat:
+                    def __init__(self, base):
+                        self.st_mode = base.st_mode
+                        self.st_file_attributes = getattr(base, "st_file_attributes", 0) | quota._REPARSE_ATTR
+
+                def fake_lstat(self_path, _real=real_lstat, _suspect=suspect):
+                    res = _real(self_path)
+                    if os.path.normcase(os.path.abspath(str(self_path))) == os.path.normcase(os.path.abspath(str(_suspect))):
+                        return _FakeStat(res)
+                    return res
+
+                with self.subTest(reparse_target=suspect.name):
+                    now = int(datetime.now(timezone.utc).timestamp())
+                    payload = {
+                        "model": {"display_name": "Opus 4.7"},
+                        "rate_limits": {"five_hour": {"used_percentage": 55, "resets_at": now + 3600}},
+                    }
+                    buf = io.StringIO()
+                    env = {"USERPROFILE": str(home), "APPDATA": str(appdata), "CLAUDE_CONFIG_DIR": str(slot_dir)}
+                    with patch.object(Path, "lstat", fake_lstat), \
+                            patch.dict(os.environ, env, clear=True), \
+                            patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                            patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                            contextlib.redirect_stdout(buf):
+                        quota.handle_statusline()
+                    self.assertEqual(buf.getvalue(), "")
+                    self.assertFalse((app / "quota_ledger.json").exists())
+
+            # 2. Real OS symlink check when supported without admin privilege
+            cj_path = slot_dir / ".claude.json"
+            if cj_path.exists():
+                cj_path.unlink()
+            try:
+                os.symlink(secret_target, cj_path)
+            except OSError:
+                return
+            now = int(datetime.now(timezone.utc).timestamp())
+            payload = {
+                "model": {"display_name": "Opus 4.7"},
+                "rate_limits": {"five_hour": {"used_percentage": 75, "resets_at": now + 3600}},
+            }
+            buf = io.StringIO()
+            env = {"USERPROFILE": str(home), "APPDATA": str(appdata), "CLAUDE_CONFIG_DIR": str(slot_dir)}
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                    contextlib.redirect_stdout(buf):
+                quota.handle_statusline()
+            self.assertEqual(buf.getvalue(), "")
+            self.assertFalse((app / "quota_ledger.json").exists())
+
+    def test_statusline_relay_active_hint_honors_threshold_exclusions_cooldown_and_awaiting_reset(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            vault = app / "identity-vault"
+            home.mkdir()
+            vault.mkdir(parents=True)
+            now = int(datetime.now(timezone.utc).timestamp())
+
+            (home / ".claude.json").write_text(
+                json.dumps({
+                    "oauthAccount": {
+                        "accountUuid": "uuid-a",
+                        "emailAddress": "a@example.invalid",
+                        "displayName": "Acct-A",
+                    }
+                }),
+                encoding="utf-8",
+            )
+
+            id_excl = "11111111111111111111111111111111"
+            id_cool = "22222222222222222222222222222222"
+            id_await = "33333333333333333333333333333333"
+            id_good = "44444444444444444444444444444444"
+
+            db_path = vault / "identities.sqlite"
+            conn = sqlite3.connect(str(db_path))
+            conn.executescript(
+                "CREATE TABLE identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, empty INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE identity_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);"
+            )
+            for rid, rname, remail, resets_rem in (
+                (id_excl, "Excluded-Peer", "excl@example.invalid", 0),
+                (id_cool, "Cooldown-Peer", "cool@example.invalid", 0),
+                (id_await, "AwaitingReset-Peer", "await@example.invalid", 2),
+                (id_good, "Healthy-Peer", "good@example.invalid", 0),
+            ):
+                conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, ?, 0)", (rid, rname))
+                conn.execute(
+                    "INSERT INTO identity_summaries(id, summary) VALUES(?, ?)",
+                    (rid, json.dumps({"email": remail, "manual_resets_remaining": resets_rem})),
+                )
+            conn.commit()
+            conn.close()
+
+            def make_entry(uuid_s: str, email_s: str, u5: int, u7: int) -> dict:
+                return {
+                    "account_uuid": uuid_s,
+                    "quota_identity": quota.quota_identity({"accountUuid": uuid_s, "emailAddress": email_s}),
+                    "quota_source": "server_anchor",
+                    "quota_5h_source": "server_anchor",
+                    "quota_7d_source": "server_anchor",
+                    "quota_5h_observed_at_ms": now * 1000,
+                    "quota_7d_observed_at_ms": now * 1000,
+                    "auth_status": "valid",
+                    "quota_5h_used": u5,
+                    "quota_5h_reset_at": now + 3600,
+                    "quota_7d_used": u7,
+                    "quota_7d_reset_at": now + 86400,
+                    "server_anchor": {"accountUuid": uuid_s, "fetchedAtMs": now * 1000},
+                }
+
+            (app / "quota_ledger.json").write_text(
+                json.dumps({
+                    "accounts": {
+                        "excl@example.invalid": make_entry("uuid-excl", "excl@example.invalid", 0, 5),
+                        "cool@example.invalid": make_entry("uuid-cool", "cool@example.invalid", 5, 10),
+                        "await@example.invalid": make_entry("uuid-await", "await@example.invalid", 10, 96),
+                        "good@example.invalid": make_entry("uuid-good", "good@example.invalid", 15, 25),
+                    }
+                }),
+                encoding="utf-8",
+            )
+
+            # spentThresholdPct=95 -> await@example.invalid (used_7d=96, resets=2) is awaitingManualReset!
+            (app / "smart_relay_v1.json").write_text(
+                json.dumps({
+                    "schema": 1,
+                    "enabled": True,
+                    "spentThresholdPct": 95,
+                    "autoContinueOnRelay": False,
+                    "excludedAccountIds": [id_excl],
+                    "cooldownUntilSec": {id_cool: now + 900},
+                }),
+                encoding="utf-8",
+            )
+
+            payload_95 = {
+                "model": {"display_name": "Opus 4.7"},
+                "context_window": {"used_percentage": 40},
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 95, "resets_at": now + 3600},
+                    "seven_day": {"used_percentage": 50, "resets_at": now + 86400},
+                },
+            }
+
+            # 1. Manual /exit mode (autoContinueOnRelay=False) at 95% -> skips Excluded, Cooldown, and AwaitingReset
+            buf_manual = io.StringIO()
+            env_manual = {
+                "USERPROFILE": str(home),
+                "APPDATA": str(appdata),
+                "CLAUDE_LOCAL_RELAY_ACTIVE": "1",
+                "CLAUDE_LOCAL_RELAY_THRESHOLD": "95",
+            }
+            with patch.dict(os.environ, env_manual, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload_95))), \
+                    contextlib.redirect_stdout(buf_manual):
+                quota.handle_statusline()
+            out_manual = buf_manual.getvalue().strip()
+            self.assertIn("🔄 /exit 切[Healthy-Peer]", out_manual)
+            self.assertNotIn("切[Excluded-Peer]", out_manual)
+            self.assertNotIn("切[Cooldown-Peer]", out_manual)
+            self.assertNotIn("切[AwaitingReset-Peer]", out_manual)
+
+            # 2. Auto-continue mode (autoContinueOnRelay=True) -> shows 🔄 接力就绪→[Healthy-Peer]
+            (app / "smart_relay_v1.json").write_text(
+                json.dumps({
+                    "schema": 1,
+                    "enabled": True,
+                    "spentThresholdPct": 95,
+                    "autoContinueOnRelay": True,
+                    "excludedAccountIds": [id_excl],
+                    "cooldownUntilSec": {id_cool: now + 900},
+                }),
+                encoding="utf-8",
+            )
+            buf_auto = io.StringIO()
+            with patch.dict(os.environ, env_manual, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload_95))), \
+                    contextlib.redirect_stdout(buf_auto):
+                quota.handle_statusline()
+            self.assertIn("🔄 接力就绪→[Healthy-Peer]", buf_auto.getvalue().strip())
+
+    def test_free_and_pro_downgrade_never_get_stamped_pro_or_retain_sticky_ultra_no_5h(self):
+        now = int(datetime.now(timezone.utc).timestamp())
+        now_dt = datetime.fromtimestamp(now, timezone.utc)
+        cj = {"oauthAccount": {"accountUuid": "uuid-down", "emailAddress": "down@example.invalid", "organizationUuid": "org-d"}}
+        # Stale rateLimitTier="5x" with explicit subscriptionType="free" or "pro" must honor subscriptionType
+        self.assertEqual(
+            quota.format_account(cj, {"claudeAiOauth": {"subscriptionType": "free", "rateLimitTier": "5x"}}, [], None, now_dt)["plan"],
+            "Free",
+        )
+        self.assertEqual(
+            quota.format_account(cj, {"claudeAiOauth": {"subscriptionType": "pro", "rateLimitTier": "20x"}}, [], None, now_dt)["plan"],
+            "Pro",
+        )
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            vault = app / "identity-vault"
+            (home / ".claude").mkdir(parents=True)
+            vault.mkdir(parents=True)
+            ident_id = "99999999999999999999999999999999"
+            fp = quota.quota_identity(cj["oauthAccount"])
+
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            conn.executescript(
+                "CREATE TABLE identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, empty INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE identity_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);"
+            )
+            conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, 'DownCard', 0)", (ident_id,))
+            conn.execute(
+                "INSERT INTO identity_summaries(id, summary) VALUES(?, ?)",
+                (ident_id, json.dumps({"email": "down@example.invalid", "quota_identity": fp, "plan": "Ultra", "quota_no_5h_limit": True})),
+            )
+            conn.commit()
+            conn.close()
+
+            # Seed ledger as Ultra with no_five_hour=True
+            (app / "quota_ledger.json").write_text(
+                json.dumps({
+                    "accounts": {
+                        "down@example.invalid": {
+                            "email": "down@example.invalid",
+                            "account_uuid": "uuid-down",
+                            "organization_uuid": "org-d",
+                            "quota_identity": fp,
+                            "plan": "Ultra",
+                            "quota_no_5h_limit": True,
+                            "quota_7d_used": 30,
+                            "quota_7d_reset_at": now + 86400,
+                            "quota_7d_source": "server_anchor",
+                            "quota_7d_observed_at_ms": (now - 60) * 1000,
+                            "server_anchor": {
+                                "accountUuid": "uuid-down",
+                                "fetchedAtMs": (now - 60) * 1000,
+                                "no_five_hour": True,
+                                "utilization": {"seven_day": {"utilization": 30, "resets_at": now + 86400, "fetchedAtMs": (now - 60) * 1000}},
+                            },
+                        }
+                    }
+                }),
+                encoding="utf-8",
+            )
+
+            # User downgrades to Free in CLI and triggers statusLine
+            (home / ".claude.json").write_text(json.dumps(cj), encoding="utf-8")
+            (home / ".claude" / ".credentials.json").write_text(
+                json.dumps({"claudeAiOauth": {"subscriptionType": "free"}}),
+                encoding="utf-8",
+            )
+            payload = {
+                "model": {"display_name": "Sonnet 4.6"},
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 25, "resets_at": now + 3600},
+                    "seven_day": {"used_percentage": 35, "resets_at": now + 86400},
+                },
+            }
+            with patch.dict(os.environ, {"USERPROFILE": str(home), "APPDATA": str(appdata)}, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline", "--quiet"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))):
+                quota.handle_statusline()
+
+            entry = quota.load_ledger(str(app))["accounts"]["down@example.invalid"]
+            self.assertEqual(entry["plan"], "Free")
+            self.assertFalse(entry["quota_no_5h_limit"])
+            self.assertNotIn("no_five_hour", entry["server_anchor"])
+
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            saved_sum = json.loads(conn.execute("SELECT summary FROM identity_summaries WHERE id=?", (ident_id,)).fetchone()[0])
+            conn.close()
+            self.assertEqual(saved_sum["plan"], "Free")
+            self.assertFalse(saved_sum["quota_no_5h_limit"])
+
+            # Verify handle_statusline never treats a downgraded Pro peer or slot with stale no_five_hour as 5h ∞
+            slot_id = "88888888888888888888888888888888"
+            slot_dir = app / "cli-slots" / slot_id
+            slot_dir.mkdir(parents=True)
+            (slot_dir / ".claude.json").write_text(
+                json.dumps({"oauthAccount": {"accountUuid": "uuid-slot-p", "emailAddress": "slotpro@example.invalid"}}),
+                encoding="utf-8",
+            )
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, 'SlotPro', 0)", (slot_id,))
+            conn.execute(
+                "INSERT INTO identity_summaries(id, summary) VALUES(?, ?)",
+                (slot_id, json.dumps({"email": "slotpro@example.invalid", "plan": "Pro", "quota_no_5h_limit": False})),
+            )
+            conn.commit()
+            conn.close()
+            (app / "quota_ledger.json").write_text(
+                json.dumps({
+                    "updated_at": now_dt.isoformat(),
+                    "accounts": {
+                        "slotpro@example.invalid": {
+                            "email": "slotpro@example.invalid",
+                            "plan": "Pro",
+                            "quota_no_5h_limit": True,
+                            "quota_7d_used": 40,
+                            "quota_7d_reset_at": now + 86400,
+                            "quota_7d_source": "server_anchor",
+                            "quota_7d_observed_at_ms": now * 1000,
+                            "server_anchor": {"accountUuid": "uuid-slot-p", "fetchedAtMs": now * 1000, "no_five_hour": True},
+                        }
+                    },
+                }),
+                encoding="utf-8",
+            )
+            slot_buf = io.StringIO()
+            slot_payload = {
+                "model": {"display_name": "Sonnet 4.6"},
+                "rate_limits": {"seven_day": {"used_percentage": 40, "resets_at": now + 86400}},
+            }
+            with patch.dict(os.environ, {"USERPROFILE": str(home), "APPDATA": str(appdata), "CLAUDE_CONFIG_DIR": str(slot_dir)}, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(slot_payload))), \
+                    contextlib.redirect_stdout(slot_buf):
+                quota.handle_statusline()
+            self.assertNotIn("5h ∞", slot_buf.getvalue())
+            self.assertIn("5h --", slot_buf.getvalue())
+
+    def test_rested_5h_preserved_and_strategy_a1_reset_grants_and_active_relay_badge(self):
+        now = int(datetime.now(timezone.utc).timestamp())
+        # Strategy A1 unit checks: expired slice trims against raw_rem when future slice exists,
+        # while all-expired slices still keep positive manual_resets_remaining per Strategy A1.
+        self.assertEqual(
+            quota._active_reset_cards_a1(
+                {
+                    "manual_resets_remaining": 3,
+                    "manual_resets_grants": [
+                        {"resets_left": 2, "ends_at": now - 10},
+                        {"resets_left": 1, "ends_at": now + 3600},
+                    ],
+                },
+                now,
+            ),
+            1,
+        )
+        self.assertEqual(
+            quota._active_reset_cards_a1(
+                {
+                    "manual_resets_remaining": 2,
+                    "manual_resets_grants": [{"resets_left": 2, "ends_at": now - 10}],
+                },
+                now,
+            ),
+            2,
+        )
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            vault = app / "identity-vault"
+            home.mkdir()
+            vault.mkdir(parents=True)
+            id_act = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            id_locked = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            id_pref = "cccccccccccccccccccccccccccccccc"
+            fp_act = quota.quota_identity({"accountUuid": "uuid-act", "emailAddress": "act@example.invalid"})
+
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            conn.executescript(
+                "CREATE TABLE state(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                "CREATE TABLE identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, archive TEXT NOT NULL DEFAULT '', saved_at INTEGER NOT NULL DEFAULT 0, empty INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE identity_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);"
+            )
+            conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, 'Card-Active', 0)", (id_act,))
+            conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, 'Card-NoReturn', 0)", (id_locked,))
+            conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, 'Card-Preferred', 0)", (id_pref,))
+            conn.execute(
+                "INSERT INTO identity_summaries(id, summary) VALUES(?, ?)",
+                (id_act, json.dumps({"email": "act@example.invalid", "quota_identity": fp_act, "plan": "Pro", "quota_5h_rested": True})),
+            )
+            conn.execute("INSERT INTO identity_summaries(id, summary) VALUES(?, ?)", (id_locked, json.dumps({"email": "locked@example.invalid", "plan": "Pro"})))
+            conn.execute("INSERT INTO identity_summaries(id, summary) VALUES(?, ?)", (id_pref, json.dumps({"email": "pref@example.invalid", "plan": "Pro"})))
+            conn.commit()
+            conn.close()
+
+            # Syncing rested account without 5h anchor preserves quota_5h_rested=True in SQLite
+            quota.save_ledger_and_sync_sqlite(
+                str(app),
+                str(vault),
+                [{
+                    "id": id_act,
+                    "role": "saved",
+                    "email": "act@example.invalid",
+                    "account_uuid": "uuid-act",
+                    "quota_identity": fp_act,
+                    "plan": "Pro",
+                    "used_5h": None,
+                    "quota_5h_source": "unknown",
+                    "used_7d": 20,
+                    "reset_7d_ts": now + 86400,
+                    "quota_7d_source": "server_anchor",
+                    "quota_7d_observed_at_ms": now * 1000,
+                    "server_anchor": {"accountUuid": "uuid-act", "fetchedAtMs": now * 1000, "utilization": {"seven_day": {"utilization": 20, "resets_at": now + 86400, "fetchedAtMs": now * 1000}}},
+                }],
+                datetime.fromtimestamp(now, timezone.utc),
+            )
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            synced_act = json.loads(conn.execute("SELECT summary FROM identity_summaries WHERE id=?", (id_act,)).fetchone()[0])
+            conn.close()
+            self.assertTrue(synced_act.get("quota_5h_rested"))
+
+            # Relay HUD shows active saved card badge and honors noReturnAccountId / preferredAccountId
+            (home / ".claude.json").write_text(
+                json.dumps({"oauthAccount": {"accountUuid": "uuid-act", "emailAddress": "act@example.invalid"}}),
+                encoding="utf-8",
+            )
+            (app / "quota_ledger.json").write_text(
+                json.dumps({
+                    "accounts": {
+                        "locked@example.invalid": {
+                            "account_uuid": "uuid-locked",
+                            "quota_source": "server_anchor",
+                            "quota_5h_source": "server_anchor",
+                            "quota_7d_source": "server_anchor",
+                            "auth_status": "valid",
+                            "quota_5h_used": 5,
+                            "quota_5h_reset_at": now + 3600,
+                            "quota_7d_used": 10,
+                            "quota_7d_reset_at": now + 7200,
+                            "server_anchor": {"accountUuid": "uuid-locked", "fetchedAtMs": now * 1000},
+                        },
+                        "pref@example.invalid": {
+                            "account_uuid": "uuid-pref",
+                            "quota_source": "server_anchor",
+                            "quota_5h_source": "server_anchor",
+                            "quota_7d_source": "server_anchor",
+                            "auth_status": "valid",
+                            "quota_5h_used": 20,
+                            "quota_5h_reset_at": now + 3600,
+                            "quota_7d_used": 30,
+                            "quota_7d_reset_at": now + 6 * 86400,
+                            "server_anchor": {"accountUuid": "uuid-pref", "fetchedAtMs": now * 1000},
+                        },
+                    }
+                }),
+                encoding="utf-8",
+            )
+            (app / "smart_relay_v1.json").write_text(
+                json.dumps({
+                    "schema": 1,
+                    "enabled": True,
+                    "spentThresholdPct": 95,
+                    "autoContinueOnRelay": True,
+                    "preferredAccountId": id_pref,
+                    "returnToPreferred": True,
+                    "preferredReturnThresholdPct": 80,
+                    "noReturnAccountId": id_locked,
+                    "noReturnUntilSec": now + 1800,
+                }),
+                encoding="utf-8",
+            )
+            buf = io.StringIO()
+            payload = {
+                "model": {"display_name": "Opus 4.7"},
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 96, "resets_at": now + 3600},
+                    "seven_day": {"used_percentage": 40, "resets_at": now + 86400},
+                },
+            }
+            env = {
+                "USERPROFILE": str(home),
+                "APPDATA": str(appdata),
+                "CLAUDE_LOCAL_RELAY_ACTIVE": "1",
+                "CLAUDE_LOCAL_RELAY_THRESHOLD": "95",
+            }
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                    contextlib.redirect_stdout(buf):
+                quota.handle_statusline()
+            hud = buf.getvalue().strip()
+            self.assertTrue(hud.startswith("🔗 Card-Active │ Opus 4.7"))
+            self.assertIn("🔄 接力就绪→[Card-Preferred]", hud)
+
+    def test_statusline_persists_100_pct_exhaustion_without_reset_timestamp(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            vault = app / "identity-vault"
+            home.mkdir()
+            vault.mkdir(parents=True)
+            ident_id = "1234567890abcdef1234567890abcdef"
+            acc_obj = {"accountUuid": "uuid-exh", "emailAddress": "exhausted@example.invalid", "displayName": "ExhAcct"}
+            fp = quota.quota_identity(acc_obj)
+            (home / ".claude.json").write_text(json.dumps({"oauthAccount": acc_obj}), encoding="utf-8")
+
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            conn.executescript(
+                "CREATE TABLE state(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                "CREATE TABLE identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, empty INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE identity_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);"
+            )
+            conn.execute("INSERT INTO state(key, value) VALUES('active', ?)", (ident_id,))
+            conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, 'ExhCard', 0)", (ident_id,))
+            conn.execute(
+                "INSERT INTO identity_summaries(id, summary) VALUES(?, ?)",
+                (ident_id, json.dumps({"email": "exhausted@example.invalid", "quota_identity": fp, "plan": "Pro"})),
+            )
+            conn.commit()
+            conn.close()
+
+            # Live 100% exhaustion with resets_at omitted (None) MUST persist immediately as server_anchor!
+            payload = {
+                "model": {"display_name": "Opus 5.5"},
+                "rate_limits": {"five_hour": {"used_percentage": 100}},
+            }
+            with patch.dict(os.environ, {"USERPROFILE": str(home), "APPDATA": str(appdata)}, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline", "--quiet"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))):
+                quota.handle_statusline()
+
+            entry = quota.load_ledger(str(app))["accounts"]["exhausted@example.invalid"]
+            self.assertEqual(entry["quota_5h_used"], 100)
+            self.assertEqual(entry["quota_5h_source"], "server_anchor")
+            self.assertIsNotNone(entry["quota_5h_observed_at_ms"])
+
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            synced = json.loads(conn.execute("SELECT summary FROM identity_summaries WHERE id=?", (ident_id,)).fetchone()[0])
+            conn.close()
+            self.assertEqual(synced["quota_5h_used"], 100)
+            self.assertEqual(synced["quota_5h_source"], "server_anchor")
+
+    def test_statusline_scenario_g_active_identity_guard_skips_mismatch_persist(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            vault = app / "identity-vault"
+            home.mkdir()
+            vault.mkdir(parents=True)
+            now = int(datetime.now(timezone.utc).timestamp())
+
+            id_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            acc_a = {"accountUuid": "uuid-a", "emailAddress": "a@example.invalid", "displayName": "AcctA"}
+            acc_b = {"accountUuid": "uuid-b", "emailAddress": "b@example.invalid", "displayName": "AcctB"}
+            qi_a = quota.quota_identity(acc_a)
+
+            # SQLite state.active points to Account A (qi_a), while disk ~/.claude.json was externally switched to Account B!
+            (home / ".claude.json").write_text(json.dumps({"oauthAccount": acc_b}), encoding="utf-8")
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            conn.executescript(
+                "CREATE TABLE state(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                "CREATE TABLE identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, empty INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE identity_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);"
+            )
+            conn.execute("INSERT INTO state(key, value) VALUES('active', ?)", (id_a,))
+            conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, 'Card-A', 0)", (id_a,))
+            conn.execute(
+                "INSERT INTO identity_summaries(id, summary) VALUES(?, ?)",
+                (id_a, json.dumps({"email": "a@example.invalid", "quota_identity": qi_a, "plan": "Pro", "quota_5h_used": 10})),
+            )
+            conn.commit()
+            conn.close()
+
+            payload = {
+                "model": {"display_name": "Sonnet 5.5"},
+                "context_window": {"used_percentage": 22},
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 99, "resets_at": now + 3600},
+                    "seven_day": {"used_percentage": 88, "resets_at": now + 86400},
+                },
+            }
+            buf = io.StringIO()
+            with patch.dict(os.environ, {"USERPROFILE": str(home), "APPDATA": str(appdata)}, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                    contextlib.redirect_stdout(buf):
+                quota.handle_statusline()
+
+            # Status bar still prints safely
+            self.assertIn("Sonnet 5.5 (Ctx 22%)", buf.getvalue())
+            # Ledger MUST NOT be written due to Scenario G mismatch guard!
+            self.assertFalse((app / "quota_ledger.json").exists())
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            still_a = json.loads(conn.execute("SELECT summary FROM identity_summaries WHERE id=?", (id_a,)).fetchone()[0])
+            conn.close()
+            self.assertEqual(still_a["quota_5h_used"], 10)
+
+    def test_statusline_p1_8_threshold_85_strict_lt_rested_5h_inferred_7d_qident_dedup_and_default_thresh(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home, appdata = root / "home", root / "appdata"
+            app = appdata / "ai.local.claude-local"
+            vault = app / "identity-vault"
+            home.mkdir()
+            vault.mkdir(parents=True)
+            now = int(datetime.now(timezone.utc).timestamp())
+
+            # Active account shares email with Org-B peer, distinguished by quota_identity!
+            acc_act = {"accountUuid": "uuid-shared", "emailAddress": "shared@example.invalid", "organizationUuid": "org-1"}
+            acc_org2 = {"accountUuid": "uuid-shared", "emailAddress": "shared@example.invalid", "organizationUuid": "org-2"}
+            acc_rested = {"accountUuid": "uuid-rested", "emailAddress": "rested@example.invalid"}
+            acc_inf7 = {"accountUuid": "uuid-inf7", "emailAddress": "inf7@example.invalid"}
+            acc_pref = {"accountUuid": "uuid-pref85", "emailAddress": "pref85@example.invalid"}
+
+            qi_act = quota.quota_identity(acc_act)
+            qi_org2 = quota.quota_identity(acc_org2)
+            qi_rested = quota.quota_identity(acc_rested)
+            qi_inf7 = quota.quota_identity(acc_inf7)
+            qi_pref = quota.quota_identity(acc_pref)
+
+            id_act = "11111111111111111111111111111111"
+            id_org2 = "22222222222222222222222222222222"
+            id_rested = "33333333333333333333333333333333"
+            id_inf7 = "44444444444444444444444444444444"
+            id_pref = "55555555555555555555555555555555"
+
+            (home / ".claude.json").write_text(json.dumps({"oauthAccount": acc_act}), encoding="utf-8")
+
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            conn.executescript(
+                "CREATE TABLE state(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                "CREATE TABLE identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, empty INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE identity_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);"
+            )
+            conn.execute("INSERT INTO state(key, value) VALUES('active', ?)", (id_act,))
+            for rid, rname, sum_obj in (
+                (id_act, "Org1-Active", {"email": "shared@example.invalid", "quota_identity": qi_act, "plan": "Pro"}),
+                (id_org2, "Org2-Peer", {"email": "shared@example.invalid", "quota_identity": qi_org2, "plan": "Pro"}),
+                (id_rested, "Rested5h-Peer", {"email": "rested@example.invalid", "quota_identity": qi_rested, "plan": "Pro", "quota_5h_rested": True}),
+                (id_inf7, "Inf7d-Peer", {"email": "inf7@example.invalid", "quota_identity": qi_inf7, "plan": "Pro"}),
+                (id_pref, "Pref85-Peer", {"email": "pref85@example.invalid", "quota_identity": qi_pref, "plan": "Pro"}),
+            ):
+                conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, ?, 0)", (rid, rname))
+                conn.execute("INSERT INTO identity_summaries(id, summary) VALUES(?, ?)", (rid, json.dumps(sum_obj)))
+            conn.commit()
+            conn.close()
+
+            def write_ledger(pref_u5: int):
+                (app / "quota_ledger.json").write_text(
+                    json.dumps({
+                        "accounts": {
+                            f"shared@example.invalid#{qi_org2}": {
+                                "account_uuid": "uuid-shared",
+                                "organization_uuid": "org-2",
+                                "quota_identity": qi_org2,
+                                "quota_source": "server_anchor",
+                                "quota_5h_source": "server_anchor",
+                                "quota_7d_source": "server_anchor",
+                                "quota_observed_at_ms": now * 1000,
+                                "auth_status": "valid",
+                                "quota_5h_used": 30,
+                                "quota_5h_reset_at": now + 3600,
+                                "quota_7d_used": 40,
+                                "quota_7d_reset_at": now + 3 * 86400,
+                                "server_anchor": {"accountUuid": "uuid-shared", "fetchedAtMs": now * 1000},
+                            },
+                            "rested@example.invalid": {
+                                "account_uuid": "uuid-rested",
+                                "quota_identity": qi_rested,
+                                "quota_5h_source": "unknown",
+                                "quota_7d_source": "server_anchor",
+                                "quota_observed_at_ms": now * 1000,
+                                "auth_status": "valid",
+                                "quota_5h_rested": True,
+                                "quota_7d_used": 25,
+                                "quota_7d_reset_at": now + 4 * 86400,
+                                "server_anchor": {"accountUuid": "uuid-rested", "fetchedAtMs": now * 1000},
+                            },
+                            "inf7@example.invalid": {
+                                "account_uuid": "uuid-inf7",
+                                "quota_identity": qi_inf7,
+                                "quota_5h_source": "server_anchor",
+                                "quota_7d_source": "reset_inferred",
+                                "quota_observed_at_ms": (now - 100) * 1000,
+                                "quota_5h_observed_at_ms": (now - 100) * 1000,
+                                "quota_7d_observed_at_ms": (now - 100) * 1000,
+                                "auth_status": "valid",
+                                "quota_5h_used": 20,
+                                "quota_5h_reset_at": now + 3600,
+                                "quota_7d_used": 0,
+                                "quota_7d_reset_at": now - 10,
+                                "server_anchor": {
+                                    "accountUuid": "uuid-inf7",
+                                    "fetchedAtMs": (now - 100) * 1000,
+                                    "utilization": {
+                                        "five_hour": {"utilization": 20, "resets_at": now + 3600, "fetchedAtMs": (now - 100) * 1000},
+                                        "seven_day": {"utilization": 90, "resets_at": now - 10, "fetchedAtMs": (now - 100) * 1000},
+                                    },
+                                },
+                            },
+                            "pref85@example.invalid": {
+                                "account_uuid": "uuid-pref85",
+                                "quota_identity": qi_pref,
+                                "quota_source": "server_anchor",
+                                "quota_5h_source": "server_anchor",
+                                "quota_7d_source": "server_anchor",
+                                "quota_observed_at_ms": now * 1000,
+                                "auth_status": "valid",
+                                "quota_5h_used": pref_u5,
+                                "quota_5h_reset_at": now + 3600,
+                                "quota_7d_used": 10,
+                                "quota_7d_reset_at": now + 6 * 86400,
+                                "server_anchor": {"accountUuid": "uuid-pref85", "fetchedAtMs": now * 1000},
+                            },
+                            # Duplicate older ledger entry for same quota_identity must be deduplicated
+                            f"pref85@example.invalid#{qi_pref}": {
+                                "account_uuid": "uuid-pref85",
+                                "quota_identity": qi_pref,
+                                "quota_source": "server_anchor",
+                                "quota_5h_source": "server_anchor",
+                                "quota_7d_source": "server_anchor",
+                                "quota_observed_at_ms": (now - 500) * 1000,
+                                "auth_status": "valid",
+                                "quota_5h_used": 99,
+                                "quota_5h_reset_at": now + 3600,
+                                "quota_7d_used": 99,
+                                "quota_7d_reset_at": now + 6 * 86400,
+                                "server_anchor": {"accountUuid": "uuid-pref85", "fetchedAtMs": (now - 500) * 1000},
+                            },
+                        }
+                    }),
+                    encoding="utf-8",
+                )
+
+            (app / "smart_relay_v1.json").write_text(
+                json.dumps({
+                    "schema": 1,
+                    "enabled": True,
+                    "spentThresholdPct": 98,
+                    "autoContinueOnRelay": False,
+                    "preferredAccountId": id_pref,
+                    "returnToPreferred": True,
+                    "preferredReturnThresholdPct": 85,
+                }),
+                encoding="utf-8",
+            )
+            # Confirm _load_smart_relay_filter accepts 85
+            rf = quota._load_smart_relay_filter(str(app), now)
+            self.assertEqual(rf["preferred_return_threshold_pct"], 85)
+
+            # 1. CLAUDE_LOCAL_RELAY_THRESHOLD unset -> defaults to cfg_spent_thresh (98): 96% does NOT trigger relay hint!
+            write_ledger(pref_u5=85)
+            buf_96 = io.StringIO()
+            env_unset = {"USERPROFILE": str(home), "APPDATA": str(appdata), "CLAUDE_LOCAL_RELAY_ACTIVE": "1"}
+            payload_96 = {
+                "model": {"display_name": "Opus 5.5"},
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 96, "resets_at": now + 3600},
+                    "seven_day": {"used_percentage": 20, "resets_at": now + 86400},
+                },
+            }
+            with patch.dict(os.environ, env_unset, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload_96))), \
+                    contextlib.redirect_stdout(buf_96):
+                quota.handle_statusline()
+            hud_96 = buf_96.getvalue().strip()
+            self.assertNotIn("🔄", hud_96)
+            # Same-email Org2 peer, Rested5h peer, and reset_inferred 7d peer all appear; Pref85 appears once (deduped)!
+            self.assertIn("Org2-Peer:60%", hud_96)
+            self.assertIn("Rested5h-Peer:75%", hud_96)
+            self.assertIn("Inf7d-Peer:80%", hud_96)
+            self.assertEqual(hud_96.count("Pref85-Peer:"), 1)
+
+            # 2. At 98% (default cfg_spent_thresh) with Pref85 at 85% (strict < 85 is False) -> picks Org2-Peer (soonest 7d), NOT Pref85!
+            buf_98_eq = io.StringIO()
+            payload_98 = {
+                "model": {"display_name": "Opus 5.5"},
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 98, "resets_at": now + 3600},
+                    "seven_day": {"used_percentage": 20, "resets_at": now + 86400},
+                },
+            }
+            with patch.dict(os.environ, env_unset, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload_98))), \
+                    contextlib.redirect_stdout(buf_98_eq):
+                quota.handle_statusline()
+            self.assertIn("🔄 /exit 切[Org2-Peer]", buf_98_eq.getvalue().strip())
+
+            # 3. With Pref85 at 84% (strict < 85 is True) -> picks Pref85-Peer!
+            write_ledger(pref_u5=84)
+            buf_98_lt = io.StringIO()
+            with patch.dict(os.environ, env_unset, clear=True), \
+                    patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                    patch.object(sys, "stdin", io.StringIO(json.dumps(payload_98))), \
+                    contextlib.redirect_stdout(buf_98_lt):
+                quota.handle_statusline()
+            self.assertIn("🔄 /exit 切[Pref85-Peer]", buf_98_lt.getvalue().strip())
 
 
 if __name__ == "__main__":

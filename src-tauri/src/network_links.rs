@@ -1,4 +1,4 @@
-// [INPUT]: 四个固定 Claude 服务目标、只读浏览器/系统代理配置和用户手动诊断命令。
+// [INPUT]: 四个固定 Claude 服务目标、只读浏览器/系统代理配置（SOCKS 自动升级 socks5h/socks4a 远程 DNS）和用户手动诊断命令。
 // [OUTPUT]: 四域名只读连通性诊断；重定向仅认可服务 HTTPS 目标且不跟随，下载探针验证有界版本正文，不输出正文或冒充出口核验。
 // [POS]: 独立网络诊断接口；没有外部资源导航或供应商配置依赖，不读取密钥，诊断不上传凭据。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -164,9 +164,9 @@ pub(crate) async fn diagnose_urls_with_proxy(
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(8));
-    let trimmed = proxy.trim();
+    let trimmed = crate::browser::config::normalize_reqwest_proxy(proxy);
     if !trimmed.is_empty() {
-        if let Ok(p) = reqwest::Proxy::all(trimmed) {
+        if let Ok(p) = reqwest::Proxy::all(&trimmed) {
             builder = builder.proxy(p);
         }
     }

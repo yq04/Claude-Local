@@ -75,26 +75,24 @@ export function WarmingLibrary({cards, runtime, activity, blocked, promotionBloc
       card.registered_timezone || 'America/Los_Angeles',
       'en-US',
     ].join(' · ');
-    const expiryYmd = card.subscription_expiry_ymd || (locale === 'zh' ? '未设置' : 'Not set');
-    const lines = locale === 'zh'
-      ? [
-          '### Claude-Local 跨机防关联环境交接卡 (养号工牌)',
-          `- **养号工牌**: ${shownLabel} (${t(`warming.stage.${card.stage}`)}) · ${shownEmail}`,
-          `- **固定指纹种子与槽位**: \`seed=#${String(card.seed).slice(-4)} (${card.seed})\` · \`slot=${card.slot}\``,
-          `- **目标区域 / 时区 / 语言**: \`${regionSpec}\``,
-          '- **推荐本地代理监听**: `socks5://127.0.0.1:7899` (独立住宅出口，CLI 不受影响)',
-          `- **订阅到期日**: ${expiryYmd}`,
-          '- **抗封铁律 (单机单活)**: 严禁两台设备同时打开同一养号浏览器槽位或并发登录；迁移前请先关闭源设备内置浏览器并保持住宅出口国家/时区一致。',
-        ]
-      : [
-          '### Claude-Local Anti-Association Handoff Spec (Warming Card)',
-          `- **Warming Card**: ${shownLabel} (${t(`warming.stage.${card.stage}`)}) · ${shownEmail}`,
-          `- **Fingerprint Seed & Slot**: \`seed=#${String(card.seed).slice(-4)} (${card.seed})\` · \`slot=${card.slot}\``,
-          `- **Target Region / Timezone / Locale**: \`${regionSpec}\``,
-          '- **Recommended Local Proxy Listener**: `socks5://127.0.0.1:7899` (dedicated residential exit, CLI unaffected)',
-          `- **Subscription Expiry**: ${expiryYmd}`,
-          '- **Anti-Ban Rule (1-Device-at-a-Time)**: Never open the same warming browser slot on two machines simultaneously; close the companion browser on the source machine and match the registered country/timezone before opening on the target machine.',
-        ];
+    const expiryYmd = card.subscription_expiry_ymd || t('warming.handoffSpec.notSet');
+    const lines = [
+      t('warming.handoffSpec.title'),
+      t('warming.handoffSpec.card', {
+        name: shownLabel,
+        stage: t(`warming.stage.${card.stage}`),
+        email: shownEmail,
+      }),
+      t('warming.handoffSpec.seedSlot', {
+        shortSeed: String(card.seed).slice(-4),
+        seed: card.seed,
+        slot: card.slot,
+      }),
+      t('warming.handoffSpec.region', {region: regionSpec}),
+      t('warming.handoffSpec.proxy'),
+      t('warming.handoffSpec.expiry', {expiry: expiryYmd}),
+      t('warming.handoffSpec.rule'),
+    ];
     const text = lines.join('\n');
     try {
       await invoke('copy_result', {text});

@@ -92,8 +92,9 @@ export function ClaudeResiduePanel({activity,blocked,revision,onBusy,onChanged}:
      {cliSec.nonessential_traffic_blocked&&<>{' · '}<strong title={t('risk.cliSecurity.nonessentialBlockedHint')}>{t('risk.cliSecurity.nonessentialBlockedWarn')}</strong></>}
      {cliSec.socks5_in_cli_env&&<>{' · '}<strong data-residue-cli-proxy="socks5" title={t('risk.cliSecurity.socks5Hint')}>{t('risk.cliSecurity.socks5Warn')}</strong></>}
      {!cliSec.socks5_in_cli_env&&!cliSec.proxy_env_complete&&<>{' · '}<strong data-residue-cli-proxy="incomplete" title={t('risk.cliSecurity.proxyEnvIncompleteHint')}>{t('risk.cliSecurity.proxyEnvIncompleteWarn')}</strong></>}
+     {cliSec.non_english_language&&<>{' · '}<span data-residue-cli-language="non-english" title={t('risk.cliSecurity.languageWarnHint')}>{t('risk.cliSecurity.languageWarnHint')}</span></>}
      {' · '}
-     {cliMcpOk?t('risk.cliSecurity.mcpOk'):t('risk.cliSecurity.mcpWarn',{unpinned:Math.max(cliSec.unpinned_npx_count,cliSec.windows_bare_npx_count),remote:cliSec.remote_http_mcp_count+(cliSec.has_custom_hooks_or_helpers?1:0)})}
+     {cliMcpOk?t('risk.cliSecurity.mcpOk'):Math.max(cliSec.unpinned_npx_count,cliSec.windows_bare_npx_count)===0&&cliSec.remote_http_mcp_count===0&&cliSec.has_custom_hooks_or_helpers?t('risk.cliSecurity.mcpCustomHooks'):t('risk.cliSecurity.mcpWarn',{unpinned:Math.max(cliSec.unpinned_npx_count,cliSec.windows_bare_npx_count),remote:cliSec.remote_http_mcp_count})}
     </span>
     <div className="claude-residue-presets">
      <Button variant="secondary" size="small" onClick={()=>void copyCliAntiLeakJson()}>{t(copiedCliCfg?'risk.feedback.copied':'risk.action.copyCliSettingsJson')}</Button>
