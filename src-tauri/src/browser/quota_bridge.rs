@@ -12,8 +12,10 @@ use std::{
 };
 use tauri::{Emitter, Manager};
 
+#[cfg(test)]
 pub(super) const TICKET_TTL: Duration = Duration::from_secs(90);
 const SYNC_WAIT: Duration = Duration::from_secs(45);
+#[cfg(test)]
 const MAX_PENDING_TICKETS: usize = 16;
 const MAX_GRANTS: usize = 100;
 const ZERO_VALIDITY_SECS: i64 = 6 * 60 * 60;

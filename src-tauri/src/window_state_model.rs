@@ -58,6 +58,7 @@ pub fn valid_state(state: WindowState) -> bool {
         && (MIN_HEIGHT..=MAX_DIMENSION).contains(&state.height)
 }
 
+#[cfg(any(not(windows), test))]
 pub fn capture_normal_size(
     previous: WindowState,
     width: f64,

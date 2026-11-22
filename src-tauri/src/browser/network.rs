@@ -435,6 +435,7 @@ impl Report {
                 .unwrap_or(true)
     }
 }
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExitKind {
     ResidentialIsp,
@@ -816,6 +817,7 @@ pub fn is_residential_isp_exit(exit: &Exit) -> bool {
         || RES_PHRASES.iter().any(|kw| contains_ascii_word(&text, kw))
 }
 
+#[cfg(test)]
 pub fn classify_exit(exit: &Exit) -> ExitKind {
     if is_hosting_exit(exit) {
         ExitKind::Hosting

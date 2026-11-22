@@ -358,48 +358,6 @@ export function formatVelocityLabel(tokensPerMin: number | undefined | null): st
   return `${formatCompactCount(tokensPerMin)} tok/m`
 }
 
-export function formatExhaustionEta(
-  etaMins: number | undefined | null,
-  language: Locale = 'zh',
-): string | null {
-  if (typeof etaMins !== 'number' || !Number.isFinite(etaMins) || etaMins <= 0) {
-    return null
-  }
-  const totalMins = Math.max(1, Math.round(etaMins))
-  if (totalMins < 60) {
-    return language === 'en' ? `~${totalMins}m to limit` : `约 ${totalMins}m 触顶`
-  }
-  const hours = Math.floor(totalMins / 60)
-  const mins = totalMins % 60
-  if (mins === 0) {
-    return language === 'en' ? `~${hours}h to limit` : `约 ${hours}h 触顶`
-  }
-  return language === 'en'
-    ? `~${hours}h ${mins}m to limit`
-    : `约 ${hours}h ${mins}m 触顶`
-}
-
-export function formatCompactExhaustionEta(
-  etaMins: number | undefined | null,
-): string | null {
-  if (typeof etaMins !== 'number' || !Number.isFinite(etaMins) || etaMins <= 0) {
-    return null
-  }
-  const totalMins = Math.max(1, Math.round(etaMins))
-  if (totalMins < 60) {
-    return `~${totalMins}m`
-  }
-  const hours = Math.floor(totalMins / 60)
-  const mins = totalMins % 60
-  return mins === 0 ? `~${hours}h` : `~${hours}h${mins}m`
-}
-
-export interface MonitorContextMeter {
-  usedPct: number | null
-  fillWidthPct: number
-  tone: MonitorBarTone
-}
-
 export function computeMonitorWindowBar(usedPct: number | undefined | null): MonitorWindowBar {
   if (typeof usedPct !== 'number' || !Number.isFinite(usedPct)) {
     return {
@@ -438,24 +396,6 @@ export function computeMonitorBarFillPct(
   if (bar.usedLabel === '0%') return 0
   if (bar.usedLabel === '100%') return 100
   return Math.max(4, Math.min(96, bar.used))
-}
-
-export function computeContextMeter(contextUsedPct: number | undefined | null): MonitorContextMeter {
-  if (typeof contextUsedPct !== 'number' || !Number.isFinite(contextUsedPct)) {
-    return {
-      usedPct: null,
-      fillWidthPct: 0,
-      tone: 'unknown',
-    }
-  }
-  const usedPct = Math.max(0, Math.min(100, Math.round(contextUsedPct)))
-  const tone: MonitorBarTone =
-    usedPct >= 90 ? 'danger' : usedPct >= 70 ? 'warn' : 'ok'
-  return {
-    usedPct,
-    fillWidthPct: usedPct === 0 ? 0 : Math.max(8, usedPct),
-    tone,
-  }
 }
 
 export function formatWindowResetLabel(

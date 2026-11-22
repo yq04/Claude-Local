@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Shell navigation, active-page refresh, page icons, quota/plan evaluation and explicit identity/SmartRelay/handoff actions; saved identities are read only when opened.
+ * [INPUT]: Shell navigation, active-page refresh, page icons, quota/plan evaluation and explicit identity/SmartRelay actions; saved identities are read only when opened.
  * [OUTPUT]: Grouped keyboard-searchable command dialog (Pages / Quick Actions / Saved Identities) with page icons, current-page & active-identity badges, semantic plan/quota/slot pills, privacy-filtered labels and roving selection.
  * [POS]: Product shell command surface; it never switches identities or writes local/native data.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
@@ -44,7 +44,6 @@ type PaletteAction = CommandItem & {
 } & (
     | {kind: 'navigate'; page: Page; isCurrentPage: boolean}
     | {kind: 'refresh'}
-    | {kind: 'handoff'}
     | {kind: 'smart-relay'}
     | {
         kind: 'identity';
@@ -63,7 +62,6 @@ export function CommandPalette({
   locked,
   onNavigate,
   onRefresh,
-  onOpenHandoff,
   onReviewIdentity,
   onOpenSmartRelay,
 }: {
@@ -73,7 +71,6 @@ export function CommandPalette({
   locked: boolean;
   onNavigate: (page: Page) => void;
   onRefresh: () => void;
-  onOpenHandoff: () => void;
   onReviewIdentity: (identityId: string) => void;
   onOpenSmartRelay?: () => void;
 }) {
@@ -145,14 +142,6 @@ export function CommandPalette({
         disabled: locked,
       });
     }
-    items.push({
-      id: 'handoff',
-      group: 'actions',
-      kind: 'handoff',
-      label: t('handoff.title'),
-      keywords: ['handoff', 'notes'],
-      disabled: locked,
-    });
     if (identityState) {
       for (const identity of identityState.records) {
         const summary = identityState.summaries[identity.id];
@@ -199,7 +188,6 @@ export function CommandPalette({
     if (item.kind === 'navigate') onNavigate(item.page);
     else if (item.kind === 'refresh') onRefresh();
     else if (item.kind === 'smart-relay') onOpenSmartRelay?.();
-    else if (item.kind === 'handoff') onOpenHandoff();
     else onReviewIdentity(item.identityId);
     onOpenChange(false);
   }
@@ -309,7 +297,7 @@ export function CommandPalette({
                         <small>{t('commandPalette.goTo')}</small>
                       ))}
                     {item.kind === 'refresh' && <small>{t('commandPalette.refresh')}</small>}
-                    {(item.kind === 'handoff' || item.kind === 'smart-relay') && <small>{t('commandPalette.open')}</small>}
+                    {item.kind === 'smart-relay' && <small>{t('commandPalette.open')}</small>}
                     {item.kind === 'identity' && (
                       <>
                         {item.quotaLabel && <small>{item.quotaLabel}</small>}

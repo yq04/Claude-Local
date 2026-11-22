@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.4.1 CLI-browser exit sync, cooldown convergence, read-only multi-port Clash helper & Sift/Yoti/handoff hardening, built on 0.4.0 proactive 2-stage threshold auto-relay, aligned Smart Relay UI & same-exit cluster hint, Sift v122/Yoti Mihomo audit & read-only /kyc_status observation, and multi-account browser fingerprint guidance, atop 0.3.7 Strategy A1 reset_harvest & modular --orchestrate CLI relay, 0.3.6 Quick-Setup-aligned workbench overhaul, 0.3.5 UI De-AI unification across all 9 pages, 0.3.3 kernel-handle CLI liveness & zero-residue rollback, 0.3.2 five-core-area polish, 0.3.1 Smart Relay/Usage Analytics 2.1, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.4.2 zero-warning Rust cleanup, cross-stack dead-code/CSS/i18n pruning & zero-behavior-change modular splits (risk_check/, identities/profile/, src/identities/), atop 0.4.1 CLI-browser exit sync, cooldown convergence, read-only multi-port Clash helper & Sift/Yoti/handoff hardening, 0.4.0 proactive 2-stage threshold auto-relay, aligned Smart Relay UI & same-exit cluster hint, Sift v122/Yoti Mihomo audit & read-only /kyc_status observation, and multi-account browser fingerprint guidance, 0.3.7 Strategy A1 reset_harvest & modular --orchestrate CLI relay, 0.3.6 Quick-Setup-aligned workbench overhaul, 0.3.5 UI De-AI unification across all 9 pages, 0.3.3 kernel-handle CLI liveness & zero-residue rollback, 0.3.2 five-core-area polish, 0.3.1 Smart Relay/Usage Analytics 2.1, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
 [OUTPUT]: Full English flagship project presentation foregrounding anti-ban & multi-identity isolation engineering, architectural lineage, feature matrix, visual tour, installation workflow and runtime boundaries.
 [POS]: English repository introduction linked bidirectionally with README.md.
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -15,7 +15,7 @@
 
 Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://github.com/liseami)) and independently maintained, retaining the original contributors' copyright and [MIT license](LICENSE) · 100% Local-First · Zero Cloud Credential Hosting · Never Force-Kills Running `claude.exe` Sessions
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.4.1-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.4.1)
+[![Latest Release](https://img.shields.io/badge/Release-v0.4.2-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.4.2)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@ Derived from [CCBaga](https://github.com/liseami/CCBaga) ([@liseami](https://git
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.4.1/Claude-Local_0.4.1_x64-setup.exe"><strong>⬇️ Download v0.4.1 Installer (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.4.2/Claude-Local_0.4.2_x64-setup.exe"><strong>⬇️ Download v0.4.2 Installer (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.4.1"><strong>✨ v0.4.1 Release Notes</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.4.2"><strong>✨ v0.4.2 Release Notes</strong></a>
   ·
   <a href="#-why-claude-local-solving-the-4-multi-account-anti-ban-pain-points"><strong>🔥 Anti-Ban Core Architecture</strong></a>
   ·
@@ -187,29 +187,30 @@ While preserving 100% compatibility with existing `.baga` vaults and browser see
 
 ## 📦 Download, Installation & Release History
 
-### 1. Latest Windows x64 Installer (`v0.4.1`)
+### 1. Latest Windows x64 Installer (`v0.4.2`)
 
 | Asset | Platform | File Size | SHA-256 Checksum |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.4.1_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.4.1/Claude-Local_0.4.1_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | See Release assets | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.4.1/SHA256SUMS.txt) |
+| **[Claude-Local_0.4.2_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.4.2/Claude-Local_0.4.2_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | See Release assets | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.4.2/SHA256SUMS.txt) |
 
-Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.4.1 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.4.1):
+Compute the installer SHA-256 in PowerShell and compare it with the checksum published in the [v0.4.2 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.4.2):
 
 ```powershell
-Get-FileHash .\Claude-Local_0.4.1_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Claude-Local_0.4.2_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. Installation & Non-Disruptive Upgrade Notes
 
 1. **Install Location & Identifiers**: Per-user NSIS installer defaulting to `%LOCALAPPDATA%\Programs\Claude-Local`; main executable `claude-local.exe`, bundle identifier `ai.local.claude-local`, companion browser registration `Claude-Local-Browser`.
 2. **User Data Root**: All encrypted vaults, master keys, quota/usage ledgers, appearance settings, and browser profiles live under `%APPDATA%\ai.local.claude-local`.
-3. **Seamless Upgrades**: Upgrading from `0.1.x`, `0.2.x`, `0.3.x`, and `0.4.0` to `0.4.1` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
+3. **Seamless Upgrades**: Upgrading from `0.1.x`, `0.2.x`, `0.3.x`, `0.4.0`, and `0.4.1` to `0.4.2` preserves existing vaults, keys, and browser profiles without re-creating identities or interrupting running `claude.exe` sessions. Export a password-encrypted backup from `App settings → Data management` before upgrading.
 
-### 3. Public Release Series (`0.1.0` – `0.4.1`)
+### 3. Public Release Series (`0.1.0` – `0.4.2`)
 
 | Version | Date | Highlights | Documentation |
 | :--- | :--- | :--- | :--- |
-| **`v0.4.1`** *(Latest)* | 2026-11-22 | **CLI ↔ Browser exit sync, cooldown convergence, read-only multi-port Clash helper & anti-ban hardening**: fixes subagent cooldown `rotation_tick` overwrites, adds atomic `identities_orchestrator_clear_cooldown` + passive `wakeup` 429 propagation, and removes dead `autoSwitchWhenIdle`; fixes unbound browser donor-proxy bleed, cross-switch `slotProxies` bleed, and `[::1]` loopback unification while adding Smart Relay mismatch indicators and one-click `identities_sync_browser_proxy`; adds a read-only multi-port Clash YAML snippet generator dialog (`2–5` ports) on Network page; hardens cross-section YAML/RFC1918/Sift+Hexagon rules, desktop anti-tamper & `/kyc_status` normalization, plus `forced_stop` subagent wait, `handoff.rs` false-positive filtering, and `handoffReason` telemetry | [Release notes](docs/RELEASE_NOTES_0.4.1.md) · [Verification](docs/RELEASE_VERIFICATION_0.4.1.md) |
+| **`v0.4.2`** *(Latest)* | 2026-11-22 | **Full-stack de-redundancy, zero-warning Rust cleanup & modular splits**: eliminates all `7` Rust `dead_code` warnings and gates `9` test-only session helpers while consolidating shared `valid_fingerprint`; prunes dead Python/PS1/TS symbols, removes obsolete nested `TaskHandoff` plus `6` legacy handoff files, trims `497` dead CSS lines, and removes `743` zero-reference i18n keys (`3,165 → 2,422` `1:1` parity, `0` CJK in `en.yaml`); decomposes `risk_check.rs` into `risk_check/` (`6` files), `identities/profile.rs` into `identities/profile/` (`5` files), and `src/identities.tsx` (`5,443 → 3,018` lines) into `5` `src/identities/` components with recursive `i18n.test.ts` coverage | [Release notes](docs/RELEASE_NOTES_0.4.2.md) · [Verification](docs/RELEASE_VERIFICATION_0.4.2.md) |
+| **`v0.4.1`** | 2026-11-22 | **CLI ↔ Browser exit sync, cooldown convergence, read-only multi-port Clash helper & anti-ban hardening**: fixes subagent cooldown `rotation_tick` overwrites, adds atomic `identities_orchestrator_clear_cooldown` + passive `wakeup` 429 propagation, and removes dead `autoSwitchWhenIdle`; fixes unbound browser donor-proxy bleed, cross-switch `slotProxies` bleed, and `[::1]` loopback unification while adding Smart Relay mismatch indicators and one-click `identities_sync_browser_proxy`; adds a read-only multi-port Clash YAML snippet generator dialog (`2–5` ports) on Network page; hardens cross-section YAML/RFC1918/Sift+Hexagon rules, desktop anti-tamper & `/kyc_status` normalization, plus `forced_stop` subagent wait, `handoff.rs` false-positive filtering, and `handoffReason` telemetry | [Release notes](docs/RELEASE_NOTES_0.4.1.md) · [Verification](docs/RELEASE_VERIFICATION_0.4.1.md) |
 | **`v0.4.0`** | 2026-11-22 | **Proactive 2-stage threshold auto-relay, aligned Smart Relay UI & cluster warning, and Sift v122/Yoti/KYC anti-ban upgrades**: expands threshold options to `80%–100%` with `PostToolUse` 2-stage graceful wrap-up before hitting the 5h 100% cap, fixes 300s external-worker timeout fallthrough & mid-wrap-up 5h reset cleanup, defaults `maxSameExitConcurrency` to `1` while keeping `1..=5` backend compat; aligns all 10 Smart Relay modal rows along a `108px` single vertical axis with uniform `26px` chips and adds ≥3 shared-exit cluster notice (`findSameExitClusterWarning`); completes Sift/Hexagon/Yoti domain rules, Rust `has_sift_rules` audit, allowlisted `/kyc_status` sync (stripping vendor IDs/URLs), and multi-account `native_graphics` guidance | [Release notes](docs/RELEASE_NOTES_0.4.0.md) · [Verification](docs/RELEASE_VERIFICATION_0.4.0.md) |
 | **`v0.3.7`** | 2026-11-20 | **Strategy A1 reset-card accounting & `reset_harvest`, modular `--orchestrate` CLI relay/subagent hardening & `clean_handoff`, Supported Countries Policy anti-ban & Scenario G guard, background silent resource optimization, and 5 UI refinements**: per-grant slicing with non-expiring balance preservation, [`orchestrator/`](src-tauri/src/identities/orchestrator/mod.rs) 6-submodule refactor + `claude-relay`/`claude-subagent` (`Opus 5.5 + max`, `daemon stop --any`, scrubbed `handoff.rs` checkpoint, `api-request-blob`/raw-mode fixes), sticky proxy/per-identity device IDs/pre-launch browser exit gate/Scenario G ledger guard, bounded Tokio + tray WebView2 suspension, and removal of sidebar search/CLI callouts/Smart Relay library banner alongside a 5-column zero-overflow Usage table & label-fit account filter | [Release notes](docs/RELEASE_NOTES_0.3.7.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.7.md) |
 | **`v0.3.6`** | 2026-11-15 | **Quick-Setup-aligned layout overhaul & second-pass polish across Browser, Computer, Network, and Risk & KYC**: shared `env-pages.css` 4-cell de-duplicated telemetry strips, `.settings-group-heading` bars, edge-to-edge hairline matrices & `@container` breakpoints; eliminates hero right-side dead space and nested risk borders, hides redundant `Location disabled` button when off, rebuilds the 4-module Risk workbench with `3+2` security pills, and synchronizes 33 workbench i18n keys | [Release notes](docs/RELEASE_NOTES_0.3.6.md) · [Verification](docs/RELEASE_VERIFICATION_0.3.6.md) |

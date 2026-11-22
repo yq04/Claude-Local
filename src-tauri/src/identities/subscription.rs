@@ -57,13 +57,6 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn valid_fingerprint(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
 fn days_in_month(year: i32, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -232,7 +225,7 @@ pub fn read_store(vault: &Path) -> ManualSubscriptionsFile {
         plan_by_record: BTreeMap::new(),
     };
     for (k, v) in parsed.by_identity {
-        if valid_fingerprint(&k) {
+        if super::valid_fingerprint(&k) {
             if let Some(entry) = sanitize_entry(v) {
                 clean.by_identity.insert(k, entry);
             }
@@ -246,7 +239,7 @@ pub fn read_store(vault: &Path) -> ManualSubscriptionsFile {
         }
     }
     for (k, v) in parsed.plan_by_identity {
-        if valid_fingerprint(&k) {
+        if super::valid_fingerprint(&k) {
             if let Some(entry) = sanitize_plan_entry(v) {
                 clean.plan_by_identity.insert(k, entry);
             }
@@ -303,13 +296,13 @@ pub(crate) fn read_store_checked(vault: &Path) -> Result<ManualSubscriptionsFile
         serde_json::from_slice(&bytes).map_err(|_| "订阅到期设置无效。")?;
     if store.version != 1
         || store.by_identity.iter().any(|(id, entry)| {
-            !valid_fingerprint(id) || sanitize_entry(entry.clone()).as_ref() != Some(entry)
+            !super::valid_fingerprint(id) || sanitize_entry(entry.clone()).as_ref() != Some(entry)
         })
         || store.by_record.iter().any(|(id, entry)| {
             !super::valid_id(id) || sanitize_entry(entry.clone()).as_ref() != Some(entry)
         })
         || store.plan_by_identity.iter().any(|(id, entry)| {
-            !valid_fingerprint(id) || sanitize_plan_entry(entry.clone()).as_ref() != Some(entry)
+            !super::valid_fingerprint(id) || sanitize_plan_entry(entry.clone()).as_ref() != Some(entry)
         })
         || store.plan_by_record.iter().any(|(id, entry)| {
             !super::valid_id(id) || sanitize_plan_entry(entry.clone()).as_ref() != Some(entry)
@@ -338,7 +331,7 @@ fn lookup_manual_entry<'a>(
     record_id: Option<&str>,
 ) -> Option<&'a ManualSubscriptionEntry> {
     let by_qi = quota_identity
-        .filter(|qi| valid_fingerprint(qi))
+        .filter(|qi| super::valid_fingerprint(qi))
         .and_then(|qi| store.by_identity.get(qi));
     let by_rec = record_id
         .filter(|id| super::valid_id(id))
@@ -363,7 +356,7 @@ fn lookup_manual_plan_entry<'a>(
     record_id: Option<&str>,
 ) -> Option<&'a ManualPlanEntry> {
     let by_qi = quota_identity
-        .filter(|qi| valid_fingerprint(qi))
+        .filter(|qi| super::valid_fingerprint(qi))
         .and_then(|qi| store.plan_by_identity.get(qi));
     let by_rec = record_id
         .filter(|id| super::valid_id(id))
@@ -440,6 +433,7 @@ pub fn apply_manual_with_plan(
     super::profile::enforce_plan_quota_limits(plan.as_deref(), quota_no_5h_limit);
 }
 
+#[cfg(test)]
 pub fn apply_manual(
     store: &ManualSubscriptionsFile,
     quota_identity: Option<&str>,
@@ -473,7 +467,7 @@ pub async fn identities_set_subscription_expiry(
         return Err("身份编号无效。".into());
     }
     if let Some(ref exp) = expected_identity {
-        if !exp.trim().is_empty() && !valid_fingerprint(exp.trim()) {
+        if !exp.trim().is_empty() && !super::valid_fingerprint(exp.trim()) {
             return Err("quotaOnline.accountMismatch".into());
         }
     }
@@ -571,7 +565,7 @@ pub async fn identities_set_subscription_expiry(
                     expiry_epoch_sec: sec,
                     updated_at_ms: stamp_ms,
                 };
-                if let Some(ref qi) = actual_qi.as_ref().filter(|q| valid_fingerprint(q)) {
+                if let Some(ref qi) = actual_qi.as_ref().filter(|q| super::valid_fingerprint(q)) {
                     store.by_identity.insert((*qi).clone(), entry);
                     if let Some(ref rid) = target_record_id {
                         store.by_record.remove(rid);
@@ -600,7 +594,7 @@ pub async fn identities_set_subscription_expiry(
                         manual_plan: canonical,
                         updated_at_ms: stamp_ms,
                     };
-                    if let Some(ref qi) = actual_qi.as_ref().filter(|q| valid_fingerprint(q)) {
+                    if let Some(ref qi) = actual_qi.as_ref().filter(|q| super::valid_fingerprint(q)) {
                         store.plan_by_identity.insert((*qi).clone(), plan_entry);
                         if let Some(ref rid) = target_record_id {
                             store.plan_by_record.remove(rid);

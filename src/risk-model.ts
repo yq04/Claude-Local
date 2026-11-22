@@ -1781,7 +1781,7 @@ export function isCliMcpBoundarySafe(cliSec: CliSecurityAudit | null | undefined
   );
 }
 
-export const MULTI_PORT_CLASH_DOMAINS = [
+const MULTI_PORT_CLASH_DOMAINS = [
   'claude.ai',
   'claude.com',
   'anthropic.com',

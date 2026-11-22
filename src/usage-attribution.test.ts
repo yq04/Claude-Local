@@ -1,9 +1,9 @@
-// [INPUT]: Synthetic attribution configs, account fixtures and privacy flags.
-// [OUTPUT]: Masked labels, scope previews, DST hour detectors and IANA timezone format regressions.
+// [INPUT]: Synthetic account fixtures, hourly slots and privacy flags.
+// [OUTPUT]: Masked labels, DST hour detectors and IANA timezone format regressions.
 // [POS]: Pure attribution model unit tests; no live database, tauri IPC or credential files.
 // [PROTOCOL]: Keep unit tests fast, pure and independent.
 import {expect, test} from 'bun:test';
-import {formatTimezoneContext, getDstDayType, maskAccountLabel, previewAttributionScope} from './usage-attribution';
+import {formatTimezoneContext, getDstDayType, maskAccountLabel} from './usage-attribution';
 
 test('maskAccountLabel masks email when privacyMask is true and leaves name intact when false', () => {
   const account = {id: 'acc1', name: 'Primary Account', email: 'alice@example.com'};
@@ -28,40 +28,6 @@ test('maskAccountLabel masks email when privacyMask is true and leaves name inta
 
   const emptyLocal = {id: 'acc7', name: 'Broken', email: '@example.org'};
   expect(maskAccountLabel(emptyLocal, true)).toBe('Broken (***@example.org)');
-});
-
-test('previewAttributionScope calculates target scope and reports current fallback status', () => {
-  const accounts = [
-    {id: '0192e2b3aaaa70008000000000000001', name: 'Work'},
-    {id: '0192e2b3bbbb70008000000000000002', name: 'Personal'},
-  ];
-  const config = {
-    fallback_account_id: '0192e2b3aaaa70008000000000000001',
-    fallback_account_name: 'Work',
-    unassigned_requests: 12,
-    unassigned_tokens: 34567,
-  };
-
-  const previewWork = previewAttributionScope(config, '0192e2b3aaaa70008000000000000001', accounts);
-  expect(previewWork).toEqual({
-    targetId: '0192e2b3aaaa70008000000000000001',
-    targetName: 'Work',
-    requests: 12,
-    tokens: 34567,
-    isCurrent: true,
-  });
-
-  const previewPersonal = previewAttributionScope(config, '0192e2b3bbbb70008000000000000002', accounts);
-  expect(previewPersonal).toEqual({
-    targetId: '0192e2b3bbbb70008000000000000002',
-    targetName: 'Personal',
-    requests: 12,
-    tokens: 34567,
-    isCurrent: false,
-  });
-
-  expect(previewAttributionScope(config, 'nonexistent', accounts)).toBeNull();
-  expect(previewAttributionScope(undefined, '0192e2b3aaaa70008000000000000001', accounts)).toBeNull();
 });
 
 test('getDstDayType identifies 23h and 25h real-hourly days and ignores normal 24h days', () => {

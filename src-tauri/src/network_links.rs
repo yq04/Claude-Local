@@ -151,6 +151,7 @@ async fn diagnose(client: reqwest::Client, domain: String, url: String) -> Domai
     result.latency_ms = Some(started.elapsed().as_millis() as u64);
     result
 }
+#[cfg(test)]
 pub(crate) async fn diagnose_urls(targets: &[(&str, &str)]) -> Vec<DomainCheckResult> {
     diagnose_urls_with_proxy(targets, "").await
 }

@@ -21,7 +21,6 @@ export type Report={schema_version?:number;language:string;languages:string[];ti
 export type BrowserIdentity={linked:boolean;status:'linked'|'draft'|'empty'|'unlinked'|'mismatch'|'unknown'|'warming';name:string|null;email:string|null;organization:string|null;cli_proxy?:string|null};
 export type BrowserContext={identity?:BrowserIdentity;ui_language:'zh'|'en';exit_services:string[];exit_classification_service?:string;region:{id:string;label:string;country:string;language:string;locale:string;timezone:string}|null;config:BrowserConfig;machine:Machine;engine_version:string};
 export type BrowserState=BrowserContext&{engine_ready:boolean;running:boolean;profile:string;active_browser_slot?:string;cli_identity?:BrowserIdentity|null;cli_expected_identity?:string|null;identity_linked?:boolean;cache:{path:string;bytes:number;login:boolean}[];cache_error:string;report:Report|null;report_received_at:number|null;machine_exit:Exit|null;checks:{id:string;title:string;status:'ok'|'mismatch'|'pending';detail:string}[]};
-export type DefaultBrowser={is_default:boolean;http:string;https:string;installed:boolean;app:string};
 
 const DATACENTER_ASNS = new Set([
     'AS174', 'AS906', 'AS3214', 'AS4785', 'AS6939', 'AS8068', 'AS8075', 'AS8100',
@@ -88,45 +87,6 @@ export function classifyBrowserExitIsp(exit?: Pick<Exit, 'isp' | 'asn' | 'hostin
     }
     return exit.hosting === false ? 'isp' : 'unknown';
 }
-
-export type DeepVerifySite = {
-    id: 'ping0' | 'checkcc' | 'browserscan' | 'iphey';
-    name: string;
-    url: string;
-    focusKey: string;
-    passRuleKey: string;
-};
-
-export const DEEP_VERIFY_SITES: readonly DeepVerifySite[] = [
-    {
-        id: 'ping0',
-        name: 'Ping0.cc',
-        url: 'https://ping0.cc/',
-        focusKey: 'browserVerify.ping0Focus',
-        passRuleKey: 'browserVerify.ping0Pass',
-    },
-    {
-        id: 'checkcc',
-        name: 'CheckCC.org',
-        url: 'https://checkcc.org/',
-        focusKey: 'browserVerify.checkccFocus',
-        passRuleKey: 'browserVerify.checkccPass',
-    },
-    {
-        id: 'browserscan',
-        name: 'BrowserScan',
-        url: 'https://www.browserscan.net/',
-        focusKey: 'browserVerify.browserscanFocus',
-        passRuleKey: 'browserVerify.browserscanPass',
-    },
-    {
-        id: 'iphey',
-        name: 'IPHey',
-        url: 'https://iphey.com/',
-        focusKey: 'browserVerify.ipheyFocus',
-        passRuleKey: 'browserVerify.ipheyPass',
-    },
-];
 
 export function effectiveBrowserTarget({config, machine}: Pick<BrowserContext, 'config' | 'machine'>) {
     if (!config.follow_machine) return {timezone: config.timezone, language: config.language};

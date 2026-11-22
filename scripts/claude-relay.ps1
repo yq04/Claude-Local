@@ -2305,11 +2305,6 @@ function Send-ConsolePhasedExitCommand {
     }
 }
 
-function Send-ConsoleExitCommand {
-    param([System.Diagnostics.Process]$ChildProcess = $null)
-    return (Send-ConsolePhasedExitCommand -SendSecondEscape $false -ChildProcess $ChildProcess)
-}
-
 function Send-ConsoleBackgroundChoice {
     if ($env:CLAUDE_LOCAL_DISABLE_CONSOLE_INJECT -eq '1') { return $false }
     if ([Console]::IsInputRedirected) { return $false }

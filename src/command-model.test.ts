@@ -11,13 +11,13 @@ import {
 const items = [
   {id: 'quick', label: '快速配置'},
   {id: 'cleaner', label: '身份管理'},
-  {id: 'handoff', label: '任务交接', keywords: ['next steps']},
+  {id: 'smart-relay', label: '智能接力', keywords: ['relay', 'smart']},
 ];
 
 test('command search is case-insensitive and includes explicit keywords', () => {
-  expect(filterCommandItems(items, 'NEXT').map(item => item.id)).toEqual(['handoff']);
+  expect(filterCommandItems(items, 'SMART').map(item => item.id)).toEqual(['smart-relay']);
   expect(filterCommandItems(items, '身份').map(item => item.id)).toEqual(['cleaner']);
-  expect(filterCommandItems(items, '').map(item => item.id)).toEqual(['quick', 'cleaner', 'handoff']);
+  expect(filterCommandItems(items, '').map(item => item.id)).toEqual(['quick', 'cleaner', 'smart-relay']);
 });
 
 test('active command selection stays within available results and skips disabled items', () => {

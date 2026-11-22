@@ -432,11 +432,6 @@ def info_window_state(info: dict, suffix: str, window: str, now_sec: int | None 
     return used, reset, source, int(observed) if isinstance(observed, (int, float)) and observed > 0 else None
 
 
-def merge_window_state(current: tuple, candidate: tuple) -> tuple:
-    """Compatibility wrapper around the shared merge operation."""
-    return merge_window_states([current], [candidate], int(time.time()))[0]
-
-
 def parse_reset_dt(val) -> datetime | None:
     if val is None:
         return None
@@ -630,16 +625,6 @@ def parse_jsonl_lines_into(
     if not saw_assistant_usage:
         fallback_slices.extend(file_cs_slices)
     return last_dt
-
-
-def parse_jsonl_file_into(
-    fp: str,
-    raw_text: str,
-    global_turns: dict[tuple[str, str], tuple[datetime, float]],
-    fallback_slices: list[tuple[datetime, float]],
-) -> datetime | None:
-    """Parse a single .jsonl text buffer into a shared cross-file deduplicated turn map."""
-    return parse_jsonl_lines_into(fp, raw_text.splitlines(), global_turns, fallback_slices)
 
 
 def collect_session_slices_from_dir(proj_root: str) -> tuple[list[tuple[datetime, float]], datetime | None]:
@@ -1666,19 +1651,6 @@ def _classify_claude_config_dir(env_claude_dir: str | None, app_dir: str) -> tup
         if getattr(cj_info, "st_file_attributes", 0) & _REPARSE_ATTR:
             return False, None, True
     return True, slot_name, False
-
-
-def _read_saved_identity_names(vault_dir: str) -> tuple[dict[str, str], dict[str, str]]:
-    saved_name_by_id: dict[str, str] = {}
-    saved_name_by_email: dict[str, str] = {}
-    for ident_id, rec in _read_saved_identity_records(vault_dir).items():
-        ident_name = rec.get("name") or ""
-        semail = rec.get("email") or ""
-        if ident_id and ident_name:
-            saved_name_by_id[ident_id] = ident_name
-        if semail and ident_name:
-            saved_name_by_email[semail] = ident_name
-    return saved_name_by_id, saved_name_by_email
 
 
 def _active_reset_cards_a1(meta: dict, now_sec: int) -> int:

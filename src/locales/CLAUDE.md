@@ -26,13 +26,13 @@ identityCard.noSubscriptionOrResetData / identityCard.nextRenewal / identityCard
 
 cli.statusUnavailable / cli.retryRead: CLI状态读取失败与缺少安装分开呈现，允许手动重试。usage.allAccounts / coverageNote: 简洁「全部」标签和本地统计覆盖说明；账号选项来自动态账号目录。
 
-identitySearch.* / identityDiagnostic.*: 可见别名检索、视图排序、观测年龄和白名单诊断复制。commandPalette.* / handoff.*: 受控快捷键入口和纯手填交接预览/复制/下载。usage.export* / usage.timezoneNote / 固定时区错误键: 当前scope导出、真实时区与旧offset兼容；峰值称时段峰值，覆盖半小时区间。
+identitySearch.* / identityDiagnostic.*: 可见别名检索、视图排序、观测年龄和白名单诊断复制。commandPalette.*: 受控快捷键入口（页面导航、当前页刷新与已保存身份确认）。usage.export* / usage.timezoneNote / 固定时区错误键: 当前scope导出、真实时区与旧offset兼容；峰值称时段峰值，覆盖半小时区间。
 
 usage.composition / sessions / activity* / modelsHint: 四类Token构成与全模型占比，去重会话和本地活跃日含义；旧快照无可信字段保持未知，无美元或生成速度推算。monitor.velocity / responses5h / latestModel / accountUsageUnavailable / localUsageScope / *Short: 共享账本当前账号已确认5h用量、四类构成、10分钟均值速率与响应数；未知账号或模型不显示伪零值。两语同键同插槽。
 quick.readFailed / quick.failedChecks / quick.followsMachine: 独立读取失败、具体分区与跟随电脑配置的同键同插槽双语提示。
 quotaOnline.runtimeStage.* / quotaOnline.runtimeReason.* / quotaOnline.reason.* / quotaOnline.stage.* / quotaOnline.routeMode.* / quotaOnline.status.*: P0 探针/采集运行阶段与失败原因、P1 路由模式及 route_unavailable 状态映射。
 wakeup.*: 唤醒尝试与确认新5h窗口的双语反馈；明确未知结果的延迟重试、授权恢复要求及配置/状态持久化失败，不将缓存或仅7d观测表述为5h成功。
-usage.attribution*: 仅保留兼容词条，当前用量页面不引用。usage.dst*: IANA 时区与 23h/25h 夏令时日历徽章双语文案。
+usage.dst*: IANA 时区与 23h/25h 夏令时日历徽章双语文案（原 `usage.attribution*` 兼容死键已随死视图一并清理）。
 cli.installGuide / cli.installCommand / cli.copyInstall / cli.recheck: CLI 未安装时官方 Windows 安装指引与复制、重新检查双语文案。
 quick.troubleshoot* / identitySafety.troubleshootHelp: 快速配置排障卡片与使用说明缓存/残留清理入口导航提示。
 浏览器联动确认文案真实说明「运行中的浏览器会自动重开，未启动则保持关闭」。
@@ -52,3 +52,4 @@ v0.3.8 新增套餐校准与网页续费保留提示（`identityCard.plan*` / `i
 2.25 新增 `relay.routingSectionTitle`、`quota.kycStatusLabel`、`quota.kycStatus.{notRequired,pending,verified,issue}` 及 Sift v122 屏幕/语言/窗口外框/PDF 查看器诊断双语词条（7 键），总计 3,121 键 1:1 对齐，英文零 CJK。
 2.26 新增 Sift/Hexagon 分流规则核验（`risk.check.kycRoutingRules.missingSift`、`risk.cliSecurity.siftRulesOk`、`risk.cliSecurity.siftRulesMissing`）、智能接力 `≥3` 账号同出口聚集提示（`relay.sameExitClusterHint`）与伴生浏览器 `native_graphics` 单号/多号指纹取舍说明（`browserSafety.nativeGraphicsOnHint`、`browserSafety.nativeGraphicsOffHint`）共 6 键，总计 3,127 键 1:1 对齐，英文零 CJK。
 2.27 新增智能接力多集群与绑定浏览器槽位对齐同步文案（`relay.sameExitMultiClusterHint`、`relay.browserSlot*`、`relay.handoffReason*` 含 `awaiting_manual_reset`、`identities_sync_browser_proxy` / `clear_cooldown` 原生错误键并精简英文 `relay.handoffModeLabel` 为 `"Handoff mode"`）、网络页多端口 Clash 只读生成弹窗（`network.multiPort*`）、风控 `missingTelemetry`/`warnIncompleteRules`/`telemetryRulesMissing`、浏览起始页 UA-CH 平台/DPR/languages 空值诊断、浏览工作台多绑定真实指纹提示（`browserSafety.nativeGraphicsMultiBoundHint`）及 `quota.kycStatus.expired`（新增 38 键），总计 3,165 键 1:1 对齐，英文零 CJK。
+2.28（Beat 2 孤儿键与死功能裁剪）清理已验证零引用的 743 键（279 条 Section 3A 分组键 + 32 条已移除手工交接 `handoff.*` 键 + 432 条 Section 3B 历史中文直译死键）并同步移除 `commandPalette.description` 中过时交接描述；严格保留 37 条 `scripts/claude-cli.{ps1,sh}` 内嵌键、`backup.rs` 动态拼接串、`identitySearch.age.*`、14 条测试夹具专用键及 5 条测试匹配键，总计 2,422 键 1:1 对齐、英文零 CJK（除 `Claude-Local Browser.app`）且纯 LF UTF-8 无 BOM。

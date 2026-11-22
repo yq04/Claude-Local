@@ -719,7 +719,6 @@ test('reset_harvest strategy prioritizes positive reset cards by earliest deadli
   );
   const c2 = evalHarvest.candidates.find(c => c.id === 'grant-48h-2cards')!;
   const c1 = evalHarvest.candidates.find(c => c.id === 'grant-48h-1card')!;
-  const c3 = evalHarvest.candidates.find(c => c.id === 'grant-72h-1card')!;
   const cNo = evalHarvest.candidates.find(c => c.id === 'no-card-soon')!;
 
   expect(c2.manualResetsRemaining).toBe(2);

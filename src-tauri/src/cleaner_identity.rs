@@ -359,10 +359,6 @@ pub(crate) fn extract(source: &Source, text: &str) -> Result<serde_json::Value, 
     }
     Ok(serde_json::Value::Object(out))
 }
-#[allow(dead_code)]
-pub(crate) fn apply_config(source: &Source, saved: &serde_json::Value) -> Result<(), String> {
-    apply_config_with_lock_clear(source, saved, true)
-}
 pub(crate) fn apply_config_with_lock_clear(
     source: &Source,
     saved: &serde_json::Value,
@@ -729,9 +725,12 @@ pub(crate) fn clear_stale_locks_count(root: &Path) -> usize {
     cleared
 }
 
+#[cfg(test)]
 const EMAIL_REMINDER_PREFIX: &str = "The user's email address is ";
+#[cfg(test)]
 const EMAIL_REMINDER_SUFFIX: &str = ". Use it only to identify the user";
 
+#[cfg(test)]
 fn has_foreign_email_in_text(text: &str, active_email: &str) -> bool {
     let mut rest = text;
     while let Some(start) = rest.find(EMAIL_REMINDER_PREFIX) {
@@ -749,6 +748,7 @@ fn has_foreign_email_in_text(text: &str, active_email: &str) -> bool {
     false
 }
 
+#[cfg(test)]
 fn replace_foreign_email_in_line(line: &str, active_email: &str) -> Option<String> {
     if !line.contains(EMAIL_REMINDER_PREFIX) {
         return None;
@@ -782,6 +782,7 @@ fn replace_foreign_email_in_line(line: &str, active_email: &str) -> Option<Strin
     changed.then_some(out)
 }
 
+#[cfg(test)]
 fn file_has_foreign_session_markers(
     path: &Path,
     active_acct: Option<&str>,
@@ -876,6 +877,7 @@ fn file_has_foreign_session_markers(
     false
 }
 
+#[cfg(test)]
 fn family_needs_foreign_sanitization(
     family_files: &[PathBuf],
     active_acct: Option<&str>,
@@ -917,6 +919,7 @@ fn family_needs_foreign_sanitization(
 /// 借鉴 `KarpelesLab/teamclaude` (`tool-pair-sanitize.js`) 与 Claude Code `ensureToolResultPairing`：
 /// 当账号因 5h 限额耗尽 (429) 或手动中断而卡在 `tool_use` 半途时，修复末尾或跨轮次未配对的 `tool_use` / 孤儿 `tool_result`，
 /// 旧兼容诊断转换：保持 `uuid` / `parentUuid` 链；产品切换和恢复不调用此转换。
+#[cfg(test)]
 fn repair_unpaired_tool_blocks_in_lines(lines: &[String]) -> Option<Vec<String>> {
     let has_tool_blocks = lines
         .iter()
@@ -1050,6 +1053,7 @@ fn repair_unpaired_tool_blocks_in_lines(lines: &[String]) -> Option<Vec<String>>
     modified.then_some(out)
 }
 
+#[cfg(test)]
 fn sanitize_jsonl_session_file(
     path: &Path,
     active_org: Option<&str>,
@@ -1193,6 +1197,7 @@ fn sanitize_jsonl_session_file(
 /// 2) 旧实现会改写 `session_context.userEmail` 至 `active_email`；
 /// 3) 剥离异账号会话中绑定原组织密钥的 `thinking` / `redacted_thinking` 签名块、诊断回放块 (`api-request*`) 与远程桥接记录 (`bridge-session`)；
 /// 4) 修复因额度耗尽 (429) 或中断遗留的未配对 `tool_use` / 孤儿 `tool_result`（保持 `uuid`/`parentUuid` 链不断裂）。
+#[cfg(test)]
 fn sanitize_project_sessions(
     root: &Path,
     active_acct: Option<&str>,
@@ -1586,7 +1591,7 @@ pub(crate) fn maintain_account_caches_report(root: &Path) -> Result<CleanroomRep
 
 /// 清理与当前活跃 `.claude.json` 账号 UUID 不一致的旧跨账号残留。
 /// 仅保留给显式测试/兼容诊断使用；产品入口调用上方窄缓存维护函数。
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> {
     clear_stale_locks(root);
     let claude_json = root.join(".claude.json");

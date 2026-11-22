@@ -12,13 +12,24 @@ import {translate,setLocale} from './i18n';
 const zh:Record<string,string>=parse(readFileSync(new URL('./locales/zh.yaml',import.meta.url),'utf8'));
 const en:Record<string,string>=parse(readFileSync(new URL('./locales/en.yaml',import.meta.url),'utf8'));
 const slots=(value:string)=>[...value.matchAll(/\{(\w+)\}/g)].map(match=>match[1]).sort();
-function collectRustFiles(dir:URL):URL[]{
+function collectSourceFiles(dir:URL,ext:'.rs'|'.ts'):URL[]{
   const out:URL[]=[];
   for(const entry of readdirSync(dir,{withFileTypes:true})){
     if(entry.isDirectory()){
-      out.push(...collectRustFiles(new URL(`${entry.name}/`,dir)));
-    }else if(entry.isFile()&&entry.name.endsWith('.rs')){
-      out.push(new URL(entry.name,dir));
+      if(ext==='.ts'&&entry.name==='locales')continue;
+      out.push(...collectSourceFiles(new URL(`${entry.name}/`,dir),ext));
+    }else if(entry.isFile()){
+      if(ext==='.rs'&&entry.name.endsWith('.rs')){
+        out.push(new URL(entry.name,dir));
+      }else if(
+        ext==='.ts'&&
+        (entry.name.endsWith('.tsx')||entry.name.endsWith('.ts'))&&
+        !entry.name.includes('.test.')&&
+        !entry.name.endsWith('.d.ts')&&
+        entry.name!=='i18n.ts'
+      ){
+        out.push(new URL(entry.name,dir));
+      }
     }
   }
   return out;
@@ -33,8 +44,9 @@ test('双语目录完整且命名插槽一致',()=>{
   }
 });
 test('每个界面源文案与辅助名称都在 YAML 中',()=>{
-  for(const name of readdirSync(new URL('.',import.meta.url)).filter(name=>(name.endsWith('.tsx')||name.endsWith('.ts'))&&!name.includes('.test.')&&!name.endsWith('.d.ts')&&name!=='i18n.ts')){
-    const source=readFileSync(new URL(name,import.meta.url),'utf8');
+  for(const fileUrl of collectSourceFiles(new URL('.',import.meta.url),'.ts')){
+    const name=fileUrl.pathname;
+    const source=readFileSync(fileUrl,'utf8');
     const file=ts.createSourceFile(name,source,ts.ScriptTarget.Latest,true,name.endsWith('.tsx')?ts.ScriptKind.TSX:ts.ScriptKind.TS);
     function walk(node:ts.Node){
       if(ts.isCallExpression(node)){
@@ -84,9 +96,9 @@ test('YAML 目录中无重复顶级键',()=>{
 });
 
 test('原生额度与智能接力编排错误键均能在两种语言中显示人类可读文案',()=>{
-  const orchestratorFiles=collectRustFiles(new URL('../src-tauri/src/identities/orchestrator/',import.meta.url));
+  const orchestratorFiles=collectSourceFiles(new URL('../src-tauri/src/identities/orchestrator/',import.meta.url),'.rs');
   expect(orchestratorFiles.length).toBeGreaterThanOrEqual(4);
-  const nativeFiles=collectRustFiles(new URL('../src-tauri/src/',import.meta.url));
+  const nativeFiles=collectSourceFiles(new URL('../src-tauri/src/',import.meta.url),'.rs');
   const nativeKeys=new Set(nativeFiles.flatMap(fileUrl=>
     [...readFileSync(fileUrl,'utf8').matchAll(/"((?:quotaOnline|relay\.error|browser\.error)\.[A-Za-z0-9_.]+)"/g)].map(match=>match[1])));
   expect(nativeKeys.has('quotaOnline.unavailable')).toBe(true);

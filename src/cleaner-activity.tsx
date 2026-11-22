@@ -18,15 +18,6 @@ export type Progress = {
     elapsed_ms: number;
 };
 type Kind = 'scan' | 'clean' | 'stop' | 'system' | 'browser' | 'cli' | 'identity';
-export type AuditHistoryItem = {
-    id: number;
-    kind: Kind;
-    title: string;
-    status: 'ok' | 'warning' | 'error';
-    message: string;
-    elapsed_ms: number;
-    finishedAtMs: number;
-};
 export type Activity = {
     kind: Kind;
     title?: string;
@@ -35,7 +26,6 @@ export type Activity = {
     running: boolean;
     failed: boolean;
     warning?: boolean;
-    history?: AuditHistoryItem[];
 };
 const labels: Record<string, string> = { delete:'直接删除',archive:'身份暂存',switch:'身份切换',identity:'身份管理',validate: '检查', clean: '逐项清理', verify: '复查', scan: '深度扫描', stop: '进程检查', system: '应用设置', browser: '浏览器操作', cli: 'CLI 安装', done: '结果' };
 const phaseLabels:Record<string,string>={...labels,identity:'准备身份操作',stop:'结束 Claude 进程',archive:'压缩暂存',compress:'写入加密归档',verify_archive:'验证身份归档',clear:'清空当前工作区',credentials:'处理登录凭据',restore:'恢复目标身份',cleanroom:'净室隔离与指纹对齐',commit:'保存身份状态',rollback:'恢复原有状态'};
@@ -154,31 +144,11 @@ export function summarizeCleanroomPipelineStages(entries: Progress[], running: b
     ];
 }
 
-let auditHistorySeq = 0;
-let sharedAuditHistory: AuditHistoryItem[] = [];
-
-export function getAuditHistoryItems(): AuditHistoryItem[] {
-    return sharedAuditHistory;
-}
-
-export function recordAuditHistoryItem(
-    item: Omit<AuditHistoryItem, 'id' | 'finishedAtMs'>,
-): AuditHistoryItem[] {
-    const record: AuditHistoryItem = {
-        ...item,
-        id: ++auditHistorySeq,
-        finishedAtMs: Date.now(),
-    };
-    sharedAuditHistory = [record, ...sharedAuditHistory].slice(0, 20);
-    return sharedAuditHistory;
-}
-
 export function useCleanupActivity() {
     const [state, setState] = useState<Activity | null>(null);
     const sequence = useRef(0);
     const began = useRef(0);
     const maxElapsedRef = useRef(0);
-    const historyRef = useRef<AuditHistoryItem[]>(sharedAuditHistory);
     function append(event: Progress, token = sequence.current) {
         if (token !== sequence.current)
             return;
@@ -216,27 +186,16 @@ export function useCleanupActivity() {
         sequence.current++;
         began.current = performance.now();
         maxElapsedRef.current = 0;
-        historyRef.current = sharedAuditHistory;
-        setState({ kind, title, started: began.current, entries: [], running: true, failed: false, history: historyRef.current });
+        setState({ kind, title, started: began.current, entries: [], running: true, failed: false });
         log(kind === 'clean' ? 'validate' : kind, 'running', kind === 'clean' ? "已提交所选清单，等待快照核验。" : kind === 'scan' ? "开始扫描本地数据。" : kind === 'system' ? "开始应用电脑设置。" : kind === 'browser' ? "开始浏览器操作。" : kind === 'identity' ? "开始本地身份操作。" : kind === 'cli' ? "开始 Claude Code CLI 安装管理。" : "检查并结束已确认的 Claude 进程。");
         return channel();
     }
     function finish(success: boolean, message: string) {
-        const wallElapsed = Math.round(performance.now() - began.current);
-        const elapsed_ms = Math.max(maxElapsedRef.current, wallElapsed);
         log('done', success ? 'ok' : 'error', message);
         setState(old => {
             if (!old) return old;
             const hasWarning = success && old.entries.some(entry => entry.status === 'warning' || entry.status === 'error');
-            const finalElapsed = Math.max(elapsed_ms, old.entries.at(-1)?.elapsed_ms ?? 0);
-            historyRef.current = recordAuditHistoryItem({
-                kind: old.kind,
-                title: old.title || (old.kind === 'identity' ? '身份操作记录' : '操作记录'),
-                status: !success ? 'error' : hasWarning ? 'warning' : 'ok',
-                message,
-                elapsed_ms: finalElapsed,
-            });
-            return { ...old, running: false, failed: !success, warning: hasWarning, history: historyRef.current };
+            return { ...old, running: false, failed: !success, warning: hasWarning };
         });
     }
     return { state, start, channel, log, finish };

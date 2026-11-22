@@ -6,15 +6,12 @@
 import { describe, expect, test } from 'bun:test'
 import {
   clampMonitorOpacityPct,
-  computeContextMeter,
   computeMonitorBarFillPct,
   computeMonitorWindowBar,
   computeWindowTimePace,
   cycleMonitorOpacityPct,
   deriveMonitorActivityMode,
   formatCompactCount,
-  formatCompactExhaustionEta,
-  formatExhaustionEta,
   formatMonitorCacheStats,
   formatVelocityLabel,
   formatWindowPaceBadge,
@@ -74,16 +71,7 @@ describe('floating-monitor-model', () => {
     ).toEqual({ hitPctText: '91.9%', reuseRatioText: '11.4×' })
   })
 
-  test('formats exhaustion ETA in both Chinese and English', () => {
-    expect(formatExhaustionEta(undefined, 'zh')).toBeNull()
-    expect(formatExhaustionEta(45, 'zh')).toBe('约 45m 触顶')
-    expect(formatExhaustionEta(45, 'en')).toBe('~45m to limit')
-    expect(formatExhaustionEta(95, 'zh')).toBe('约 1h 35m 触顶')
-    expect(formatExhaustionEta(95, 'en')).toBe('~1h 35m to limit')
-    expect(formatExhaustionEta(120, 'zh')).toBe('约 2h 触顶')
-    expect(formatExhaustionEta(120, 'en')).toBe('~2h to limit')
-    expect(formatCompactExhaustionEta(70)).toBe('~1h10m')
-    expect(formatCompactExhaustionEta(120)).toBe('~2h')
+  test('clamps and cycles monitor opacity percentages cleanly', () => {
     expect(clampMonitorOpacityPct(20)).toBe(50)
     expect(clampMonitorOpacityPct(100)).toBe(100)
     expect(cycleMonitorOpacityPct(100)).toBe(88)
@@ -166,20 +154,7 @@ describe('floating-monitor-model', () => {
     expect(computeMonitorBarFillPct(computeMonitorWindowBar(0), 'used')).toBe(0)
   })
 
-  test('computes context meter and window reset labels cleanly', () => {
-    expect(computeContextMeter(undefined)).toEqual({
-      usedPct: null,
-      fillWidthPct: 0,
-      tone: 'unknown',
-    })
-    expect(computeContextMeter(40)).toEqual({
-      usedPct: 40,
-      fillWidthPct: 40,
-      tone: 'ok',
-    })
-    expect(computeContextMeter(75).tone).toBe('warn')
-    expect(computeContextMeter(94).tone).toBe('danger')
-
+  test('computes window reset labels cleanly', () => {
     expect(formatWindowResetLabel('14h 11m', false, '7d', 'zh')).toBe('重置 14h 11m')
     expect(formatWindowResetLabel('14h 11m', false, '7d', 'en')).toBe('Reset 14h 11m')
     expect(formatWindowResetLabel('', true, '5h', 'zh')).toBe('重置 5h')

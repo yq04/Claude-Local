@@ -1292,13 +1292,6 @@ struct QuotaGroup {
     aliases: Vec<usize>,
 }
 
-fn valid_fingerprint(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
 fn validate_batch_input(targets: &[QuotaTarget], request_id: &str) -> Result<(), String> {
     if targets.is_empty() || targets.len() > MAX_QUOTA_BATCH || !super::valid_id(request_id) {
         return Err("quotaOnline.unavailable".into());
@@ -1306,7 +1299,7 @@ fn validate_batch_input(targets: &[QuotaTarget], request_id: &str) -> Result<(),
     let mut ids = std::collections::HashSet::with_capacity(targets.len());
     if targets.iter().any(|target| {
         !valid_account(&target.account_id)
-            || !valid_fingerprint(&target.expected_identity)
+            || !super::valid_fingerprint(&target.expected_identity)
             || !ids.insert(target.account_id.as_str())
     }) {
         return Err("quotaOnline.unavailable".into());

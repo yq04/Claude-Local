@@ -1,19 +1,10 @@
 /**
- * [INPUT]: Sanitized usage attribution snapshot data, account catalogs and privacy preferences.
- * [OUTPUT]: Masked account labels, scope previews, confirm states, and IANA timezone/DST context badges.
+ * [INPUT]: Sanitized usage attribution account records and privacy preferences.
+ * [OUTPUT]: Masked account labels, DST hour detectors and IANA timezone/UTC offset formatters.
  * [POS]: Pure attribution and timezone presentation model; no raw credentials, tokens or database access.
  * [PROTOCOL]: Keep presentation logic pure and testable.
  */
-import type {UsageAttributionConfig} from './usage-model';
 import {maskDisplayName, maskEmailAddress} from './settings-model';
-
-export type AttributionScopePreview = {
-  targetId: string;
-  targetName: string;
-  requests: number;
-  tokens: number;
-  isCurrent: boolean;
-};
 
 export function maskAccountLabel(
   account: {id: string; name: string; email?: string | null},
@@ -26,23 +17,6 @@ export function maskAccountLabel(
     return name;
   }
   return name + ' (' + maskedEmail + ')';
-}
-
-export function previewAttributionScope(
-  config: UsageAttributionConfig | undefined | null,
-  targetId: string,
-  accounts: {id: string; name: string}[]
-): AttributionScopePreview | null {
-  if (!config || !targetId) return null;
-  const target = accounts.find(a => a.id === targetId);
-  if (!target) return null;
-  return {
-    targetId,
-    targetName: target.name,
-    requests: config.unassigned_requests,
-    tokens: config.unassigned_tokens,
-    isCurrent: config.fallback_account_id === targetId,
-  };
 }
 
 export function getDstDayType(
