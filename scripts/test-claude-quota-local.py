@@ -1,5 +1,5 @@
 # [INPUT]: Fictional statusLine payloads, smart_relay_v1.json fixtures, temporary ledgers and bounded Rust subprocess fixtures.
-# [OUTPUT]: Percentage-input validation, independent window persistence, SmartRelay statusLine hints, and inferred-reset/bridge regressions.
+# [OUTPUT]: Percentage-input validation, independent window persistence, SmartRelay statusLine hints, 80/85 threshold filter checks, and inferred-reset/bridge regressions.
 # [POS]: Synthetic quota tests; never open real Claude settings, account data or processes.
 # [PROTOCOL]: Keep scripts/CLAUDE.md aligned with the tested input and writer boundaries.
 """Synthetic ledger tests; never open the real Claude home or application data."""
@@ -1937,6 +1937,26 @@ class LocalQuotaTests(unittest.TestCase):
                     contextlib.redirect_stdout(buf_98_lt):
                 quota.handle_statusline()
             self.assertIn("🔄 /exit 切[Pref85-Peer]", buf_98_lt.getvalue().strip())
+
+    def test_load_smart_relay_filter_accepts_80_and_85_thresholds(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app = Path(temp) / "ai.local.claude-local"
+            app.mkdir(parents=True)
+            now = int(datetime.now(timezone.utc).timestamp())
+            for pct in (80, 85, 90, 95, 98, 100):
+                (app / "smart_relay_v1.json").write_text(
+                    json.dumps({"schema": 1, "spentThresholdPct": pct}),
+                    encoding="utf-8",
+                )
+                rf = quota._load_smart_relay_filter(str(app), now)
+                self.assertEqual(rf["spent_threshold_pct"], pct)
+            for invalid in (79, 83, True, "85"):
+                (app / "smart_relay_v1.json").write_text(
+                    json.dumps({"schema": 1, "spentThresholdPct": invalid}),
+                    encoding="utf-8",
+                )
+                rf = quota._load_smart_relay_filter(str(app), now)
+                self.assertEqual(rf["spent_threshold_pct"], 98)
 
 
 if __name__ == "__main__":

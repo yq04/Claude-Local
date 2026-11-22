@@ -1,5 +1,5 @@
 // [INPUT]: Explicit account selectors and frozen fingerprints, packaged Python collector, account-bound browser summaries and fixed local quota/config/credentials file metadata.
-// [OUTPUT]: Bounded quota batches, structured scheduler admission, strict wakeup confirmation/effect contract, sanitized plan_tier metadata (with per-grant manual reset slices) and native private audit; Python owns every ledger write.
+// [OUTPUT]: Bounded quota batches, structured scheduler admission, strict wakeup confirmation/effect contract, sanitized plan_tier and kyc_status/kyc_check_kind metadata (with per-grant manual reset slices) and native private audit; Python owns every ledger write.
 // [POS]: Shared orchestration allows 10s cold runtime probes within one 30s preparation budget outside the identity door; frozen identity/epoch is rechecked at commit.
 // [PROTOCOL]: Batch progress is quota-batch-progress; update identities/CLAUDE.md and the package resource allowlist.
 use serde::{Deserialize, Serialize};
@@ -342,6 +342,42 @@ pub struct WebMetadata {
     pub manual_plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kyc_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kyc_check_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kyc_observed_at_ms: Option<u64>,
+}
+
+/// Normalizes a raw KYC status string against the fixed allowlist.
+pub(crate) fn normalize_kyc_status(raw: &str) -> Option<String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "not_required"
+            | "pending"
+            | "required"
+            | "in_progress"
+            | "completed"
+            | "approved"
+            | "verified"
+            | "failed"
+            | "declined"
+            | "expired"
+    )
+    .then_some(normalized)
+}
+
+/// Normalizes an optional KYC check kind (`1..=32` ASCII `[a-z0-9_-]`).
+pub(crate) fn normalize_kyc_check_kind(raw: &str) -> Option<String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    (!normalized.is_empty()
+        && normalized.len() <= 32
+        && normalized
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-'))
+    .then_some(normalized)
 }
 
 fn valid_account(account: &str) -> bool {
@@ -1745,9 +1781,24 @@ fn metadata_entry(root: &Value, identity: &str, now_ms: u64) -> Option<WebMetada
                     == Some(remaining)
         });
     }
+    let kyc_time = data.kyc_observed_at_ms.or(data.metadata_observed_at_ms);
+    let normalized_kyc_status = data.kyc_status.as_deref().and_then(normalize_kyc_status);
+    if !valid_time(kyc_time) || normalized_kyc_status.is_none() {
+        data.kyc_status = None;
+        data.kyc_check_kind = None;
+        data.kyc_observed_at_ms = None;
+    } else {
+        data.kyc_status = normalized_kyc_status;
+        data.kyc_check_kind = data
+            .kyc_check_kind
+            .as_deref()
+            .and_then(normalize_kyc_check_kind);
+        data.kyc_observed_at_ms = kyc_time;
+    }
     data.metadata_observed_at_ms = data
         .billing_observed_at_ms
-        .max(data.manual_resets_observed_at_ms);
+        .max(data.manual_resets_observed_at_ms)
+        .max(data.kyc_observed_at_ms);
     data.subscription_expiry_ymd = None;
     data.subscription_recharge_ymd = None;
     data.subscription_date_source = data.billing_date.map(|_| "browser".into());
@@ -2295,6 +2346,107 @@ print(json.dumps({'type':'result','result':{'status':'updated','source':'oauth'}
             make(0, Some(json!([{"resets_left": 1, "ends_at": 100_000}]))).manual_resets_grants,
             None
         );
+    }
+
+    #[test]
+    fn kyc_metadata_normalizes_allowlist_clears_invalid_and_tracks_monotonic_clock() {
+        let key = "a".repeat(64);
+        let mut root = json!({"version":1,"accounts":{}});
+        for status in [
+            "not_required",
+            "pending",
+            "required",
+            "in_progress",
+            "completed",
+            "approved",
+            "verified",
+            "failed",
+            "declined",
+            "expired",
+        ] {
+            root["accounts"][&key] = json!({
+                "kyc_status": format!("  {}  ", status.to_ascii_uppercase()),
+                "kyc_check_kind": "  Identity_Check-1 ",
+                "kyc_observed_at_ms": 1_500
+            });
+            let entry = metadata_entry(&root, &key, 2_000).unwrap();
+            assert_eq!(entry.kyc_status.as_deref(), Some(status));
+            assert_eq!(entry.kyc_check_kind.as_deref(), Some("identity_check-1"));
+            assert_eq!(entry.kyc_observed_at_ms, Some(1_500));
+            assert_eq!(entry.metadata_observed_at_ms, Some(1_500));
+        }
+
+        // Invalid check_kind is cleared while valid kyc_status survives.
+        root["accounts"][&key] = json!({
+            "kyc_status": "required",
+            "kyc_check_kind": "bad/kind!",
+            "kyc_observed_at_ms": 1_500
+        });
+        let bad_kind = metadata_entry(&root, &key, 2_000).unwrap();
+        assert_eq!(bad_kind.kyc_status.as_deref(), Some("required"));
+        assert_eq!(bad_kind.kyc_check_kind, None);
+        assert_eq!(bad_kind.kyc_observed_at_ms, Some(1_500));
+
+        // Unknown kyc_status or invalid kyc_observed_at_ms clears all KYC fields without breaking billing.
+        for bad_entry in [
+            json!({
+                "billing_date_kind": "next_renewal",
+                "billing_date": 2_000_000_000u64,
+                "billing_observed_at_ms": 1_000,
+                "kyc_status": "bogus_status",
+                "kyc_check_kind": "identity",
+                "kyc_observed_at_ms": 1_800
+            }),
+            json!({
+                "billing_date_kind": "next_renewal",
+                "billing_date": 2_000_000_000u64,
+                "billing_observed_at_ms": 1_000,
+                "kyc_status": "required",
+                "kyc_check_kind": "identity",
+                "kyc_observed_at_ms": 0
+            }),
+            json!({
+                "billing_date_kind": "next_renewal",
+                "billing_date": 2_000_000_000u64,
+                "billing_observed_at_ms": 1_000,
+                "kyc_status": "required",
+                "kyc_check_kind": "identity",
+                "kyc_observed_at_ms": 400_000
+            }),
+        ] {
+            root["accounts"][&key] = bad_entry;
+            let cleared = metadata_entry(&root, &key, 2_000).unwrap();
+            assert_eq!(cleared.kyc_status, None);
+            assert_eq!(cleared.kyc_check_kind, None);
+            assert_eq!(cleared.kyc_observed_at_ms, None);
+            assert_eq!(cleared.billing_observed_at_ms, Some(1_000));
+            assert_eq!(cleared.metadata_observed_at_ms, Some(1_000));
+        }
+
+        // Monotonic max across billing, manual_resets, and kyc timestamps (and metadata_observed_at_ms fallback).
+        root["accounts"][&key] = json!({
+            "billing_date_kind": "next_renewal",
+            "billing_date": 2_000_000_000u64,
+            "billing_observed_at_ms": 1_100,
+            "manual_resets_remaining": 1,
+            "manual_resets_valid_until": 2_000,
+            "manual_resets_observed_at_ms": 1_200,
+            "kyc_status": "verified",
+            "kyc_observed_at_ms": 1_900
+        });
+        let kyc_newest = metadata_entry(&root, &key, 2_000).unwrap();
+        assert_eq!(kyc_newest.metadata_observed_at_ms, Some(1_900));
+
+        root["accounts"][&key] = json!({
+            "billing_date_kind": "next_renewal",
+            "billing_date": 2_000_000_000u64,
+            "billing_observed_at_ms": 1_950,
+            "kyc_status": "pending",
+            "metadata_observed_at_ms": 1_400
+        });
+        let billing_newest = metadata_entry(&root, &key, 2_000).unwrap();
+        assert_eq!(billing_newest.kyc_observed_at_ms, Some(1_400));
+        assert_eq!(billing_newest.metadata_observed_at_ms, Some(1_950));
     }
 
     fn target(account_id: &str, fingerprint: &str) -> QuotaTarget {

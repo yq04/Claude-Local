@@ -7,6 +7,7 @@ import {
   RELAY_CLI_EFFORTS,
   RELAY_CLI_MODELS,
   RELAY_HANDOFF_MODES,
+  RELAY_SPENT_THRESHOLDS,
   RELAY_STRATEGIES,
   buildSubagentMarkdownTemplate,
   canSyncNativeSmartRelay,
@@ -19,6 +20,7 @@ import {
   defaultSmartRelayConfig,
   evaluateSmartRelay,
   extractResetCardInfo,
+  findSameExitClusterWarning,
   flushNativeSmartRelaySync,
   formatLaunchDirChip,
   formatRelayCliModelEffortArgs,
@@ -582,7 +584,7 @@ test('SoonReset (<=24h) harvest bonus prioritizes accounts with >=15% 7d and >10
 test('RELAY_STRATEGIES includes reset_harvest and config extends autoContinueOnRelay, maxSameExitConcurrency, slotProxies', () => {
   expect(RELAY_STRATEGIES).toEqual(['smart', 'reset_harvest', 'pace', 'least_used', 'ordered', 'rotate']);
   expect(defaultSmartRelayConfig.autoContinueOnRelay).toBe(false);
-  expect(defaultSmartRelayConfig.maxSameExitConcurrency).toBe(2);
+  expect(defaultSmartRelayConfig.maxSameExitConcurrency).toBe(1);
   expect(defaultSmartRelayConfig.slotProxies).toEqual({});
 
   const sanitized = sanitizeSmartRelayConfig({
@@ -602,7 +604,9 @@ test('RELAY_STRATEGIES includes reset_harvest and config extends autoContinueOnR
   expect(sanitized.slotProxies).toEqual({'acc-ok': 'http://localhost:7901'});
 
   const invalidConcurrency = sanitizeSmartRelayConfig({maxSameExitConcurrency: 99});
-  expect(invalidConcurrency.maxSameExitConcurrency).toBe(2);
+  expect(invalidConcurrency.maxSameExitConcurrency).toBe(1);
+  expect(sanitizeSmartRelayConfig({maxSameExitConcurrency: 0}).maxSameExitConcurrency).toBe(1);
+  expect(sanitizeSmartRelayConfig({maxSameExitConcurrency: 5}).maxSameExitConcurrency).toBe(5);
 
   resetSmartRelayConfig();
   const hydrated = hydrateSmartRelayConfig({
@@ -1634,4 +1638,148 @@ test('HandoffSummary and HandoffItem match the camelCase native checkpoint contr
       'sessionCount',
     ].sort(),
   );
+});
+
+test('RELAY_SPENT_THRESHOLDS supports 80 and 85 in config sanitization and Smart Relay evaluation triggers', () => {
+  expect(RELAY_SPENT_THRESHOLDS).toEqual([80, 85, 90, 95, 98, 100]);
+  expect(defaultSmartRelayConfig.spentThresholdPct).toBe(98);
+
+  expect(sanitizeSmartRelayConfig({spentThresholdPct: 80}).spentThresholdPct).toBe(80);
+  expect(sanitizeSmartRelayConfig({spentThresholdPct: 85}).spentThresholdPct).toBe(85);
+  expect(sanitizeSmartRelayConfig({spentThresholdPct: 79}).spentThresholdPct).toBe(98);
+  expect(sanitizeSmartRelayConfig({spentThresholdPct: 82}).spentThresholdPct).toBe(98);
+
+  const accountsAt79: RelayAccountInput[] = [
+    makeAccount('current', 0, 79, 30, 3, 4, true),
+    makeAccount('standby', 1, 20, 20, 4, 5, false),
+  ];
+  const below80 = evaluateSmartRelay(
+    accountsAt79,
+    {...defaultSmartRelayConfig, enabled: true, spentThresholdPct: 80},
+    NOW,
+  );
+  expect(below80.currentCandidate?.tier).toBe(0);
+  expect(below80.shouldRelayNow).toBe(false);
+
+  const accountsAt80: RelayAccountInput[] = [
+    makeAccount('current', 0, 80, 30, 3, 4, true),
+    makeAccount('standby', 1, 20, 20, 4, 5, false),
+  ];
+  const at80 = evaluateSmartRelay(
+    accountsAt80,
+    {...defaultSmartRelayConfig, enabled: true, spentThresholdPct: 80},
+    NOW,
+  );
+  expect(at80.currentCandidate?.tier).toBe(2);
+  expect(at80.shouldRelayNow).toBe(true);
+  expect(at80.relayTriggerKind).toBe('current_spent');
+  expect(at80.recommended?.id).toBe('standby');
+
+  const accountsAt84: RelayAccountInput[] = [
+    makeAccount('current', 0, 84, 30, 3, 4, true),
+    makeAccount('standby', 1, 20, 20, 4, 5, false),
+  ];
+  const below85 = evaluateSmartRelay(
+    accountsAt84,
+    {...defaultSmartRelayConfig, enabled: true, spentThresholdPct: 85},
+    NOW,
+  );
+  expect(below85.currentCandidate?.tier).toBe(0);
+  expect(below85.shouldRelayNow).toBe(false);
+
+  const accountsAt85: RelayAccountInput[] = [
+    makeAccount('current', 0, 85, 30, 3, 4, true),
+    makeAccount('standby', 1, 20, 20, 4, 5, false),
+  ];
+  const at85 = evaluateSmartRelay(
+    accountsAt85,
+    {...defaultSmartRelayConfig, enabled: true, spentThresholdPct: 85},
+    NOW,
+  );
+  expect(at85.currentCandidate?.tier).toBe(2);
+  expect(at85.shouldRelayNow).toBe(true);
+  expect(at85.relayTriggerKind).toBe('current_spent');
+  expect(at85.recommended?.id).toBe('standby');
+
+  // Verify awaitingManualReset also respects 80 and 85 on 7d usage
+  const resetCardAccounts: RelayAccountInput[] = [
+    {
+      ...makeAccount('card-at-82-7d', 0, 25, 82, 3, 5, true),
+      summary: {
+        quota_source: 'server_anchor',
+        quota_5h_used: 25,
+        quota_5h_reset_at: NOW + 3 * HOUR,
+        quota_7d_used: 82,
+        quota_7d_reset_at: NOW + 5 * DAY,
+        manual_resets_remaining: 1,
+      },
+    },
+    makeAccount('backup', 1, 10, 20, 4, 5, false),
+  ];
+  const evalCard80 = evaluateSmartRelay(
+    resetCardAccounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'reset_harvest', spentThresholdPct: 80},
+    NOW,
+  );
+  expect(evalCard80.candidates.find(c => c.id === 'card-at-82-7d')?.awaitingManualReset).toBe(true);
+  expect(evalCard80.shouldRelayNow).toBe(true);
+
+  const evalCard85 = evaluateSmartRelay(
+    resetCardAccounts,
+    {...defaultSmartRelayConfig, enabled: true, strategy: 'reset_harvest', spentThresholdPct: 85},
+    NOW,
+  );
+  expect(evalCard85.candidates.find(c => c.id === 'card-at-82-7d')?.awaitingManualReset).toBe(false);
+  expect(evalCard85.shouldRelayNow).toBe(false);
+});
+
+test('findSameExitClusterWarning detects >=3 included accounts sharing the same normalized exit endpoint', () => {
+  // 1) 2 accounts on same port -> null
+  expect(
+    findSameExitClusterWarning(
+      [
+        {id: 'a1', isIncluded: true, proxy: 'http://127.0.0.1:7899'},
+        {id: 'a2', isIncluded: true, proxy: 'socks5://127.0.0.1:7899'},
+      ],
+      {},
+    ),
+  ).toBeNull();
+
+  // 2) 3 included accounts on mixed http/socks5h/localhost:7899 -> { endpoint: ':7899', count: 3 }
+  expect(
+    findSameExitClusterWarning(
+      [
+        {id: 'a1', isIncluded: true, proxy: 'http://127.0.0.1:7899/'},
+        {id: 'a2', isIncluded: true, proxy: 'socks5h://127.0.0.1:7899'},
+        {id: 'a3', isIncluded: true, proxy: null},
+      ],
+      {'a3': 'HTTP://LOCALHOST:7899/'},
+    ),
+  ).toEqual({endpoint: ':7899', count: 3});
+
+  // 3) 4 accounts split 2+2 on :7899 and :7898 -> null
+  expect(
+    findSameExitClusterWarning(
+      [
+        {id: 'a1', isIncluded: true, proxy: 'http://127.0.0.1:7899'},
+        {id: 'a2', isIncluded: true, proxy: 'socks5://localhost:7899'},
+        {id: 'a3', isIncluded: true, proxy: 'http://127.0.0.1:7898'},
+        {id: 'a4', isIncluded: true, proxy: 'http://[::1]:7898/'},
+      ],
+      {},
+    ),
+  ).toBeNull();
+
+  // 4) Excluded accounts not counted (2 included + 2 excluded on :7899 -> null)
+  expect(
+    findSameExitClusterWarning(
+      [
+        {id: 'a1', isIncluded: true, proxy: null},
+        {id: 'a2', isIncluded: true, proxy: 'socks5://127.0.0.1:7899'},
+        {id: 'a3', isIncluded: false, proxy: 'http://127.0.0.1:7899'},
+        {id: 'a4', isIncluded: false, proxy: null},
+      ],
+      {},
+    ),
+  ).toBeNull();
 });

@@ -1,4 +1,4 @@
-// [INPUT]: Explicit local pairing ticket, bounded Claude account/org candidates, and projected metadata.
+// [INPUT]: Explicit local pairing ticket, bounded Claude account/org candidates, and projected metadata (subscription, usage, optional kyc_status).
 // [OUTPUT]: One nonce/tab-bound callback after fingerprint matching, or an allowlisted failure with no account payload.
 // [POS]: Fixed MV3 bridge service worker; fingerprint stays in session storage and never reaches claude.ai.
 "use strict";
@@ -146,6 +146,10 @@ function projectSnapshot(snapshot, selected) {
       safe.subscription_details = projectedDetails;
     }
   }
+  const projectedKyc = projectKycStatus(snapshot.kyc_status);
+  if (projectedKyc) {
+    safe.kyc_status = projectedKyc;
+  }
   const cedar = snapshot.usage?.cedar_ember;
   if (cedar && typeof cedar === "object") {
     const projected = {};
@@ -194,4 +198,16 @@ function projectSnapshot(snapshot, selected) {
     }
   }
   return safe;
+}
+
+function projectKycStatus(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const status = typeof raw.status === "string" ? raw.status.trim() : "";
+  if (!status || status.length > 32) return undefined;
+  const rawKind = typeof raw.check_kind === "string" ? raw.check_kind.trim().toLowerCase() : "";
+  const check_kind = /^[a-z0-9_-]{1,32}$/.test(rawKind) ? rawKind : undefined;
+  return {
+    status,
+    ...(check_kind ? { check_kind } : {})
+  };
 }

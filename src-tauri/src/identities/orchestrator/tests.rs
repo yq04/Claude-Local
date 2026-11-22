@@ -1,5 +1,5 @@
 // [INPUT]: identities::orchestrator、identities::{catalog,database,online,private,profile,store,usage,Policy} 与 cleaner_identity 隔离辅助的合成测试夹具。
-// [OUTPUT]: 覆盖 smart_relay_v1 校验与 128KiB 限制、6 策略 1:1 评估器（Strategy A1 Reset-Card / 阈值感知 awaiting_manual_reset / WeekLow / 10% pace 分带 / 首选滞回返回 / affinity_mode）、Windows FILETIME 防 PID 复用、exclude_record_ids 多路故障转移、settings.local.json + skills/synced 干净物化、单调 expiresAt 回灌与释放后凭据擦除、429 冷却入狱、纯后台守护态自动优雅挂起与跨切号 `adopt.json`/`daemon*` 保护、cr.cmd + pro-pool-worker.md 原子无 BOM LF 安装与 --orchestrate 全分支的纯合成单元测试。
+// [OUTPUT]: 覆盖 smart_relay_v1 校验（含 80/85 阈值与默认并发 1、兼容 1..=5）与 128KiB 限制、6 策略 1:1 评估器（Strategy A1 Reset-Card / 阈值感知 awaiting_manual_reset / WeekLow / 10% pace 分带 / 首选滞回返回 / affinity_mode）、Windows FILETIME 防 PID 复用、exclude_record_ids 多路故障转移、settings.local.json + skills/synced 干净物化、单调 expiresAt 回灌与释放后凭据擦除、429 冷却入狱、纯后台守护态自动优雅挂起与跨切号 `adopt.json`/`daemon*` 保护、cr.cmd + pro-pool-worker.md 原子无 BOM LF 安装与 --orchestrate 全分支的纯合成单元测试。
 // [POS]: orchestrator 子包单元测试边界；仅使用临时目录与合成夹具，绝不触碰真实系统进程、全局 ~/.claude 或注册表。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -236,6 +236,7 @@ fn smart_relay_config_roundtrip_and_strict_validation() {
     assert!(!pre_state.config_persisted);
     assert_eq!(pre_state.config.spent_threshold_pct, 98);
     assert_eq!(pre_state.config.preferred_return_threshold_pct, 90);
+    assert_eq!(pre_state.config.max_same_exit_concurrency, 1);
     assert!(pre_state.config.sunk_order.is_empty());
     assert!(pre_state.config.rotation_tick.is_empty());
 
@@ -249,7 +250,7 @@ fn smart_relay_config_roundtrip_and_strict_validation() {
         "preferredReturnThresholdPct": 90,
         "autoSwitchWhenIdle": false,
         "autoContinueOnRelay": false,
-        "maxSameExitConcurrency": 2,
+        "maxSameExitConcurrency": 1,
         "preferredAccountId": null,
         "excludedAccountIds": [],
         "slotProxies": {},
@@ -3136,5 +3137,183 @@ fn relay_handoff_mode_config_slots_skills_copy_and_relay_switch_handoff_paths() 
     let json = res.handoff_json_path.expect("handoff_json_path");
     assert!(PathBuf::from(&md).is_file());
     assert!(PathBuf::from(&json).is_file());
+}
+
+#[test]
+fn spent_thresholds_80_85_and_default_concurrency_one() {
+    let fx = TempFixture::new("thresh-80-85-conc");
+    let now_sec = now_epoch_sec();
+
+    let defaults = SmartRelayConfig::default();
+    assert_eq!(defaults.spent_threshold_pct, 98);
+    assert_eq!(defaults.max_same_exit_concurrency, 1);
+
+    // Strict & lenient validation for all VALID_SPENT_THRESHOLDS including 80 and 85
+    for threshold in [80u8, 85, 90, 95, 98, 100] {
+        let mut cfg = SmartRelayConfig::default();
+        cfg.spent_threshold_pct = threshold;
+        let validated = validate_config_strict(cfg).expect("valid threshold");
+        assert_eq!(validated.spent_threshold_pct, threshold);
+        save_config(&fx.app_data, &validated).unwrap();
+        assert_eq!(load_config(&fx.app_data).spent_threshold_pct, threshold);
+    }
+    for bad_threshold in [75u8, 89, 101] {
+        let mut cfg = SmartRelayConfig::default();
+        cfg.spent_threshold_pct = bad_threshold;
+        assert_eq!(
+            validate_config_strict(cfg.clone()).unwrap_err(),
+            "relay.error.invalidThreshold"
+        );
+        save_config(&fx.app_data, &cfg).unwrap();
+        assert_eq!(load_config(&fx.app_data).spent_threshold_pct, 98);
+    }
+
+    // Strict & lenient validation for max_same_exit_concurrency in 1..=5
+    for conc in 1u8..=5 {
+        let mut cfg = SmartRelayConfig::default();
+        cfg.max_same_exit_concurrency = conc;
+        let validated = validate_config_strict(cfg).expect("valid concurrency");
+        assert_eq!(validated.max_same_exit_concurrency, conc);
+        save_config(&fx.app_data, &validated).unwrap();
+        assert_eq!(load_config(&fx.app_data).max_same_exit_concurrency, conc);
+    }
+    for (bad_conc, expected_clamped) in [(0u8, 1u8), (6u8, 5u8)] {
+        let mut cfg = SmartRelayConfig::default();
+        cfg.max_same_exit_concurrency = bad_conc;
+        assert_eq!(
+            validate_config_strict(cfg.clone()).unwrap_err(),
+            "relay.error.invalidConcurrency"
+        );
+        save_config(&fx.app_data, &cfg).unwrap();
+        assert_eq!(
+            load_config(&fx.app_data).max_same_exit_concurrency,
+            expected_clamped
+        );
+    }
+
+    // Evaluator threshold checks at 80% and 85%
+    let rec_a = fx.seed_saved_account("Active A", "u-th-a", "tha@example.invalid", "ta", "ra");
+    let rec_b = fx.seed_saved_account("Standby B", "u-th-b", "thb@example.invalid", "tb", "rb");
+    {
+        let mut store = Store::open(&fx.vault, &fx.home).unwrap();
+        store
+            .switch(&rec_a.id, "Active A", &Policy::default(), &Reporter::channel(None))
+            .unwrap();
+    }
+    let db = database::Database::open(&fx.vault).unwrap();
+    set_summary_quota(
+        &db,
+        &rec_b.id,
+        Some(10),
+        Some(now_sec + 14_400),
+        Some(15),
+        Some(now_sec + 5 * 86_400),
+        None,
+    );
+
+    let set_live_a_5h = |used_5h: u8| {
+        fs::write(
+            fx.home.join(".claude.json"),
+            serde_json::to_vec_pretty(&json!({
+                "oauthAccount": { "accountUuid": "u-th-a", "emailAddress": "tha@example.invalid" },
+                "cachedUsageUtilization": {
+                    "accountUuid": "u-th-a",
+                    "fetchedAtMs": now_sec * 1000,
+                    "utilization": {
+                        "five_hour": { "utilization": used_5h, "resets_at": now_sec + 3600 },
+                        "seven_day": { "utilization": 20, "resets_at": now_sec + 5 * 86_400 }
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        set_summary_quota(
+            &db,
+            &rec_a.id,
+            Some(used_5h),
+            Some(now_sec + 3600),
+            Some(20),
+            Some(now_sec + 5 * 86_400),
+            None,
+        );
+    };
+
+    // Threshold 80%: 79% is ready; 80% is spent & triggers relay
+    let mut cfg = SmartRelayConfig {
+        enabled: true,
+        strategy: "smart".into(),
+        spent_threshold_pct: 80,
+        ..SmartRelayConfig::default()
+    };
+    save_config(&fx.app_data, &cfg).unwrap();
+
+    set_live_a_5h(79);
+    let st_79 = orchestrator_state_in(&fx.app_data, &fx.vault, &fx.home, now_sec, &[]).unwrap();
+    assert!(!st_79.should_relay_now);
+    let view_a_79 = st_79.accounts.iter().find(|a| a.id == rec_a.id).unwrap();
+    assert!(!view_a_79.spent);
+    assert_eq!(view_a_79.tier, "ready");
+
+    set_live_a_5h(80);
+    let st_80 = orchestrator_state_in(&fx.app_data, &fx.vault, &fx.home, now_sec, &[]).unwrap();
+    assert!(st_80.should_relay_now);
+    assert_eq!(st_80.relay_trigger_kind.as_deref(), Some("threshold_reached"));
+    let view_a_80 = st_80.accounts.iter().find(|a| a.id == rec_a.id).unwrap();
+    assert!(view_a_80.spent);
+    assert_eq!(view_a_80.tier, "spent");
+
+    // Threshold 85%: 80% and 84% remain ready; 85% is spent & triggers relay
+    cfg.spent_threshold_pct = 85;
+    save_config(&fx.app_data, &cfg).unwrap();
+
+    for pct in [80u8, 84] {
+        set_live_a_5h(pct);
+        let st = orchestrator_state_in(&fx.app_data, &fx.vault, &fx.home, now_sec, &[]).unwrap();
+        assert!(!st.should_relay_now, "pct={pct} must stay below 85% threshold");
+        let view_a = st.accounts.iter().find(|a| a.id == rec_a.id).unwrap();
+        assert!(!view_a.spent);
+        assert_eq!(view_a.tier, "ready");
+    }
+
+    set_live_a_5h(85);
+    let st_85 = orchestrator_state_in(&fx.app_data, &fx.vault, &fx.home, now_sec, &[]).unwrap();
+    assert!(st_85.should_relay_now);
+    assert_eq!(st_85.relay_trigger_kind.as_deref(), Some("threshold_reached"));
+    let view_a_85 = st_85.accounts.iter().find(|a| a.id == rec_a.id).unwrap();
+    assert!(view_a_85.spent);
+    assert_eq!(view_a_85.tier, "spent");
+
+    // Non-persisting status threshold_pct overrides accept 80 and 85
+    cfg.spent_threshold_pct = 98;
+    save_config(&fx.app_data, &cfg).unwrap();
+    set_live_a_5h(80);
+    let (c80, out80) = orchestrate_handle_json_in(
+        br#"{"schema":1,"op":"status","threshold_pct":80}"#,
+        &fx.app_data,
+        &fx.vault,
+        &fx.home,
+        now_sec,
+        &[],
+    );
+    assert_eq!(c80, 0);
+    let v80: Value = serde_json::from_str(&out80).unwrap();
+    assert_eq!(v80["config"]["spentThresholdPct"], 80);
+    assert_eq!(v80["should_relay_now"], true);
+
+    set_live_a_5h(85);
+    let (c85, out85) = orchestrate_handle_json_in(
+        br#"{"schema":1,"op":"status","threshold_pct":85}"#,
+        &fx.app_data,
+        &fx.vault,
+        &fx.home,
+        now_sec,
+        &[],
+    );
+    assert_eq!(c85, 0);
+    let v85: Value = serde_json::from_str(&out85).unwrap();
+    assert_eq!(v85["config"]["spentThresholdPct"], 85);
+    assert_eq!(v85["should_relay_now"], true);
+    assert_eq!(load_config(&fx.app_data).spent_threshold_pct, 98);
 }
 

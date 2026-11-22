@@ -1,5 +1,5 @@
-// [INPUT]: Explicit loopback fragment and same-origin Claude account/organization API responses.
-// [OUTPUT]: Fingerprint candidates, allowlisted metadata and bounded failure reasons for the local callback.
+// [INPUT]: Explicit loopback fragment and same-origin Claude account/organization API responses (subscription, usage, optional kyc_status).
+// [OUTPUT]: Fingerprint candidates, allowlisted metadata (including stripped kyc_status) and bounded failure reasons for the local callback.
 // [POS]: Fixed MV3 page bridge; account identity is selected by the local quota_identity fingerprint.
 "use strict";
 let quotaRequestDeadlineMs = 0;
@@ -41,9 +41,10 @@ let quotaRequestDeadlineMs = 0;
 
     const encoded = encodeURIComponent(organizationUuid);
     failure = "usage_unavailable";
-    const [subscriptionDetails, usage] = await Promise.all([
+    const [subscriptionDetails, usage, kycStatus] = await Promise.all([
       getJsonOptional(`/api/organizations/${encoded}/subscription_details`),
-      getJson(`/api/organizations/${encoded}/usage?at_wall=1&skip_spend=1`)
+      getJson(`/api/organizations/${encoded}/usage?at_wall=1&skip_spend=1`),
+      getJsonOptional(`/api/organizations/${encoded}/kyc_status`)
     ]);
     failure = "identity_unavailable";
     const identityAfter = await readIdentity();
@@ -59,11 +60,13 @@ let quotaRequestDeadlineMs = 0;
       paused: grant?.paused
     })) : undefined;
     const projectedSubscription = projectSubscriptionDetails(subscriptionDetails);
+    const projectedKyc = projectKycStatus(kycStatus);
     const snapshot = {
       nonce,
       account_uuid: accountUuid,
       organization_uuid: organizationUuid,
       ...(projectedSubscription ? { subscription_details: projectedSubscription } : {}),
+      ...(projectedKyc ? { kyc_status: projectedKyc } : {}),
       usage: usage ? { ...(cedar ? { cedar_ember: {
         ...(typeof cedar.eligible === "boolean" ? { eligible: cedar.eligible } : {}),
         ...(grants ? { grants } : {})
@@ -179,6 +182,18 @@ function projectSubscriptionDetails(details) {
     }
   }
   return Object.keys(projected).length > 0 ? projected : undefined;
+}
+
+function projectKycStatus(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const status = typeof raw.status === "string" ? raw.status.trim() : "";
+  if (!status || status.length > 32) return undefined;
+  const rawKind = typeof raw.check_kind === "string" ? raw.check_kind.trim().toLowerCase() : "";
+  const check_kind = /^[a-z0-9_-]{1,32}$/.test(rawKind) ? rawKind : undefined;
+  return {
+    status,
+    ...(check_kind ? { check_kind } : {})
+  };
 }
 
 function sameIdentity(left, right) {

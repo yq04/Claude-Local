@@ -1,5 +1,5 @@
 // [INPUT]: 只读 ~/.claude/{projects,todos,tasks,teams,plans,jobs}、Store 切换上下文与 <app_data_dir>/handoff/ 持久化目录。
-// [OUTPUT]: 零配置扰动防封交接检查点（捕获只读 HandoffDraft、硬防封脱敏防火墙剥离账号/组织/邮箱/UUID/路径/凭据/思考签名、原子提交 latest-handoff.{json,md} 与 subagent-outputs/sub-XX.md）、identities_latest_handoff 与 identities_dismiss_handoff 命令。
+// [OUTPUT]: 零配置扰动防封交接检查点（捕获只读 HandoffDraft 与至多 1200 字符会话进度摘要、硬防封脱敏防火墙剥离账号/组织/邮箱/UUID/路径/凭据/思考签名、原子提交 latest-handoff.{json,md} 与 subagent-outputs/sub-XX.md）、identities_latest_handoff 与 identities_dismiss_handoff 命令。
 // [POS]: 身份切换后的跨账号断点续接与防封隔离防火墙；绝不写入 ~/.claude/settings.json 或 ~/.claude/projects/*.jsonl。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{private, profile};
@@ -1124,7 +1124,7 @@ pub(crate) fn capture_handoff_draft(
             inspect_jsonl_lines(&lines, home, &mut ctx);
 
         let goal = scrub_single_line(&first_user, &ctx, 220);
-        let progress = scrub_single_line(&last_progress, &ctx, 300);
+        let progress = scrub_single_line(&last_progress, &ctx, 1200);
         sessions.push(HandoffSessionBrief {
             label: format!("session-{:02}", sess_idx + 1),
             goal: if goal.is_empty() {
@@ -1847,6 +1847,57 @@ mod tests {
         let (goal, progress, _, _, _) = inspect_jsonl_lines(&lines, &fx.home, &mut ctx.clone());
         assert_eq!(goal, "HEAD_GOAL_MARKER");
         assert_eq!(progress, "TAIL_PROGRESS_MARKER");
+    }
+
+    #[test]
+    fn session_progress_allows_structured_1200_chars_and_bounds_overflow() {
+        let fx = TempHandoffFixture::new("progress-cap");
+        let summary_900 = format!(
+            "Completed step 1 and step 2 ({}). Next: verify sk-ant-api03-secret999.",
+            "detail ".repeat(118).trim()
+        );
+        assert!(summary_900.chars().count() > 800 && summary_900.chars().count() <= 1000);
+        fx.write(
+            ".claude/projects/demo/11111111-2222-4333-8444-555555555555.jsonl",
+            format!(
+                "{}\n{}\n",
+                json!({ "type": "user", "message": { "role": "user", "content": "Run handoff" } }),
+                json!({
+                    "type": "assistant",
+                    "message": { "role": "assistant", "content": [{ "type": "text", "text": summary_900 }] }
+                })
+            )
+            .as_bytes(),
+        );
+
+        let draft = capture_handoff_draft(&fx.home, &[], &[]).expect("draft");
+        assert_eq!(draft.sessions.len(), 1);
+        let captured = &draft.sessions[0].last_progress;
+        assert!(
+            captured.chars().count() > 300,
+            "structured summary must not be clipped at 300 chars: len={}",
+            captured.chars().count()
+        );
+        assert!(!captured.ends_with('…'));
+        assert!(!captured.contains("sk-ant-api03-secret999"));
+
+        let over_1200 = "P".repeat(1400);
+        fx.write(
+            ".claude/projects/demo/11111111-2222-4333-8444-555555555555.jsonl",
+            format!(
+                "{}\n{}\n",
+                json!({ "type": "user", "message": { "role": "user", "content": "Run handoff" } }),
+                json!({
+                    "type": "assistant",
+                    "message": { "role": "assistant", "content": [{ "type": "text", "text": over_1200 }] }
+                })
+            )
+            .as_bytes(),
+        );
+        let capped_draft = capture_handoff_draft(&fx.home, &[], &[]).expect("capped draft");
+        let capped = &capped_draft.sessions[0].last_progress;
+        assert_eq!(capped.chars().count(), 1200);
+        assert!(capped.ends_with('…'));
     }
 }
 

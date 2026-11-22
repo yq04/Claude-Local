@@ -1,5 +1,5 @@
 // [INPUT]: app_data_dir/smart_relay_v1.json、~/.claude/settings(.local).json 代理配置与 .orchestrate.lock 跨进程锁文件。
-// [OUTPUT]: SmartRelayConfig 序列化/反序列化（含跨切号持久化的 defaultCliModel / defaultCliEffort / relayHandoffMode，兼容旧版 sunkOrder/rotationTick 零编译告警）、严格/宽容配置归一化、HTTP 代理严格校验与转换、子代理环境净化键表及跨进程文件锁守卫。
+// [OUTPUT]: SmartRelayConfig 序列化/反序列化（默认 spentThresholdPct=98 支持 80/85/90/95/98/100、默认 maxSameExitConcurrency=1 且兼容 1..=5、含跨切号持久化的 defaultCliModel / defaultCliEffort / relayHandoffMode，兼容旧版 sunkOrder/rotationTick 零编译告警）、严格/宽容配置归一化、HTTP 代理严格校验与转换、子代理环境净化键表及跨进程文件锁守卫。
 // [POS]: orchestrator 配置、常量与跨进程互斥基础设施层；纯本地私有文件读写，不发起网络请求。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::super::private;
@@ -48,7 +48,7 @@ pub(super) const VALID_STRATEGIES: &[&str] = &[
 ];
 pub(super) const VALID_RATE_LIMIT_MODES: &[&str] = &["keep_position", "sink_to_end"];
 pub(super) const VALID_AFFINITY_MODES: &[&str] = &["auto", "session", "manual"];
-pub(super) const VALID_SPENT_THRESHOLDS: &[u8] = &[90, 95, 98, 100];
+pub(super) const VALID_SPENT_THRESHOLDS: &[u8] = &[80, 85, 90, 95, 98, 100];
 pub(super) const VALID_RETURN_THRESHOLDS: &[u8] = &[80, 85, 90];
 pub(super) const VALID_RELAY_HANDOFF_MODES: &[&str] = &["clean_handoff", "fork_resume"];
 pub(super) const VALID_DEFAULT_CLI_MODELS: &[&str] = &[
@@ -126,7 +126,7 @@ fn default_preferred_return_threshold_pct() -> u8 {
     90
 }
 fn default_max_same_exit_concurrency() -> u8 {
-    2
+    1
 }
 fn default_relay_handoff_mode() -> String {
     "clean_handoff".into()

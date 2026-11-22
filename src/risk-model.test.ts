@@ -267,6 +267,9 @@ test('buildMobileBridgeConfig generates hardened profiles for all 4 mobile clien
     expect(profileText).toContain('growthbook.io');
     expect(profileText).toContain('claude.com');
     expect(profileText).toContain('withpersona.com');
+    expect(profileText).toContain('yoti.com');
+    expect(profileText).toContain('hexagon-cdn.com');
+    expect(profileText).toContain('hexagon-analytics.com');
   }
 
   const matrix = encodeQrMatrix(sr!.qrUri);
@@ -316,6 +319,9 @@ test('Shadowrocket standalone SOCKS5 QR generator produces RFC 3986 socks5:// au
   expect(conf.configText).toContain('growthbook.io');
   expect(conf.configText).toContain('claude.com');
   expect(conf.configText).toContain('withpersona.com');
+  expect(conf.configText).toContain('yoti.com');
+  expect(conf.configText).toContain('hexagon-cdn.com');
+  expect(conf.configText).toContain('hexagon-analytics.com');
   expect(conf.configText).toContain('FINAL,PROXY,dns-failed');
   expect(conf.configText).not.toContain('user_01');
 });
@@ -343,6 +349,15 @@ test('AI remediation prompts cover desktop DNS/Persona fix, campus route exclusi
   const zhStandalone = buildStandaloneMobilePrompt({client: 'shadowrocket', targetTimezone: 'America/New_York', locale: 'zh'});
   expect(zhStandalone).toContain('Shadowrocket (iOS)');
   expect(zhStandalone).toContain('America/New_York');
+  expect(zhStandalone).toContain('yoti.com');
+  expect(zhStandalone).toContain('hexagon-cdn.com');
+  expect(zhStandalone).toContain('hexagon-analytics.com');
+
+  const enStandalone = buildStandaloneMobilePrompt({client: 'clash-mi', targetTimezone: 'America/Los_Angeles', locale: 'en'});
+  expect(enStandalone).toContain('yoti.com');
+  expect(enStandalone).toContain('hexagon-cdn.com');
+  expect(enStandalone).toContain('hexagon-analytics.com');
+  expect(enStandalone).not.toMatch(/[\u3400-\u9fff]/);
 
   for (const locale of ['zh', 'en'] as const) {
     const prompt = buildAiProxyPrompt(locale);
@@ -360,6 +375,9 @@ test('AI remediation prompts cover desktop DNS/Persona fix, campus route exclusi
     expect(prompt).toMatch(/claudeusercontent\.com/);
     expect(prompt).toMatch(/withpersona\.com/);
     expect(prompt).toMatch(/persona\.org/);
+    expect(prompt).toMatch(/yoti\.com/);
+    expect(prompt).toMatch(/hexagon-cdn\.com/);
+    expect(prompt).toMatch(/hexagon-analytics\.com/);
     expect(prompt).toMatch(/ippure\.com/);
     expect(prompt).toMatch(/198\.18\.0\.0\/15/);
     expect(prompt).toMatch(/https:\/\/1\.1\.1\.1\/dns-query/);
@@ -593,6 +611,9 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
     'browser-intake-us5-datadoghq.com',
     'datadoghq.eu',
     'beyondwickedmapping.org',
+    'yoti.com',
+    'hexagon-cdn.com',
+    'hexagon-analytics.com',
   ]) {
     expect(desktopYamlFull).toContain(`DOMAIN-SUFFIX,${portfolioDomain},`);
     expect(zhPromptFull).toContain(portfolioDomain);
@@ -937,4 +958,92 @@ test('auditClaudeCliSecurityBoundary rejects NO_PROXY bypasses, case-clobbered o
   expect(mcpEdgeAudit.non_english_language).toBe(true);
   expect(mcpEdgeAudit.unpinned_npx_count).toBe(1);
   expect(mcpEdgeAudit.remote_http_mcp_count).toBe(1);
+});
+
+test('evaluateRiskChecks attaches missingSift detailKey only when has_sift_rules === false without downgrading okFull status', () => {
+  const baseLocal: LocalRiskSnapshot = {
+    browser: {
+      proxy_configured: true,
+      proxy_scheme: 'socks5',
+      proxy_local_port: 7899,
+      remote_dns_locked: true,
+      target_country: 'US',
+      target_timezone: 'America/New_York',
+      target_language: 'en-US',
+    },
+    mihomo: {
+      detected: true,
+      config_source: 'running_core',
+      config_source_status: 'confirmed',
+      dns_projection_complete: true,
+      dns_has_encrypted_resolver: true,
+      client_kind: 'clash-verge-rev',
+      mixed_port: 7897,
+      allow_lan: false,
+      tun_enabled: true,
+      tun_strict_route: true,
+      dns_enabled: true,
+      dns_enhanced_mode: 'fake-ip',
+      dns_respect_rules: true,
+      dns_has_remote_doh: true,
+      dns_has_domestic_plain: false,
+      dns_has_nameserver_policy: true,
+      has_claude_rules: true,
+      has_persona_rules: true,
+      has_quic_reject: true,
+      has_geoip_cn: true,
+      dedicated_listener_port: 7899,
+    },
+    system: {
+      tun_adapter_active: true,
+      secondary_plaintext_dns_active: false,
+      lan_ipv4_candidates: ['192.168.1.10'],
+      public_wan_detected: false,
+    },
+  };
+
+  // 1) undefined has_sift_rules keeps detailKeys undefined and status 'ok'
+  const kycUndefined = evaluateRiskChecks(baseLocal, null, false).find(c => c.id === 'kyc_routing_rules')!;
+  expect(kycUndefined.status).toBe('ok');
+  expect(kycUndefined.summaryKey).toBe('risk.check.kycRoutingRules.okFull');
+  expect(kycUndefined.detailKeys).toBeUndefined();
+
+  // 2) has_sift_rules === true keeps detailKeys undefined and status 'ok'
+  const kycTrue = evaluateRiskChecks(
+    {...baseLocal, mihomo: {...baseLocal.mihomo, has_sift_rules: true}},
+    null,
+    false,
+  ).find(c => c.id === 'kyc_routing_rules')!;
+  expect(kycTrue.status).toBe('ok');
+  expect(kycTrue.detailKeys).toBeUndefined();
+
+  // 3) has_sift_rules === false on okFull branch sets detailKeys without downgrading status or banner
+  const checksFalseOk = evaluateRiskChecks(
+    {...baseLocal, mihomo: {...baseLocal.mihomo, has_sift_rules: false}},
+    null,
+    false,
+  );
+  const kycFalseOk = checksFalseOk.find(c => c.id === 'kyc_routing_rules')!;
+  expect(kycFalseOk.status).toBe('ok');
+  expect(kycFalseOk.summaryKey).toBe('risk.check.kycRoutingRules.okFull');
+  expect(kycFalseOk.detailKeys).toEqual(['risk.check.kycRoutingRules.missingSift']);
+  expect(resolveRiskBanner(baseLocal, null, checksFalseOk).status).toBe('ok');
+
+  // 4) has_sift_rules === false on warnMissingQuicOrListener branch also attaches detailKeys
+  const kycFalseWarn = evaluateRiskChecks(
+    {
+      ...baseLocal,
+      mihomo: {...baseLocal.mihomo, has_quic_reject: false, has_sift_rules: false},
+    },
+    null,
+    false,
+  ).find(c => c.id === 'kyc_routing_rules')!;
+  expect(kycFalseWarn.status).toBe('warn');
+  expect(kycFalseWarn.summaryKey).toBe('risk.check.kycRoutingRules.warnMissingQuicOrListener');
+  expect(kycFalseWarn.detailKeys).toEqual(['risk.check.kycRoutingRules.missingSift']);
+
+  for (const locale of ['zh', 'en'] as const) {
+    const msg = translate('risk.check.kycRoutingRules.missingSift', {}, locale);
+    expect(msg).not.toBe('risk.check.kycRoutingRules.missingSift');
+  }
 });

@@ -26,8 +26,8 @@ const server=createServer((request,response)=>{
   if(request.method==='OPTIONS'){
     response.writeHead(204,{'Access-Control-Allow-Origin':request.headers.origin||'null','Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'content-type'});response.end();return;
   }
-  if(request.url===`/${nonce}/browser.html`){response.writeHead(200,{'Content-Type':'text/html'});response.end('<!doctype html><title>fixture</title>');return;}
-  if(request.url===`/${nonce}/quota-sync`&&request.method==='POST'){
+  if(/^\/[a-f0-9]{48}\/browser\.html$/.test(request.url)){response.writeHead(200,{'Content-Type':'text/html'});response.end('<!doctype html><title>fixture</title>');return;}
+  if(/^\/[a-f0-9]{48}\/quota-sync$/.test(request.url)&&request.method==='POST'){
     let body='';request.setEncoding('utf8');request.on('data',chunk=>body+=chunk);request.on('end',()=>{
       try{received.push(JSON.parse(body));receivedOrigins.push(request.headers.origin);response.writeHead(200,{'Access-Control-Allow-Origin':request.headers.origin||'null','Content-Type':'application/json'});response.end('{"ok":true}');}
       catch{response.writeHead(400);response.end();}
@@ -114,10 +114,64 @@ try{
   assert.deepEqual(body.usage,{five_hour:{utilization:23,resets_at:'2027-01-01T00:00:00Z'},seven_day:{utilization:44,resets_at:'2027-01-05T00:00:00Z'},cedar_ember:{eligible:true,grants:[{resets_left:3,starts_at:'2026-01-01T00:00:00Z',ends_at:'2028-01-01T00:00:00Z',paused:false}]}});
   assert.equal(body.account_uuid,account);assert.equal(body.organization_uuid,organization);
   assert.ok(queried.includes(`/api/organizations/${organization}/subscription_details`));
+  assert.ok(queried.includes(`/api/organizations/${organization}/kyc_status`));
   assert.ok(queried.includes(`/api/organizations/${organization}/usage?at_wall=1&skip_spend=1`));
   assert.ok(!queried.some((path)=>path.includes(otherOrganization)),'unmatched organization must never be queried');
   assert.ok(!JSON.stringify(body).includes('secret'));
   assert.ok(new URL(workers.url()).host,'MV3 extension should be loaded');
+
+  const kycNonce='1111222233334444555566667777888899990000aaaabbbb';
+  const kycLocalUrl=`http://127.0.0.1:${port}/${kycNonce}/browser.html#quota-sync=${kycNonce}&quota_identity=${quotaIdentity}`;
+  const kycClaudeUrl=`https://claude.ai/settings/usage#claude-local-sync=${kycNonce}`;
+  const kycPair=await workers.evaluate(async({nonce,localUrl,quotaIdentity})=>{
+    const sender={id:chrome.runtime.id,tab:{id:11,url:localUrl}};
+    return pair({nonce,quotaIdentity},sender);
+  },{nonce:kycNonce,localUrl:kycLocalUrl,quotaIdentity});
+  assert.deepEqual(kycPair,{paired:true});
+
+  let kycOutbound;
+  const kycQueried=[];
+  const kycResponses={
+    '/api/account':{account:{uuid:account,email_address:email}},
+    '/api/account_profile':null,
+    '/api/organizations':[{id:organization,name:'Private Organization'}],
+    [`/api/organizations/${organization}/subscription_details`]:null,
+    [`/api/organizations/${organization}/kyc_status`]:{
+      status:'not_required',
+      check_kind:'identity',
+      vendor_inquiry_id:'secret-id',
+      vendor_inquiry_url:'https://secret.invalid/v'
+    },
+    [`/api/organizations/${organization}/usage?at_wall=1&skip_spend=1`]:{
+      five_hour:{utilization:23,resets_at:'2027-01-01T00:00:00Z'}
+    }
+  };
+  await runInNewContext(content,{
+    URL,AbortController,setTimeout,clearTimeout,TextDecoder,location:{href:kycClaudeUrl,origin:'https://claude.ai',pathname:'/settings/usage',search:'',hash:`#claude-local-sync=${kycNonce}`},
+    history:{replaceState(){}},sessionStorage:{getItem(){return null;},setItem(){}},
+    fetch:async path=>{kycQueried.push(path);return {ok:Object.hasOwn(kycResponses,path)&&kycResponses[path]!==null,json:async()=>kycResponses[path]};},
+    chrome:{runtime:{sendMessage:async message=>{
+      const sender={id:workers.url().match(/^chrome-extension:\/\/([^/]+)/)[1],tab:{id:11,url:kycClaudeUrl}};
+      if(message.kind==='claude-local-quota-candidates')return workers.evaluate(({msg,sender})=>matchCandidates(msg,sender),{msg:message,sender});
+      if(message.kind==='claude-local-quota-snapshot'){
+        kycOutbound=message;
+        return workers.evaluate(({msg,sender})=>deliver(msg,sender),{msg:message,sender});
+      }
+      return {paired:false};
+    }}},
+    encodeURIComponent
+  });
+  for(let i=0;i<30&&!kycOutbound;i++)await new Promise(resolveWait=>setTimeout(resolveWait,10));
+  assert.equal(kycOutbound?.kind,'claude-local-quota-snapshot');
+  assert.deepEqual(JSON.parse(JSON.stringify(kycOutbound?.snapshot?.kyc_status)),{status:'not_required',check_kind:'identity'});
+  assert.equal(received.length,2,'second paired flow should post once');
+  const kycBody=received[1];
+  assert.deepEqual(Object.keys(kycBody).sort(),['account_uuid','kyc_status','nonce','organization_uuid','usage']);
+  assert.deepEqual(kycBody.kyc_status,{status:'not_required',check_kind:'identity'});
+  assert.ok(kycQueried.includes(`/api/organizations/${organization}/kyc_status`));
+  assert.ok(!JSON.stringify(kycBody).includes('vendor_inquiry'));
+  assert.ok(!JSON.stringify(kycBody).includes('secret'));
+  assert.ok(!JSON.stringify(kycOutbound).includes('secret'));
   console.log('Synthetic MV3 quota bridge passed: duplicate pairing rejected and filtered snapshot delivered once.');
 }finally{
   if(context)await context.close();

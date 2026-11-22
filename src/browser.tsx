@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生浏览器/CLI归属快照、网络防漏断路器状态与事件、轻量窗口采样、真实观测事件、共享活动日志、env-pages.css、Pika 图标与双语文案。
- * [OUTPUT]: 顶部浏览器操作卡（四列去重发丝遥测条 + 状态胶囊）、分组标头、两列边线核验矩阵、双列水平数据清理区、高级设置与安全确认弹窗。
+ * [OUTPUT]: 顶部浏览器操作卡（四列去重发丝遥测条 + 状态胶囊）、分组标头、两列边线核验矩阵、双列水平数据清理区、高级设置（含真实设备指纹 native_graphics 单号/多号 Sift 防关联说明 `[data-native-graphics-hint]`）与安全确认弹窗。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -405,6 +405,7 @@ export function BrowserPanel({ onBusy }: {
                             <Button variant="secondary" size="small" disabled={disabled || state?.running || !changed} loading={busy === 'browser_save'} onClick={() => draft && void act('browser_save', { config: draft })}>{t("保存设置")}</Button>
                         </div>
                     </div>
+                    <p className="system-hint browser-fingerprint-hint" data-native-graphics-hint>{t(draft?.native_graphics ? 'browserSafety.nativeGraphicsOnHint' : 'browserSafety.nativeGraphicsOffHint')}</p>
                 </div>
             </Disclosure>
         </div>

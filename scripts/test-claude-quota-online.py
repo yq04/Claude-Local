@@ -1,5 +1,5 @@
 # [INPUT]: Synthetic OAuth files, mock HTTP replies and temporary application data.
-# [OUTPUT]: OAuth/browser binding, bounded grants, writer-lock persistence, strict wakeup confirmation and controlled ambiguity regressions.
+# [OUTPUT]: OAuth/browser binding, bounded grants, kyc_status persistence, writer-lock persistence, strict wakeup confirmation and controlled ambiguity regressions.
 # [POS]: Isolated tests for scripts/claude_quota_online.py; never uses real accounts or network.
 # [PROTOCOL]: Keep scripts/CLAUDE.md aligned with tested poller behavior.
 """Synthetic online quota tests; HTTP and credentials are always fixtures."""
@@ -1298,6 +1298,99 @@ class OnlineQuotaTests(unittest.TestCase):
                 online.import_browser_snapshot(app, home, "current", {**snap_team, "plan": "InvalidPlan"}, expected)["status"],
                 "invalid_response",
             )
+
+    def test_kyc_status_persistence_monotonicity_and_validation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app, home, account = self.fixture(Path(temp))
+            identity = self.expected(account)
+            meta_path = app / "identity-vault" / "quota_web_metadata.json"
+            t0 = int(time.time() * 1000)
+            base = {
+                "account_uuid": account["accountUuid"],
+                "organization_uuid": account["organizationUuid"],
+                "billing_date_kind": "unknown",
+                "billing_date": None,
+                "manual_resets_remaining": None,
+                "manual_resets_valid_until": None,
+                "metadata_observed_at_ms": t0,
+            }
+
+            # 1. Valid kyc_status + kyc_check_kind (trimmed + lowercased) persists and updates aggregate clock
+            first = online.import_browser_snapshot(
+                app,
+                home,
+                "current",
+                {**base, "kyc_status": "  PENDING ", "kyc_check_kind": " Identity_V1 "},
+                identity,
+            )
+            self.assertEqual(first["status"], "updated")
+            self.assertTrue(first["metadata_updated"])
+            self.assertEqual(first["observed_at_ms"], t0)
+            stored = json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity]
+            self.assertEqual(stored["kyc_status"], "pending")
+            self.assertEqual(stored["kyc_check_kind"], "identity_v1")
+            self.assertEqual(stored["kyc_observed_at_ms"], t0)
+            self.assertEqual(stored["metadata_observed_at_ms"], t0)
+
+            # 2. Equal or older kyc_observed_at_ms never overwrites newer kyc_status
+            for stale_ms in (t0, t0 - 500):
+                stale = online.import_browser_snapshot(
+                    app,
+                    home,
+                    "current",
+                    {**base, "metadata_observed_at_ms": stale_ms, "kyc_status": "verified", "kyc_check_kind": "other"},
+                    identity,
+                )
+                self.assertEqual(stale["status"], "cached")
+                self.assertFalse(stale["metadata_updated"])
+            self.assertEqual(json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity], stored)
+
+            # 3. Invalid kyc_status, invalid kyc_check_kind, or vendor inquiry fields fail closed without writing
+            bad_patches = [
+                {"kyc_status": "unknown_status"},
+                {"kyc_status": ""},
+                {"kyc_status": 123},
+                {"kyc_status": True},
+                {"kyc_check_kind": "identity"},
+                {"kyc_status": None, "kyc_check_kind": "identity"},
+                {"kyc_status": "pending", "kyc_check_kind": ""},
+                {"kyc_status": "pending", "kyc_check_kind": "a" * 33},
+                {"kyc_status": "pending", "kyc_check_kind": "bad kind!"},
+                {"kyc_status": "pending", "kyc_check_kind": 123},
+                {"kyc_status": "pending", "vendor_inquiry_id": "inq_secret_1"},
+                {"kyc_status": "pending", "vendor_inquiry_url": "https://secret.invalid/v"},
+            ]
+            for idx, patch_fields in enumerate(bad_patches):
+                with self.subTest(bad_idx=idx, patch=patch_fields):
+                    bad_res = online.import_browser_snapshot(
+                        app,
+                        home,
+                        "current",
+                        {**base, "metadata_observed_at_ms": t0 + 100 + idx, **patch_fields},
+                        identity,
+                    )
+                    self.assertEqual(bad_res["status"], "invalid_response")
+                    self.assertFalse(bad_res["metadata_updated"])
+            self.assertEqual(json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity], stored)
+
+            # 4. Newer valid observation without kyc_check_kind clears prior kyc_check_kind and keeps all valid statuses accepted
+            t1 = t0 + 1000
+            for offset, valid_status in enumerate(sorted(online.VALID_KYC_STATUSES)):
+                obs_ms = t1 + offset * 10
+                res = online.import_browser_snapshot(
+                    app,
+                    home,
+                    "current",
+                    {**base, "metadata_observed_at_ms": obs_ms, "kyc_status": valid_status},
+                    identity,
+                )
+                self.assertEqual(res["status"], "updated")
+                self.assertTrue(res["metadata_updated"])
+                entry = json.loads(meta_path.read_text(encoding="utf-8"))["accounts"][identity]
+                self.assertEqual(entry["kyc_status"], valid_status)
+                self.assertNotIn("kyc_check_kind", entry)
+                self.assertEqual(entry["kyc_observed_at_ms"], obs_ms)
+                self.assertEqual(entry["metadata_observed_at_ms"], obs_ms)
 
 
 if __name__ == "__main__":

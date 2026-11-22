@@ -1,5 +1,5 @@
 # [INPUT]: scripts/claude-relay.ps1, scripts/claude-subagent.ps1, and temporary mock claude/claude-local shims.
-# [OUTPUT]: Encoding/BOM/LF/PS5.1+PS7 AST checks and end-to-end synthetic relay, flag-preservation, Ctrl+C rescue, StopFailure sentinel (with has_bg), continued-in background session resume, proxy preflight, and subagent 429 failover regressions.
+# [OUTPUT]: Encoding/BOM/LF/PS5.1+PS7 AST checks and end-to-end synthetic relay, flag-preservation, Ctrl+C rescue, StopFailure/Stop/PostToolUse sentinels (2-stage proactive threshold wrap-up & forced_stop via quota_ledger.json watcher), continued-in background session resume, 1200-char progress digest, proxy preflight, and subagent 429 failover regressions.
 # [POS]: Offline orchestrator script tests; never runs real claude.exe, modifies %APPDATA%, or stops live processes.
 # [PROTOCOL]: Update scripts/CLAUDE.md when adding or altering orchestrator wrapper flags or protocol fields.
 """Synthetic end-to-end tests for claude-relay.ps1 and claude-subagent.ps1."""
@@ -42,7 +42,7 @@ def _write_mock_shims(root: Path, scenario: dict) -> tuple[Path, Path, Path, Pat
 
     driver = root / "mock_driver.py"
     driver.write_text(
-        r'''import json, os, subprocess, sys, time
+        r'''import contextlib, json, os, subprocess, sys, time
 from pathlib import Path
 
 mode = sys.argv[1]
@@ -50,8 +50,42 @@ state_path = Path(sys.argv[2])
 trace_path = Path(sys.argv[3])
 args = sys.argv[4:]
 
+@contextlib.contextmanager
+def trace_lock():
+    lock_path = trace_path.with_suffix(".lock")
+    deadline = time.monotonic() + 5.0
+    acquired = False
+    while not acquired:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            acquired = True
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                try:
+                    os.unlink(str(lock_path))
+                except OSError:
+                    pass
+                break
+            time.sleep(0.01)
+    try:
+        yield
+    finally:
+        if acquired:
+            try:
+                os.unlink(str(lock_path))
+            except OSError:
+                pass
+
+def read_trace():
+    return json.loads(trace_path.read_text(encoding="utf-8"))
+
+def write_trace(obj):
+    tmp = trace_path.with_suffix(".tmp." + str(os.getpid()))
+    tmp.write_text(json.dumps(obj), encoding="utf-8")
+    os.replace(str(tmp), str(trace_path))
+
 state = json.loads(state_path.read_text(encoding="utf-8"))
-trace = json.loads(trace_path.read_text(encoding="utf-8"))
 
 if mode == "orchestrate":
     if "--orchestrate" not in args:
@@ -59,17 +93,19 @@ if mode == "orchestrate":
         sys.exit(2)
     req = json.loads(sys.stdin.read() or "{}")
     op = req.get("op")
-    trace["orchestrate_calls"].append(req)
-    responses = state.get("orchestrate", {}).get(op, [])
-    if isinstance(responses, list):
-        idx = sum(1 for c in trace["orchestrate_calls"] if c.get("op") == op) - 1
-        resp = responses[idx] if idx < len(responses) else responses[-1]
-    else:
-        resp = responses
-    if isinstance(resp, dict) and resp.pop("_same_account", False):
-        # Legacy resume-mechanics fixtures model a same-account relay (from == target record).
-        resp["from_record_id"] = resp["target_id"] = "f" * 32
-    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    with trace_lock():
+        trace = read_trace()
+        trace["orchestrate_calls"].append(req)
+        responses = state.get("orchestrate", {}).get(op, [])
+        if isinstance(responses, list):
+            idx = sum(1 for c in trace["orchestrate_calls"] if c.get("op") == op) - 1
+            resp = responses[idx] if idx < len(responses) else responses[-1]
+        else:
+            resp = responses
+        if isinstance(resp, dict) and resp.pop("_same_account", False):
+            # Legacy resume-mechanics fixtures model a same-account relay (from == target record).
+            resp["from_record_id"] = resp["target_id"] = "f" * 32
+        write_trace(trace)
     sys.stdout.write(json.dumps(resp))
     sys.exit(int(resp.get("_exit", 0)) if isinstance(resp, dict) else 0)
 
@@ -81,9 +117,6 @@ elif mode == "claude":
                 stdin_text = sys.stdin.read()
         except Exception:
             stdin_text = ""
-    run_idx = len(trace["claude_calls"])
-    runs = state.get("claude_runs", [])
-    run_spec = runs[run_idx] if run_idx < len(runs) else (runs[-1] if runs else {})
 
     settings_snapshot = None
     if "--settings" in args:
@@ -126,19 +159,40 @@ elif mode == "claude":
             "CLAUDE_CODE_ENTRYPOINT",
         )
     }
-    trace["claude_calls"].append({
-        "argv": args,
-        "stdin": stdin_text,
-        "env": env_snap,
-        "ephemeral_settings": settings_snapshot,
-    })
-    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    with trace_lock():
+        trace = read_trace()
+        run_idx = len(trace["claude_calls"])
+        trace["claude_calls"].append({
+            "argv": args,
+            "stdin": stdin_text,
+            "env": env_snap,
+            "ephemeral_settings": settings_snapshot,
+        })
+        write_trace(trace)
+
+    runs = state.get("claude_runs", [])
+    run_spec = runs[run_idx] if run_idx < len(runs) else (runs[-1] if runs else {})
+
+    def patch_call(**updates):
+        with trace_lock():
+            tr = read_trace()
+            tr["claude_calls"][run_idx].update(updates)
+            write_trace(tr)
 
     home = Path(os.environ.get("USERPROFILE", ""))
-    for rel_path, content in run_spec.get("write_files", {}).items():
-        fp = home / rel_path
-        fp.parent.mkdir(parents=True, exist_ok=True)
-        fp.write_text(content, encoding="utf-8")
+    appdata = Path(os.environ.get("APPDATA", ""))
+    def apply_writes(spec_obj):
+        for rel_path, content in (spec_obj.get("write_files") or {}).items():
+            fp = home / rel_path
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(content, encoding="utf-8")
+        if str(appdata):
+            for rel_path, content in (spec_obj.get("write_appdata_files") or {}).items():
+                fp = appdata / rel_path
+                fp.parent.mkdir(parents=True, exist_ok=True)
+                fp.write_text(content, encoding="utf-8")
+
+    apply_writes(run_spec)
 
     captured = {}
     for pattern in run_spec.get("capture_globs", []):
@@ -146,8 +200,87 @@ elif mode == "claude":
             if cap.is_file():
                 captured[cap.relative_to(home).as_posix()] = cap.read_text(encoding="utf-8")
     if captured:
-        trace["claude_calls"][-1]["captured_files"] = captured
-        trace_path.write_text(json.dumps(trace), encoding="utf-8")
+        patch_call(captured_files=captured)
+
+    pre_ptu_sleep_ms = int(run_spec.get("sleep_before_post_tool_use_ms") or 0)
+    if pre_ptu_sleep_ms > 0:
+        time.sleep(pre_ptu_sleep_ms / 1000.0)
+
+    def wait_armed_if_requested(timeout_ms):
+        if timeout_ms > 0 and "--settings" in args:
+            s_idx = args.index("--settings")
+            if s_idx + 1 < len(args):
+                armed_p = Path(args[s_idx + 1]).parent / "threshold_armed.json"
+                deadline = time.monotonic() + (timeout_ms / 1000.0)
+                while (not armed_p.is_file()) and (time.monotonic() < deadline):
+                    time.sleep(0.05)
+
+    wait_armed_if_requested(int(run_spec.get("wait_for_armed_timeout_ms") or 0))
+
+    ptu_items = run_spec.get("fire_post_tool_use")
+    if isinstance(ptu_items, list) and isinstance(settings_snapshot, dict):
+        ptu_list = (settings_snapshot.get("hooks") or {}).get("PostToolUse") or []
+        bash_exe = run_spec.get("hook_bash_exe")
+        ptu_outputs = []
+        for item in ptu_items:
+            if isinstance(item, dict) and "payload" in item:
+                apply_writes(item)
+                step_sleep_ms = int(item.get("sleep_ms") or 0)
+                if step_sleep_ms > 0:
+                    time.sleep(step_sleep_ms / 1000.0)
+                wait_armed_if_requested(int(item.get("wait_for_armed_timeout_ms") or 0))
+                ptu_payload = item["payload"]
+            else:
+                ptu_payload = item
+            for group in ptu_list:
+                for hk in (group.get("hooks") or []):
+                    if hk.get("type") == "command" and hk.get("command"):
+                        if bash_exe:
+                            hk_res = subprocess.run(
+                                [bash_exe, "-c", hk["command"]],
+                                input=json.dumps(ptu_payload),
+                                text=True,
+                                encoding="utf-8",
+                                capture_output=True,
+                                timeout=10,
+                            )
+                        else:
+                            hk_res = subprocess.run(
+                                hk["command"],
+                                input=json.dumps(ptu_payload),
+                                text=True,
+                                encoding="utf-8",
+                                shell=True,
+                                capture_output=True,
+                                timeout=10,
+                            )
+                        raw_out = hk_res.stdout or ""
+                        parsed_out = None
+                        if raw_out.strip():
+                            try:
+                                parsed_out = json.loads(raw_out.strip())
+                            except Exception:
+                                parsed_out = None
+                        ptu_outputs.append({
+                            "returncode": hk_res.returncode,
+                            "stdout": raw_out,
+                            "stderr": hk_res.stderr,
+                            "parsed": parsed_out,
+                        })
+        updates = {"post_tool_use_outputs": ptu_outputs}
+        if "--settings" in args:
+            s_idx = args.index("--settings")
+            if s_idx + 1 < len(args):
+                s_dir = Path(args[s_idx + 1]).parent
+                for snap_key, fname in (("threshold_armed_snapshot", "threshold_armed.json"), ("proactive_handoff_snapshot", "proactive_handoff.json")):
+                    sp_file = s_dir / fname
+                    if sp_file.is_file():
+                        try:
+                            updates[snap_key] = json.loads(sp_file.read_text(encoding="utf-8"))
+                        except Exception:
+                            pass
+        patch_call(**updates)
+
     hook_payload = run_spec.get("fire_stop_failure")
     if isinstance(hook_payload, dict) and isinstance(settings_snapshot, dict):
         sf_list = (settings_snapshot.get("hooks") or {}).get("StopFailure") or []
@@ -169,10 +302,7 @@ elif mode == "claude":
                 trig_p = Path(args[s_idx + 1]).parent / "trigger.json"
                 if trig_p.is_file():
                     try:
-                        trace["claude_calls"][-1]["trigger_snapshot"] = json.loads(
-                            trig_p.read_text(encoding="utf-8")
-                        )
-                        trace_path.write_text(json.dumps(trace), encoding="utf-8")
+                        patch_call(trigger_snapshot=json.loads(trig_p.read_text(encoding="utf-8")))
                     except Exception:
                         pass
 
@@ -202,9 +332,11 @@ elif mode == "claude":
                             capture_output=True,
                             timeout=10,
                         )
-                    trace["claude_calls"][-1]["stop_hook_result"] = {
-                        "returncode": hk_res.returncode,
-                        "stderr": hk_res.stderr,
+                    updates = {
+                        "stop_hook_result": {
+                            "returncode": hk_res.returncode,
+                            "stderr": hk_res.stderr,
+                        }
                     }
                     if "--settings" in args:
                         s_idx = args.index("--settings")
@@ -212,24 +344,52 @@ elif mode == "claude":
                             te_p = Path(args[s_idx + 1]).parent / "turn_end.json"
                             if te_p.is_file():
                                 try:
-                                    trace["claude_calls"][-1]["turn_end_snapshot"] = json.loads(
-                                        te_p.read_text(encoding="utf-8")
-                                    )
+                                    updates["turn_end_snapshot"] = json.loads(te_p.read_text(encoding="utf-8"))
                                 except Exception:
                                     pass
                             tr_p = Path(args[s_idx + 1]).parent / "trigger.json"
                             if tr_p.is_file():
                                 try:
-                                    trace["claude_calls"][-1]["trigger_snapshot"] = json.loads(
-                                        tr_p.read_text(encoding="utf-8")
-                                    )
+                                    updates["trigger_snapshot"] = json.loads(tr_p.read_text(encoding="utf-8"))
                                 except Exception:
                                     pass
-                    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+                    patch_call(**updates)
 
     sleep_ms = int(run_spec.get("sleep_after_hook_ms") or 0)
-    if sleep_ms > 0:
-        time.sleep(sleep_ms / 1000.0)
+    ext_worker_proc = None
+    ext_worker_ms = int(run_spec.get("spawn_ext_worker_ms") or 0)
+    if ext_worker_ms > 0:
+        import shutil as _shutil
+        sh_bin = _shutil.which("pwsh") or _shutil.which("powershell.exe")
+        if sh_bin:
+            ext_worker_proc = subprocess.Popen(
+                [sh_bin, "-NoProfile", "-Command", f"Start-Sleep -Milliseconds {ext_worker_ms} # external worker"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+    try:
+        if sleep_ms > 0:
+            time.sleep(sleep_ms / 1000.0)
+    finally:
+        if ext_worker_proc is not None:
+            try:
+                ext_worker_proc.wait(timeout=10)
+            except Exception:
+                try:
+                    ext_worker_proc.kill()
+                except Exception:
+                    pass
+
+    if run_spec.get("capture_ephemeral_after_sleep") and "--settings" in args:
+        s_idx = args.index("--settings")
+        if s_idx + 1 < len(args):
+            s_dir = Path(args[s_idx + 1]).parent
+            patch_call(ephemeral_after_sleep={
+                "threshold_armed_exists": (s_dir / "threshold_armed.json").is_file(),
+                "proactive_handoff_exists": (s_dir / "proactive_handoff.json").is_file(),
+                "turn_end_exists": (s_dir / "turn_end.json").is_file(),
+            })
 
     if run_spec.get("stdout"):
         sys.stdout.write(run_spec["stdout"])
@@ -711,9 +871,10 @@ class CliOrchestratorScriptsTests(unittest.TestCase):
             self.assertEqual(res_d.returncode, 0, res_d.stderr + "\n" + res_d.stdout)
             tr_d = json.loads(trace_d.read_text(encoding="utf-8"))
             self.assertEqual(len(tr_d["claude_calls"]), 2)
-            # Both StopFailure and Stop are registered when -AutoContinue is active
+            # StopFailure, Stop, and PostToolUse are registered when -AutoContinue is active
             self.assertIn("StopFailure", tr_d["claude_calls"][0]["ephemeral_settings"]["hooks"])
             self.assertIn("Stop", tr_d["claude_calls"][0]["ephemeral_settings"]["hooks"])
+            self.assertIn("PostToolUse", tr_d["claude_calls"][0]["ephemeral_settings"]["hooks"])
             # Relay argv MUST NOT duplicate "Initial task prompt", and MUST guard variadic --allowedTools with "--"
             resumed_argv_d = tr_d["claude_calls"][1]["argv"]
             self.assertNotIn("Initial task prompt", resumed_argv_d)
@@ -1700,7 +1861,7 @@ class CliOrchestratorScriptsTests(unittest.TestCase):
             tr = json.loads(trace_file.read_text(encoding="utf-8"))
             call0 = tr["claude_calls"][0]
             hooks = call0["ephemeral_settings"]["hooks"]
-            for event_key in ("Stop", "StopFailure"):
+            for event_key in ("Stop", "StopFailure", "PostToolUse"):
                 cmd_str = hooks[event_key][0]["hooks"][0]["command"]
                 self.assertNotIn("\\", cmd_str, f"{event_key} hook command must use forward slashes for Git Bash: {cmd_str}")
                 self.assertTrue(cmd_str.startswith('"'), f"{event_key} hook command should quote executable path: {cmd_str}")
@@ -1766,6 +1927,7 @@ class CliOrchestratorScriptsTests(unittest.TestCase):
             tr_1 = json.loads(trace_1.read_text(encoding="utf-8"))
             self.assertEqual(len(tr_1["claude_calls"]), 2)
             self.assertNotIn("Stop", tr_1["claude_calls"][0]["ephemeral_settings"]["hooks"])
+            self.assertNotIn("PostToolUse", tr_1["claude_calls"][0]["ephemeral_settings"]["hooks"])
             self.assertNotIn(DEFAULT_CONT_PROMPT, tr_1["claude_calls"][1]["argv"])
 
             # 2. relay_trigger_kind == "preferred_recovered" must NEVER yank on clean Stop or manual /exit!
@@ -3128,6 +3290,574 @@ class CliOrchestratorScriptsTests(unittest.TestCase):
             sw_p = [c for c in trp["orchestrate_calls"] if c.get("op") == "relay_switch"]
             self.assertEqual(len(sw_p), 1)
             self.assertTrue(sw_p[0].get("rate_limited"))
+
+    def test_relay_proactive_threshold_posttooluse_two_stage_handoff_and_digest(self):
+        shells = [s for s in (shutil.which("pwsh"), shutil.which("powershell.exe")) if s]
+        assert shells
+        ps_exe = shells[0]
+        id_a, id_b = "a" * 32, "b" * 32
+
+        # 0. Show-RelayStatus defaults maxSameExitConcurrency to 1 when omitted from config
+        with tempfile.TemporaryDirectory(prefix="cl-status-def-") as tmp:
+            root = Path(tmp)
+            home, work = root / "home", root / "work"
+            home.mkdir()
+            work.mkdir()
+            l0, c0, _, _ = _write_mock_shims(root, {
+                "orchestrate": {
+                    "status": {
+                        "ok": True,
+                        "cli_running": False,
+                        "should_relay_now": False,
+                        "active": id_a,
+                        "active_name": "Acct-A",
+                        "config": {"strategy": "smart", "spentThresholdPct": 98, "autoContinueOnRelay": False},
+                        "accounts": [{"id": id_a, "name": "Acct-A", "is_current": True, "tier": "ready", "rem_5h": 80, "rem_7d": 80}],
+                    },
+                },
+                "claude_runs": [],
+            })
+            res0 = _run_ps(ps_exe, RELAY_PS1, ["-Status"], _mock_env(home, l0, c0), work)
+            self.assertEqual(res0.returncode, 0, res0.stderr)
+            self.assertIn("maxSameExitConcurrency=1", res0.stdout)
+
+        # 1. Below-threshold PostToolUse returns empty stdout (both Python hook and ps1 fallback)
+        stub_root = Path(tempfile.mkdtemp(prefix="cl-ptu-below-"))
+        try:
+            work = stub_root / "work"
+            work.mkdir()
+            stub_dir = stub_root / "Microsoft" / "WindowsApps"
+            stub_dir.mkdir(parents=True)
+            (stub_dir / "python.exe").write_bytes(b"")
+            (stub_dir / "py.cmd").write_text("@echo off\r\nexit /b 9009\r\n", encoding="utf-8")
+            ps_dir = str(Path(ps_exe).parent)
+            sys32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+            isolated_path = os.pathsep.join([str(stub_dir), ps_dir, sys32])
+
+            for mode in ("python", "ps1"):
+                with self.subTest(below_threshold_hook=mode):
+                    d_below = stub_root / f"below_{mode}"
+                    d_below.mkdir()
+                    home = d_below / "home"
+                    (home / ".claude" / "agents").mkdir(parents=True)
+                    (home / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+                    l_b, c_b, t_b, _ = _write_mock_shims(d_below, {
+                        "orchestrate": {
+                            "status": {
+                                "ok": True,
+                                "cli_running": False,
+                                "should_relay_now": False,
+                                "active": id_a,
+                                "active_name": "Acct-A",
+                                "ranked_auto_targets": [id_b],
+                                "accounts": [
+                                    {"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 70, "used_7d": 30},
+                                    {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 90},
+                                ],
+                                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+                            },
+                        },
+                        "claude_runs": [{
+                            "exit_code": 0,
+                            "write_files": {
+                                "AppData/Roaming/ai.local.claude-local/quota_ledger.json": json.dumps({"accounts": {"a@example.invalid": {"quota_5h_used": 70}}}),
+                            },
+                            "sleep_before_post_tool_use_ms": 650,
+                            "fire_post_tool_use": [{"hook_event_name": "PostToolUse", "tool_name": "Read", "session_id": "sess-below-1"}],
+                        }],
+                    })
+                    extra_env = {"PATH": isolated_path} if mode == "ps1" else {}
+                    r_b = _run_ps(ps_exe, RELAY_PS1, ["-AutoContinue", "-ThresholdPct", "85"], _mock_env(home, l_b, c_b, **extra_env), work)
+                    self.assertEqual(r_b.returncode, 0, r_b.stderr + "\n" + r_b.stdout)
+                    tr_b = json.loads(t_b.read_text(encoding="utf-8"))
+                    self.assertEqual(len(tr_b["claude_calls"]), 1)
+                    ptu_outs = tr_b["claude_calls"][0].get("post_tool_use_outputs") or []
+                    self.assertEqual(len(ptu_outs), 1)
+                    self.assertEqual(ptu_outs[0]["returncode"], 0)
+                    self.assertEqual(ptu_outs[0]["stdout"], "")
+                    self.assertIsNone(ptu_outs[0]["parsed"])
+                    self.assertIsNone(tr_b["claude_calls"][0].get("threshold_armed_snapshot"))
+                    self.assertIsNone(tr_b["claude_calls"][0].get("proactive_handoff_snapshot"))
+                    self.assertFalse(any(c.get("op") == "relay_switch" for c in tr_b["orchestrate_calls"]))
+        finally:
+            shutil.rmtree(stub_root, ignore_errors=True)
+
+        # 2. Armed PostToolUse Stage 1 (wrapping_up) -> Stop (proactive_wrapup=True) -> clean_handoff + CLEAN_CONT_PROMPT + 1200-char final digest
+        with tempfile.TemporaryDirectory(prefix="cl-ptu-stage1-") as tmp:
+            root = Path(tmp)
+            home, work = root / "home", root / "work"
+            home.mkdir()
+            work.mkdir()
+            (home / ".claude" / "agents").mkdir(parents=True)
+            (home / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+            slug = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in str(work))
+
+            earlier_text = "EARLY_STEP_" + ("x" * 740) + "_END_EARLY"
+            final_text = "FINAL_HANDOFF_SUMMARY: Completed parser refactor; Files Modified: src/mod.py; Exact Next Step: " + ("y" * 920) + "_END_FINAL"
+            transcript_s1 = "\n".join([
+                json.dumps({"type": "user", "sessionId": "sess-pro-stage1", "message": {"role": "user", "content": "Refactor module cleanly"}}),
+                json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": earlier_text}]}}),
+                json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": final_text}]}}),
+            ]) + "\n"
+
+            status_pre = {
+                "ok": True, "cli_running": False, "should_relay_now": False,
+                "active": id_a, "active_name": "Acct-A", "ranked_auto_targets": [id_b],
+                "accounts": [
+                    {"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 72, "used_7d": 35, "effective_rem": 28},
+                    {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 92},
+                ],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+            status_armed = {
+                "ok": True, "cli_running": True, "should_relay_now": True,
+                "relay_trigger_kind": "threshold_reached", "active": id_a, "active_name": "Acct-A",
+                "ranked_auto_targets": [id_b],
+                "accounts": [
+                    {"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 86, "used_7d": 35, "effective_rem": 14},
+                    {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 92},
+                ],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+            status_post = {
+                "ok": True, "cli_running": False, "should_relay_now": False,
+                "active": id_b, "active_name": "Acct-B", "ranked_auto_targets": [],
+                "accounts": [{"id": id_b, "name": "Acct-B", "is_current": True, "used_5h": 5, "used_7d": 8, "effective_rem": 92}],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+            l1, c1, t1, _ = _write_mock_shims(root, {
+                "orchestrate": {
+                    "status": [status_pre, status_armed, status_armed, status_armed, status_post],
+                    "relay_switch": {
+                        "ok": True, "switched": True, "from_record_id": id_a, "target_id": id_b,
+                        "from_name": "Acct-A", "target_name": "Acct-B", "target_effective_rem": 92, "reason": "threshold_reached",
+                    },
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 0,
+                        "write_files": {
+                            "AppData/Roaming/ai.local.claude-local/quota_ledger.json": json.dumps({"accounts": {"a@example.invalid": {"quota_5h_used": 86}}}),
+                            ".claude/sessions/99901.json": json.dumps({"pid": 99901, "sessionId": "sess-pro-stage1", "cwd": str(work)}),
+                            f".claude/projects/{slug}/sess-pro-stage1.jsonl": transcript_s1,
+                        },
+                        "wait_for_armed_timeout_ms": 4000,
+                        "fire_post_tool_use": [{"hook_event_name": "PostToolUse", "tool_name": "Edit", "session_id": "sess-pro-stage1", "transcript_path": str(home / ".claude" / "projects" / slug / "sess-pro-stage1.jsonl")}],
+                        "fire_stop": {"hook_event_name": "Stop", "stop_hook_active": False, "session_id": "sess-pro-stage1", "transcript_path": str(home / ".claude" / "projects" / slug / "sess-pro-stage1.jsonl")},
+                        "sleep_after_hook_ms": 1950,
+                    },
+                    {"exit_code": 0, "stdout": "continued cleanly on Acct-B\n"},
+                ],
+            })
+            r1 = _run_ps(ps_exe, RELAY_PS1, ["-AutoContinue", "-ThresholdPct", "85", "--model", "sonnet"], _mock_env(home, l1, c1), work)
+            self.assertEqual(r1.returncode, 0, r1.stderr + "\n" + r1.stdout)
+            tr1 = json.loads(t1.read_text(encoding="utf-8"))
+            self.assertEqual(len(tr1["claude_calls"]), 2)
+            armed_snap = tr1["claude_calls"][0].get("threshold_armed_snapshot") or {}
+            self.assertIs(armed_snap.get("armed"), True)
+            self.assertEqual(armed_snap.get("threshold_pct"), 85)
+            self.assertEqual(armed_snap.get("hard_cap_pct"), 90)
+            self.assertEqual(armed_snap.get("used_5h"), 86)
+            self.assertEqual(armed_snap.get("standby_name"), "Acct-B (92%)")
+
+            ptu_out1 = tr1["claude_calls"][0]["post_tool_use_outputs"][0]
+            self.assertEqual(ptu_out1["returncode"], 0)
+            parsed1 = ptu_out1["parsed"]
+            self.assertIsInstance(parsed1, dict)
+            self.assertIn("86%", parsed1["systemMessage"])
+            self.assertIn("threshold 85%", parsed1["systemMessage"])
+            self.assertIn("Acct-B (92%)", parsed1["systemMessage"])
+            self.assertEqual(parsed1["hookSpecificOutput"]["hookEventName"], "PostToolUse")
+            self.assertIn("at most 2 quick tool calls", parsed1["hookSpecificOutput"]["additionalContext"])
+
+            pro_snap1 = tr1["claude_calls"][0].get("proactive_handoff_snapshot") or {}
+            self.assertEqual(pro_snap1.get("stage"), "wrapping_up")
+            self.assertEqual(pro_snap1.get("post_notice_tools"), 0)
+            te_snap1 = tr1["claude_calls"][0].get("turn_end_snapshot") or {}
+            self.assertIs(te_snap1.get("proactive_wrapup"), True)
+
+            sw1 = [c for c in tr1["orchestrate_calls"] if c.get("op") == "relay_switch"]
+            self.assertEqual(len(sw1), 1)
+            self.assertFalse(sw1[0].get("rate_limited", False))
+
+            run2_argv = tr1["claude_calls"][1]["argv"]
+            self.assertNotIn("--resume", run2_argv)
+            self.assertIn("--append-system-prompt", run2_argv)
+            self.assertEqual(run2_argv[-2:], ["--", CLEAN_CONT_PROMPT])
+
+            handoff_md = home / "AppData" / "Roaming" / "ai.local.claude-local" / "handoff" / "latest-handoff.md"
+            md_txt = handoff_md.read_text(encoding="utf-8")
+            self.assertNotIn("_END_EARLY", md_txt, "earlier progress item must still be capped at 600 chars")
+            self.assertIn("_END_FINAL", md_txt, "final progress item up to 1200 chars must be preserved intact")
+
+        # 3a. Armed PostToolUse Stage 2 (forced_stop via >= 2 post-notice tools) -> relays with CLEAN_CONT_PROMPT
+        with tempfile.TemporaryDirectory(prefix="cl-ptu-stage2-tools-") as tmp:
+            root = Path(tmp)
+            home, work = root / "home", root / "work"
+            home.mkdir()
+            work.mkdir()
+            (home / ".claude" / "agents").mkdir(parents=True)
+            (home / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+            slug = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in str(work))
+            t_path = home / ".claude" / "projects" / slug / "sess-pro-tools.jsonl"
+            t_lines = "\n".join([
+                json.dumps({"type": "user", "sessionId": "sess-pro-tools", "message": {"role": "user", "content": "Run migration"}}),
+                json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tu_1", "name": "Bash", "input": {"command": "echo 1"}}]}}),
+                json.dumps({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "1"}]}}),
+            ]) + "\n"
+
+            st_80_pre = {
+                "ok": True, "cli_running": False, "should_relay_now": False, "active": id_a, "active_name": "Acct-A",
+                "ranked_auto_targets": [id_b],
+                "accounts": [
+                    {"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 60, "used_7d": 20, "effective_rem": 40},
+                    {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 91},
+                ],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 80},
+            }
+            st_80_armed = {
+                "ok": True, "cli_running": True, "should_relay_now": True, "relay_trigger_kind": "threshold_reached",
+                "active": id_a, "active_name": "Acct-A", "ranked_auto_targets": [id_b],
+                "accounts": [
+                    {"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 81, "used_7d": 20, "effective_rem": 19},
+                    {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 91},
+                ],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 80},
+            }
+            st_80_post = {
+                "ok": True, "cli_running": False, "should_relay_now": False, "active": id_b, "active_name": "Acct-B",
+                "ranked_auto_targets": [],
+                "accounts": [{"id": id_b, "name": "Acct-B", "is_current": True, "used_5h": 9, "used_7d": 9, "effective_rem": 91}],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 80},
+            }
+            l2, c2, t2, _ = _write_mock_shims(root, {
+                "orchestrate": {
+                    "status": [st_80_pre, st_80_armed, st_80_armed, st_80_armed, st_80_post],
+                    "relay_switch": {
+                        "ok": True, "switched": True, "from_record_id": id_a, "target_id": id_b,
+                        "from_name": "Acct-A", "target_name": "Acct-B", "target_effective_rem": 91, "reason": "threshold_reached",
+                    },
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 0,
+                        "write_files": {
+                            "AppData/Roaming/ai.local.claude-local/quota_ledger.json": json.dumps({"accounts": {"a@example.invalid": {"quota_5h_used": 81}}}),
+                            ".claude/sessions/99902.json": json.dumps({"pid": 99902, "sessionId": "sess-pro-tools", "cwd": str(work)}),
+                            f".claude/projects/{slug}/sess-pro-tools.jsonl": t_lines,
+                        },
+                        "wait_for_armed_timeout_ms": 4000,
+                        "fire_post_tool_use": [
+                            {"hook_event_name": "PostToolUse", "tool_name": "Read", "session_id": "sess-pro-tools", "transcript_path": str(t_path)},
+                            {"hook_event_name": "PostToolUse", "tool_name": "Edit", "session_id": "sess-pro-tools", "transcript_path": str(t_path)},
+                            {"hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": "sess-pro-tools", "transcript_path": str(t_path)},
+                        ],
+                        "sleep_after_hook_ms": 950,
+                    },
+                    {"exit_code": 0, "stdout": "resumed after forced_stop >=2 tools\n"},
+                ],
+            })
+            r2 = _run_ps(ps_exe, RELAY_PS1, ["-AutoContinue", "-ThresholdPct", "80"], _mock_env(home, l2, c2), work)
+            self.assertEqual(r2.returncode, 0, r2.stderr + "\n" + r2.stdout)
+            tr2 = json.loads(t2.read_text(encoding="utf-8"))
+            self.assertEqual(len(tr2["claude_calls"]), 2)
+            outs2 = tr2["claude_calls"][0]["post_tool_use_outputs"]
+            self.assertEqual(len(outs2), 3)
+            self.assertIn("systemMessage", outs2[0]["parsed"])
+            self.assertNotIn("systemMessage", outs2[1]["parsed"])
+            self.assertIn("1 tool call left", outs2[1]["parsed"]["hookSpecificOutput"]["additionalContext"])
+            self.assertIs(outs2[2]["parsed"]["continue"], False)
+            self.assertIn("81% / 80%", outs2[2]["parsed"]["stopReason"])
+            self.assertIn("Acct-B (91%)", outs2[2]["parsed"]["stopReason"])
+            self.assertEqual((tr2["claude_calls"][0].get("proactive_handoff_snapshot") or {}).get("stage"), "forced_stop")
+            self.assertEqual((tr2["claude_calls"][0].get("proactive_handoff_snapshot") or {}).get("post_notice_tools"), 2)
+            sw2 = [c for c in tr2["orchestrate_calls"] if c.get("op") == "relay_switch"]
+            self.assertEqual(len(sw2), 1)
+            self.assertFalse(sw2[0].get("rate_limited", False))
+            self.assertEqual(tr2["claude_calls"][1]["argv"][-2:], ["--", CLEAN_CONT_PROMPT])
+
+        # 3b. Armed PostToolUse Stage 2 (forced_stop via max_used >= hard_cap_pct) in Python hook and ps1 fallback across available PS engines
+        stub_root2 = Path(tempfile.mkdtemp(prefix="cl-ptu-hardcap-"))
+        try:
+            work = stub_root2 / "work"
+            work.mkdir()
+            stub_dir = stub_root2 / "Microsoft" / "WindowsApps"
+            stub_dir.mkdir(parents=True)
+            (stub_dir / "python.exe").write_bytes(b"")
+            (stub_dir / "py.cmd").write_text("@echo off\r\nexit /b 9009\r\n", encoding="utf-8")
+            sys32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+
+            hc_targets = [("python", ps_exe)] + [("ps1", sh) for sh in shells]
+            for mode, sh_exe in hc_targets:
+                with self.subTest(hard_cap_hook=mode, shell=Path(sh_exe).name):
+                    d_hc = stub_root2 / f"hc_{mode}_{Path(sh_exe).stem}"
+                    d_hc.mkdir()
+                    home = d_hc / "home"
+                    (home / ".claude" / "agents").mkdir(parents=True)
+                    (home / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+                    slug = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in str(work))
+                    t_path = home / ".claude" / "projects" / slug / f"sess-hc-{mode}.jsonl"
+                    t_lines = json.dumps({"type": "user", "sessionId": f"sess-hc-{mode}", "message": {"role": "user", "content": "Finish build"}}) + "\n"
+
+                    st_98_pre = {
+                        "ok": True, "cli_running": False, "should_relay_now": False, "active": id_a, "active_name": "Acct-A",
+                        "ranked_auto_targets": [id_b],
+                        "accounts": [
+                            {"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 80, "used_7d": 20, "effective_rem": 20},
+                            {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 95},
+                        ],
+                        "config": {"autoContinueOnRelay": True, "spentThresholdPct": 98},
+                    }
+                    st_98_armed = {
+                        "ok": True, "cli_running": True, "should_relay_now": True, "relay_trigger_kind": "threshold_reached",
+                        "active": id_a, "active_name": "Acct-A", "ranked_auto_targets": [id_b],
+                        "accounts": [
+                            {"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 99, "used_7d": 20, "effective_rem": 1},
+                            {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 95},
+                        ],
+                        "config": {"autoContinueOnRelay": True, "spentThresholdPct": 98},
+                    }
+                    st_98_post = {
+                        "ok": True, "cli_running": False, "should_relay_now": False, "active": id_b, "active_name": "Acct-B",
+                        "ranked_auto_targets": [],
+                        "accounts": [{"id": id_b, "name": "Acct-B", "is_current": True, "used_5h": 1, "used_7d": 5, "effective_rem": 95}],
+                        "config": {"autoContinueOnRelay": True, "spentThresholdPct": 98},
+                    }
+                    l3, c3, t3, _ = _write_mock_shims(d_hc, {
+                        "orchestrate": {
+                            "status": [st_98_pre, st_98_armed, st_98_armed, st_98_armed, st_98_post],
+                            "relay_switch": {
+                                "ok": True, "switched": True, "from_record_id": id_a, "target_id": id_b,
+                                "from_name": "Acct-A", "target_name": "Acct-B", "target_effective_rem": 95, "reason": "threshold_reached",
+                            },
+                        },
+                        "claude_runs": [
+                            {
+                                "exit_code": 0,
+                                "write_files": {
+                                    "AppData/Roaming/ai.local.claude-local/quota_ledger.json": json.dumps({"accounts": {"a@example.invalid": {"quota_5h_used": 99}}}),
+                                    ".claude/sessions/99903.json": json.dumps({"pid": 99903, "sessionId": f"sess-hc-{mode}", "cwd": str(work)}),
+                                    f".claude/projects/{slug}/sess-hc-{mode}.jsonl": t_lines,
+                                },
+                                "wait_for_armed_timeout_ms": 4000,
+                                "fire_post_tool_use": [{"hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": f"sess-hc-{mode}", "transcript_path": str(t_path)}],
+                                "sleep_after_hook_ms": 950,
+                            },
+                            {"exit_code": 0, "stdout": f"resumed after hard_cap forced_stop ({mode})\n"},
+                        ],
+                    })
+                    sh_dir = str(Path(sh_exe).parent)
+                    extra_env = {"PATH": os.pathsep.join([str(stub_dir), sh_dir, sys32])} if mode == "ps1" else {}
+                    r3 = _run_ps(sh_exe, RELAY_PS1, ["-AutoContinue", "-ThresholdPct", "98"], _mock_env(home, l3, c3, **extra_env), work)
+                    self.assertEqual(r3.returncode, 0, r3.stderr + "\n" + r3.stdout)
+                    tr3 = json.loads(t3.read_text(encoding="utf-8"))
+                    self.assertEqual(len(tr3["claude_calls"]), 2)
+                    if mode == "ps1":
+                        self.assertIn("sentinel_hook.ps1", tr3["claude_calls"][0]["ephemeral_settings"]["hooks"]["PostToolUse"][0]["hooks"][0]["command"])
+                    out3 = tr3["claude_calls"][0]["post_tool_use_outputs"][0]
+                    self.assertEqual(out3["returncode"], 0)
+                    self.assertIs(out3["parsed"]["continue"], False)
+                    self.assertIn("99% / 98%", out3["parsed"]["stopReason"])
+                    self.assertEqual((tr3["claude_calls"][0].get("proactive_handoff_snapshot") or {}).get("stage"), "forced_stop")
+                    sw3 = [c for c in tr3["orchestrate_calls"] if c.get("op") == "relay_switch"]
+                    self.assertEqual(len(sw3), 1)
+                    self.assertFalse(sw3[0].get("rate_limited", False))
+                    self.assertEqual(tr3["claude_calls"][1]["argv"][-2:], ["--", CLEAN_CONT_PROMPT])
+        finally:
+            shutil.rmtree(stub_root2, ignore_errors=True)
+
+        # 4. Verify Test-HasLiveChildShellOrWork ignores MCP/wrapper/tool-host commands
+        relay_text = RELAY_PS1.read_text(encoding="utf-8-sig")
+        for token in (r"\bnpx\b", r"\buvx\b", "dual[-_]?collab", "claude-local", "node_modules"):
+            self.assertIn(token, relay_text)
+
+    def test_relay_external_worker_timeout_turn_end_and_5h_reset_mid_wrapup(self):
+        shells = [s for s in (shutil.which("pwsh"), shutil.which("powershell.exe")) if s]
+        assert shells
+        ps_exe = shells[0]
+        id_a, id_b = "a" * 32, "b" * 32
+
+        # 1. External non-Claude worker timeout during turn_end deferral falls through to status -> relay (never drops relay!)
+        with tempfile.TemporaryDirectory(prefix="cl-ext-timeout-") as tmp:
+            root = Path(tmp)
+            home, work = root / "home", root / "work"
+            home.mkdir()
+            work.mkdir()
+            (home / ".claude" / "agents").mkdir(parents=True)
+            (home / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+            slug = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in str(work))
+            t_path = home / ".claude" / "projects" / slug / "sess-ext-to.jsonl"
+            t_lines = json.dumps({"type": "user", "sessionId": "sess-ext-to", "message": {"role": "user", "content": "Run external worker"}}) + "\n"
+
+            st_pre = {
+                "ok": True, "cli_running": False, "should_relay_now": False, "active": id_a, "active_name": "Acct-A",
+                "ranked_auto_targets": [id_b],
+                "accounts": [{"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 70, "used_7d": 20, "effective_rem": 30},
+                             {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 90}],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+            st_ready = {
+                "ok": True, "cli_running": True, "should_relay_now": True, "relay_trigger_kind": "threshold_reached",
+                "active": id_a, "active_name": "Acct-A", "ranked_auto_targets": [id_b],
+                "accounts": [{"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 87, "used_7d": 20, "effective_rem": 13},
+                             {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 90}],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+            st_post = {
+                "ok": True, "cli_running": False, "should_relay_now": False, "active": id_b, "active_name": "Acct-B",
+                "ranked_auto_targets": [],
+                "accounts": [{"id": id_b, "name": "Acct-B", "is_current": True, "used_5h": 0, "used_7d": 10, "effective_rem": 90}],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+            l_ext, c_ext, tr_ext_p, _ = _write_mock_shims(root, {
+                "orchestrate": {
+                    "status": [st_pre, st_ready, st_ready, st_post],
+                    "relay_switch": {
+                        "ok": True, "switched": True, "from_record_id": id_a, "target_id": id_b,
+                        "from_name": "Acct-A", "target_name": "Acct-B", "target_effective_rem": 90, "reason": "threshold_reached",
+                    },
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 0,
+                        "write_files": {
+                            f".claude/projects/{slug}/sess-ext-to.jsonl": t_lines,
+                            f".claude/projects/{slug}/sess-ext-to/subagents/agent-ext.meta.json": json.dumps({"agentType": "gemini-reviewer", "finished": False}),
+                        },
+                        "fire_stop": {"hook_event_name": "Stop", "stop_hook_active": False, "session_id": "sess-ext-to", "transcript_path": str(t_path)},
+                        "spawn_ext_worker_ms": 2300,
+                        "sleep_after_hook_ms": 2350,
+                        "capture_ephemeral_after_sleep": True,
+                    },
+                    {"exit_code": 0, "stdout": "relayed after external worker timeout\n"},
+                ],
+            })
+            env_ext = _mock_env(home, l_ext, c_ext, CLAUDE_RELAY_TEST_EXT_TIMEOUT_SEC="0.4")
+            r_ext = _run_ps(ps_exe, RELAY_PS1, ["-AutoContinue", "-ThresholdPct", "85"], env_ext, work)
+            self.assertEqual(r_ext.returncode, 0, r_ext.stderr + "\n" + r_ext.stdout)
+            self.assertIn("deferring /exit up to 300s until completion", r_ext.stdout)
+            tr_ext = json.loads(tr_ext_p.read_text(encoding="utf-8"))
+            self.assertEqual(len(tr_ext["claude_calls"]), 2)
+            sw_ext = [c for c in tr_ext["orchestrate_calls"] if c.get("op") == "relay_switch"]
+            self.assertEqual(len(sw_ext), 1)
+            self.assertFalse(tr_ext["claude_calls"][0]["ephemeral_after_sleep"]["turn_end_exists"])
+
+        # 2. Mid-wrapup 5h reset clears threshold_armed.json & proactive_handoff.json cleanly without relaying
+        #    (covers both forced_stop status recheck and wrapping_up -> turn_end status recheck, plus PS 5.1 Stage 1/1.5 fallback)
+        stub_root = Path(tempfile.mkdtemp(prefix="cl-5h-reset-wrap-"))
+        try:
+            work = stub_root / "work"
+            work.mkdir()
+            stub_dir = stub_root / "Microsoft" / "WindowsApps"
+            stub_dir.mkdir(parents=True)
+            (stub_dir / "python.exe").write_bytes(b"")
+            (stub_dir / "py.cmd").write_text("@echo off\r\nexit /b 9009\r\n", encoding="utf-8")
+            sys32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+
+            st_armed = {
+                "ok": True, "cli_running": True, "should_relay_now": True, "relay_trigger_kind": "threshold_reached",
+                "active": id_a, "active_name": "Acct-A", "ranked_auto_targets": [id_b],
+                "accounts": [{"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 88, "used_7d": 25, "effective_rem": 12},
+                             {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 90}],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+            st_reset_5h = {
+                "ok": True, "cli_running": True, "should_relay_now": False,
+                "active": id_a, "active_name": "Acct-A", "ranked_auto_targets": [id_b],
+                "accounts": [{"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 0, "used_7d": 25, "effective_rem": 75},
+                             {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 90}],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+
+            # 2a. forced_stop encounters 5h reset -> clears proactive state & does not relay (also exercises ps1 hook Stage 1 & 1.5 in PS 5.1 if available)
+            ps51_or_pwsh = shutil.which("powershell.exe") or ps_exe
+            d_fs = stub_root / "reset_forced"
+            d_fs.mkdir()
+            home_fs = d_fs / "home"
+            (home_fs / ".claude" / "agents").mkdir(parents=True)
+            (home_fs / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+            slug = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in str(work))
+            t_fs = home_fs / ".claude" / "projects" / slug / "sess-reset-fs.jsonl"
+            l_fs, c_fs, tr_fs_p, _ = _write_mock_shims(d_fs, {
+                "orchestrate": {
+                    "status": [
+                        {**st_reset_5h, "cli_running": False},
+                        st_armed,
+                        st_reset_5h,
+                        {**st_reset_5h, "cli_running": False},
+                    ],
+                },
+                "claude_runs": [{
+                    "exit_code": 0,
+                    "write_files": {
+                        "AppData/Roaming/ai.local.claude-local/quota_ledger.json": json.dumps({"accounts": {"a@example.invalid": {"quota_5h_used": 88}}}),
+                        ".claude/sessions/99911.json": json.dumps({"pid": 99911, "sessionId": "sess-reset-fs", "cwd": str(work)}),
+                        f".claude/projects/{slug}/sess-reset-fs.jsonl": json.dumps({"type": "user", "sessionId": "sess-reset-fs", "message": {"role": "user", "content": "Work"}}) + "\n",
+                    },
+                    "wait_for_armed_timeout_ms": 4000,
+                    "fire_post_tool_use": [
+                        {"hook_event_name": "PostToolUse", "tool_name": "Read", "session_id": "sess-reset-fs", "transcript_path": str(t_fs)},
+                        {"hook_event_name": "PostToolUse", "tool_name": "Edit", "session_id": "sess-reset-fs", "transcript_path": str(t_fs)},
+                        {"hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": "sess-reset-fs", "transcript_path": str(t_fs)},
+                    ],
+                    "sleep_after_hook_ms": 2100,
+                    "capture_ephemeral_after_sleep": True,
+                }],
+            })
+            iso_path = os.pathsep.join([str(stub_dir), str(Path(ps51_or_pwsh).parent), sys32])
+            r_fs = _run_ps(ps51_or_pwsh, RELAY_PS1, ["-AutoContinue", "-ThresholdPct", "85"], _mock_env(home_fs, l_fs, c_fs, PATH=iso_path), work)
+            self.assertEqual(r_fs.returncode, 0, r_fs.stderr + "\n" + r_fs.stdout)
+            tr_fs = json.loads(tr_fs_p.read_text(encoding="utf-8"))
+            self.assertEqual(len(tr_fs["claude_calls"]), 1)
+            self.assertFalse(any(c.get("op") == "relay_switch" for c in tr_fs["orchestrate_calls"]))
+            self.assertGreaterEqual(sum(1 for c in tr_fs["orchestrate_calls"] if c.get("op") == "status"), 4)
+            outs_fs = tr_fs["claude_calls"][0]["post_tool_use_outputs"]
+            self.assertIn("systemMessage", outs_fs[0]["parsed"])
+            self.assertIn("1 tool call left", outs_fs[1]["parsed"]["hookSpecificOutput"]["additionalContext"])
+            self.assertIs(outs_fs[2]["parsed"]["continue"], False)
+            self.assertFalse(tr_fs["claude_calls"][0]["ephemeral_after_sleep"]["threshold_armed_exists"])
+            self.assertFalse(tr_fs["claude_calls"][0]["ephemeral_after_sleep"]["proactive_handoff_exists"])
+
+            # 2b. wrapping_up -> Stop (turn_end) encounters 5h reset -> clears proactive state & does not relay
+            d_te = stub_root / "reset_turn_end"
+            d_te.mkdir()
+            home_te = d_te / "home"
+            (home_te / ".claude" / "agents").mkdir(parents=True)
+            (home_te / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+            t_te = home_te / ".claude" / "projects" / slug / "sess-reset-te.jsonl"
+            l_te, c_te, tr_te_p, _ = _write_mock_shims(d_te, {
+                "orchestrate": {
+                    "status": [
+                        {**st_reset_5h, "cli_running": False},
+                        st_armed,
+                        st_reset_5h,
+                        {**st_reset_5h, "cli_running": False},
+                    ],
+                },
+                "claude_runs": [{
+                    "exit_code": 0,
+                    "write_files": {
+                        "AppData/Roaming/ai.local.claude-local/quota_ledger.json": json.dumps({"accounts": {"a@example.invalid": {"quota_5h_used": 88}}}),
+                        ".claude/sessions/99912.json": json.dumps({"pid": 99912, "sessionId": "sess-reset-te", "cwd": str(work)}),
+                        f".claude/projects/{slug}/sess-reset-te.jsonl": json.dumps({"type": "user", "sessionId": "sess-reset-te", "message": {"role": "user", "content": "Work"}}) + "\n",
+                    },
+                    "wait_for_armed_timeout_ms": 4000,
+                    "fire_post_tool_use": [{"hook_event_name": "PostToolUse", "tool_name": "Read", "session_id": "sess-reset-te", "transcript_path": str(t_te)}],
+                    "fire_stop": {"hook_event_name": "Stop", "stop_hook_active": False, "session_id": "sess-reset-te", "transcript_path": str(t_te)},
+                    "sleep_after_hook_ms": 2600,
+                    "capture_ephemeral_after_sleep": True,
+                }],
+            })
+            r_te = _run_ps(ps_exe, RELAY_PS1, ["-AutoContinue", "-ThresholdPct", "85"], _mock_env(home_te, l_te, c_te), work)
+            self.assertEqual(r_te.returncode, 0, r_te.stderr + "\n" + r_te.stdout)
+            tr_te = json.loads(tr_te_p.read_text(encoding="utf-8"))
+            self.assertEqual(len(tr_te["claude_calls"]), 1)
+            self.assertFalse(any(c.get("op") == "relay_switch" for c in tr_te["orchestrate_calls"]))
+            self.assertGreaterEqual(sum(1 for c in tr_te["orchestrate_calls"] if c.get("op") == "status"), 4)
+            self.assertFalse(tr_te["claude_calls"][0]["ephemeral_after_sleep"]["threshold_armed_exists"])
+            self.assertFalse(tr_te["claude_calls"][0]["ephemeral_after_sleep"]["proactive_handoff_exists"])
+        finally:
+            shutil.rmtree(stub_root, ignore_errors=True)
 
 
 if __name__ == "__main__":

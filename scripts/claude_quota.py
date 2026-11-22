@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# [INPUT]: Passive statusLine data (default ~/.claude, CLAUDE_LOCAL_RELAY_ACTIVE/THRESHOLD env, smart_relay_v1.json, and symlink-safe managed cli-slots), isolated account evidence, strict quota_archive frames and bounded sibling Rust quota protocol.
+# [INPUT]: Passive statusLine data (default ~/.claude, CLAUDE_LOCAL_RELAY_ACTIVE/THRESHOLD env, smart_relay_v1.json with 80/85/90/95/98/100 thresholds, and symlink-safe managed cli-slots), isolated account evidence, strict quota_archive frames and bounded sibling Rust quota protocol.
 # [OUTPUT]: Serialized atomic quota summaries with validated observed percentages, Free/Pro/Max/Ultra downgrade-safe plan resolution, Ultra five_hour=null (cleared on numeric 5h or Free/Pro downgrade), model-scoped weekly pools, speed/Mythos pricing, trusted-reset inference, SmartRelay statusLine hints, and original observations.
 # [POS]: Sole quota-ledger writer; standalone legacy rules mirror Rust without polling or editing Claude configuration.
 # [PROTOCOL]: Update scripts/CLAUDE.md when changing window evidence or persistence behavior.
@@ -1885,7 +1885,7 @@ def _load_smart_relay_filter(app_dir: str, now_sec: int) -> dict:
     if not isinstance(raw, dict):
         return out
     thresh = raw.get("spentThresholdPct", raw.get("spent_threshold_pct"))
-    if isinstance(thresh, int) and not isinstance(thresh, bool) and thresh in (90, 95, 98, 100):
+    if isinstance(thresh, int) and not isinstance(thresh, bool) and thresh in (80, 85, 90, 95, 98, 100):
         out["spent_threshold_pct"] = thresh
     auto_cont = raw.get("autoContinueOnRelay", raw.get("auto_continue_on_relay"))
     if isinstance(auto_cont, bool):

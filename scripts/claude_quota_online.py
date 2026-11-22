@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # [INPUT]: Minimal authenticated account/settings projection, explicit selector, profile/usage or bound browser snapshots with independent clocks.
-# [OUTPUT]: Sanitized status plus explicit wakeup-effect/5h-reset/7d-reset, Ultra five_hour=null, model-scoped weekly pools and plan_tier evidence; opt-in two-phase commit; Python-owned atomic quota ledger and bounded manual-reset validity plus optional uncapped grant end and per-grant slices.
+# [OUTPUT]: Sanitized status plus explicit wakeup-effect/5h-reset/7d-reset, Ultra five_hour=null, model-scoped weekly pools and plan_tier/kyc_status evidence; opt-in two-phase commit; Python-owned atomic quota ledger and bounded manual-reset validity plus optional uncapped grant end and per-grant slices.
 # [POS]: Network outside native identity door; grant before writer lock; never refreshes credentials or edits Claude configuration.
 # [PROTOCOL]: Update scripts/CLAUDE.md when changing identity binding or persistence boundaries.
 """Fetch OAuth usage without refreshing or modifying local credentials."""
@@ -94,6 +94,11 @@ MAX_ERROR_BACKOFF_MS = 30 * 60_000
 ACCOUNT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 IDENTITY_RE = re.compile(r"^[0-9a-f]{64}$")
 WINDOWS = {"five_hour": "5h", "seven_day": "7d"}
+VALID_KYC_STATUSES = frozenset({
+    "not_required", "pending", "required", "in_progress",
+    "completed", "approved", "verified", "failed", "declined", "expired",
+})
+KYC_CHECK_KIND_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 
 class IdentityMismatch(LookupError):
@@ -1085,8 +1090,9 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
         return _result("unavailable", metadata_updated=False)
     base_fields = {"account_uuid", "organization_uuid", "billing_date_kind", "billing_date",
                    "manual_resets_remaining", "manual_resets_valid_until", "metadata_observed_at_ms"}
-    # Optional: uncapped latest finite grant end, per-grant slices, and optional browser plan tier.
-    optional_fields = {"usage", "manual_resets_grant_ends_at", "manual_resets_grants", "plan_tier", "plan"}
+    # Optional: uncapped latest finite grant end, per-grant slices, browser plan tier, and KYC status.
+    optional_fields = {"usage", "manual_resets_grant_ends_at", "manual_resets_grants", "plan_tier", "plan",
+                       "kyc_status", "kyc_check_kind"}
     try:
         if (not isinstance(snapshot, dict) or not base_fields.issubset(snapshot)
                 or set(snapshot) - base_fields - optional_fields):
@@ -1177,6 +1183,24 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
     now_ms = int(time.time() * 1000)
     if type(observed) is not int or not 0 < observed <= now_ms + 300_000:
         return _result("invalid_response", metadata_updated=False)
+    kyc_status = None
+    raw_kyc_status = snapshot.get("kyc_status")
+    if raw_kyc_status is not None:
+        if not isinstance(raw_kyc_status, str):
+            return _result("invalid_response", metadata_updated=False)
+        cleaned_kyc_status = raw_kyc_status.strip().lower()
+        if cleaned_kyc_status not in VALID_KYC_STATUSES:
+            return _result("invalid_response", metadata_updated=False)
+        kyc_status = cleaned_kyc_status
+    kyc_check_kind = None
+    raw_kyc_check_kind = snapshot.get("kyc_check_kind")
+    if raw_kyc_check_kind is not None:
+        if not isinstance(raw_kyc_check_kind, str) or kyc_status is None:
+            return _result("invalid_response", metadata_updated=False)
+        cleaned_kyc_kind = raw_kyc_check_kind.strip().lower()
+        if not KYC_CHECK_KIND_RE.fullmatch(cleaned_kyc_kind):
+            return _result("invalid_response", metadata_updated=False)
+        kyc_check_kind = cleaned_kyc_kind
 
     usage_anchor = None
     usage_windows = []
@@ -1345,9 +1369,18 @@ def import_browser_snapshot(app_data: Path, claude_home: Path, account_id: str, 
                 if entry.get("plan_tier") != "Ultra":
                     entry["plan_tier"] = "Ultra"
                     updated = True
+            if kyc_status is not None and observed > int(previous.get("kyc_observed_at_ms") or 0):
+                entry["kyc_status"] = kyc_status
+                if kyc_check_kind is not None:
+                    entry["kyc_check_kind"] = kyc_check_kind
+                else:
+                    entry.pop("kyc_check_kind", None)
+                entry["kyc_observed_at_ms"] = observed
+                updated = True
             # Preserve the legacy aggregate timestamp as the maximum field clock.
             field_times = [int(entry.get("billing_observed_at_ms") or 0),
-                           int(entry.get("manual_resets_observed_at_ms") or 0)]
+                           int(entry.get("manual_resets_observed_at_ms") or 0),
+                           int(entry.get("kyc_observed_at_ms") or 0)]
             aggregate = max(field_times) or None
             entry.pop("metadata_observed_at_ms", None)
             if aggregate is not None:

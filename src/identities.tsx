@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生身份命令、轻量实时会话存活命令（identities_live_sessions，含 cli-slots 子代理槽位、后台守护标记 background、前台交互子 Shell child_shells 与待接管任务 active_adopt_jobs）、可选编排状态/安装命令（identities_orchestrator_* / identities_install_cli_wrappers）、手动/自动订阅到期、充值日与套餐层级校准命令（manualPlan）、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、Ultra无上限/Fable专项池/离线刷新凭据到期元数据、智能接力池摘要与悬浮窗穿透态、保留策略、逐窗观测、隐私偏好、顶部横条卡片拖拽排序、跨页卡片定位及本地额度修订轮询。
- * [OUTPUT]: 同风格计数的166×286 CLI身份/养号工牌（语义套餐色标 Free/Pro/Max/Ultra/Team、72h临期提醒、清晰区分当前使用/CLI运行中/桌面端运行与脉冲子代理槽位状态、快速筛选与可选多行平铺、切换前三态运行中CLI引导［后台守护无损保活挂起 / 前台子Shell防断管告警 / 标准无感接力直达］、顶部横条拖拽排序与共享弹簧滚轮）、单滚动容器无嵌套双滚的智能接力与自动续杯弹窗（2分区账号行、语义5h/7d微缩条、重置卡一键同步验证与差值回执、未入库当前号提示、同出口并发风控提示、错峰打开多号用量页）、额度详情5h/7d燃尽ETA与套餐校准、跨机防关联环境交接卡复制及悬浮窗穿透态恢复。
+ * [OUTPUT]: 同风格计数的166×286 CLI身份/养号工牌（语义套餐色标 Free/Pro/Max/Ultra/Team、72h临期提醒、清晰区分当前使用/CLI运行中/桌面端运行与脉冲子代理槽位状态、快速筛选与可选多行平铺、切换前三态运行中CLI引导［后台守护无损保活挂起 / 前台子Shell防断管告警 / 标准无感接力直达］、顶部横条拖拽排序与共享弹簧滚轮）、单滚动容器无嵌套双滚的智能接力与自动续杯弹窗（2分区账号行、语义5h/7d微缩条、≥3号同出口聚集温和提示 `[data-relay-exit-cluster-hint]`、同轴全宽路由与CLI无感接力分组卡、80%~100%换号阈值、OpusPlan模型说明、重置卡一键同步验证与差值回执、未入库当前号提示、错峰打开多号用量页）、额度详情5h/7d燃尽ETA/套餐校准与只读KYC核验状态、跨机防关联环境交接卡复制及悬浮窗穿透态恢复。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定；后台 revision 触发的读取在原生快照内容未变时保留现有状态对象，避免整页重渲染。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -52,6 +52,7 @@ import {
   clearAccountCooldown,
   formatTruthfulPercent,
   validateSlotHttpProxy,
+  findSameExitClusterWarning,
   buildSubagentMarkdownTemplate,
   getRelayLaunchDirs,
   useRelayLaunchDirs,
@@ -727,6 +728,10 @@ export function IdentityPanel({
   );
   const relayEval = useMemo(() => evaluateSmartRelay(relayAccounts, smartRelay, nowSec), [relayAccounts, smartRelay, nowSec]);
   const relayPoolSummary = useMemo(() => summarizeRelayPool(relayEval.candidates, nowSec), [relayEval.candidates, nowSec]);
+  const sameExitCluster = useMemo(
+    () => findSameExitClusterWarning(relayEval.candidates, smartRelay.slotProxies),
+    [relayEval.candidates, smartRelay.slotProxies],
+  );
   const relayTargetCand = relayEval.recommended ?? relayEval.standbyCandidate ?? null;
   const relayRecommendedSaved =
     smartRelay.enabled && relayTargetCand && !relayTargetCand.isCurrent
@@ -3126,6 +3131,11 @@ export function IdentityPanel({
                 )}
               </div>
             </div>
+            {sameExitCluster && (
+              <div className="identity-unsaved-pool-hint identity-relay-cluster-hint" role="note" data-relay-exit-cluster-hint>
+                <span>{t('relay.sameExitClusterHint', {count: sameExitCluster.count, endpoint: sameExitCluster.endpoint})}</span>
+              </div>
+            )}
             <div className="identity-relay-account-list">
               {[...relayEval.candidates]
                 .sort((a, b) => a.listIndex - b.listIndex)
@@ -3423,27 +3433,30 @@ export function IdentityPanel({
             </div>
           </section>
 
-          <div className="identity-relay-form-rows">
-            <div className="identity-relay-form-row">
-              <span className="identity-relay-form-label">{t('relay.routeLabel')}</span>
-              <div className="identity-relay-form-body">
-                <div className="identity-wakeup-presets">
-                  {RELAY_STRATEGIES.map(strategy => (
-                    <button
-                      key={strategy}
-                      type="button"
-                      className={`wakeup-preset-chip${smartRelay.strategy === strategy ? ' active' : ''}`}
-                      onClick={() => updateSmartRelayConfig({strategy})}
-                    >
-                      {t(`relay.strategy.${strategy}`)}
-                    </button>
-                  ))}
-                </div>
-                <p className="identity-relay-form-desc">{t(`relay.strategyDesc.${smartRelay.strategy}`)}</p>
-              </div>
+          <section className="identity-relay-section" aria-label={t('relay.routingSectionTitle')}>
+            <div className="identity-relay-section-head">
+              <h3>{t('relay.routingSectionTitle')}</h3>
             </div>
+            <div className="identity-relay-form-rows identity-relay-cli-rows">
+              <div className="identity-relay-form-row">
+                <span className="identity-relay-form-label">{t('relay.routeLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-wakeup-presets">
+                    {RELAY_STRATEGIES.map(strategy => (
+                      <button
+                        key={strategy}
+                        type="button"
+                        className={`wakeup-preset-chip${smartRelay.strategy === strategy ? ' active' : ''}`}
+                        onClick={() => updateSmartRelayConfig({strategy})}
+                      >
+                        {t(`relay.strategy.${strategy}`)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="identity-relay-form-desc">{t(`relay.strategyDesc.${smartRelay.strategy}`)}</p>
+                </div>
+              </div>
 
-            <div className="identity-relay-form-pair">
               <div className="identity-relay-form-row">
                 <span className="identity-relay-form-label">{t('relay.rateLimitLabel')}</span>
                 <div className="identity-relay-form-body">
@@ -3481,27 +3494,27 @@ export function IdentityPanel({
                   <p className="identity-relay-form-desc">{t(`relay.affinityDesc.${smartRelay.affinityMode}`)}</p>
                 </div>
               </div>
-            </div>
 
-            <div className="identity-relay-form-row">
-              <span className="identity-relay-form-label">{t('relay.thresholdLabel')}</span>
-              <div className="identity-relay-form-body">
-                <div className="identity-wakeup-presets">
-                  {RELAY_SPENT_THRESHOLDS.map(pct => (
-                    <button
-                      key={pct}
-                      type="button"
-                      className={`wakeup-preset-chip${smartRelay.spentThresholdPct === pct ? ' active' : ''}`}
-                      onClick={() => updateSmartRelayConfig({spentThresholdPct: pct})}
-                    >
-                      {pct}%
-                    </button>
-                  ))}
+              <div className="identity-relay-form-row">
+                <span className="identity-relay-form-label">{t('relay.thresholdLabel')}</span>
+                <div className="identity-relay-form-body">
+                  <div className="identity-wakeup-presets identity-relay-threshold-chips">
+                    {RELAY_SPENT_THRESHOLDS.map(pct => (
+                      <button
+                        key={pct}
+                        type="button"
+                        className={`wakeup-preset-chip${smartRelay.spentThresholdPct === pct ? ' active' : ''}`}
+                        onClick={() => updateSmartRelayConfig({spentThresholdPct: pct})}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
+                  <p className="identity-relay-form-desc">{t('relay.thresholdDesc', {pct: smartRelay.spentThresholdPct})}</p>
                 </div>
-                <p className="identity-relay-form-desc">{t('relay.thresholdDesc', {pct: smartRelay.spentThresholdPct})}</p>
               </div>
             </div>
-          </div>
+          </section>
 
           <section className="identity-relay-section identity-relay-cli-section" aria-label={t('relay.cliSectionTitle')}>
             <div className="identity-relay-section-head">
@@ -3517,6 +3530,7 @@ export function IdentityPanel({
                         key={model || 'follow'}
                         type="button"
                         data-relay-cli-model={model || 'follow'}
+                        title={model === 'opusplan' ? t('relay.cliModelOpusPlanDesc') : undefined}
                         className={`wakeup-preset-chip${smartRelay.defaultCliModel === model ? ' active' : ''}`}
                         onClick={() => updateSmartRelayConfig({defaultCliModel: model})}
                       >
@@ -3524,7 +3538,9 @@ export function IdentityPanel({
                       </button>
                     ))}
                   </div>
-                  <p className="identity-relay-form-desc">{t('relay.cliModelDesc')}</p>
+                  <p className="identity-relay-form-desc">
+                    {t(smartRelay.defaultCliModel === 'opusplan' ? 'relay.cliModelOpusPlanDesc' : 'relay.cliModelDesc')}
+                  </p>
                 </div>
               </div>
 
@@ -3603,38 +3619,6 @@ export function IdentityPanel({
                       </span>
                     </div>
                   )}
-                </div>
-              </div>
-
-              <div className="identity-relay-form-row">
-                <span className="identity-relay-form-label">{t('relay.concurrencyLabel')}</span>
-                <div className="identity-relay-form-body">
-                  <div className="identity-wakeup-presets">
-                    {([1, 2, 3, 4, 5] as const).map(cap => (
-                      <button
-                        key={cap}
-                        type="button"
-                        className={`wakeup-preset-chip${smartRelay.maxSameExitConcurrency === cap ? ' active' : ''}`}
-                        onClick={() => updateSmartRelayConfig({maxSameExitConcurrency: cap})}
-                      >
-                        {cap === 1
-                          ? t('relay.concurrencySerial')
-                          : cap === 2
-                            ? t('relay.concurrencyRecommendedMainPlusOne')
-                            : String(cap)}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="identity-relay-form-desc">
-                    {t('relay.concurrencyDesc', {max: smartRelay.maxSameExitConcurrency})}
-                  </p>
-                  {smartRelay.maxSameExitConcurrency >= 3 &&
-                    Object.values(smartRelay.slotProxies ?? {}).filter(v => Boolean(v && v.trim())).length <= 1 && (
-                      <div className="relay-same-exit-risk-banner" role="note" data-same-exit-risk>
-                        <strong>{t('relay.sameExitRiskBadge')}</strong>
-                        <span>{t('relay.sameExitRiskHint', {max: smartRelay.maxSameExitConcurrency})}</span>
-                      </div>
-                    )}
                 </div>
               </div>
 
@@ -4416,6 +4400,29 @@ export function IdentityPanel({
           const isolated = state?.browser.enabled
             ? (detailsAreCurrent || (quotaDetails && state.browser.bound_ids.includes(quotaDetails.id)) ? 'active' : 'pending')
             : 'off';
+          const kycInfo = (() => {
+            const status = typeof detailsSummary?.kyc_status === 'string'
+              ? detailsSummary.kyc_status.trim().toLowerCase()
+              : '';
+            if (!status) return null;
+            const checkKind = typeof detailsSummary?.kyc_check_kind === 'string' &&
+              /^[a-z0-9_-]{1,32}$/.test(detailsSummary.kyc_check_kind.trim().toLowerCase())
+              ? detailsSummary.kyc_check_kind.trim().toLowerCase()
+              : '';
+            if (status === 'not_required') {
+              return {status, tone: 'neutral' as const, labelKey: 'quota.kycStatus.notRequired', checkKind};
+            }
+            if (status === 'pending' || status === 'required' || status === 'in_progress') {
+              return {status, tone: 'warn' as const, labelKey: 'quota.kycStatus.pending', checkKind};
+            }
+            if (status === 'completed' || status === 'approved' || status === 'verified') {
+              return {status, tone: 'ok' as const, labelKey: 'quota.kycStatus.verified', checkKind};
+            }
+            if (status === 'failed' || status === 'declined' || status === 'expired') {
+              return {status, tone: 'danger' as const, labelKey: 'quota.kycStatus.issue', checkKind};
+            }
+            return null;
+          })();
           return (
             <div className="identity-quota-details quota-details">
               <header className="quota-details-profile">
@@ -4585,6 +4592,19 @@ export function IdentityPanel({
                     )}
                   </dd>
                 </div>
+                {kycInfo && (
+                  <div data-kyc-status={kycInfo.status}>
+                    <dt>{t('quota.kycStatusLabel')}</dt>
+                    <dd>
+                      {kycInfo.tone === 'neutral' ? (
+                        <span className="quota-details-kyc-note">{t(kycInfo.labelKey)}</span>
+                      ) : (
+                        <span className="quota-details-chip" data-tone={kycInfo.tone}>{t(kycInfo.labelKey)}</span>
+                      )}
+                      {kycInfo.checkKind && <small className="quota-details-kyc-kind">{kycInfo.checkKind}</small>}
+                    </dd>
+                  </div>
+                )}
                 <div>
                   <dt>{t('quota.isolationStatus')}</dt>
                   <dd>

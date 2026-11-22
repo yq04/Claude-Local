@@ -1,5 +1,5 @@
 /* [INPUT]: Identity/warming shared count headers, readable saved-profile email, selected-slot/runtime/cli-slot states, short onboarding, expiry, quota, wakeup, smart-relay, Claude CLI and residue sub-panel states.
- * [OUTPUT]: Accessible ⋯ dropdown menu, compact .identity-slot-live-pill badge with live pulse dot, semantic data-plan-tier (Free/Pro/Max/Ultra/Team) pills + right-hand MM/DD subscription expiry urgency tag, manual plan calibration & recharge/expiry editor dialog, uniform 28px header action groups without wrap-orphan dividers, single-scroll auto-wakeup & 2-zone smart-relay dialogs (eliminating nested double scrollbars, with semantic 5h/7d bars, Reset-Card verify-sync button, collapsible slot proxy pill & 1-click CLI relay launcher), card filter chips + optional multi-row grid toggle, burn-rate ETA in QuotaDetails, non-disruptive live-CLI switch callout, and Dark/Glass contrast parity without changing 166×286 card geometry.
+ * [OUTPUT]: Accessible ⋯ dropdown menu, compact .identity-slot-live-pill badge with live pulse dot, semantic data-plan-tier (Free/Pro/Max/Ultra/Team) pills + right-hand MM/DD subscription expiry urgency tag, manual plan calibration & recharge/expiry editor dialog, uniform 28px header action groups without wrap-orphan dividers, single-scroll auto-wakeup & 2-zone smart-relay dialogs (eliminating nested double scrollbars, coaxial full-width routing/CLI .identity-relay-section cards, aligned 24px account-row controls & 26px chips, .identity-relay-cluster-hint >=3 same-exit pool warning, semantic 5h/7d bars, Reset-Card verify-sync button, collapsible slot proxy pill & 1-click CLI relay launcher), QuotaDetails KYC status pill/note, card filter chips + optional multi-row grid toggle, burn-rate ETA in QuotaDetails, non-disruptive live-CLI switch callout, and Dark/Glass contrast parity without changing 166×286 card geometry.
  * [POS]: Identity productivity presentation; the 166×286 badge remains owned by style.css.
  * [PROTOCOL]: Keep additions local to identity workbench controls.
  */
@@ -985,8 +985,8 @@
 }
 .identity-relay-section {
   display: grid;
-  gap: 6px;
-  padding: 9px 12px;
+  gap: 10px;
+  padding: 12px 14px;
   border-radius: 9px;
   border: 1px solid var(--border);
   background: var(--card);
@@ -1189,46 +1189,38 @@
 }
 .identity-relay-form-rows {
   display: grid;
-  gap: 7px;
+  gap: 9px;
   padding: 10px 12px;
   border-radius: 9px;
   border: 1px solid var(--border);
   background: var(--card);
 }
-.identity-relay-form-pair {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 7px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-}
-@media (min-width: 640px) {
-  .identity-relay-form-pair {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
-  }
-}
-.identity-relay-form-pair > .identity-relay-form-row {
-  padding-bottom: 0;
-  border-bottom: 0;
-  grid-template-columns: 74px minmax(0, 1fr);
-}
 .identity-relay-form-row {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
+  grid-template-columns: 108px minmax(0, 1fr);
   align-items: start;
-  gap: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  gap: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+@media (max-width: 520px) {
+  .identity-relay-form-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
 }
 .identity-relay-form-row:last-child {
   padding-bottom: 0;
   border-bottom: 0;
 }
 .identity-relay-form-label {
-  padding-top: 3px;
-  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+  padding-top: 0;
+  font-size: 12px;
   font-weight: 600;
+  line-height: 1.25;
   color: var(--foreground);
 }
 .identity-relay-form-body {
@@ -1236,11 +1228,36 @@
   gap: 4px;
   min-width: 0;
 }
+.identity-relay-form-body .identity-wakeup-presets {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.identity-relay-form-body .wakeup-preset-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.identity-relay-form-body .identity-relay-threshold-chips .wakeup-preset-chip {
+  min-width: 50px;
+}
 .identity-relay-form-desc {
   margin: 0;
   font-size: 11px;
-  line-height: 1.38;
+  line-height: 1.45;
   color: var(--muted-foreground);
+}
+.identity-relay-form-body .identity-relay-form-desc {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 /* ----- v0.3.0 Cleanroom 3-Stage Pipeline, Smart Relay Pace/Cooling & Window-Hidden Animation Pause ----- */
@@ -1812,6 +1829,7 @@ html[data-window-hidden="true"] *::after {
   flex: 1 1 220px;
   min-width: 160px;
   height: 28px;
+  box-sizing: border-box;
   padding: 0 9px;
   border-radius: 7px;
   border: 1px solid var(--border);
@@ -1967,6 +1985,11 @@ html[data-window-hidden="true"] *::after {
   background: rgba(245, 158, 11, 0.14);
   color: #fde68a;
 }
+.identity-relay-cluster-hint {
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+}
 
 .identity-filter-bar {
   display: flex;
@@ -2099,4 +2122,44 @@ html[data-window-hidden="true"] *::after {
   flex: 1 1 220px;
   min-width: 0;
   line-height: 1.45;
+}
+
+.identity-relay-account-right .identity-relay-proxy-pill,
+.identity-relay-account-right .identity-relay-set-preferred,
+.identity-relay-account-right .identity-relay-preferred-pill,
+.identity-relay-account-right .identity-relay-preferred-pill.is-clickable,
+.identity-relay-account-right .identity-relay-quick-reset-btn,
+.identity-relay-account-right .identity-relay-verify-reset-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 8px;
+  line-height: 1;
+  box-sizing: border-box;
+}
+
+.identity-relay-launch-row > button,
+.identity-relay-cli-actions > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-height: 28px;
+  line-height: 1;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.quota-details-chip[data-tone="danger"] {
+  background: var(--identity-danger-bg);
+  color: var(--identity-danger);
+}
+.quota-details-kyc-note {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+}
+.quota-details-kyc-kind {
+  font-family: var(--font-mono);
 }

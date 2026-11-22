@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 共享界面语言状态、宿主语言写入命令、Tauri 本机应用版本、settings-model 响应式视图偏好与主题预设、smart-relay-model 多账号智能接力与轮换策略、floating-monitor-model 悬浮窗开启/鼠标穿透状态、wallpaper-store 本地自定义壁纸与主色调提取引擎、身份备份组件与 Cromma UI 控件。
- * [OUTPUT]: 统一 44px 工具栏页头与紧凑分段切换器的「软件设置」四分页：通用（含原生 smart_relay_v1.json 安全同步、自动续跑、带串行/主+1推荐标签及同出口风控提示的同出口并发上限与默认重置）、外观与布局、数据管理与关于；紧致行距与 28px 中性图标角标，功能边界与选项契约保持完整。
+ * [OUTPUT]: 统一 44px 工具栏页头与紧凑分段切换器的「软件设置」四分页：通用（含原生 smart_relay_v1.json 安全同步、80%~100% 换号阈值、OpusPlan 混合别名说明、自动续跑与默认重置）、外观与布局、数据管理与关于；紧致行距与 28px 中性图标角标，功能边界与选项契约保持完整。
  * [POS]: 独立设置面板；视图偏好与身份备份均由用户手动触发，不联网、不检查或安装更新、不替换当前身份库。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -52,7 +52,6 @@ import {
   useSmartRelayConfig,
   type RelayCliEffort,
   type RelayCliModel,
-  type RelayMaxSameExitConcurrency,
   type RelaySpentThreshold,
   type RelayStrategy,
 } from './smart-relay-model';
@@ -437,7 +436,14 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
           onCheckedChange={autoContinueOnRelay => updateSmartRelayConfig({autoContinueOnRelay})}
         />
       </SettingsRow>
-      <SettingsRow title={t('settings.relayDefaultModelLabel')} detail={t('settings.relayDefaultModelHint')}>
+      <SettingsRow
+        title={t('settings.relayDefaultModelLabel')}
+        detail={t(
+          smartRelay.defaultCliModel === 'opusplan'
+            ? 'relay.cliModelOpusPlanDesc'
+            : 'settings.relayDefaultModelHint',
+        )}
+      >
         <Select
           aria-label={t('settings.relayDefaultModelLabel')}
           size="small"
@@ -465,32 +471,6 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
           }))}
         />
       </SettingsRow>
-      <SettingsRow title={t('settings.relayConcurrencyLabel')} detail={t('settings.relayConcurrencyHint')}>
-        <Select
-          aria-label={t('settings.relayConcurrencyLabel')}
-          size="small"
-          value={String(smartRelay.maxSameExitConcurrency)}
-          onValueChange={v =>
-            updateSmartRelayConfig({maxSameExitConcurrency: Number(v) as RelayMaxSameExitConcurrency})
-          }
-          items={([1, 2, 3, 4, 5] as const).map(cap => ({
-            value: String(cap),
-            label:
-              cap === 1
-                ? t('relay.concurrencySerial')
-                : cap === 2
-                  ? t('relay.concurrencyRecommendedMainPlusOne')
-                  : String(cap),
-          }))}
-        />
-      </SettingsRow>
-      {smartRelay.maxSameExitConcurrency >= 3 &&
-        Object.values(smartRelay.slotProxies ?? {}).filter(v => Boolean(v && v.trim())).length <= 1 && (
-          <div className="relay-same-exit-risk-banner" role="note" data-same-exit-risk>
-            <strong>{t('relay.sameExitRiskBadge')}</strong>
-            <span>{t('relay.sameExitRiskHint', {max: smartRelay.maxSameExitConcurrency})}</span>
-          </div>
-        )}
       <SettingsRow title={t('settings.relayResetRowLabel')} detail={t('settings.relayResetRowHint')}>
         <Button variant="secondary" size="small" onClick={() => resetSmartRelayConfig()}>
           {t('settings.relayResetBtn')}

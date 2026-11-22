@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生只读环境快照（浏览器远程 DNS 锁、Mihomo 结构特征、Claude CLI 遥测护盾/MCP 供应链审计、网卡 RFC1918 候选）与三路边缘 trace 一致性实测结果。
- * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属、多信号机房优先拦截与美区/主流地区家宽 ASN/ISP 分类（classifyRiskExitIsp / formatExitIspLabel）、因果对齐的顶栏态势文案路由（resolveRiskBanner）、严格 RFC1918 校验、Mihomo strict-route 覆写片段、桌面/移动端全量 Claude+Datadog+GrowthBook+Persona 防漏分流规则、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段与安全边界纯函数审计（含统一护盾与 MCP 边界判定）、安全随机源缺失即失败的内存桥接凭据与双语提示词。
+ * [INPUT]: 原生只读环境快照（浏览器远程 DNS 锁、Mihomo 结构特征含 Sift/Hexagon 规则标志 has_sift_rules、Claude CLI 遥测护盾/MCP 供应链审计、网卡 RFC1918 候选）与三路边缘 trace 一致性实测结果。
+ * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属（含 kyc_routing_rules 的 missingSift 细项提示）、多信号机房优先拦截与美区/主流地区家宽 ASN/ISP 分类（classifyRiskExitIsp / formatExitIspLabel）、因果对齐的顶栏态势文案路由（resolveRiskBanner）、严格 RFC1918 校验、Mihomo strict-route 覆写片段、桌面/移动端全量 Claude+Datadog+GrowthBook+Persona/Yoti+Sift/Hexagon 防漏分流规则、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段与安全边界纯函数审计（含统一护盾与 MCP 边界判定）、安全随机源缺失即失败的内存桥接凭据与双语提示词。
  * [POS]: 风控验证纯模型层；不持有上游家宽密码、不落盘临时口令、不向公网暴露任何监听配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -37,6 +37,7 @@ export type MihomoAudit = {
   dns_has_nameserver_policy: boolean;
   has_claude_rules: boolean;
   has_persona_rules: boolean;
+  has_sift_rules?: boolean;
   has_telemetry_rules?: boolean;
   has_quic_reject: boolean;
   has_geoip_cn: boolean;
@@ -589,19 +590,25 @@ export function evaluateRiskChecks(
       summaryKey: 'risk.check.kycRoutingRules.missingPersona',
     });
   } else if (!local.mihomo.has_quic_reject || !local.mihomo.dedicated_listener_port) {
+    const siftDetail =
+      local.mihomo.has_sift_rules === false ? ['risk.check.kycRoutingRules.missingSift'] : undefined;
     checks.push({
       id: 'kyc_routing_rules',
       status: 'warn',
       titleKey: 'risk.check.kycRoutingRules.title',
       summaryKey: 'risk.check.kycRoutingRules.warnMissingQuicOrListener',
+      ...(siftDetail ? {detailKeys: siftDetail} : {}),
     });
   } else {
+    const siftDetail =
+      local.mihomo.has_sift_rules === false ? ['risk.check.kycRoutingRules.missingSift'] : undefined;
     checks.push({
       id: 'kyc_routing_rules',
       status: 'ok',
       titleKey: 'risk.check.kycRoutingRules.title',
       summaryKey: 'risk.check.kycRoutingRules.okFull',
       summaryParams: {port: local.mihomo.dedicated_listener_port},
+      ...(siftDetail ? {detailKeys: siftDetail} : {}),
     });
   }
 
@@ -728,6 +735,7 @@ const MOBILE_ANTI_LEAK_DOMAIN_SUFFIXES = [
   'persona.org',
   'personacustomer.com',
   'persona-cdn.com',
+  'yoti.com',
   'stripe.com',
   'stripe.network',
   'stripecdn.com',
@@ -745,6 +753,8 @@ const MOBILE_ANTI_LEAK_DOMAIN_SUFFIXES = [
   'authkit.app',
   'sift.com',
   'siftscience.com',
+  'hexagon-cdn.com',
+  'hexagon-analytics.com',
   'cloudflare.com',
 ] as const;
 
@@ -1048,7 +1058,7 @@ export function buildDesktopDnsFixPrompt(opts: {
     return [
       `Please inspect and harden my local ${clientName} configuration to eliminate WebRTC leaks, DNS leaks, and KYC split-routing between claude.ai and withpersona.com.`,
       '1. Back Up & Persist Across Subscription Updates: Back up the active profile and place all changes in the persistent Global Extend Config (Merge) or Extend Script so subscription refreshes never overwrite them, preserving all existing nodes and subscriptions.',
-      '2. Unified KYC & Anti-Fraud Residential Routing: Route ALL of the following domains and DoH resolver IPs at highest priority to the EXACT SAME static residential exit used by claude.ai (never transit/fallback nodes, and never place IP-CIDR/GEOIP rules without `no-resolve` above them): claude.ai, claude.com, anthropic.com, clau.de, ant.dev, antspace.dev, anthropic.dev, anthropic.team, claude.app, claude.dev, claude.new, claude.site, claudeusercontent.com, claudemcpclient.com, claudemcpcontent.com, claudepages.dev, claudestudio.com, claudeacademy.com, chatbotclaude.com (plus GEOSITE,anthropic when GeoSite is enabled), http-intake.logs.us5.datadoghq.com, datadoghq.com, browser-intake-us5-datadoghq.com, browser-intake-datadoghq.com, datadoghq.eu, ddog-gov.com (plus DOMAIN-KEYWORD,datadoghq), growthbook.io, storage.googleapis.com, withpersona.com, persona.com, persona.org, personacustomer.com, persona-cdn.com, stripe.com, stripe.network, stripecdn.com, stripe.global, paypal.com, paypalobjects.com, paypal-mktg.com, braintreegateway.com, braintree-api.com, hcaptcha.com, challenges.cloudflare.com, arkoselabs.com, funcaptcha.com, workos.com, authkit.app, sift.com, siftscience.com, sentry.io, intercom.io, intercomcdn.com, intercomassets.com, statsig.anthropic.com, statsig.com, statsigapi.net, featuregates.org, prodregistryv2.org, beyondwickedmapping.org, openai.com, chatgpt.com, oaistatic.com, oaiusercontent.com, auth0.com, ipquery.io, ippure.com, plus IP-CIDR 1.1.1.1/32, 1.0.0.1/32, 8.8.8.8/32, 8.8.4.4/32 (no-resolve) and Fake-IP leak guard IP-CIDR,198.18.0.0/15,REJECT,no-resolve. Keep localhost, 127.0.0.1 and ::1 DIRECT.',
+      '2. Unified KYC & Anti-Fraud Residential Routing: Route ALL of the following domains and DoH resolver IPs at highest priority to the EXACT SAME static residential exit used by claude.ai (never transit/fallback nodes, and never place IP-CIDR/GEOIP rules without `no-resolve` above them): claude.ai, claude.com, anthropic.com, clau.de, ant.dev, antspace.dev, anthropic.dev, anthropic.team, claude.app, claude.dev, claude.new, claude.site, claudeusercontent.com, claudemcpclient.com, claudemcpcontent.com, claudepages.dev, claudestudio.com, claudeacademy.com, chatbotclaude.com (plus GEOSITE,anthropic when GeoSite is enabled), http-intake.logs.us5.datadoghq.com, datadoghq.com, browser-intake-us5-datadoghq.com, browser-intake-datadoghq.com, datadoghq.eu, ddog-gov.com (plus DOMAIN-KEYWORD,datadoghq), growthbook.io, storage.googleapis.com, withpersona.com, persona.com, persona.org, personacustomer.com, persona-cdn.com, yoti.com, stripe.com, stripe.network, stripecdn.com, stripe.global, paypal.com, paypalobjects.com, paypal-mktg.com, braintreegateway.com, braintree-api.com, hcaptcha.com, challenges.cloudflare.com, arkoselabs.com, funcaptcha.com, workos.com, authkit.app, sift.com, siftscience.com, hexagon-cdn.com, hexagon-analytics.com, sentry.io, intercom.io, intercomcdn.com, intercomassets.com, statsig.anthropic.com, statsig.com, statsigapi.net, featuregates.org, prodregistryv2.org, beyondwickedmapping.org, openai.com, chatgpt.com, oaistatic.com, oaiusercontent.com, auth0.com, ipquery.io, ippure.com, plus IP-CIDR 1.1.1.1/32, 1.0.0.1/32, 8.8.8.8/32, 8.8.4.4/32 (no-resolve) and Fake-IP leak guard IP-CIDR,198.18.0.0/15,REJECT,no-resolve. Keep localhost, 127.0.0.1 and ::1 DIRECT.',
       '3. Block WebRTC STUN/TURN, QUIC UDP & Dual-Stack IPv6 Leaks: Set top-level `ipv6: false` and `dns.ipv6: false` (preventing native IPv6 bypass when the residential SOCKS5 exit is IPv4-only), and add explicit rules rejecting UDP ports 443 (QUIC), 3478, 19302 and 5349 (WebRTC STUN/TURN) plus `DOMAIN-KEYWORD,stun,REJECT` (`AND,((NETWORK,UDP),(DST-PORT,443)),REJECT`, `AND,((NETWORK,UDP),(DST-PORT,3478)),REJECT`, `AND,((NETWORK,UDP),(DST-PORT,19302)),REJECT`, `AND,((NETWORK,UDP),(DST-PORT,5349)),REJECT`) so neither TUN nor system browsers can leak real ISP UDP/WebRTC candidates.',
       '4. Eliminate Domestic Plaintext DNS Leaks (Campus/Enterprise Safe): Enable `sniffer.enable: true` (`parse-pure-ip: true`), `dns.respect-rules: true`, and `dns.direct-nameserver-follow-policy: true`; configure `proxy-server-nameserver` (`system`, `https://223.5.5.5/dns-query`, `https://1.12.12.12/dns-query`) strictly for resolving proxy server hostnames; use IP-literal encrypted remote DoH (`https://1.1.1.1/dns-query`, `https://8.8.8.8/dns-query` — avoids campus UDP:53 bootstrap hangs) for non-CN / Claude / Persona domains while keeping `geosite:cn,private` on `system` + domestic DoH via `nameserver-policy`; and set `tun.strict-route: true` with `inet4-route-exclude-address: [127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` and `dns-hijack: [any:53, tcp://any:53]` so multi-homed Windows adapters never leak DNS while intranet/domestic traffic stays fast.',
       listenerLine,
@@ -1066,7 +1076,7 @@ export function buildDesktopDnsFixPrompt(opts: {
   return [
     `请检查并加固我本机的 ${clientName} 配置，彻底根治 WebRTC 穿透泄露、DNS 抢答泄露以及 claude.ai 与 KYC 核验服务 withpersona.com 跨域名分流不一致的问题：`,
     '1. 先备份并写入持久化覆写层：先完整备份当前生效配置文件与全局扩展覆写配置/脚本（Merge / Script），将修改写入不会被订阅刷新冲掉的扩展覆写层，保留原有订阅、节点与无关分流规则。',
-    '2. 补齐 KYC 与风控全链路同源家宽分流：将以下域名与远程 DoH 解析器 IP 以最高优先级全部强制指向与 claude.ai 完全相同的静态住宅出口策略组（严禁漏入默认中转节点或直连，且严禁在上方放置缺少 `no-resolve` 的 IP-CIDR/GEOIP 规则）：claude.ai、claude.com、anthropic.com、clau.de、ant.dev、antspace.dev、anthropic.dev、anthropic.team、claude.app、claude.dev、claude.new、claude.site、claudeusercontent.com、claudemcpclient.com、claudemcpcontent.com、claudepages.dev、claudestudio.com、claudeacademy.com、chatbotclaude.com（若内核已启用 GeoSite 可同步添加 GEOSITE,anthropic）、http-intake.logs.us5.datadoghq.com、datadoghq.com、browser-intake-us5-datadoghq.com、browser-intake-datadoghq.com、datadoghq.eu、ddog-gov.com（及 DOMAIN-KEYWORD,datadoghq）、growthbook.io、storage.googleapis.com、withpersona.com、persona.com、persona.org、personacustomer.com、persona-cdn.com、stripe.com、stripe.network、stripecdn.com、stripe.global、paypal.com、paypalobjects.com、paypal-mktg.com、braintreegateway.com、braintree-api.com、hcaptcha.com、challenges.cloudflare.com、arkoselabs.com、funcaptcha.com、workos.com、authkit.app、sift.com、siftscience.com、sentry.io、intercom.io、intercomcdn.com、intercomassets.com、statsig.anthropic.com、statsig.com、statsigapi.net、featuregates.org、prodregistryv2.org、beyondwickedmapping.org、openai.com、chatgpt.com、oaistatic.com、oaiusercontent.com、auth0.com、ipquery.io、ippure.com，以及 `IP-CIDR,1.1.1.1/32`、`IP-CIDR,1.0.0.1/32`、`IP-CIDR,8.8.8.8/32`、`IP-CIDR,8.8.4.4/32`（`no-resolve`）和防 Fake-IP 漏出规则 `IP-CIDR,198.18.0.0/15,REJECT,no-resolve`；同时确保 localhost、127.0.0.1、::1 本地回调保持 DIRECT。',
+    '2. 补齐 KYC 与风控全链路同源家宽分流：将以下域名与远程 DoH 解析器 IP 以最高优先级全部强制指向与 claude.ai 完全相同的静态住宅出口策略组（严禁漏入默认中转节点或直连，且严禁在上方放置缺少 `no-resolve` 的 IP-CIDR/GEOIP 规则）：claude.ai、claude.com、anthropic.com、clau.de、ant.dev、antspace.dev、anthropic.dev、anthropic.team、claude.app、claude.dev、claude.new、claude.site、claudeusercontent.com、claudemcpclient.com、claudemcpcontent.com、claudepages.dev、claudestudio.com、claudeacademy.com、chatbotclaude.com（若内核已启用 GeoSite 可同步添加 GEOSITE,anthropic）、http-intake.logs.us5.datadoghq.com、datadoghq.com、browser-intake-us5-datadoghq.com、browser-intake-datadoghq.com、datadoghq.eu、ddog-gov.com（及 DOMAIN-KEYWORD,datadoghq）、growthbook.io、storage.googleapis.com、withpersona.com、persona.com、persona.org、personacustomer.com、persona-cdn.com、yoti.com、stripe.com、stripe.network、stripecdn.com、stripe.global、paypal.com、paypalobjects.com、paypal-mktg.com、braintreegateway.com、braintree-api.com、hcaptcha.com、challenges.cloudflare.com、arkoselabs.com、funcaptcha.com、workos.com、authkit.app、sift.com、siftscience.com、hexagon-cdn.com、hexagon-analytics.com、sentry.io、intercom.io、intercomcdn.com、intercomassets.com、statsig.anthropic.com、statsig.com、statsigapi.net、featuregates.org、prodregistryv2.org、beyondwickedmapping.org、openai.com、chatgpt.com、oaistatic.com、oaiusercontent.com、auth0.com、ipquery.io、ippure.com，以及 `IP-CIDR,1.1.1.1/32`、`IP-CIDR,1.0.0.1/32`、`IP-CIDR,8.8.8.8/32`、`IP-CIDR,8.8.4.4/32`（`no-resolve`）和防 Fake-IP 漏出规则 `IP-CIDR,198.18.0.0/15,REJECT,no-resolve`；同时确保 localhost、127.0.0.1、::1 本地回调保持 DIRECT。',
     '3. 阻断 WebRTC STUN/TURN 穿透、QUIC UDP 旁路与双栈 IPv6 泄露：显式设置顶层 `ipv6: false` 与 `dns.ipv6: false`（防止纯 IPv4 静态家宽下本地运营商原生 IPv6 旁路抢答），并添加 `AND,((NETWORK,UDP),(DST-PORT,443)),REJECT`（阻断 HTTP/3 QUIC）以及 `AND,((NETWORK,UDP),(DST-PORT,3478)),REJECT`、`AND,((NETWORK,UDP),(DST-PORT,19302)),REJECT`、`AND,((NETWORK,UDP),(DST-PORT,5349)),REJECT`、`DOMAIN-KEYWORD,stun,REJECT`（阻断 WebRTC STUN/TURN 探测），防止浏览器在 TUN 或直连下通过 UDP 暴露本机运营商真实公网 IP。',
     '4. 根治国内明文 DNS 抢答泄露（兼容校园网/企业内网）：开启 `sniffer.enable: true`（`parse-pure-ip: true`）、`dns.respect-rules: true` 与 `dns.direct-nameserver-follow-policy: true`；配置 `proxy-server-nameserver`（`system`、`https://223.5.5.5/dns-query`、`https://1.12.12.12/dns-query`）仅用于解析节点服务器域名；将海外及 Claude/Persona 域名的 `nameserver` 切换至纯 IP 远程加密 DoH（`https://1.1.1.1/dns-query`、`https://8.8.8.8/dns-query`，规避校园网封锁 UDP:53 导致的域名 DoH 引导死锁），并在 `nameserver-policy` 中让 `geosite:cn,private` 保留 `system` + 国内 DoH；若启用了 TUN，开启 `strict-route: true` 并配置 `inet4-route-exclude-address: [127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]` 与 `dns-hijack: [any:53, tcp://any:53]`，既阻断双网卡明文 DNS 泄露又确保内网与国内直连秒开。',
     listenerLineZh,
@@ -1112,7 +1122,7 @@ export function buildStandaloneMobilePrompt(opts: {
     return [
       `My PC is on a public/campus network or AP-isolated Wi-Fi where LAN port sharing is unsafe. Generate a standalone Global TUN configuration for ${clientLabel} on my phone using the exact same two-hop residential chain as my PC (iKuuu transit -> Kookeey static residential SOCKS5):`,
       '1. Ask me for my transit node and static residential SOCKS5 host/port/username/password if not already provided in this local session.',
-      `2. Build a complete, importable ${clientLabel} configuration that chains Transit -> Static Residential (via dialer-proxy / underlying-proxy / detour), enables Global TUN, routes ALL traffic (including claude.ai, claude.com, anthropic.com, datadoghq.com, growthbook.io, and withpersona.com) through the static residential exit, uses IP-literal encrypted remote DoH DNS (https://1.1.1.1/dns-query, https://8.8.8.8/dns-query), and explicitly blocks UDP ports 443 (QUIC), 3478 and 19302 (WebRTC STUN).`,
+      `2. Build a complete, importable ${clientLabel} configuration that chains Transit -> Static Residential (via dialer-proxy / underlying-proxy / detour), enables Global TUN, routes ALL traffic (including claude.ai, claude.com, anthropic.com, datadoghq.com, growthbook.io, withpersona.com, yoti.com, sift.com, siftscience.com, hexagon-cdn.com, and hexagon-analytics.com) through the static residential exit, uses IP-literal encrypted remote DoH DNS (https://1.1.1.1/dns-query, https://8.8.8.8/dns-query), and explicitly blocks UDP ports 443 (QUIC), 3478 and 19302 (WebRTC STUN).`,
       `3. Give step-by-step instructions to import this profile on my phone, enable Airplane Mode + Wi-Fi, set phone timezone manually to ${tzHint}, and verify in Private Browsing that https://claude.ai/cdn-cgi/trace and https://withpersona.com/cdn-cgi/trace show my PC's exact residential ip= and http=http/2 before scanning the KYC QR code.`,
     ].join('\n');
   }
@@ -1120,7 +1130,7 @@ export function buildStandaloneMobilePrompt(opts: {
   return [
     `我当前处于校园网 / 公网有线或路由器 AP 隔离环境，不便开启电脑局域网共享端口。请为我手机端的 ${clientLabel} 生成一份与电脑完全同源的「独立双跳静态家宽全局 TUN 配置」（iKuuu 前置中转 -> Kookeey 静态住宅 SOCKS5）：`,
     '1. 若当前会话尚未提供前置中转节点与静态家宽 SOCKS5 的服务器、端口、账号密码，请先向我询问。',
-    `2. 按 ${clientLabel} 原生语法生成完整可导入的配置文件：使用链式代理（dialer-proxy / underlying-proxy / detour）串联「前置节点 -> 静态家宽」，开启全局 TUN 接管，确保 claude.ai、claude.com、anthropic.com、datadoghq.com、growthbook.io 与 withpersona.com 等全部流量统一走该静态家宽出口，启用纯 IP 远程加密 DoH（https://1.1.1.1/dns-query、https://8.8.8.8/dns-query）防 DNS 泄露，并显式拦截 UDP 443（QUIC，防纯 TCP 家宽卡死）及 UDP 3478/19302（防 WebRTC STUN 穿透）。`,
+    `2. 按 ${clientLabel} 原生语法生成完整可导入的配置文件：使用链式代理（dialer-proxy / underlying-proxy / detour）串联「前置节点 -> 静态家宽」，开启全局 TUN 接管，确保 claude.ai、claude.com、anthropic.com、datadoghq.com、growthbook.io、withpersona.com、yoti.com、sift.com、siftscience.com、hexagon-cdn.com 与 hexagon-analytics.com 等全部流量统一走该静态家宽出口，启用纯 IP 远程加密 DoH（https://1.1.1.1/dns-query、https://8.8.8.8/dns-query）防 DNS 泄露，并显式拦截 UDP 443（QUIC，防纯 TCP 家宽卡死）及 UDP 3478/19302（防 WebRTC STUN 穿透）。`,
     `3. 给出手机端导入步骤，并提醒我在开启飞行模式仅连 Wi-Fi、手动将手机时区对齐为 ${tzHint} 后，先用手机无痕浏览器访问 https://claude.ai/cdn-cgi/trace 与 https://withpersona.com/cdn-cgi/trace 核对 ip= 与电脑完全一致且 http=http/2 再扫 KYC 二维码。`,
   ].join('\n');
 }
@@ -1212,7 +1222,7 @@ export function buildDesktopMihomoAntiLeakYaml(port = DEFAULT_DEDICATED_LISTENER
       '  - IP-CIDR,1.0.0.1/32,<你的静态家宽节点名称>,no-resolve',
       '  - IP-CIDR,8.8.8.8/32,<你的静态家宽节点名称>,no-resolve',
       '  - IP-CIDR,8.8.4.4/32,<你的静态家宽节点名称>,no-resolve',
-      '  # 3. Claude / Anthropic 全矩阵 19 域名 + Datadog 日志/RUM 遥测 + Persona KYC + Stripe / PayPal 支付 + 风控探针同源家宽',
+      '  # 3. Claude / Anthropic 全矩阵 19 域名 + Datadog 日志/RUM 遥测 + Persona/Yoti KYC + Stripe / PayPal 支付 + Sift/Hexagon 风控探针同源家宽',
       '  # （若 Mihomo 已启用 GeoSite 库，亦可额外取消下一行注释启用 GEOSITE,anthropic 兜底）',
       '  # - GEOSITE,anthropic,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,claude.ai,<你的静态家宽节点名称>',
@@ -1248,6 +1258,7 @@ export function buildDesktopMihomoAntiLeakYaml(port = DEFAULT_DEDICATED_LISTENER
       '  - DOMAIN-SUFFIX,persona.org,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,personacustomer.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,persona-cdn.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,yoti.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,stripe.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,stripe.network,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,stripecdn.com,<你的静态家宽节点名称>',
@@ -1265,6 +1276,8 @@ export function buildDesktopMihomoAntiLeakYaml(port = DEFAULT_DEDICATED_LISTENER
       '  - DOMAIN-SUFFIX,authkit.app,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,sift.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,siftscience.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,hexagon-cdn.com,<你的静态家宽节点名称>',
+      '  - DOMAIN-SUFFIX,hexagon-analytics.com,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,sentry.io,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,intercom.io,<你的静态家宽节点名称>',
       '  - DOMAIN-SUFFIX,intercomcdn.com,<你的静态家宽节点名称>',

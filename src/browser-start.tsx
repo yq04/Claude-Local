@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 随机令牌回环服务上下文、浏览器原生 navigator/Intl/Permissions/WebRTC/WebGL/Canvas/Audio/UA-CH 与实际 HTTPS 出口与服务备援目录与宿主界面语言。
- * [OUTPUT]: 明确被测养号/CLI浏览器归属与仅环境范围的20项实测页；输出 Canvas 2D FNV-1a 像素哈希与音频节点核验，未知保持待测。
+ * [OUTPUT]: 明确被测养号/CLI浏览器归属与仅环境范围的20项实测页；输出 Canvas 2D FNV-1a 像素哈希、音频节点与 Sift v122 屏幕 avail / 语言首项 / 外框尺寸 / PDF 查看器防篡改核验，未知保持待测。
  * [POS]: 独立 Chromium 入口，复用工具箱控件；成功状态只由真实观测决定，不接入 Tauri 权限，不伪造地理位置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -129,16 +129,44 @@ function probeMediaFingerprint(): { ok: boolean|null; detail: string } {
 
 function probeClientHintsAndScreen(): { ok: boolean; detail: string } {
     try {
-        const uaData = (navigator as Navigator & { userAgentData?: { mobile?: boolean; platform?: string } }).userAgentData;
+        const nav = navigator as Navigator & {
+            userAgentData?: { mobile?: boolean; platform?: string };
+            pdfViewerEnabled?: boolean;
+        };
+        const uaData = nav.userAgentData;
         const isDesktop = uaData?.mobile !== true;
         const width = window.screen?.width || 0;
         const height = window.screen?.height || 0;
+        const availWidth = window.screen?.availWidth || 0;
+        const availHeight = window.screen?.availHeight || 0;
         const depth = window.screen?.colorDepth || 24;
-        const screenOk = width > 0 && height > 0 && depth >= 24;
-        const ok = isDesktop && screenOk;
+        const screenBaseOk = width > 0 && height > 0 && depth >= 24;
+        const availConsistent = availWidth > 0 && availHeight > 0
+            ? width >= availWidth && height >= availHeight
+            : true;
+        const primaryLang = nav.language;
+        const langs = nav.languages;
+        const langConsistent = primaryLang && Array.isArray(langs) && langs.length > 0
+            ? primaryLang.toLowerCase() === String(langs[0]).toLowerCase()
+            : true;
+        const frameOk = !(
+            (window.innerWidth > 0 && typeof window.outerWidth === 'number' && window.outerWidth === 0) ||
+            (window.innerHeight > 0 && typeof window.outerHeight === 'number' && window.outerHeight === 0)
+        );
+        const pdfOk = typeof nav.pdfViewerEnabled === 'boolean' ? nav.pdfViewerEnabled === true : true;
+        const reasons: string[] = [];
+        if (!isDesktop) reasons.push('UA-CH 报告移动端');
+        if (!screenBaseOk) reasons.push('屏幕尺寸或色深异常');
+        if (!availConsistent) reasons.push('availWidth/availHeight 超出屏幕尺寸');
+        if (!langConsistent) reasons.push('language 与 languages[0] 不一致');
+        if (!frameOk) reasons.push('outerWidth/outerHeight 为 0');
+        if (!pdfOk) reasons.push('PDF 查看器未启用');
+        const ok = reasons.length === 0;
         return {
             ok,
-            detail: ok ? `${width}×${height} · ${depth}-bit · Desktop` : '客户端提示或屏幕色深异常',
+            detail: ok
+                ? `${width}×${height} · ${depth}-bit · Desktop`
+                : `客户端提示或屏幕异常：${reasons.join('；')}`,
         };
     } catch {
         return { ok: false, detail: '屏幕或客户端提示异常' };

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Local identity records, passive/online quota snapshots (including Reset Card grants), current timestamp and browser localStorage.
- * [OUTPUT]: Magpie-inspired 3-tier account classification (with rested inferred7d/inferred5h Tier 0 promotion, 0% remaining Tier 2 spent semantics, subExpired non-next_renewal guard, SoonReset <=24h harvest tie-break bonus & threshold-aware Reset-Card awaitingManualReset demotion), canonical plan slug/manual plan helpers (CANONICAL_MANUAL_PLANS / normalizePlanSlug), truthful percentage formatter (formatTruthfulPercent), 5h/7d window burn-pace delta & exhaustion ETA (computeWindowPaceDelta / computeWindowBurnEta), dynamic anti-ping-pong switch margin (computeDynamicSwitchMarginPct / meetsDynamicSwitchMargin), per-account cooldown jail & rate-limit helper (noteRelayAccountRateLimited), one-way noReturnAccountId lock, 6 routing strategies (Smart / Reset Harvest / Pace / LeastUsed / Ordered / Rotate), 3-state affinityMode (auto / session / manual), current_spent-prioritized evaluation & preferred-account hysteresis return (!inferred && !inferred5h), rate-limit queue demotion, pool capacity summary with totalManualResetsRemaining, awaitingResetCount & cooldown-inclusive soonestResetSec (summarizeRelayPool), 3-tier Reset-Card expiry urgency (computeResetCardExpiryUrgency), slot HTTP proxy validation (validateSlotHttpProxy), persistent default CLI model & effort level helpers (RELAY_CLI_MODELS / RELAY_CLI_EFFORTS / formatRelayCliModelEffortArgs), Bash/PowerShell-safe subagent markdown template (buildSubagentMarkdownTemplate), 5-item MRU recent launch directories store (useRelayLaunchDirs), and guarded reactive Smart Relay configuration store synced to native smart_relay_v1.json (syncNativeSmartRelayConfigIfLive / flushNativeSmartRelaySync).
+ * [OUTPUT]: Magpie-inspired 3-tier account classification (with rested inferred7d/inferred5h Tier 0 promotion, 0% remaining Tier 2 spent semantics, subExpired non-next_renewal guard, SoonReset <=24h harvest tie-break bonus & threshold-aware Reset-Card awaitingManualReset demotion), canonical plan slug/manual plan helpers (CANONICAL_MANUAL_PLANS / normalizePlanSlug), truthful percentage formatter (formatTruthfulPercent), 5h/7d window burn-pace delta & exhaustion ETA (computeWindowPaceDelta / computeWindowBurnEta), dynamic anti-ping-pong switch margin (computeDynamicSwitchMarginPct / meetsDynamicSwitchMargin), per-account cooldown jail & rate-limit helper (noteRelayAccountRateLimited), one-way noReturnAccountId lock, 6 routing strategies (Smart / Reset Harvest / Pace / LeastUsed / Ordered / Rotate), 3-state affinityMode (auto / session / manual), expanded RELAY_SPENT_THRESHOLDS (80/85/90/95/98/100, default 98) & maxSameExitConcurrency (default 1, 1..5 valid), current_spent-prioritized evaluation & preferred-account hysteresis return (!inferred && !inferred5h), rate-limit queue demotion, pool capacity summary with totalManualResetsRemaining, awaitingResetCount & cooldown-inclusive soonestResetSec (summarizeRelayPool), 3-tier Reset-Card expiry urgency (computeResetCardExpiryUrgency), slot HTTP proxy validation & >=3 same-exit cluster detection (validateSlotHttpProxy / findSameExitClusterWarning), persistent default CLI model & effort level helpers (RELAY_CLI_MODELS / RELAY_CLI_EFFORTS / formatRelayCliModelEffortArgs), Bash/PowerShell-safe subagent markdown template (buildSubagentMarkdownTemplate), 5-item MRU recent launch directories store (useRelayLaunchDirs), and guarded reactive Smart Relay configuration store synced to native smart_relay_v1.json (syncNativeSmartRelayConfigIfLive / flushNativeSmartRelaySync).
  * [POS]: Pure frontend multi-account rotation & smart relay model; default OFF, never terminates running claude.exe or bypasses vault isolation.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -11,7 +11,7 @@ import {evaluateQuota, type QuotaInput} from './identity-quota';
 export type RelayStrategy = 'smart' | 'reset_harvest' | 'pace' | 'least_used' | 'ordered' | 'rotate';
 export type RelayRateLimitMode = 'keep_position' | 'sink_to_end';
 export type RelayAffinityMode = 'auto' | 'session' | 'manual';
-export type RelaySpentThreshold = 90 | 95 | 98 | 100;
+export type RelaySpentThreshold = 80 | 85 | 90 | 95 | 98 | 100;
 export type RelayMaxSameExitConcurrency = 1 | 2 | 3 | 4 | 5;
 export const RELAY_CLI_MODELS = [
   '',
@@ -67,7 +67,7 @@ export type WindowBurnEta = {
 export const RELAY_STRATEGIES: readonly RelayStrategy[] = ['smart', 'reset_harvest', 'pace', 'least_used', 'ordered', 'rotate'];
 export const RELAY_RATE_LIMIT_MODES: readonly RelayRateLimitMode[] = ['keep_position', 'sink_to_end'];
 export const RELAY_AFFINITY_MODES: readonly RelayAffinityMode[] = ['auto', 'session', 'manual'];
-export const RELAY_SPENT_THRESHOLDS: readonly RelaySpentThreshold[] = [90, 95, 98, 100];
+export const RELAY_SPENT_THRESHOLDS: readonly RelaySpentThreshold[] = [80, 85, 90, 95, 98, 100];
 
 /**
  * Formats a quota percentage truthfully without misleading rounding near 0% or 100%.
@@ -282,7 +282,7 @@ export const defaultSmartRelayConfig: SmartRelayConfig = {
   autoSwitchWhenIdle: false,
   autoContinueOnRelay: false,
   relayHandoffMode: 'clean_handoff',
-  maxSameExitConcurrency: 2,
+  maxSameExitConcurrency: 1,
   defaultCliModel: '',
   defaultCliEffort: '',
   preferredAccountId: null,
@@ -342,6 +342,57 @@ export function validateSlotHttpProxy(raw: string): {ok: boolean; normalized: st
   } catch {
     return {ok: false, normalized: '', errorKey: 'relay.proxy.invalidHttp'};
   }
+}
+
+function normalizeClusterEndpoint(raw: string, fallback = '127.0.0.1:7899'): string {
+  const source = raw.trim() || fallback.trim() || '127.0.0.1:7899';
+  let cleaned = source.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+  cleaned = (cleaned.split(/[/?#]/)[0] ?? '').trim();
+  const atIdx = cleaned.lastIndexOf('@');
+  if (atIdx !== -1) {
+    cleaned = cleaned.slice(atIdx + 1).trim();
+  }
+  cleaned = cleaned.replace(/\/+$/, '').toLowerCase();
+  if (!cleaned) {
+    return fallback !== '127.0.0.1:7899' ? normalizeClusterEndpoint('127.0.0.1:7899') : ':7899';
+  }
+  if (/^:\d{1,5}$/.test(cleaned)) {
+    return cleaned;
+  }
+  const loopbackMatch = cleaned.match(/^(?:127\.0\.0\.1|localhost|\[::1\]):(\d{1,5})$/);
+  if (loopbackMatch) {
+    return `:${loopbackMatch[1]}`;
+  }
+  return cleaned;
+}
+
+/**
+ * Detects when >= 3 included accounts in the Smart Relay pool resolve to the same normalized proxy exit endpoint.
+ * Normalizes `http://`, `https://`, `socks5://`, `socks5h://`, and loopback hosts (`127.0.0.1`, `localhost`, `[::1]`)
+ * to a compact endpoint label (e.g. `:7899` for loopback ports or `host:port` otherwise).
+ */
+export function findSameExitClusterWarning(
+  entries: ReadonlyArray<{id: string; isIncluded: boolean; proxy?: string | null}>,
+  slotProxies: Record<string, string>,
+  defaultEndpoint = '127.0.0.1:7899',
+): {endpoint: string; count: number} | null {
+  if (!Array.isArray(entries) || entries.length < 3) return null;
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    if (!entry || entry.isIncluded !== true) continue;
+    const rawProxy = (slotProxies?.[entry.id] || entry.proxy || defaultEndpoint).trim();
+    const endpoint = normalizeClusterEndpoint(rawProxy, defaultEndpoint);
+    counts.set(endpoint, (counts.get(endpoint) ?? 0) + 1);
+  }
+  let bestEndpoint: string | null = null;
+  let bestCount = 0;
+  for (const [endpoint, count] of counts.entries()) {
+    if (count >= 3 && count > bestCount) {
+      bestEndpoint = endpoint;
+      bestCount = count;
+    }
+  }
+  return bestEndpoint ? {endpoint: bestEndpoint, count: bestCount} : null;
 }
 
 function sanitizeRecordMap(raw: unknown): Record<string, number> {
@@ -897,7 +948,7 @@ export type RelayAccountInput = {
   billingDateKind?: IdentitySubscriptionMetadata['billing_date_kind'];
   isCurrent: boolean;
   listIndex: number;
-  summary?: (QuotaInput & IdentitySubscriptionMetadata & {subscription_expires_at?: number | null; auth_has_refresh?: boolean | null}) | null;
+  summary?: (QuotaInput & IdentitySubscriptionMetadata & {subscription_expires_at?: number | null; auth_has_refresh?: boolean | null; proxy?: string | null}) | null;
 };
 
 export type RelayCandidate = {
@@ -905,6 +956,7 @@ export type RelayCandidate = {
   name: string;
   email: string | null;
   plan: string | null;
+  proxy?: string | null;
   isCurrent: boolean;
   isPreferred: boolean;
   isIncluded: boolean;
@@ -1227,6 +1279,7 @@ export function evaluateSmartRelay(
         name: acc.name,
         email: acc.email ?? null,
         plan: resolvedPlan,
+        proxy: acc.summary?.proxy ?? null,
         isCurrent: acc.isCurrent,
         isPreferred,
         isIncluded,
@@ -1311,6 +1364,7 @@ export function evaluateSmartRelay(
       name: acc.name,
       email: acc.email ?? null,
       plan: resolvedPlan,
+      proxy: acc.summary?.proxy ?? null,
       isCurrent: acc.isCurrent,
       isPreferred,
       isIncluded,

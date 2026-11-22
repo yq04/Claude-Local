@@ -1,5 +1,5 @@
 // [INPUT]: 当前绑定浏览器快照、本机网卡、当前用户已知代理内核的只读配置投影、Claude CLI 只读遥测/MCP 安全边界与手动触发的三路 trace。
-// [OUTPUT]: 带配置来源/解析不确定性的 DNS 结构诊断、本机 TUN/明文 DNS 布尔状态、CLI 遥测护盾/MCP 供应链计数、同上下文的遮罩浏览器归属、安全内网候选与绑定上下文一致（socks5h 远程 DNS + 多信号北美/全球家宽 ISP 与机房 ASN 识别及 IPQuery 回退）的跨域出口结果。
+// [OUTPUT]: 带配置来源/解析不确定性的 DNS 与 Persona/Yoti KYC 及 Sift/Hexagon 设备指纹分流规则一致性结构诊断、本机 TUN/明文 DNS 布尔状态、CLI 遥测护盾/MCP 供应链计数、同上下文的遮罩浏览器归属、安全内网候选与绑定上下文一致（socks5h 远程 DNS + 多信号北美/全球家宽 ISP 与机房 ASN 识别及 IPQuery 回退）的跨域出口结果。
 // [POS]: 风控验证原生只读边界；绝不读取或输出任何代理密码、节点域名、订阅地址或账号凭据，不修改系统设置或中断运行进程。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,8 @@ pub struct MihomoAudit {
     pub dns_has_nameserver_policy: bool,
     pub has_claude_rules: bool,
     pub has_persona_rules: bool,
+    #[serde(default)]
+    pub has_sift_rules: bool,
     #[serde(default)]
     pub has_telemetry_rules: bool,
     pub has_quic_reject: bool,
@@ -331,7 +333,8 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
     let mut current_listener_is_proxy_type = false;
     let mut seen_unresolved_ip_rule = false;
     let mut claude_group: Option<String> = None;
-    let mut persona_group: Option<String> = None;
+    let mut kyc_groups: Vec<String> = Vec::new();
+    let mut sift_groups: Vec<String> = Vec::new();
     let mut has_datadog_logs_rule = false;
     let mut datadog_groups: Vec<String> = Vec::new();
 
@@ -567,10 +570,27 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                             }
                             if matches!(
                                 pattern.as_str(),
-                                "withpersona.com" | "persona.com" | "persona.org"
-                            ) || (rtype == "DOMAIN-KEYWORD" && pattern == "withpersona")
+                                "withpersona.com" | "persona.com" | "persona.org" | "yoti.com"
+                            ) || (rtype == "DOMAIN-KEYWORD"
+                                && matches!(pattern.as_str(), "withpersona" | "yoti"))
                             {
-                                persona_group.get_or_insert_with(|| target.to_string());
+                                kyc_groups.push(target.to_string());
+                            }
+                            if (matches!(rtype.as_str(), "DOMAIN" | "DOMAIN-SUFFIX")
+                                && matches!(
+                                    pattern.as_str(),
+                                    "sift.com"
+                                        | "siftscience.com"
+                                        | "hexagon-cdn.com"
+                                        | "hexagon-analytics.com"
+                                ))
+                                || (rtype == "DOMAIN-KEYWORD"
+                                    && matches!(
+                                        pattern.as_str(),
+                                        "sift" | "hexagon-cdn" | "hexagon-analytics"
+                                    ))
+                            {
+                                sift_groups.push(target.to_string());
                             }
                             let is_dd_keyword =
                                 rtype == "DOMAIN-KEYWORD" && pattern == "datadoghq";
@@ -599,11 +619,22 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
     }
 
     audit.has_claude_rules = claude_group.is_some();
-    audit.has_persona_rules = match (&persona_group, &claude_group) {
-        (Some(pg), Some(cg)) => pg == cg,
-        (Some(_), None) => true,
-        _ => false,
-    };
+    audit.has_persona_rules = !kyc_groups.is_empty()
+        && match &claude_group {
+            Some(cg) => kyc_groups.iter().all(|kg| kg == cg),
+            None => {
+                let first = &kyc_groups[0];
+                kyc_groups.iter().all(|kg| kg == first)
+            }
+        };
+    audit.has_sift_rules = !sift_groups.is_empty()
+        && match &claude_group {
+            Some(cg) => sift_groups.iter().all(|sg| sg == cg),
+            None => {
+                let first = &sift_groups[0];
+                sift_groups.iter().all(|sg| sg == first)
+            }
+        };
     audit.has_telemetry_rules = has_datadog_logs_rule
         && !datadog_groups.is_empty()
         && match &claude_group {
@@ -2238,5 +2269,83 @@ Windows IP 配置
             );
             assert_eq!(res.hosting, Some(false));
         }
+    }
+
+    #[test]
+    fn mihomo_audit_recognizes_yoti_rules_and_rejects_persona_yoti_group_mismatch() {
+        let yoti_domain = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,yoti.com,US-Residential\n",
+            None,
+        );
+        assert!(yoti_domain.has_claude_rules);
+        assert!(yoti_domain.has_persona_rules);
+
+        let yoti_keyword_only = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-KEYWORD,yoti,US-Residential\n",
+            None,
+        );
+        assert!(!yoti_keyword_only.has_claude_rules);
+        assert!(yoti_keyword_only.has_persona_rules);
+
+        let both_aligned = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,withpersona.com,US-Residential\n  - DOMAIN-SUFFIX,yoti.com,US-Residential\n",
+            None,
+        );
+        assert!(both_aligned.has_persona_rules);
+
+        let both_aligned_without_claude = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,withpersona.com,US-Residential\n  - DOMAIN-KEYWORD,yoti,US-Residential\n",
+            None,
+        );
+        assert!(both_aligned_without_claude.has_persona_rules);
+
+        let mismatch_with_claude = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,withpersona.com,US-Residential\n  - DOMAIN-SUFFIX,yoti.com,JP-Residential\n",
+            None,
+        );
+        assert!(!mismatch_with_claude.has_persona_rules);
+
+        let mismatch_without_claude = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,withpersona.com,US-Residential\n  - DOMAIN-KEYWORD,yoti,JP-Residential\n",
+            None,
+        );
+        assert!(!mismatch_without_claude.has_persona_rules);
+
+        let yoti_mismatch_claude = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,yoti.com,JP-Residential\n",
+            None,
+        );
+        assert!(!yoti_mismatch_claude.has_persona_rules);
+    }
+
+    #[test]
+    fn mihomo_audit_recognizes_sift_rules_and_rejects_mismatch_or_ip_shadowing() {
+        let aligned = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,sift.com,US-Residential\n  - DOMAIN-SUFFIX,hexagon-cdn.com,US-Residential\n  - DOMAIN-SUFFIX,hexagon-analytics.com,US-Residential\n",
+            None,
+        );
+        assert!(aligned.has_claude_rules);
+        assert!(aligned.has_sift_rules);
+
+        let missing_sift = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,withpersona.com,US-Residential\n",
+            None,
+        );
+        assert!(missing_sift.has_claude_rules);
+        assert!(!missing_sift.has_sift_rules);
+
+        let split_group_mismatch = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,sift.com,US-Residential\n  - DOMAIN-SUFFIX,hexagon-cdn.com,JP-Residential\n",
+            None,
+        );
+        assert!(split_group_mismatch.has_claude_rules);
+        assert!(!split_group_mismatch.has_sift_rules);
+
+        let shadowed_by_unresolved_ip = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - IP-CIDR,104.16.0.0/13,Cloudflare\n  - DOMAIN-SUFFIX,sift.com,US-Residential\n  - DOMAIN-SUFFIX,hexagon-cdn.com,US-Residential\n  - DOMAIN-SUFFIX,hexagon-analytics.com,US-Residential\n",
+            None,
+        );
+        assert!(shadowed_by_unresolved_ip.has_claude_rules);
+        assert!(!shadowed_by_unresolved_ip.has_sift_rules);
     }
 }

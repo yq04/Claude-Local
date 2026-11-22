@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生只读环境快照（risk_inspect_local_env 含 CLI 遥测护盾/MCP 供应链审计）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好与双语文案。
- * [OUTPUT]: 四模块单层工作台布局：安全态势与四栏紧凑去重遥测条、带分组标头的双层三列静态/动态核验矩阵与 strict-route 闭环修复向导、移动端 3+2 徽章去折叠扫码桥接（含贴边分隔独立提示框）及 6 步前置飞行清单（含 PayPal 站点清理直达助手）。
+ * [INPUT]: 原生只读环境快照（risk_inspect_local_env 含 CLI 遥测护盾/MCP 供应链审计与 Mihomo Sift/Hexagon 规则标志 has_sift_rules）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好与双语文案。
+ * [OUTPUT]: 四模块单层工作台布局：安全态势与四栏紧凑去重遥测条（含 Sift/Hexagon 分流规则对齐指示 `[data-risk-sift-rules]`）、带分组标头的双层三列静态/动态核验矩阵与 strict-route 闭环修复向导、移动端 3+2 徽章去折叠扫码桥接（含贴边分隔独立提示框）及 6 步前置飞行清单（含 PayPal 站点清理直达助手）。
  * [POS]: 风控验证主页面；零上游凭据读取、零临时口令落盘、严格拦截非 RFC1918 内网暴露，所有修复通过可审计 AI 提示词或用户显式下载完成。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -535,6 +535,15 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                 </small>
               ) : (
                 <small title={t('risk.telemetry.telemetryPending')}>{t('risk.telemetry.telemetryPending')}</small>
+              )}
+              {local?.mihomo.detected && typeof local.mihomo.has_sift_rules === 'boolean' && (
+                <small
+                  className={local.mihomo.has_sift_rules ? 'is-ok' : 'is-warn'}
+                  data-risk-sift-rules={local.mihomo.has_sift_rules ? 'ok' : 'missing'}
+                  title={local.mihomo.has_sift_rules ? t('risk.cliSecurity.siftRulesOk') : t('risk.cliSecurity.siftRulesMissing')}
+                >
+                  {local.mihomo.has_sift_rules ? t('risk.cliSecurity.siftRulesOk') : t('risk.cliSecurity.siftRulesMissing')}
+                </small>
               )}
             </div>
 

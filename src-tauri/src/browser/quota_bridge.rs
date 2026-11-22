@@ -1,5 +1,5 @@
 // [INPUT]: 用户显式触发的隔离 Chromium、带本地 quota_identity 指纹的短期票据与当前或已保存账号的绑定身份快照。
-// [OUTPUT]: 独立短期回环监听与多票据目标绑定复核后的白名单订阅/重置元数据（区分自动续费 next_renewal 与取消到期 access_until）、实时 5h/7d（含 Ultra five_hour=null 与周级模型池回退）额度窗口与有界权益有效期（24h新鲜度边界 + 可选未截断最晚 grant 结束时间 + 逐份 active grant 明细），或白名单桥接失败；Python仍唯一写入额度账本。
+// [OUTPUT]: 独立短期回环监听与多票据目标绑定复核后的白名单订阅/重置元数据（区分自动续费 next_renewal 与取消到期 access_until）、实时 5h/7d（含 Ultra five_hour=null 与周级模型池回退）额度窗口、有界权益有效期（24h新鲜度边界 + 可选未截断最晚 grant 结束时间 + 逐份 active grant 明细）与剥离厂商字段的 kyc_status/kyc_check_kind，或白名单桥接失败；Python仍唯一写入额度账本。
 // [POS]: Claude.ai 到身份账本的多账号并发短期单次桥；支持 current 与任意已保存 account_id 并行同步，不串号、不抢占全局会话、不读取 Cookie，不后台轮询。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub(crate) use super::quota_existing::query_existing_profile;
@@ -45,6 +45,7 @@ pub(super) struct Incoming {
     pub organization_uuid: Option<String>,
     pub subscription_details: Option<Value>,
     pub usage: Option<Value>,
+    pub kyc_status: Option<Value>,
     pub failure: Option<String>,
 }
 
@@ -77,6 +78,29 @@ pub(super) struct Snapshot {
     pub metadata_observed_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kyc_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kyc_check_kind: Option<String>,
+}
+
+/// Extracts allowlisted `(kyc_status, kyc_check_kind)` while ignoring vendor inquiry metadata.
+fn parse_kyc_status(raw: Option<&Value>) -> (Option<String>, Option<String>) {
+    let Some(obj) = raw.and_then(Value::as_object) else {
+        return (None, None);
+    };
+    let Some(status) = obj
+        .get("status")
+        .and_then(Value::as_str)
+        .and_then(crate::identities::online::normalize_kyc_status)
+    else {
+        return (None, None);
+    };
+    let check_kind = obj
+        .get("check_kind")
+        .and_then(Value::as_str)
+        .and_then(crate::identities::online::normalize_kyc_check_kind);
+    (Some(status), check_kind)
 }
 
 fn valid_uuid(value: &str) -> bool {
@@ -258,6 +282,7 @@ pub(super) fn snapshot(incoming: Incoming, observed_ms: u64) -> Result<Snapshot,
         manual_resets_grants,
     ) = resets_with_grant_end(incoming.usage.as_ref(), observed_ms);
     let usage = quota_windows(incoming.usage.as_ref());
+    let (kyc_status, kyc_check_kind) = parse_kyc_status(incoming.kyc_status.as_ref());
     Ok(Snapshot {
         account_uuid: account_uuid.to_string(),
         organization_uuid: organization_uuid.to_string(),
@@ -269,6 +294,8 @@ pub(super) fn snapshot(incoming: Incoming, observed_ms: u64) -> Result<Snapshot,
         manual_resets_grants,
         metadata_observed_at_ms: observed_ms,
         usage,
+        kyc_status,
+        kyc_check_kind,
     })
 }
 
@@ -421,6 +448,7 @@ pub(super) fn commit_browser_snapshot(
     if snapshot.billing_date.is_none()
         && snapshot.manual_resets_remaining.is_none()
         && snapshot.usage.is_none()
+        && snapshot.kyc_status.is_none()
     {
         return Err("quotaOnline.bridgeUnavailable".into());
     }
@@ -599,6 +627,7 @@ mod tests {
             organization_uuid: Some(ORG.into()),
             subscription_details,
             usage,
+            kyc_status: None,
             failure: None,
         }
     }
@@ -880,5 +909,71 @@ mod tests {
         let snap_cancelled = snapshot(cancelled, OBSERVED).unwrap();
         assert_eq!(snap_cancelled.billing_date_kind, "access_until");
         assert_eq!(snap_cancelled.billing_date, snap_active.billing_date);
+    }
+
+    #[test]
+    fn kyc_status_parses_allowlist_and_strips_vendor_inquiry_fields() {
+        let mut req = input(None, None);
+        req.kyc_status = Some(json!({
+            "status": "  Required ",
+            "check_kind": " Identity_Check-2 ",
+            "vendor_inquiry_id": "inq_secret_123",
+            "vendor_inquiry_url": "https://withpersona.com/verify?inquiry=secret",
+            "extra_private": "must-drop"
+        }));
+        let snap = snapshot(req, OBSERVED).unwrap();
+        assert_eq!(snap.kyc_status.as_deref(), Some("required"));
+        assert_eq!(snap.kyc_check_kind.as_deref(), Some("identity_check-2"));
+        let serialized = serde_json::to_string(&snap).unwrap();
+        assert!(!serialized.contains("vendor_inquiry_id"));
+        assert!(!serialized.contains("vendor_inquiry_url"));
+        assert!(!serialized.contains("inq_secret_123"));
+        assert!(!serialized.contains("must-drop"));
+
+        // Invalid check_kind is dropped while valid allowlisted status survives.
+        for bad_kind in ["", "bad/kind", &"a".repeat(33)] {
+            let mut req = input(None, None);
+            req.kyc_status = Some(json!({
+                "status": "pending",
+                "check_kind": bad_kind
+            }));
+            let snap = snapshot(req, OBSERVED).unwrap();
+            assert_eq!(snap.kyc_status.as_deref(), Some("pending"));
+            assert_eq!(snap.kyc_check_kind, None);
+        }
+
+        // Unknown or missing status drops both status and check_kind.
+        for bad_payload in [
+            json!({"status": "unknown_status", "check_kind": "identity"}),
+            json!({"status": "", "check_kind": "identity"}),
+            json!({"check_kind": "identity"}),
+            json!(["required"]),
+        ] {
+            let mut req = input(None, None);
+            req.kyc_status = Some(bad_payload);
+            let snap = snapshot(req, OBSERVED).unwrap();
+            assert_eq!(snap.kyc_status, None);
+            assert_eq!(snap.kyc_check_kind, None);
+            let serialized = serde_json::to_value(&snap).unwrap();
+            assert!(serialized.get("kyc_status").is_none());
+            assert!(serialized.get("kyc_check_kind").is_none());
+        }
+
+        // Incoming deserialization accepts kyc_status and still denies unknown top-level fields.
+        let valid_json = json!({
+            "nonce": NONCE,
+            "account_uuid": ACCOUNT,
+            "organization_uuid": ORG,
+            "kyc_status": {
+                "status": "not_required",
+                "check_kind": "identity",
+                "vendor_inquiry_id": "secret-id",
+                "vendor_inquiry_url": "https://secret.invalid/v"
+            }
+        });
+        let parsed: Incoming = serde_json::from_value(valid_json).unwrap();
+        let snap = snapshot(parsed, OBSERVED).unwrap();
+        assert_eq!(snap.kyc_status.as_deref(), Some("not_required"));
+        assert_eq!(snap.kyc_check_kind.as_deref(), Some("identity"));
     }
 }
