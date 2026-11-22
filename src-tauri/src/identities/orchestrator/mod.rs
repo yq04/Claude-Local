@@ -1,8 +1,8 @@
 // [INPUT]: vault/identity-vault、app_data_dir/smart_relay_v1.json、cli-slots/<32-hex>、默认 ~/.claude 与 ~/.claude.json、--orchestrate stdin JSON 及 Tauri 命令调用。
-// [OUTPUT]: 模块化 SmartRelay 原生评估器、多路子代理隔离槽位获取/释放、--orchestrate 无头协议与 5 个 Tauri 命令（查询/保存/安装包装器+子代理定义/释放槽位/一键启动接力终端）。
+// [OUTPUT]: 模块化 SmartRelay 原生评估器、多路子代理隔离槽位获取/释放、--orchestrate 无头协议与 6 个 Tauri 命令（查询/保存/清除单个冷却/安装包装器+子代理定义/释放槽位/一键启动接力终端）。
 // [POS]: 原生多路接力编排与子代理槽位隔离门面层；聚合 config/evaluator/slots/tooling 子模块，保持对外 API 简洁清晰。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
-pub(super) mod config;
+pub(crate) mod config;
 pub(super) mod evaluator;
 pub(super) mod slots;
 #[cfg(test)]
@@ -10,9 +10,9 @@ mod tests;
 pub(super) mod tooling;
 
 pub use config::SmartRelayConfig;
-pub(crate) use config::{acquire_orchestrate_lock, now_epoch_sec};
+pub(crate) use config::{acquire_orchestrate_lock, load_config, now_epoch_sec, save_config};
 #[cfg(test)]
-pub(crate) use config::{load_config, save_config, validate_config_strict};
+pub(crate) use config::validate_config_strict;
 
 pub use evaluator::OrchestratorStateView;
 pub(crate) use evaluator::{
@@ -34,9 +34,9 @@ pub(crate) use slots::{
 };
 
 pub use tooling::{InstallWrappersResult, LaunchRelayCliResult};
-pub(crate) use tooling::{
-    install_wrappers_in, launch_relay_cli_in, relay_switch_in,
-};
+pub(crate) use tooling::{install_wrappers_in, launch_relay_cli_in};
+#[cfg(test)]
+pub(crate) use tooling::relay_switch_in;
 #[cfg(test)]
 pub(crate) use tooling::validate_launch_cwd;
 
@@ -83,6 +83,8 @@ struct CliRequest {
     auto_continue: Option<bool>,
     #[serde(default, alias = "extraArgs")]
     extra_args: Option<Vec<String>>,
+    #[serde(default, alias = "handoffReason")]
+    handoff_reason: Option<String>,
 }
 
 fn read_bounded_stdin() -> Result<Vec<u8>, String> {
@@ -151,7 +153,7 @@ pub(crate) fn orchestrate_handle_json_in(
             Err(e) => err_json(1, &e, &e),
         },
         "relay_switch" => {
-            let res = relay_switch_in(
+            let res = tooling::relay_switch_with_reason_in(
                 app_data_dir,
                 vault,
                 home,
@@ -159,6 +161,7 @@ pub(crate) fn orchestrate_handle_json_in(
                 req.threshold_pct,
                 req.rate_limited,
                 req.from_record_id.as_deref(),
+                req.handoff_reason.as_deref(),
                 now_sec,
                 procs,
             );
@@ -322,6 +325,9 @@ pub(crate) fn merge_config_preserving_runtime(
     let disk_has_newer_rotations = disk_max_tick > inc_max_tick;
 
     for (k, &disk_tick) in &disk.rotation_tick {
+        if k == "current" {
+            continue;
+        }
         incoming
             .rotation_tick
             .entry(k.clone())
@@ -329,15 +335,21 @@ pub(crate) fn merge_config_preserving_runtime(
             .or_insert(disk_tick);
     }
     for (k, &disk_sunk) in &disk.sunk_order {
+        if k == "current" {
+            continue;
+        }
         incoming
             .sunk_order
             .entry(k.clone())
             .and_modify(|inc| *inc = (*inc).max(disk_sunk))
             .or_insert(disk_sunk);
     }
+    incoming.cooldown_until_sec.remove("current");
+    incoming.rotation_tick.remove("current");
+    incoming.sunk_order.remove("current");
     if disk_has_newer_rotations {
         for (k, &disk_ts) in &disk.cooldown_until_sec {
-            if disk_ts > now_sec {
+            if k != "current" && disk_ts > now_sec {
                 incoming
                     .cooldown_until_sec
                     .entry(k.clone())
@@ -359,6 +371,59 @@ pub(crate) fn merge_config_preserving_runtime(
         }
     }
     incoming
+}
+
+pub(crate) fn clear_cooldown_in(
+    app_data_dir: &Path,
+    vault: &Path,
+    home: &Path,
+    id: &str,
+    now_sec: u64,
+    procs: &[ClaudeProcess],
+) -> Result<OrchestratorStateView, String> {
+    let clean_id = id.trim();
+    if clean_id == "current" || !config::safe_record_key(clean_id) {
+        return Err("relay.error.invalidAccountId".into());
+    }
+    {
+        let _lock = acquire_orchestrate_lock(app_data_dir)?;
+        let mut cfg = config::load_config(app_data_dir);
+        cfg.cooldown_until_sec.remove(clean_id);
+        cfg.cooldown_until_sec.remove("current");
+        if cfg.no_return_account_id.as_deref() == Some(clean_id) {
+            cfg.no_return_account_id = None;
+            cfg.no_return_until_sec = 0;
+        }
+        let next_tick = cfg
+            .rotation_tick
+            .values()
+            .copied()
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        cfg.rotation_tick.insert(clean_id.to_string(), next_tick);
+        config::save_config(app_data_dir, &cfg)?;
+    }
+    orchestrator_state_in(app_data_dir, vault, home, now_sec, procs)
+}
+
+#[tauri::command]
+pub async fn identities_orchestrator_clear_cooldown(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<OrchestratorStateView, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "relay.error.appDataUnavailable".to_string())?;
+        let vault = app_dir.join("identity-vault");
+        let home = identity::root()?;
+        let procs = identity::running_processes();
+        clear_cooldown_in(&app_dir, &vault, &home, &id, now_epoch_sec(), &procs)
+    })
+    .await
+    .map_err(|_| "冷却清除被中断。".to_string())?
 }
 
 #[tauri::command]

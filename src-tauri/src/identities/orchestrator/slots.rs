@@ -1275,7 +1275,7 @@ pub(crate) fn slot_acquire_in(
     }
 }
 
-fn apply_slot_failure_cooldown(
+pub(super) fn apply_slot_failure_cooldown(
     app_data_dir: &Path,
     vault: &Path,
     record_id: &str,
@@ -1308,6 +1308,7 @@ fn apply_slot_failure_cooldown(
     }
     let until = now_sec.saturating_add(dur);
     let mut cfg = load_config(app_data_dir);
+    cfg.cooldown_until_sec.remove("current");
     let prev = cfg.cooldown_until_sec.get(record_id).copied().unwrap_or(0);
     if until > prev {
         cfg.cooldown_until_sec.insert(record_id.to_string(), until);
@@ -1322,6 +1323,14 @@ fn apply_slot_failure_cooldown(
             .saturating_add(1);
         cfg.sunk_order.insert(record_id.to_string(), next_sink);
     }
+    let next_tick = cfg
+        .rotation_tick
+        .values()
+        .copied()
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    cfg.rotation_tick.insert(record_id.to_string(), next_tick);
     let _ = save_config(app_data_dir, &cfg);
     Some(until.max(prev))
 }

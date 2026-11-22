@@ -1958,6 +1958,118 @@ class LocalQuotaTests(unittest.TestCase):
                 rf = quota._load_smart_relay_filter(str(app), now)
                 self.assertEqual(rf["spent_threshold_pct"], 98)
 
+    def test_load_smart_relay_filter_and_statusline_respects_affinity_mode(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / "home"
+            claude_dir = home / ".claude"
+            appdata = Path(temp) / "AppData" / "Roaming"
+            app = appdata / "ai.local.claude-local"
+            vault = app / "identity-vault"
+            claude_dir.mkdir(parents=True)
+            vault.mkdir(parents=True)
+            now = int(datetime.now(timezone.utc).timestamp())
+
+            acc_cur = {"accountUuid": "uuid-cur", "emailAddress": "cur@example.invalid"}
+            acc_b = {"accountUuid": "uuid-b", "emailAddress": "b@example.invalid"}
+            qi_cur = quota.quota_identity(acc_cur)
+            qi_b = quota.quota_identity(acc_b)
+            id_cur = "11111111111111111111111111111111"
+            id_b = "22222222222222222222222222222222"
+
+            (home / ".claude.json").write_text(json.dumps({"oauthAccount": acc_cur}), encoding="utf-8")
+            conn = sqlite3.connect(str(vault / "identities.sqlite"))
+            conn.executescript(
+                "CREATE TABLE state(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                "CREATE TABLE identities(id TEXT PRIMARY KEY, name TEXT NOT NULL, empty INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE identity_summaries(id TEXT PRIMARY KEY, summary TEXT NOT NULL);"
+            )
+            conn.execute("INSERT INTO state(key, value) VALUES('active', ?)", (id_cur,))
+            for rid, rname, sum_obj in (
+                (id_cur, "Curr", {"email": "cur@example.invalid", "quota_identity": qi_cur, "plan": "Pro"}),
+                (id_b, "Peer-B", {"email": "b@example.invalid", "quota_identity": qi_b, "plan": "Pro"}),
+            ):
+                conn.execute("INSERT INTO identities(id, name, empty) VALUES(?, ?, 0)", (rid, rname))
+                conn.execute("INSERT INTO identity_summaries(id, summary) VALUES(?, ?)", (rid, json.dumps(sum_obj)))
+            conn.commit()
+            conn.close()
+
+            (app / "quota_ledger.json").write_text(
+                json.dumps({
+                    "accounts": {
+                        "cur@example.invalid": {
+                            "account_uuid": "uuid-cur",
+                            "quota_identity": qi_cur,
+                            "quota_source": "server_anchor",
+                            "quota_5h_source": "server_anchor",
+                            "quota_7d_source": "server_anchor",
+                            "quota_observed_at_ms": now * 1000,
+                            "auth_status": "valid",
+                            "quota_5h_used": 94,
+                            "quota_5h_reset_at": now + 3600,
+                            "quota_7d_used": 20,
+                            "quota_7d_reset_at": now + 86400,
+                            "server_anchor": {"accountUuid": "uuid-cur", "fetchedAtMs": now * 1000},
+                        },
+                        "b@example.invalid": {
+                            "account_uuid": "uuid-b",
+                            "quota_identity": qi_b,
+                            "quota_source": "server_anchor",
+                            "quota_5h_source": "server_anchor",
+                            "quota_7d_source": "server_anchor",
+                            "quota_observed_at_ms": now * 1000,
+                            "auth_status": "valid",
+                            "quota_5h_used": 10,
+                            "quota_5h_reset_at": now + 3600,
+                            "quota_7d_used": 10,
+                            "quota_7d_reset_at": now + 86400,
+                            "server_anchor": {"accountUuid": "uuid-b", "fetchedAtMs": now * 1000},
+                        },
+                    }
+                }),
+                encoding="utf-8",
+            )
+
+            def run_hud(u5, cfg_dict):
+                (app / "smart_relay_v1.json").write_text(json.dumps(cfg_dict), encoding="utf-8")
+                rf = quota._load_smart_relay_filter(str(app), now)
+                buf = io.StringIO()
+                payload = {
+                    "model": {"display_name": "Opus 5.5"},
+                    "rate_limits": {
+                        "five_hour": {"used_percentage": u5, "resets_at": now + 3600},
+                        "seven_day": {"used_percentage": 20, "resets_at": now + 86400},
+                    },
+                }
+                env = {
+                    "USERPROFILE": str(home),
+                    "APPDATA": str(appdata),
+                    "CLAUDE_LOCAL_RELAY_ACTIVE": "1",
+                }
+                with patch.dict(os.environ, env, clear=True), \
+                        patch.object(sys, "argv", ["claude_quota.py", "--statusline"]), \
+                        patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                        contextlib.redirect_stdout(buf):
+                    quota.handle_statusline()
+                return rf, buf.getvalue().strip()
+
+            # manual suppresses relay_due hint even at 100% exhaustion
+            rf_man, hud_man = run_hud(100, {"schema": 1, "spentThresholdPct": 85, "affinityMode": "manual"})
+            self.assertEqual(rf_man["affinity_mode"], "manual")
+            self.assertNotIn("🔄", hud_man)
+
+            # session clamps threshold <95 -> 95 (94% suppresses hint, 95% shows hint)
+            rf_s85, hud_94 = run_hud(94, {"schema": 1, "spentThresholdPct": 85, "affinityMode": "session"})
+            self.assertEqual(rf_s85["affinity_mode"], "session")
+            self.assertNotIn("🔄", hud_94)
+            _, hud_95 = run_hud(95, {"schema": 1, "spentThresholdPct": 85, "affinityMode": "session"})
+            self.assertIn("🔄 /exit 切[Peer-B]", hud_95)
+
+            # session clamps threshold >=95 -> 100 (99% suppresses hint, 100% shows hint)
+            _, hud_99 = run_hud(99, {"schema": 1, "spentThresholdPct": 95, "affinityMode": "session"})
+            self.assertNotIn("🔄", hud_99)
+            _, hud_100 = run_hud(100, {"schema": 1, "spentThresholdPct": 95, "affinityMode": "session"})
+            self.assertIn("🔄 /exit 切[Peer-B]", hud_100)
+
 
 if __name__ == "__main__":
     unittest.main()

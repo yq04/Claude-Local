@@ -1020,6 +1020,23 @@ impl WakeupOwner {
     ) -> Result<OnlineQuotaResult, String> {
         // Recheck local summary immediately before dispatch, outside the identity door.
         let state_snap = super::state_for(app, false)?;
+        let relay_record_id = if super::valid_id(account_id) {
+            Some(account_id.to_string())
+        } else if account_id == "current" && super::valid_id(&state_snap.active) {
+            Some(state_snap.active.clone())
+        } else {
+            state_snap
+                .records
+                .iter()
+                .find(|r| {
+                    state_snap
+                        .summaries
+                        .get(&r.id)
+                        .and_then(|s| s.quota_identity.as_deref())
+                        == Some(identity)
+                })
+                .map(|r| r.id.clone())
+        };
         let summary_proxy = if account_id == "current" {
             state_snap.current.proxy.clone()
         } else {
@@ -1110,9 +1127,55 @@ impl WakeupOwner {
         drop(guard);
         // Wake a parked owner now that `active` cleared.
         self.inner.1.notify_all();
+        if let Ok(ref r) = result {
+            if r.status == OnlineStatus::RateLimited {
+                if let (Ok(app_dir), Some(rec_id)) =
+                    (app.path().app_data_dir(), relay_record_id.as_deref())
+                {
+                    let _ = propagate_rate_limit_cooldown_in(
+                        &app_dir,
+                        rec_id,
+                        r.retry_at_ms,
+                        now_ms(),
+                    );
+                }
+            }
+        }
         self.emit(app);
         result
     }
+}
+pub(super) fn propagate_rate_limit_cooldown_in(
+    app_data_dir: &Path,
+    record_id: &str,
+    retry_at_ms: Option<u64>,
+    now_ms: u64,
+) -> Result<(), String> {
+    if !(super::valid_id(record_id) || identity_valid(record_id)) {
+        return Ok(());
+    }
+    let now_sec = now_ms / 1000;
+    let until = match retry_at_ms {
+        Some(ms) if ms > 0 => (ms / 1000)
+            .max(now_sec.saturating_add(60))
+            .min(MAX_TIME / 1000),
+        _ => now_sec.saturating_add(900),
+    };
+    let _lock = super::orchestrator::acquire_orchestrate_lock(app_data_dir)?;
+    let mut cfg = super::orchestrator::load_config(app_data_dir);
+    cfg.cooldown_until_sec.remove("current");
+    let prev = cfg.cooldown_until_sec.get(record_id).copied().unwrap_or(0);
+    cfg.cooldown_until_sec
+        .insert(record_id.to_string(), prev.max(until));
+    let next_tick = cfg
+        .rotation_tick
+        .values()
+        .copied()
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    cfg.rotation_tick.insert(record_id.to_string(), next_tick);
+    super::orchestrator::save_config(app_data_dir, &cfg)
 }
 fn local_preparation_failed(result: &OnlineQuotaResult) -> bool {
     result.wakeup_effect.is_none()

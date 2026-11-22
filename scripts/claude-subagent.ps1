@@ -336,7 +336,7 @@ function Assert-LocalProxyReachable {
 function Show-SubagentStatus {
     param($StatusResp)
     $cfg = Get-SafeProp $StatusResp @('config') $null
-    $maxConc = Get-SafeProp $cfg @('maxSameExitConcurrency') 2
+    $maxConc = Get-SafeProp $cfg @('maxSameExitConcurrency') 1
     $pool = Get-SafeProp $StatusResp @('pool', 'pool_summary') $null
     $slotMap = Get-SafeProp $StatusResp @('slot_sessions', 'slotSessions') $null
 

@@ -1,5 +1,5 @@
 // [INPUT]: 只读 ~/.claude/{projects,todos,tasks,teams,plans,jobs}、Store 切换上下文与 <app_data_dir>/handoff/ 持久化目录。
-// [OUTPUT]: 零配置扰动防封交接检查点（捕获只读 HandoffDraft 与至多 1200 字符会话进度摘要、硬防封脱敏防火墙剥离账号/组织/邮箱/UUID/路径/凭据/思考签名、原子提交 latest-handoff.{json,md} 与 subagent-outputs/sub-XX.md）、identities_latest_handoff 与 identities_dismiss_handoff 命令。
+// [OUTPUT]: 零配置扰动防封交接检查点（捕获只读 HandoffDraft 与至多 1200 字符会话进度摘要、硬防封脱敏防火墙剥离账号/组织/邮箱/UUID/路径/凭据/思考签名、结构化/有界横幅 429 识别免正文误报、可选 handoffReason 触发归因、原子提交 latest-handoff.{json,md} 与 subagent-outputs/sub-XX.md）、identities_latest_handoff 与 identities_dismiss_handoff 命令。
 // [POS]: 身份切换后的跨账号断点续接与防封隔离防火墙；绝不写入 ~/.claude/settings.json 或 ~/.claude/projects/*.jsonl。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{private, profile};
@@ -51,6 +51,8 @@ pub struct HandoffSummary {
     pub external_running_count: usize,
     pub copy_prompt: String,
     pub items: Vec<HandoffItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_reason: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -759,22 +761,82 @@ fn extract_visible_text_from_message(val: &Value) -> Option<String> {
     None
 }
 
-fn line_has_rate_limit(line: &str, val: Option<&Value>) -> bool {
-    if let Some(v) = val {
-        if v.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true)
-            || v.get("apiErrorStatus").and_then(Value::as_u64) == Some(429)
-            || v.get("error").and_then(Value::as_str) == Some("rate_limit")
-        {
-            return true;
+fn is_rate_limit_banner(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 400 {
+        return false;
+    }
+    let normalized = trimmed
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    let prefixes = [
+        "api error: 429",
+        "api error : 429",
+        "apierrorstatus: 429",
+        "you've hit your limit",
+        "you have hit your limit",
+        "you've hit your 5-hour limit",
+        "you have hit your 5-hour limit",
+        "you've hit your weekly limit",
+        "you have hit your weekly limit",
+        "5-hour limit",
+        "5h limit",
+        "weekly limit",
+        "usage limit reached",
+        "session limit reached",
+        "spend limit",
+        "out of extra usage",
+        "exceeded your current quota",
+        "usage credits required",
+        "rate_limit",
+        "rate limit",
+        "billing_error",
+        "overloaded_error",
+        "continuing automatically",
+    ];
+    prefixes.iter().any(|p| normalized.starts_with(p))
+}
+
+fn line_has_rate_limit(v: &Value) -> bool {
+    if v.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true)
+        || v.get("apiErrorStatus").and_then(Value::as_u64) == Some(429)
+        || v.get("error").and_then(Value::as_str).is_some_and(|e| {
+            matches!(
+                e,
+                "rate_limit" | "rate_limit_error" | "billing_error" | "overloaded_error"
+            )
+        })
+        || v.pointer("/error/type").and_then(Value::as_str).is_some_and(|e| {
+            matches!(
+                e,
+                "rate_limit" | "rate_limit_error" | "billing_error" | "overloaded_error"
+            )
+        })
+    {
+        return true;
+    }
+    let kind = v.get("type").and_then(Value::as_str).unwrap_or("");
+    if matches!(kind, "assistant" | "system") {
+        if let Some(txt) = extract_visible_text_from_message(v) {
+            if is_rate_limit_banner(&txt) {
+                return true;
+            }
+        }
+        if let Some(msg) = v.get("message").and_then(Value::as_str) {
+            if is_rate_limit_banner(msg) {
+                return true;
+            }
+        }
+    } else if kind == "result" {
+        if let Some(txt) = v.get("result").and_then(Value::as_str) {
+            if is_rate_limit_banner(txt) {
+                return true;
+            }
         }
     }
-    let lower = line.to_ascii_lowercase();
-    lower.contains("5-hour limit")
-        || lower.contains("weekly limit")
-        || lower.contains("usage limit reached")
-        || lower.contains("continuing automatically")
-        || lower.contains("rate_limit")
-        || lower.contains("apierrorstatus: 429")
+    false
 }
 
 fn is_external_agent_type(agent_type: &str) -> bool {
@@ -842,11 +904,6 @@ fn inspect_jsonl_lines(
                 }
             }
         }
-        let is_rl = line_has_rate_limit(line, parsed.as_ref());
-        if is_rl {
-            saw_rate_limit = true;
-            saw_real_assistant_after_rl = false;
-        }
         let Some(val) = parsed else {
             continue;
         };
@@ -867,7 +924,14 @@ fn inspect_jsonl_lines(
                     first_user = txt;
                 }
             }
-        } else if kind == "assistant" {
+            continue;
+        }
+        let is_rl = line_has_rate_limit(&val);
+        if is_rl {
+            saw_rate_limit = true;
+            saw_real_assistant_after_rl = false;
+        }
+        if kind == "assistant" {
             if let Some(arr) = val.pointer("/message/content").and_then(Value::as_array) {
                 for item in arr {
                     if item.get("type").and_then(Value::as_str) == Some("tool_use") {
@@ -1451,6 +1515,7 @@ For any `interrupted_429` or `incomplete` item, spawn a fresh independent subage
         external_running_count,
         copy_prompt,
         items: summary_items,
+        handoff_reason: None,
     };
 
     let json_bytes = serde_json::to_vec_pretty(&summary)
@@ -1458,6 +1523,41 @@ For any `interrupted_429` or `incomplete` item, spawn a fresh independent subage
     private::write(&json_path, &json_bytes)?;
 
     Ok((md_path, json_path))
+}
+
+pub(crate) fn set_handoff_reason_in(app_data_dir: &Path, reason: &str) -> Result<(), String> {
+    let clean = reason.trim();
+    if clean.is_empty()
+        || clean.len() > 64
+        || !clean
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+    {
+        return Ok(());
+    }
+    let handoff_dir = app_data_dir.join(HANDOFF_DIR);
+    let json_path = handoff_dir.join(HANDOFF_JSON_FILE);
+    let meta = match fs::symlink_metadata(&json_path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("无法读取交接状态。".into()),
+    };
+    if cleaner::linked(&meta) || !meta.is_file() || meta.len() > MAX_JSON_READ_BYTES {
+        return Err("交接文件状态异常。".into());
+    }
+    private::parents(&handoff_dir)?;
+    private::safe(&handoff_dir)?;
+    private::safe(&json_path)?;
+    let bytes = crate::cleaner::file_io::read_bytes_retry(&json_path)
+        .map_err(|_| "无法读取交接摘要。".to_string())?;
+    let Ok(mut summary) = serde_json::from_slice::<HandoffSummary>(&bytes) else {
+        return Ok(());
+    };
+    summary.handoff_reason = Some(clean.to_string());
+    let updated = serde_json::to_vec_pretty(&summary)
+        .map_err(|_| "无法更新交接摘要。".to_string())?;
+    private::write(&json_path, &updated)?;
+    Ok(())
 }
 
 pub(crate) fn latest_handoff_in(
@@ -1898,6 +1998,62 @@ mod tests {
         let capped = &capped_draft.sessions[0].last_progress;
         assert_eq!(capped.chars().count(), 1200);
         assert!(capped.ends_with('…'));
+    }
+
+    #[test]
+    fn inspect_jsonl_ignores_rate_limit_prose_user_and_api_blobs_and_tracks_handoff_reason() {
+        let fx = TempHandoffFixture::new("rl-filter");
+        let ctx = &mut ScrubContext::default();
+        let long_prose = format!(
+            "During diagnostics we inspected HTTP 429 rate_limit_error handling and hit your 5-hour limit recovery notes in detail. {}",
+            "context ".repeat(60)
+        );
+        assert!(long_prose.len() > 400);
+        let benign_lines = vec![
+            json!({ "type": "api-request-blob", "body": "API Error: 429 rate_limit_error You've hit your limit" }).to_string(),
+            json!({ "type": "user", "message": { "role": "user", "content": "API Error: 429 rate_limit_error hit your limit" } }).to_string(),
+            json!({ "type": "assistant", "message": { "role": "assistant", "content": [{ "type": "text", "text": long_prose }] } }).to_string(),
+        ];
+        let (_goal, _prog, _files, saw_rl_false, _after) =
+            inspect_jsonl_lines(&benign_lines, &fx.home, ctx);
+        assert!(!saw_rl_false, "api-request-blob, user prompt, and >400-char prose must not trigger saw_rate_limit");
+
+        let short_banner_lines = vec![
+            json!({ "type": "user", "message": { "role": "user", "content": "Run task" } }).to_string(),
+            json!({ "type": "assistant", "message": { "role": "assistant", "content": [{ "type": "text", "text": "API Error: 429 rate_limit_error" }] } }).to_string(),
+        ];
+        let (_g2, _p2, _f2, saw_rl_true, _a2) =
+            inspect_jsonl_lines(&short_banner_lines, &fx.home, ctx);
+        assert!(saw_rl_true);
+
+        // Optional handoffReason is omitted when None and serialized when set via set_handoff_reason_in.
+        fx.write(
+            ".claude/projects/demo/22222222-3333-4444-8555-666666666666.jsonl",
+            format!(
+                "{}\n{}\n",
+                json!({ "type": "user", "message": { "role": "user", "content": "Implement feature" } }),
+                json!({ "type": "assistant", "message": { "role": "assistant", "content": [{ "type": "text", "text": "Implemented step 1." }] } })
+            )
+            .as_bytes(),
+        );
+        let draft = capture_handoff_draft(&fx.home, &[], &[]).expect("draft");
+        commit_handoff_draft(&fx.root, &draft).expect("commit");
+        let raw_before: serde_json::Value = serde_json::from_slice(
+            &fs::read(fx.root.join("handoff/latest-handoff.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(!raw_before.as_object().unwrap().contains_key("handoffReason"));
+
+        set_handoff_reason_in(&fx.root, "forced_stop").expect("set reason");
+        let raw_after: serde_json::Value = serde_json::from_slice(
+            &fs::read(fx.root.join("handoff/latest-handoff.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(raw_after["handoffReason"], "forced_stop");
+        let loaded = latest_handoff_in(&fx.root, draft.created_at_sec)
+            .unwrap()
+            .expect("loaded");
+        assert_eq!(loaded.handoff_reason.as_deref(), Some("forced_stop"));
     }
 }
 

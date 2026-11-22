@@ -1,5 +1,5 @@
 // [INPUT]: 当前绑定浏览器快照、本机网卡、当前用户已知代理内核的只读配置投影、Claude CLI 只读遥测/MCP 安全边界与手动触发的三路 trace。
-// [OUTPUT]: 带配置来源/解析不确定性的 DNS 与 Persona/Yoti KYC 及 Sift/Hexagon 设备指纹分流规则一致性结构诊断、本机 TUN/明文 DNS 布尔状态、CLI 遥测护盾/MCP 供应链计数、同上下文的遮罩浏览器归属、安全内网候选与绑定上下文一致（socks5h 远程 DNS + 多信号北美/全球家宽 ISP 与机房 ASN 识别及 IPQuery 回退）的跨域出口结果。
+// [OUTPUT]: 带配置来源/解析不确定性的 DNS、Mihomo 规则分段优先级（prepend/main/append-rules + RFC1918 免误报）与 Persona/Yoti KYC 及 Sift+Hexagon 组合分流规则一致性结构诊断、本机 TUN/明文 DNS 布尔状态、CLI 遥测护盾/代理回环与 NO_PROXY 一致性/MCP 供应链计数（与 src/risk-model.ts 语义对齐）、同上下文的遮罩浏览器归属、安全内网候选与绑定上下文一致（socks5h 远程 DNS + 多信号北美/全球家宽 ISP 与机房 ASN 识别及 IPQuery 回退）的跨域出口结果。
 // [POS]: 风控验证原生只读边界；绝不读取或输出任何代理密码、节点域名、订阅地址或账号凭据，不修改系统设置或中断运行进程。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -320,7 +320,9 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
         Tun,
         Dns,
         Listeners,
+        PrependRules,
         Rules,
+        AppendRules,
         IgnoredSecretSection,
     }
 
@@ -331,12 +333,9 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
     let mut current_listener_port: Option<u16> = None;
     let mut current_listener_has_proxy = false;
     let mut current_listener_is_proxy_type = false;
-    let mut seen_unresolved_ip_rule = false;
-    let mut claude_group: Option<String> = None;
-    let mut kyc_groups: Vec<String> = Vec::new();
-    let mut sift_groups: Vec<String> = Vec::new();
-    let mut has_datadog_logs_rule = false;
-    let mut datadog_groups: Vec<String> = Vec::new();
+    let mut prepend_rule_lines: Vec<String> = Vec::new();
+    let mut main_rule_lines: Vec<String> = Vec::new();
+    let mut append_rule_lines: Vec<String> = Vec::new();
 
     let flush_listener =
         |audit: &mut MihomoAudit, port: Option<u16>, has_proxy: bool, is_proxy_type: bool| {
@@ -400,7 +399,9 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                         }
                     }
                     "listeners" => section = Section::Listeners,
-                    "rules" | "prepend-rules" | "append-rules" => section = Section::Rules,
+                    "prepend-rules" => section = Section::PrependRules,
+                    "rules" => section = Section::Rules,
+                    "append-rules" => section = Section::AppendRules,
                     // 显式跳过可能包含节点域名、密码、订阅链接与认证口令的所有段落。
                     "proxies" | "proxy-providers" | "authentication" | "secret" | "hosts" => {
                         section = Section::IgnoredSecretSection;
@@ -509,108 +510,162 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                     }
                 }
             }
+            Section::PrependRules => {
+                prepend_rule_lines.push(line.to_string());
+            }
             Section::Rules => {
-                let lower = line.to_ascii_lowercase();
-                if (lower.contains("443") && lower.contains("udp") && lower.contains("reject"))
-                    || (lower.contains("quic") && lower.contains("reject"))
+                main_rule_lines.push(line.to_string());
+            }
+            Section::AppendRules => {
+                append_rule_lines.push(line.to_string());
+            }
+        }
+    }
+
+    fn is_exempt_unresolved_ip_rule(pattern: &str) -> bool {
+        if matches!(
+            pattern,
+            "127.0.0.0/8"
+                | "10.0.0.0/8"
+                | "172.16.0.0/12"
+                | "192.168.0.0/16"
+                | "198.18.0.0/15"
+                | "::1/128"
+        ) {
+            return true;
+        }
+        if let Some((ip_str, prefix_str)) = pattern.split_once('/') {
+            if let (Ok(ip), Ok(prefix)) =
+                (ip_str.parse::<Ipv4Addr>(), prefix_str.parse::<u8>())
+            {
+                if prefix <= 32 {
+                    let octets = ip.octets();
+                    return (octets[0] == 127 && prefix >= 8)
+                        || (octets[0] == 10 && prefix >= 8)
+                        || (octets[0] == 172 && (16..=31).contains(&octets[1]) && prefix >= 12)
+                        || (octets[0] == 192 && octets[1] == 168 && prefix >= 16)
+                        || (octets[0] == 198 && (18..=19).contains(&octets[1]) && prefix >= 15);
+                }
+            }
+        }
+        false
+    }
+
+    let mut seen_unresolved_ip_rule = false;
+    let mut claude_group: Option<String> = None;
+    let mut kyc_groups: Vec<String> = Vec::new();
+    let mut sift_groups: Vec<String> = Vec::new();
+    let mut has_sift_domain = false;
+    let mut has_hexagon_domain = false;
+    let mut has_datadog_logs_rule = false;
+    let mut datadog_groups: Vec<String> = Vec::new();
+
+    // Evaluate sections in Mihomo runtime precedence order (`prepend-rules` -> `rules` -> `append-rules`),
+    // tracking unresolved IP-CIDR/GEOIP rules strictly in that effective order so later YAML sections
+    // cannot retroactively shadow higher-precedence `prepend-rules:`.
+    for section_lines in [&prepend_rule_lines, &main_rule_lines, &append_rule_lines] {
+        for line in section_lines {
+            let lower = line.to_ascii_lowercase();
+            if (lower.contains("443") && lower.contains("udp") && lower.contains("reject"))
+                || (lower.contains("quic") && lower.contains("reject"))
+            {
+                audit.has_quic_reject = true;
+            }
+            if lower.contains("geoip,cn") || lower.contains("geoip, cn") {
+                audit.has_geoip_cn = true;
+            }
+            if let Some(rule_item) = line.strip_prefix('-') {
+                let cleaned = rule_item.trim().trim_matches(['"', '\'']).trim();
+                let upper_head = cleaned.to_ascii_uppercase();
+                if upper_head.starts_with("AND,")
+                    || upper_head.starts_with("OR,")
+                    || upper_head.starts_with("NOT,")
                 {
-                    audit.has_quic_reject = true;
+                    continue;
                 }
-                if lower.contains("geoip,cn") || lower.contains("geoip, cn") {
-                    audit.has_geoip_cn = true;
-                }
-                if let Some(rule_item) = line.strip_prefix('-') {
-                    let cleaned = rule_item.trim().trim_matches(['"', '\'']).trim();
-                    let upper_head = cleaned.to_ascii_uppercase();
-                    if upper_head.starts_with("AND,")
-                        || upper_head.starts_with("OR,")
-                        || upper_head.starts_with("NOT,")
-                    {
+                let parts: Vec<&str> = cleaned.split(',').map(str::trim).collect();
+                if parts.len() >= 3 {
+                    let rtype = parts[0].to_ascii_uppercase();
+                    let pattern = parts[1].trim_start_matches('.').to_ascii_lowercase();
+                    let target = parts[2];
+                    let has_no_resolve = parts[3..]
+                        .iter()
+                        .any(|p| p.eq_ignore_ascii_case("no-resolve"));
+                    if matches!(
+                        rtype.as_str(),
+                        "IP-CIDR" | "IP-CIDR6" | "GEOIP" | "IP-ASN"
+                    ) {
+                        if !has_no_resolve && !is_exempt_unresolved_ip_rule(&pattern) {
+                            seen_unresolved_ip_rule = true;
+                        }
                         continue;
                     }
-                    let parts: Vec<&str> = cleaned.split(',').map(str::trim).collect();
-                    if parts.len() >= 3 {
-                        let rtype = parts[0].to_ascii_uppercase();
-                        let pattern = parts[1].trim_start_matches('.').to_ascii_lowercase();
-                        let target = parts[2];
-                        let has_no_resolve = parts[3..]
-                            .iter()
-                            .any(|p| p.eq_ignore_ascii_case("no-resolve"));
+                    if matches!(
+                        rtype.as_str(),
+                        "DOMAIN" | "DOMAIN-SUFFIX" | "DOMAIN-KEYWORD" | "GEOSITE"
+                    ) && !target.is_empty()
+                        && !target.eq_ignore_ascii_case("DIRECT")
+                        && !target.eq_ignore_ascii_case("REJECT")
+                        && !target.eq_ignore_ascii_case("REJECT-DROP")
+                        && !target.eq_ignore_ascii_case("REJECT-NO-DROP")
+                        && !seen_unresolved_ip_rule
+                    {
                         if matches!(
-                            rtype.as_str(),
-                            "IP-CIDR" | "IP-CIDR6" | "GEOIP" | "IP-ASN"
-                        ) {
-                            if !has_no_resolve
-                                && !matches!(
-                                    pattern.as_str(),
-                                    "127.0.0.0/8" | "::1/128" | "198.18.0.0/15"
-                                )
-                            {
-                                seen_unresolved_ip_rule = true;
-                            }
-                            continue;
+                            pattern.as_str(),
+                            "claude.ai" | "anthropic.com" | "claude.com"
+                        ) || (matches!(rtype.as_str(), "DOMAIN-KEYWORD" | "GEOSITE")
+                            && matches!(pattern.as_str(), "claude" | "anthropic"))
+                        {
+                            claude_group.get_or_insert_with(|| target.to_string());
                         }
                         if matches!(
-                            rtype.as_str(),
-                            "DOMAIN" | "DOMAIN-SUFFIX" | "DOMAIN-KEYWORD" | "GEOSITE"
-                        ) && !target.is_empty()
-                            && !target.eq_ignore_ascii_case("DIRECT")
-                            && !target.eq_ignore_ascii_case("REJECT")
-                            && !target.eq_ignore_ascii_case("REJECT-DROP")
-                            && !target.eq_ignore_ascii_case("REJECT-NO-DROP")
-                            && !seen_unresolved_ip_rule
+                            pattern.as_str(),
+                            "withpersona.com" | "persona.com" | "persona.org" | "yoti.com"
+                        ) || (rtype == "DOMAIN-KEYWORD"
+                            && matches!(pattern.as_str(), "withpersona" | "yoti"))
                         {
-                            if matches!(
-                                pattern.as_str(),
-                                "claude.ai" | "anthropic.com" | "claude.com"
-                            ) || (matches!(rtype.as_str(), "DOMAIN-KEYWORD" | "GEOSITE")
-                                && matches!(pattern.as_str(), "claude" | "anthropic"))
-                            {
-                                claude_group.get_or_insert_with(|| target.to_string());
-                            }
-                            if matches!(
-                                pattern.as_str(),
-                                "withpersona.com" | "persona.com" | "persona.org" | "yoti.com"
-                            ) || (rtype == "DOMAIN-KEYWORD"
-                                && matches!(pattern.as_str(), "withpersona" | "yoti"))
-                            {
-                                kyc_groups.push(target.to_string());
-                            }
-                            if (matches!(rtype.as_str(), "DOMAIN" | "DOMAIN-SUFFIX")
+                            kyc_groups.push(target.to_string());
+                        }
+                        let is_sift_rule = (matches!(rtype.as_str(), "DOMAIN" | "DOMAIN-SUFFIX")
+                            && matches!(pattern.as_str(), "sift.com" | "siftscience.com"))
+                            || (rtype == "DOMAIN-KEYWORD" && pattern == "sift");
+                        let is_hexagon_rule =
+                            (matches!(rtype.as_str(), "DOMAIN" | "DOMAIN-SUFFIX")
                                 && matches!(
                                     pattern.as_str(),
-                                    "sift.com"
-                                        | "siftscience.com"
-                                        | "hexagon-cdn.com"
-                                        | "hexagon-analytics.com"
+                                    "hexagon-cdn.com" | "hexagon-analytics.com"
                                 ))
                                 || (rtype == "DOMAIN-KEYWORD"
                                     && matches!(
                                         pattern.as_str(),
-                                        "sift" | "hexagon-cdn" | "hexagon-analytics"
-                                    ))
-                            {
-                                sift_groups.push(target.to_string());
+                                        "hexagon" | "hexagon-cdn" | "hexagon-analytics"
+                                    ));
+                        if is_sift_rule {
+                            has_sift_domain = true;
+                            sift_groups.push(target.to_string());
+                        }
+                        if is_hexagon_rule {
+                            has_hexagon_domain = true;
+                            sift_groups.push(target.to_string());
+                        }
+                        let is_dd_keyword =
+                            rtype == "DOMAIN-KEYWORD" && pattern == "datadoghq";
+                        let is_dd_logs_domain = matches!(
+                            pattern.as_str(),
+                            "datadoghq.com" | "http-intake.logs.us5.datadoghq.com"
+                        );
+                        let is_dd_aux_domain = matches!(
+                            pattern.as_str(),
+                            "browser-intake-datadoghq.com"
+                                | "browser-intake-us5-datadoghq.com"
+                                | "datadoghq.eu"
+                                | "ddog-gov.com"
+                        );
+                        if is_dd_keyword || is_dd_logs_domain || is_dd_aux_domain {
+                            if is_dd_keyword || is_dd_logs_domain {
+                                has_datadog_logs_rule = true;
                             }
-                            let is_dd_keyword =
-                                rtype == "DOMAIN-KEYWORD" && pattern == "datadoghq";
-                            let is_dd_logs_domain = matches!(
-                                pattern.as_str(),
-                                "datadoghq.com" | "http-intake.logs.us5.datadoghq.com"
-                            );
-                            let is_dd_aux_domain = matches!(
-                                pattern.as_str(),
-                                "browser-intake-datadoghq.com"
-                                    | "browser-intake-us5-datadoghq.com"
-                                    | "datadoghq.eu"
-                                    | "ddog-gov.com"
-                            );
-                            if is_dd_keyword || is_dd_logs_domain || is_dd_aux_domain {
-                                if is_dd_keyword || is_dd_logs_domain {
-                                    has_datadog_logs_rule = true;
-                                }
-                                datadog_groups.push(target.to_string());
-                            }
+                            datadog_groups.push(target.to_string());
                         }
                     }
                 }
@@ -627,7 +682,9 @@ pub fn audit_mihomo_yaml_structure(content: &str, client_kind: Option<&str>) -> 
                 kyc_groups.iter().all(|kg| kg == first)
             }
         };
-    audit.has_sift_rules = !sift_groups.is_empty()
+    audit.has_sift_rules = has_sift_domain
+        && has_hexagon_domain
+        && !sift_groups.is_empty()
         && match &claude_group {
             Some(cg) => sift_groups.iter().all(|sg| sg == cg),
             None => {
@@ -1027,7 +1084,7 @@ fn is_loopback_mcp_url(url: &str) -> bool {
     };
     matches!(
         host.as_str(),
-        "localhost" | "127.0.0.1" | "[::1]" | "0.0.0.0"
+        "localhost" | "127.0.0.1" | "[::1]" | "::1" | "0.0.0.0"
     )
 }
 
@@ -1057,11 +1114,14 @@ fn scan_mcp_servers_map(
             .unwrap_or("")
             .trim()
             .to_ascii_lowercase();
+        // Parity with src/risk-model.ts::auditClaudeCliSecurityBoundary: any non-empty URL
+        // or HTTP/SSE/WS transport is checked against the loopback boundary.
         let is_http_or_sse = url.starts_with("http://")
             || url.starts_with("https://")
             || url.starts_with("ws://")
             || url.starts_with("wss://")
-            || matches!(server_type.as_str(), "sse" | "http" | "ws" | "websocket");
+            || matches!(server_type.as_str(), "sse" | "http" | "ws" | "websocket")
+            || !url.is_empty();
         if is_http_or_sse && (url.is_empty() || !is_loopback_mcp_url(&url)) {
             audit.remote_http_mcp_count += 1;
         }
@@ -1076,7 +1136,9 @@ fn scan_mcp_servers_map(
             .or_else(|| file_name.strip_suffix(".exe"))
             .or_else(|| file_name.strip_suffix(".bat"))
             .unwrap_or(file_name);
-        if !is_http_or_sse
+        // Bare npx/npm/etc. spawning is a Windows-specific shell/quoting risk (src/risk-model.ts `isWin`).
+        if cfg!(target_os = "windows")
+            && !is_http_or_sse
             && !is_wsl_path
             && matches!(cmd_stem, "npx" | "npm" | "pnpm" | "yarn" | "uvx" | "bunx")
         {
@@ -1133,12 +1195,27 @@ fn scan_mcp_servers_map(
     }
 }
 
+/// Parity with `src/risk-model.ts::normalizeHttpProxyHostPort`: normalizes IPv6/localhost
+/// loopback forms (`localhost`, `[::1]`, bare `::1`) to `127.0.0.1:<port>`.
 fn normalize_http_proxy_host_port(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
     }
-    let url = reqwest::Url::parse(trimmed).ok()?;
+    let normalized_storage;
+    let candidate = if let Some((prefix, rest)) = trimmed.split_once("::1:") {
+        let digit_count = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+        if !prefix.contains('[') && digit_count > 0 {
+            let (digits, tail) = rest.split_at(digit_count);
+            normalized_storage = format!("{prefix}[::1]:{digits}{tail}");
+            normalized_storage.as_str()
+        } else {
+            trimmed
+        }
+    } else {
+        trimmed
+    };
+    let url = reqwest::Url::parse(candidate).ok()?;
     if !matches!(url.scheme(), "http" | "https") {
         return None;
     }
@@ -1146,7 +1223,7 @@ fn normalize_http_proxy_host_port(raw: &str) -> Option<String> {
     if host_raw.is_empty() {
         return None;
     }
-    let host = if host_raw.eq_ignore_ascii_case("localhost") {
+    let host = if host_raw.eq_ignore_ascii_case("localhost") || host_raw == "::1" {
         "127.0.0.1".to_string()
     } else {
         host_raw.to_ascii_lowercase()
@@ -1158,12 +1235,16 @@ fn normalize_http_proxy_host_port(raw: &str) -> Option<String> {
     Some(format!("{host}:{port}"))
 }
 
+/// Parity with `src/risk-model.ts::isSafeNoProxyValue`: requires explicit loopback coverage
+/// (`localhost` AND `127.0.0.1`/`127.0.0.0/8`) while blocking `*` and Claude/Datadog bypasses.
 fn is_safe_no_proxy_value(raw: &str) -> bool {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return false;
     }
     let mut has_entry = false;
+    let mut has_localhost = false;
+    let mut has_loopback_ip = false;
     for part in trimmed.split(',') {
         let token = part.trim().to_ascii_lowercase();
         if token.is_empty() {
@@ -1179,6 +1260,11 @@ fn is_safe_no_proxy_value(raw: &str) -> bool {
             token.split(':').next().unwrap_or("")
         };
         let clean = host_part.trim_start_matches("*.").trim_start_matches('.');
+        if clean == "localhost" {
+            has_localhost = true;
+        } else if matches!(clean, "127.0.0.1" | "127.0.0.0/8") {
+            has_loopback_ip = true;
+        }
         for protected in [
             "claude.ai",
             "anthropic.com",
@@ -1204,7 +1290,7 @@ fn is_safe_no_proxy_value(raw: &str) -> bool {
             }
         }
     }
-    has_entry
+    has_entry && has_localhost && has_loopback_ip
 }
 
 fn is_english_language_pref(raw: &str) -> bool {
@@ -1407,9 +1493,7 @@ pub fn audit_claude_cli_security_dir(root: &std::path::Path) -> CliSecurityAudit
 }
 
 fn inspect_local_cli_security() -> Option<CliSecurityAudit> {
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)?;
+    let home = crate::cleaner::identity::root().ok()?;
     Some(audit_claude_cli_security_dir(&home))
 }
 
@@ -2347,5 +2431,86 @@ Windows IP 配置
         );
         assert!(shadowed_by_unresolved_ip.has_claude_rules);
         assert!(!shadowed_by_unresolved_ip.has_sift_rules);
+
+        let sift_only_missing_hexagon = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,sift.com,US-Residential\n",
+            None,
+        );
+        assert!(!sift_only_missing_hexagon.has_sift_rules);
+
+        let hexagon_only_missing_sift = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,hexagon-cdn.com,US-Residential\n",
+            None,
+        );
+        assert!(!hexagon_only_missing_sift.has_sift_rules);
+
+        let keyword_sift_hexagon = audit_mihomo_yaml_structure(
+            "rules:\n  - DOMAIN-KEYWORD,sift,US-Residential\n  - DOMAIN-KEYWORD,hexagon,US-Residential\n",
+            None,
+        );
+        assert!(keyword_sift_hexagon.has_sift_rules);
+
+        // Out-of-order rules: before prepend-rules: must not poison higher-precedence prepend-rules,
+        // and RFC1918 private CIDRs without no-resolve are exempted cleanly.
+        let ordered_sections_and_rfc1918 = audit_mihomo_yaml_structure(
+            "rules:\n  - IP-CIDR,104.16.0.0/13,Cloudflare\nprepend-rules:\n  - IP-CIDR,10.0.0.0/8,DIRECT\n  - IP-CIDR,172.16.0.0/12,DIRECT\n  - IP-CIDR,192.168.0.0/16,DIRECT\n  - DOMAIN-SUFFIX,claude.ai,US-Residential\n  - DOMAIN-SUFFIX,sift.com,US-Residential\n  - DOMAIN-SUFFIX,hexagon-cdn.com,US-Residential\n",
+            None,
+        );
+        assert!(ordered_sections_and_rfc1918.has_claude_rules);
+        assert!(ordered_sections_and_rfc1918.has_sift_rules);
+    }
+
+    #[test]
+    fn cli_security_parity_checks_loopback_proxy_no_proxy_and_custom_scheme_mcp() {
+        let dir = std::env::temp_dir().join(format!(
+            "claude-local-risk-parity-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let claude_dir = dir.join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{
+                "env": {
+                    "HTTP_PROXY": "http://[::1]:7899",
+                    "HTTPS_PROXY": "http://localhost:7899",
+                    "ALL_PROXY": "http://127.0.0.1:7899",
+                    "GRPC_PROXY": "http://::1:7899",
+                    "NO_PROXY": "localhost,127.0.0.1",
+                    "DISABLE_TELEMETRY": "1",
+                    "DISABLE_ERROR_REPORTING": "1",
+                    "DO_NOT_TRACK": "1"
+                }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(".claude.json"),
+            r#"{
+                "mcpServers": {
+                    "localV6": {"url": "http://[::1]:8080/mcp"},
+                    "customScheme": {"url": "grpc://mcp.invalid/svc"}
+                }
+            }"#,
+        )
+        .unwrap();
+        let audit = audit_claude_cli_security_dir(&dir);
+        assert!(audit.proxy_env_complete);
+        assert_eq!(audit.remote_http_mcp_count, 1);
+
+        // Omitting either localhost or 127.0.0.1 fails NO_PROXY loopback check (parity with risk-model.ts).
+        for np in ["192.168.1.0/24", "localhost", "127.0.0.1"] {
+            std::fs::write(
+                claude_dir.join("settings.local.json"),
+                serde_json::json!({"env": {"NO_PROXY": np}}).to_string(),
+            )
+            .unwrap();
+            let res = audit_claude_cli_security_dir(&dir);
+            assert!(!res.proxy_env_complete, "NO_PROXY={np} must not pass");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

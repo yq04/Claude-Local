@@ -1862,6 +1862,7 @@ def _load_smart_relay_filter(app_dir: str, now_sec: int) -> dict:
     """Read smart_relay_v1.json exclusions, cooldowns, and threshold without writing."""
     out = {
         "spent_threshold_pct": 98,
+        "affinity_mode": "auto",
         "auto_continue": False,
         "excluded_ids": set(),
         "cooldown_ids": set(),
@@ -1887,6 +1888,11 @@ def _load_smart_relay_filter(app_dir: str, now_sec: int) -> dict:
     thresh = raw.get("spentThresholdPct", raw.get("spent_threshold_pct"))
     if isinstance(thresh, int) and not isinstance(thresh, bool) and thresh in (80, 85, 90, 95, 98, 100):
         out["spent_threshold_pct"] = thresh
+    affinity_mode = raw.get("affinityMode", raw.get("affinity_mode"))
+    if isinstance(affinity_mode, str):
+        affinity_norm = affinity_mode.strip().lower()
+        if affinity_norm in ("auto", "session", "manual"):
+            out["affinity_mode"] = affinity_norm
     auto_cont = raw.get("autoContinueOnRelay", raw.get("auto_continue_on_relay"))
     if isinstance(auto_cont, bool):
         out["auto_continue"] = auto_cont
@@ -2485,6 +2491,7 @@ def handle_statusline() -> None:
         parts.append(" · ".join(peer_parts))
 
     if relay_active:
+        affinity_mode = str(relay_filter.get("affinity_mode") or "auto").strip().lower()
         env_thresh = os.environ.get("CLAUDE_LOCAL_RELAY_THRESHOLD")
         if env_thresh is not None and str(env_thresh).strip():
             try:
@@ -2494,7 +2501,9 @@ def handle_statusline() -> None:
         else:
             relay_thresh = cfg_spent_thresh
         relay_thresh = max(1, min(100, relay_thresh))
-        relay_due = (
+        if affinity_mode == "session":
+            relay_thresh = 100 if relay_thresh >= 95 else max(95, relay_thresh)
+        relay_due = affinity_mode != "manual" and (
             (used5 is not None and used5 >= relay_thresh)
             or (used7 is not None and used7 >= relay_thresh)
             or (curr_eff is not None and curr_eff <= 0)

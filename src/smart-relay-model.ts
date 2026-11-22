@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Local identity records, passive/online quota snapshots (including Reset Card grants), current timestamp and browser localStorage.
- * [OUTPUT]: Magpie-inspired 3-tier account classification (with rested inferred7d/inferred5h Tier 0 promotion, 0% remaining Tier 2 spent semantics, subExpired non-next_renewal guard, SoonReset <=24h harvest tie-break bonus & threshold-aware Reset-Card awaitingManualReset demotion), canonical plan slug/manual plan helpers (CANONICAL_MANUAL_PLANS / normalizePlanSlug), truthful percentage formatter (formatTruthfulPercent), 5h/7d window burn-pace delta & exhaustion ETA (computeWindowPaceDelta / computeWindowBurnEta), dynamic anti-ping-pong switch margin (computeDynamicSwitchMarginPct / meetsDynamicSwitchMargin), per-account cooldown jail & rate-limit helper (noteRelayAccountRateLimited), one-way noReturnAccountId lock, 6 routing strategies (Smart / Reset Harvest / Pace / LeastUsed / Ordered / Rotate), 3-state affinityMode (auto / session / manual), expanded RELAY_SPENT_THRESHOLDS (80/85/90/95/98/100, default 98) & maxSameExitConcurrency (default 1, 1..5 valid), current_spent-prioritized evaluation & preferred-account hysteresis return (!inferred && !inferred5h), rate-limit queue demotion, pool capacity summary with totalManualResetsRemaining, awaitingResetCount & cooldown-inclusive soonestResetSec (summarizeRelayPool), 3-tier Reset-Card expiry urgency (computeResetCardExpiryUrgency), slot HTTP proxy validation & >=3 same-exit cluster detection (validateSlotHttpProxy / findSameExitClusterWarning), persistent default CLI model & effort level helpers (RELAY_CLI_MODELS / RELAY_CLI_EFFORTS / formatRelayCliModelEffortArgs), Bash/PowerShell-safe subagent markdown template (buildSubagentMarkdownTemplate), 5-item MRU recent launch directories store (useRelayLaunchDirs), and guarded reactive Smart Relay configuration store synced to native smart_relay_v1.json (syncNativeSmartRelayConfigIfLive / flushNativeSmartRelaySync).
+ * [INPUT]: Local identity records, passive/online quota snapshots (including Reset Card grants), current timestamp, browser localStorage, and native orchestrator view (`cli_default_proxy`, handoff checkpoints).
+ * [OUTPUT]: Magpie-inspired 3-tier account classification (with rested inferred7d/inferred5h Tier 0 promotion, 0% remaining Tier 2 spent semantics, subExpired non-next_renewal guard, SoonReset <=24h harvest tie-break bonus & threshold-aware Reset-Card awaitingManualReset demotion), canonical plan slug/manual plan helpers (CANONICAL_MANUAL_PLANS / normalizePlanSlug), truthful percentage formatter (formatTruthfulPercent), 5h/7d window burn-pace delta & exhaustion ETA (computeWindowPaceDelta / computeWindowBurnEta), dynamic anti-ping-pong switch margin (computeDynamicSwitchMarginPct / meetsDynamicSwitchMargin), per-account cooldown jail & rate-limit helper (noteRelayAccountRateLimited / clearAccountCooldown -> `identities_orchestrator_clear_cooldown`), one-way noReturnAccountId lock, 6 routing strategies (Smart / Reset Harvest / Pace / LeastUsed / Ordered / Rotate), 3-state affinityMode (auto / session / manual), expanded RELAY_SPENT_THRESHOLDS (80/85/90/95/98/100, default 98) & maxSameExitConcurrency (default 1, 1..5 valid), current_spent-prioritized evaluation & preferred-account hysteresis return (!inferred && !inferred5h), rate-limit queue demotion, pool capacity summary with totalManualResetsRemaining, awaitingResetCount & cooldown-inclusive soonestResetSec (summarizeRelayPool), 3-tier Reset-Card expiry urgency (computeResetCardExpiryUrgency), slot HTTP proxy validation, browser-slot exit alignment & >=3 multi-cluster exit detection (validateSlotHttpProxy / isSlotBrowserProxyAligned / findSameExitClusterWarning), persistent default CLI model & effort level helpers (RELAY_CLI_MODELS / RELAY_CLI_EFFORTS / formatRelayCliModelEffortArgs), Bash/PowerShell-safe subagent markdown template (buildSubagentMarkdownTemplate), 5-item MRU recent launch directories store (useRelayLaunchDirs), and guarded reactive Smart Relay + CLI default proxy store synced to native smart_relay_v1.json (syncNativeSmartRelayConfigIfLive / useCliDefaultProxy / flushNativeSmartRelaySync).
  * [POS]: Pure frontend multi-account rotation & smart relay model; default OFF, never terminates running claude.exe or bypasses vault isolation.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -231,6 +231,15 @@ export interface HandoffItem {
   outputPath?: string | null;
 }
 
+export type HandoffReason =
+  | 'threshold_reached'
+  | 'rate_limited'
+  | 'preferred_recovered'
+  | 'awaiting_manual_reset'
+  | 'external_worker_timeout'
+  | 'forced_stop'
+  | (string & {});
+
 /** Latest cross-account handoff checkpoint written by the native switch pipeline (camelCase Rust `HandoffSummary`). */
 export interface HandoffSummary {
   createdAtSec: number;
@@ -241,8 +250,18 @@ export interface HandoffSummary {
   outputReadyCount: number;
   interruptedCount: number;
   externalRunningCount: number;
+  handoffReason?: HandoffReason;
   copyPrompt: string;
   items: HandoffItem[];
+}
+
+export interface OrchestratorStateView {
+  config?: unknown;
+  config_persisted?: boolean;
+  cli_default_proxy?: string | null;
+  active?: string | null;
+  running?: boolean;
+  recommendation?: unknown;
 }
 
 export type SmartRelayConfig = {
@@ -253,7 +272,6 @@ export type SmartRelayConfig = {
   spentThresholdPct: RelaySpentThreshold;
   returnToPreferred: boolean;
   preferredReturnThresholdPct: 80 | 85 | 90;
-  autoSwitchWhenIdle: boolean;
   autoContinueOnRelay: boolean;
   relayHandoffMode: RelayHandoffMode;
   maxSameExitConcurrency: RelayMaxSameExitConcurrency;
@@ -279,7 +297,6 @@ export const defaultSmartRelayConfig: SmartRelayConfig = {
   spentThresholdPct: 98,
   returnToPreferred: true,
   preferredReturnThresholdPct: 90,
-  autoSwitchWhenIdle: false,
   autoContinueOnRelay: false,
   relayHandoffMode: 'clean_handoff',
   maxSameExitConcurrency: 1,
@@ -344,8 +361,9 @@ export function validateSlotHttpProxy(raw: string): {ok: boolean; normalized: st
   }
 }
 
-function normalizeClusterEndpoint(raw: string, fallback = '127.0.0.1:7899'): string {
-  const source = raw.trim() || fallback.trim() || '127.0.0.1:7899';
+function normalizeProxyAuthority(raw: string): string {
+  const source = raw.trim();
+  if (!source) return '';
   let cleaned = source.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
   cleaned = (cleaned.split(/[/?#]/)[0] ?? '').trim();
   const atIdx = cleaned.lastIndexOf('@');
@@ -353,13 +371,23 @@ function normalizeClusterEndpoint(raw: string, fallback = '127.0.0.1:7899'): str
     cleaned = cleaned.slice(atIdx + 1).trim();
   }
   cleaned = cleaned.replace(/\/+$/, '').toLowerCase();
+  if (/^:\d{1,5}$/.test(cleaned)) {
+    return `127.0.0.1${cleaned}`;
+  }
+  const loopbackMatch = cleaned.match(/^(?:127\.0\.0\.1|localhost|\[::1\]|::1):(\d{1,5})$/);
+  if (loopbackMatch) {
+    return `127.0.0.1:${loopbackMatch[1]}`;
+  }
+  return cleaned;
+}
+
+function normalizeClusterEndpoint(raw: string, fallback = '127.0.0.1:7899'): string {
+  const source = raw.trim() || fallback.trim() || '127.0.0.1:7899';
+  const cleaned = normalizeProxyAuthority(source);
   if (!cleaned) {
     return fallback !== '127.0.0.1:7899' ? normalizeClusterEndpoint('127.0.0.1:7899') : ':7899';
   }
-  if (/^:\d{1,5}$/.test(cleaned)) {
-    return cleaned;
-  }
-  const loopbackMatch = cleaned.match(/^(?:127\.0\.0\.1|localhost|\[::1\]):(\d{1,5})$/);
+  const loopbackMatch = cleaned.match(/^127\.0\.0\.1:(\d{1,5})$/);
   if (loopbackMatch) {
     return `:${loopbackMatch[1]}`;
   }
@@ -367,32 +395,67 @@ function normalizeClusterEndpoint(raw: string, fallback = '127.0.0.1:7899'): str
 }
 
 /**
+ * Compares a bound browser slot's proxy against an account's effective CLI proxy while normalizing
+ * scheme (`http`/`https`/`socks5`/`socks5h`), loopback host aliases (`localhost`/`127.0.0.1`/`[::1]`), and port.
+ */
+export function isSlotBrowserProxyAligned(
+  browserProxy: string | null | undefined,
+  cliProxy: string | null | undefined,
+): boolean {
+  const normBrowser = normalizeProxyAuthority(typeof browserProxy === 'string' ? browserProxy : '');
+  const normCli = normalizeProxyAuthority(typeof cliProxy === 'string' ? cliProxy : '');
+  return normBrowser === normCli;
+}
+
+export type SameExitClusterSummary = {
+  endpoint: string;
+  count: number;
+  clusterCount?: number;
+  clusters?: Array<{endpoint: string; count: number}>;
+};
+
+/**
  * Detects when >= 3 included accounts in the Smart Relay pool resolve to the same normalized proxy exit endpoint.
- * Normalizes `http://`, `https://`, `socks5://`, `socks5h://`, and loopback hosts (`127.0.0.1`, `localhost`, `[::1]`)
+ * Normalizes `http://`, `https://`, `socks5://`, `socks5h://`, and loopback hosts (`127.0.0.1`, `localhost`, `[::1]`, `::1`)
  * to a compact endpoint label (e.g. `:7899` for loopback ports or `host:port` otherwise).
+ * When `fallbackHttpProxy` is omitted (`undefined`), defaults to `'127.0.0.1:7899'`; when `null` or empty, entries
+ * without an explicit slot/summary proxy are excluded rather than grouped onto `:7899`.
  */
 export function findSameExitClusterWarning(
   entries: ReadonlyArray<{id: string; isIncluded: boolean; proxy?: string | null}>,
   slotProxies: Record<string, string>,
-  defaultEndpoint = '127.0.0.1:7899',
-): {endpoint: string; count: number} | null {
+  fallbackHttpProxy?: string | null,
+): SameExitClusterSummary | null {
   if (!Array.isArray(entries) || entries.length < 3) return null;
+  const resolvedFallback =
+    fallbackHttpProxy === undefined ? '127.0.0.1:7899' : (fallbackHttpProxy ?? '').trim();
   const counts = new Map<string, number>();
   for (const entry of entries) {
     if (!entry || entry.isIncluded !== true) continue;
-    const rawProxy = (slotProxies?.[entry.id] || entry.proxy || defaultEndpoint).trim();
-    const endpoint = normalizeClusterEndpoint(rawProxy, defaultEndpoint);
+    const explicit = (slotProxies?.[entry.id] || entry.proxy || '').trim();
+    const rawProxy = explicit || resolvedFallback;
+    if (!rawProxy) continue;
+    const endpoint = normalizeClusterEndpoint(rawProxy, resolvedFallback || '127.0.0.1:7899');
     counts.set(endpoint, (counts.get(endpoint) ?? 0) + 1);
   }
-  let bestEndpoint: string | null = null;
-  let bestCount = 0;
+  const clusters: Array<{endpoint: string; count: number}> = [];
   for (const [endpoint, count] of counts.entries()) {
-    if (count >= 3 && count > bestCount) {
-      bestEndpoint = endpoint;
-      bestCount = count;
+    if (count >= 3) {
+      clusters.push({endpoint, count});
     }
   }
-  return bestEndpoint ? {endpoint: bestEndpoint, count: bestCount} : null;
+  if (clusters.length === 0) return null;
+  clusters.sort((a, b) => b.count - a.count);
+  const top = clusters[0];
+  if (clusters.length > 1) {
+    return {
+      endpoint: top.endpoint,
+      count: top.count,
+      clusterCount: clusters.length,
+      clusters,
+    };
+  }
+  return {endpoint: top.endpoint, count: top.count};
 }
 
 function sanitizeRecordMap(raw: unknown): Record<string, number> {
@@ -556,7 +619,6 @@ export function sanitizeSmartRelayConfig(raw: unknown): SmartRelayConfig {
     spentThresholdPct,
     returnToPreferred: typeof input.returnToPreferred === 'boolean' ? input.returnToPreferred : defaultSmartRelayConfig.returnToPreferred,
     preferredReturnThresholdPct,
-    autoSwitchWhenIdle: typeof input.autoSwitchWhenIdle === 'boolean' ? input.autoSwitchWhenIdle : defaultSmartRelayConfig.autoSwitchWhenIdle,
     autoContinueOnRelay:
       typeof input.autoContinueOnRelay === 'boolean'
         ? input.autoContinueOnRelay
@@ -589,6 +651,8 @@ function loadSmartRelayConfig(): SmartRelayConfig {
 
 let currentRelayConfig: SmartRelayConfig = loadSmartRelayConfig();
 const relayListeners = new Set<() => void>();
+let currentCliDefaultProxy: string | null | undefined = undefined;
+const cliDefaultProxyListeners = new Set<() => void>();
 let inflightNativeSync: Promise<SmartRelayConfig | null> | null = null;
 let inflightRelayWritePromise: Promise<void> | null = null;
 let lastNativeRelaySyncError: string | null = null;
@@ -737,6 +801,77 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   });
 }
 
+function syncCliDefaultProxyFromView(payload: unknown): void {
+  if (!payload || typeof payload !== 'object') return;
+  const record = payload as Record<string, unknown>;
+  const isOrchestratorView =
+    'cli_default_proxy' in record || 'config_persisted' in record || 'schema' in record;
+  if (!isOrchestratorView) return;
+  const raw = record.cli_default_proxy;
+  const normalized =
+    typeof raw === 'string'
+      ? raw.trim() || null
+      : raw === null || raw === undefined
+        ? null
+        : undefined;
+  if (normalized === undefined || normalized === currentCliDefaultProxy) return;
+  currentCliDefaultProxy = normalized;
+  cliDefaultProxyListeners.forEach(fn => fn());
+}
+
+export function getCliDefaultProxy(): string | null | undefined {
+  return currentCliDefaultProxy;
+}
+
+export function subscribeCliDefaultProxy(listener: () => void): () => void {
+  cliDefaultProxyListeners.add(listener);
+  return () => cliDefaultProxyListeners.delete(listener);
+}
+
+export function useCliDefaultProxy(): string | null | undefined {
+  return useSyncExternalStore(subscribeCliDefaultProxy, getCliDefaultProxy, getCliDefaultProxy);
+}
+
+function enqueueNativeRelayWrite(
+  writeEpoch: number,
+  runner: (invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>) => Promise<unknown>,
+  label: string,
+): void {
+  if (typeof window === 'undefined') return;
+  const prevWrite = inflightRelayWritePromise;
+  lastNativeRelaySyncError = null;
+  inflightRelayWrites += 1;
+  let writePromise: Promise<void> | null = null;
+  writePromise = (async () => {
+    try {
+      if (prevWrite) {
+        await prevWrite.catch(() => {});
+      }
+      const {invoke} = await import('@tauri-apps/api/core');
+      const res = await runner(invoke as (cmd: string, args?: Record<string, unknown>) => Promise<unknown>);
+      if (!res || typeof res !== 'object' || writeEpoch !== relayWriteEpoch) return;
+      const payload = res as OrchestratorStateView;
+      syncCliDefaultProxyFromView(payload);
+      const rawConfig = 'config' in payload ? payload.config : res;
+      if (rawConfig && typeof rawConfig === 'object') {
+        hydrateSmartRelayConfig(rawConfig);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      lastNativeRelaySyncError = msg;
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn(`[smart-relay] ${label} failed:`, msg);
+      }
+    } finally {
+      inflightRelayWrites = Math.max(0, inflightRelayWrites - 1);
+      if (inflightRelayWritePromise === writePromise) {
+        inflightRelayWritePromise = null;
+      }
+    }
+  })();
+  inflightRelayWritePromise = writePromise;
+}
+
 function publishRelayConfig(next: SmartRelayConfig, syncNative = true): SmartRelayConfig {
   const writeEpoch = syncNative ? ++relayWriteEpoch : relayWriteEpoch;
   currentRelayConfig = sanitizeSmartRelayConfig(next);
@@ -748,33 +883,11 @@ function publishRelayConfig(next: SmartRelayConfig, syncNative = true): SmartRel
     }
     if (syncNative && canSyncNativeSmartRelay()) {
       const payloadConfig = currentRelayConfig;
-      lastNativeRelaySyncError = null;
-      inflightRelayWrites += 1;
-      let writePromise: Promise<void> | null = null;
-      writePromise = (async () => {
-        try {
-          const {invoke} = await import('@tauri-apps/api/core');
-          const res = await invoke<unknown>('identities_orchestrator_configure', {config: payloadConfig});
-          if (!res || typeof res !== 'object' || writeEpoch !== relayWriteEpoch) return;
-          const payload = res as {config?: unknown};
-          const rawConfig = 'config' in payload ? payload.config : res;
-          if (rawConfig && typeof rawConfig === 'object') {
-            hydrateSmartRelayConfig(rawConfig);
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          lastNativeRelaySyncError = msg;
-          if (typeof console !== 'undefined' && typeof console.warn === 'function') {
-            console.warn('[smart-relay] native config sync failed:', msg);
-          }
-        } finally {
-          inflightRelayWrites = Math.max(0, inflightRelayWrites - 1);
-          if (inflightRelayWritePromise === writePromise) {
-            inflightRelayWritePromise = null;
-          }
-        }
-      })();
-      inflightRelayWritePromise = writePromise;
+      enqueueNativeRelayWrite(
+        writeEpoch,
+        invoke => invoke('identities_orchestrator_configure', {config: payloadConfig}),
+        'native config sync',
+      );
     }
   }
   relayListeners.forEach(fn => fn());
@@ -818,7 +931,8 @@ export function syncNativeSmartRelayConfigIfLive(): Promise<SmartRelayConfig | n
         return getSmartRelayConfig();
       }
       if (!res || typeof res !== 'object') return null;
-      const payload = res as {config?: unknown; config_persisted?: unknown};
+      const payload = res as OrchestratorStateView;
+      syncCliDefaultProxyFromView(payload);
       if (payload.config_persisted === true) {
         const rawConfig = 'config' in payload ? payload.config : res;
         if (rawConfig && typeof rawConfig === 'object') {
@@ -829,7 +943,10 @@ export function syncNativeSmartRelayConfigIfLive(): Promise<SmartRelayConfig | n
       if (payload.config_persisted === false) {
         const localCfg = getSmartRelayConfig();
         if (JSON.stringify(localCfg) !== JSON.stringify(sanitizeSmartRelayConfig(null))) {
-          await invoke('identities_orchestrator_configure', {config: localCfg}).catch(() => {});
+          const configured = await invoke<unknown>('identities_orchestrator_configure', {config: localCfg}).catch(
+            () => null,
+          );
+          if (configured) syncCliDefaultProxyFromView(configured);
         }
       }
       return getSmartRelayConfig();
@@ -850,6 +967,10 @@ export function updateSmartRelayConfig(patch: Partial<SmartRelayConfig>): SmartR
 }
 
 export function resetSmartRelayConfig(): SmartRelayConfig {
+  if (currentCliDefaultProxy !== undefined) {
+    currentCliDefaultProxy = undefined;
+    cliDefaultProxyListeners.forEach(fn => fn());
+  }
   return publishRelayConfig(sanitizeSmartRelayConfig(null));
 }
 
@@ -868,6 +989,15 @@ export function clearAccountCooldown(accountId: string, clearNoReturn = false): 
   if (clearNoReturn && currentRelayConfig.noReturnAccountId === accountId) {
     patch.noReturnAccountId = null;
     patch.noReturnUntilSec = 0;
+  }
+  if (canSyncNativeSmartRelay() && accountId && accountId !== 'current') {
+    const next = publishRelayConfig({...currentRelayConfig, ...patch}, false);
+    enqueueNativeRelayWrite(
+      ++relayWriteEpoch,
+      invoke => invoke('identities_orchestrator_clear_cooldown', {id: accountId}),
+      'native clear cooldown',
+    );
+    return next;
   }
   return updateSmartRelayConfig(patch);
 }
@@ -1126,7 +1256,7 @@ export function buildSubagentMarkdownTemplate(): string {
     '```',
     '',
     'Guidelines:',
-    '- Before fanning out 3+ parallel subagents, run `pwsh -NoProfile -ExecutionPolicy Bypass -File "$HOME/.local/bin/claude-subagent.ps1" -Status` once to inspect `ready` slots and `Max Same-Exit Concurrency` (default 2), dispatching in waves of 2 to avoid `concurrency_capped` waits.',
+    '- Before fanning out 3+ parallel subagents, run `pwsh -NoProfile -ExecutionPolicy Bypass -File "$HOME/.local/bin/claude-subagent.ps1" -Status` once to inspect `ready` slots and `Max Same-Exit Concurrency` (default 1), dispatching in waves of 2 to avoid `concurrency_capped` waits.',
     '- Omit `-AccountId` to let the pool auto-select and automatically fail over across healthy Pro slots on 429/auth errors.',
     '- Omit `-ReadOnly` only when the worker owns disjoint file edits.',
     '- Pass `-Resume <session-uuid>` from `[CL-SLOT-TRACE]` for follow-up turns on the same slot.',

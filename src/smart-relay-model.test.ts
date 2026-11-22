@@ -25,11 +25,13 @@ import {
   formatLaunchDirChip,
   formatRelayCliModelEffortArgs,
   formatTruthfulPercent,
+  getCliDefaultProxy,
   getLastNativeSmartRelaySyncError,
   getRelayLaunchDirs,
   getSmartRelayConfig,
   hydrateSmartRelayConfig,
   isAccountInCooldown,
+  isSlotBrowserProxyAligned,
   meetsDynamicSwitchMargin,
   normalizePlanSlug,
   noteRelayAccountRateLimited,
@@ -875,6 +877,7 @@ test('buildSubagentMarkdownTemplate returns a copy-ready pro-pool-worker definit
   expect(tpl).toContain('-PromptFile');
   expect(tpl).toContain('-ReadOnly');
   expect(tpl).toContain('-Status');
+  expect(tpl).toContain('(default 1)');
   expect(tpl).toContain('waves of 2');
 });
 
@@ -1782,4 +1785,182 @@ test('findSameExitClusterWarning detects >=3 included accounts sharing the same 
       {},
     ),
   ).toBeNull();
+});
+
+test('findSameExitClusterWarning honors cli_default_proxy fallback, null unproxied skip, ::1 loopback, and multi-cluster counts', () => {
+  // Custom cli_default_proxy fallback groups unpinned accounts onto :7900 instead of hardcoded :7899
+  expect(
+    findSameExitClusterWarning(
+      [
+        {id: 'a1', isIncluded: true, proxy: null},
+        {id: 'a2', isIncluded: true, proxy: 'http://[::1]:7900'},
+        {id: 'a3', isIncluded: true, proxy: 'socks5://::1:7900'},
+      ],
+      {},
+      'http://127.0.0.1:7900',
+    ),
+  ).toEqual({endpoint: ':7900', count: 3});
+
+  // Explicit null cli_default_proxy skips unproxied entries instead of fabricating :7899
+  expect(
+    findSameExitClusterWarning(
+      [
+        {id: 'a1', isIncluded: true, proxy: null},
+        {id: 'a2', isIncluded: true, proxy: null},
+        {id: 'a3', isIncluded: true, proxy: 'http://127.0.0.1:7899'},
+      ],
+      {},
+      null,
+    ),
+  ).toBeNull();
+
+  // Multi-cluster (>1 clusters hitting >=3) reports clusterCount & clusters list sorted descending
+  const multi = findSameExitClusterWarning(
+    [
+      {id: 'a1', isIncluded: true},
+      {id: 'a2', isIncluded: true},
+      {id: 'a3', isIncluded: true},
+      {id: 'b1', isIncluded: true},
+      {id: 'b2', isIncluded: true},
+      {id: 'b3', isIncluded: true},
+      {id: 'b4', isIncluded: true},
+    ],
+    {
+      a1: 'http://127.0.0.1:7899',
+      a2: 'http://localhost:7899',
+      a3: 'socks5h://[::1]:7899',
+      b1: 'http://127.0.0.1:7901',
+      b2: 'http://127.0.0.1:7901',
+      b3: 'http://localhost:7901',
+      b4: 'http://::1:7901',
+    },
+    null,
+  );
+  expect(multi).toEqual({
+    endpoint: ':7901',
+    count: 4,
+    clusterCount: 2,
+    clusters: [
+      {endpoint: ':7901', count: 4},
+      {endpoint: ':7899', count: 3},
+    ],
+  });
+});
+
+test('isSlotBrowserProxyAligned normalizes schemes and loopback aliases while detecting port or proxy mismatches', () => {
+  expect(isSlotBrowserProxyAligned('socks5h://127.0.0.1:7899', 'http://localhost:7899/')).toBe(true);
+  expect(isSlotBrowserProxyAligned('http://[::1]:7899', 'socks5://127.0.0.1:7899')).toBe(true);
+  expect(isSlotBrowserProxyAligned('http://user:pass@::1:7900', 'http://127.0.0.1:7900')).toBe(true);
+  expect(isSlotBrowserProxyAligned('', null)).toBe(true);
+  expect(isSlotBrowserProxyAligned('http://127.0.0.1:7899', 'http://127.0.0.1:7900')).toBe(false);
+  expect(isSlotBrowserProxyAligned('', 'http://127.0.0.1:7899')).toBe(false);
+  expect(isSlotBrowserProxyAligned('http://127.0.0.1:7899', '')).toBe(false);
+});
+
+test('SmartRelayConfig omits dead autoSwitchWhenIdle field and strips legacy autoSwitchWhenIdle on sanitize', () => {
+  expect('autoSwitchWhenIdle' in defaultSmartRelayConfig).toBe(false);
+  const sanitized = sanitizeSmartRelayConfig({autoSwitchWhenIdle: true, enabled: true});
+  expect('autoSwitchWhenIdle' in sanitized).toBe(false);
+  expect(sanitized.enabled).toBe(true);
+});
+
+test('clearAccountCooldown invokes identities_orchestrator_clear_cooldown in native mode (including clearNoReturn) and transitions omitted cli_default_proxy to null', async () => {
+  resetSmartRelayConfig();
+  expect(getCliDefaultProxy()).toBeUndefined();
+  const prevWin = (globalThis as {window?: unknown}).window;
+  const invokeCalls: Array<{cmd: string; args: unknown}> = [];
+  let omitCliProxyInState = false;
+  (globalThis as {window?: unknown}).window = {
+    localStorage: {getItem: () => null, setItem: () => {}, removeItem: () => {}},
+    __TAURI_INTERNALS__: {
+      metadata: {currentWindow: {label: 'main'}},
+      invoke: (cmd: string, args: unknown) => {
+        invokeCalls.push({cmd, args});
+        if (cmd === 'identities_orchestrator_state') {
+          return Promise.resolve(
+            omitCliProxyInState
+              ? {
+                  schema: 1,
+                  config_persisted: true,
+                  config: {...defaultSmartRelayConfig, enabled: true},
+                }
+              : {
+                  schema: 1,
+                  config_persisted: true,
+                  cli_default_proxy: 'http://127.0.0.1:7899',
+                  config: {...defaultSmartRelayConfig, enabled: true},
+                },
+          );
+        }
+        if (cmd === 'identities_orchestrator_clear_cooldown') {
+          const reqId = (args as {id?: string})?.id;
+          return Promise.resolve({
+            config_persisted: true,
+            cli_default_proxy: 'http://127.0.0.1:7901',
+            config: {
+              ...defaultSmartRelayConfig,
+              enabled: true,
+              cooldownUntilSec: {'acc-other': NOW + 900},
+              noReturnAccountId: reqId === 'acc-reset' ? null : 'acc-reset',
+              noReturnUntilSec: reqId === 'acc-reset' ? 0 : NOW + 600,
+            },
+          });
+        }
+        return Promise.resolve(null);
+      },
+    },
+  };
+  try {
+    await syncNativeSmartRelayConfigIfLive();
+    expect(getCliDefaultProxy()).toBe('http://127.0.0.1:7899');
+    omitCliProxyInState = true;
+    await syncNativeSmartRelayConfigIfLive();
+    expect(getCliDefaultProxy()).toBeNull();
+
+    hydrateSmartRelayConfig({
+      ...defaultSmartRelayConfig,
+      enabled: true,
+      cooldownUntilSec: {'acc-1': NOW + 600, 'acc-reset': NOW + 500},
+      noReturnAccountId: 'acc-reset',
+      noReturnUntilSec: NOW + 600,
+    });
+    const localAfter = clearAccountCooldown('acc-1');
+    expect(localAfter.cooldownUntilSec['acc-1']).toBeUndefined();
+    await flushNativeSmartRelaySync();
+    expect(getSmartRelayConfig().cooldownUntilSec['acc-other']).toBe(NOW + 900);
+    expect(getSmartRelayConfig().cooldownUntilSec['acc-1']).toBeUndefined();
+    expect(getCliDefaultProxy()).toBe('http://127.0.0.1:7901');
+
+    // clearAccountCooldown(id, true) when noReturnAccountId === id must STILL invoke clear_cooldown atomically
+    invokeCalls.length = 0;
+    const afterNoReturn = clearAccountCooldown('acc-reset', true);
+    expect(afterNoReturn.noReturnAccountId).toBeNull();
+    await flushNativeSmartRelaySync();
+    expect(invokeCalls.map(c => c.cmd)).toEqual(['identities_orchestrator_clear_cooldown']);
+    expect(invokeCalls[0].args).toEqual({id: 'acc-reset'});
+    expect(getSmartRelayConfig().cooldownUntilSec['acc-other']).toBe(NOW + 900);
+    expect(getSmartRelayConfig().noReturnAccountId).toBeNull();
+  } finally {
+    if (prevWin === undefined) delete (globalThis as {window?: unknown}).window;
+    else (globalThis as {window?: unknown}).window = prevWin;
+    resetSmartRelayConfig();
+    expect(getCliDefaultProxy()).toBeUndefined();
+  }
+});
+
+test('HandoffSummary supports optional handoffReason when provided', () => {
+  const summary: HandoffSummary = {
+    createdAtSec: NOW,
+    dismissed: false,
+    handoffMdPath: 'handoff/latest-handoff.md',
+    handoffDir: 'handoff',
+    sessionCount: 1,
+    outputReadyCount: 1,
+    interruptedCount: 0,
+    externalRunningCount: 0,
+    handoffReason: 'rate_limited',
+    copyPrompt: 'Read handoff/latest-handoff.md first.',
+    items: [],
+  };
+  expect(summary.handoffReason).toBe('rate_limited');
 });

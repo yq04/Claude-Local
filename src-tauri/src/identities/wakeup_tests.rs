@@ -660,3 +660,38 @@ fn candidate_route_projection_never_scans_browsers_and_dispatch_scans_once() {
     assert_eq!(scans.get(), 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn rate_limit_wakeup_propagates_clamped_cooldown_and_rotation_tick() {
+    let dir = std::env::temp_dir().join(format!(
+        "claude-local-wakeup-rl-{}-{}",
+        std::process::id(),
+        now_ms()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let rec_id = "0123456789abcdef0123456789abcdef";
+    let now_sec = 1_760_000_000u64;
+
+    // Clamps retry_at earlier than now + 60 up to now + 60, bumps tick, and cleans "current".
+    let mut initial = crate::identities::orchestrator::load_config(&dir);
+    initial.cooldown_until_sec.insert("current".into(), now_sec + 300);
+    initial.rotation_tick.insert(rec_id.into(), 2);
+    crate::identities::orchestrator::save_config(&dir, &initial).unwrap();
+
+    propagate_rate_limit_cooldown_in(&dir, "current", Some((now_sec + 500) * 1000), now_sec * 1000)
+        .unwrap();
+    propagate_rate_limit_cooldown_in(&dir, rec_id, Some((now_sec + 10) * 1000), now_sec * 1000)
+        .unwrap();
+    let after_clamp = crate::identities::orchestrator::load_config(&dir);
+    assert!(!after_clamp.cooldown_until_sec.contains_key("current"));
+    assert_eq!(after_clamp.cooldown_until_sec.get(rec_id).copied(), Some(now_sec + 60));
+    assert_eq!(after_clamp.rotation_tick.get(rec_id).copied(), Some(3));
+
+    // When retry_at is absent, defaults to 900s and keeps monotonic max cooldown & tick.
+    propagate_rate_limit_cooldown_in(&dir, rec_id, None, now_sec * 1000).unwrap();
+    let after_default = crate::identities::orchestrator::load_config(&dir);
+    assert_eq!(after_default.cooldown_until_sec.get(rec_id).copied(), Some(now_sec + 900));
+    assert_eq!(after_default.rotation_tick.get(rec_id).copied(), Some(4));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

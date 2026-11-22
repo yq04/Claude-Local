@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 随机令牌回环服务上下文、浏览器原生 navigator/Intl/Permissions/WebRTC/WebGL/Canvas/Audio/UA-CH 与实际 HTTPS 出口与服务备援目录与宿主界面语言。
- * [OUTPUT]: 明确被测养号/CLI浏览器归属与仅环境范围的20项实测页；输出 Canvas 2D FNV-1a 像素哈希、音频节点与 Sift v122 屏幕 avail / 语言首项 / 外框尺寸 / PDF 查看器防篡改核验，未知保持待测。
+ * [OUTPUT]: 明确被测养号/CLI浏览器归属与仅环境范围的20项实测页；输出 Canvas 2D FNV-1a 像素哈希、音频节点与 Sift v122 屏幕 avail / pixelDepth / DPR / 语言列表非空及首项 / UA-CH 桌面平台一致性 / 外框尺寸 / PDF 查看器防篡改核验，未知保持待测。
  * [POS]: 独立 Chromium 入口，复用工具箱控件；成功状态只由真实观测决定，不接入 Tauri 权限，不伪造地理位置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -135,20 +135,42 @@ function probeClientHintsAndScreen(): { ok: boolean; detail: string } {
         };
         const uaData = nav.userAgentData;
         const isDesktop = uaData?.mobile !== true;
-        const width = window.screen?.width || 0;
-        const height = window.screen?.height || 0;
-        const availWidth = window.screen?.availWidth || 0;
-        const availHeight = window.screen?.availHeight || 0;
-        const depth = window.screen?.colorDepth || 24;
-        const screenBaseOk = width > 0 && height > 0 && depth >= 24;
+        const uaPlatform = typeof uaData?.platform === 'string' ? uaData.platform.trim().toLowerCase() : '';
+        const navPlatform = typeof nav.platform === 'string' ? nav.platform.trim().toLowerCase() : '';
+        const uaPlatformOk = !uaPlatform
+            ? true
+            : /^(android|ios|iphone|ipad|ipod)$/i.test(uaPlatform)
+                ? false
+                : navPlatform
+                    ? (uaPlatform === 'windows' ? /^win/.test(navPlatform)
+                        : uaPlatform === 'macos' ? /^mac/.test(navPlatform)
+                        : uaPlatform === 'linux' ? /linux/.test(navPlatform)
+                        : true)
+                    : true;
+        const width = window.screen?.width ?? 0;
+        const height = window.screen?.height ?? 0;
+        const availWidth = window.screen?.availWidth ?? 0;
+        const availHeight = window.screen?.availHeight ?? 0;
+        const depth = window.screen?.colorDepth ?? 0;
+        const pixelDepth = window.screen?.pixelDepth ?? 0;
+        const dpr = window.devicePixelRatio;
+        const screenBaseOk =
+            width > 0 &&
+            height > 0 &&
+            availWidth > 0 &&
+            availHeight > 0 &&
+            depth >= 24 &&
+            pixelDepth === depth;
         const availConsistent = availWidth > 0 && availHeight > 0
             ? width >= availWidth && height >= availHeight
             : true;
+        const dprOk = typeof dpr === 'number' && Number.isFinite(dpr) && dpr > 0;
         const primaryLang = nav.language;
         const langs = nav.languages;
-        const langConsistent = primaryLang && Array.isArray(langs) && langs.length > 0
+        const hasLangs = Boolean(primaryLang) && Array.isArray(langs) && langs.length > 0;
+        const langConsistent = hasLangs
             ? primaryLang.toLowerCase() === String(langs[0]).toLowerCase()
-            : true;
+            : false;
         const frameOk = !(
             (window.innerWidth > 0 && typeof window.outerWidth === 'number' && window.outerWidth === 0) ||
             (window.innerHeight > 0 && typeof window.outerHeight === 'number' && window.outerHeight === 0)
@@ -156,9 +178,12 @@ function probeClientHintsAndScreen(): { ok: boolean; detail: string } {
         const pdfOk = typeof nav.pdfViewerEnabled === 'boolean' ? nav.pdfViewerEnabled === true : true;
         const reasons: string[] = [];
         if (!isDesktop) reasons.push('UA-CH 报告移动端');
+        if (!uaPlatformOk) reasons.push('UA-CH 平台非桌面或与 navigator.platform 不一致');
         if (!screenBaseOk) reasons.push('屏幕尺寸或色深异常');
         if (!availConsistent) reasons.push('availWidth/availHeight 超出屏幕尺寸');
-        if (!langConsistent) reasons.push('language 与 languages[0] 不一致');
+        if (!dprOk) reasons.push('devicePixelRatio 无效');
+        if (!hasLangs) reasons.push('navigator.languages 为空');
+        else if (!langConsistent) reasons.push('language 与 languages[0] 不一致');
         if (!frameOk) reasons.push('outerWidth/outerHeight 为 0');
         if (!pdfOk) reasons.push('PDF 查看器未启用');
         const ok = reasons.length === 0;

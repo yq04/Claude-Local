@@ -1,5 +1,5 @@
 /* [INPUT]: Theme surface, border, typography and accent tokens from style.css.
- * [OUTPUT]: Shared 4-column hairline telemetry strip and unified Quick-Setup layouts for Browser, Computer and Network pages.
+ * [OUTPUT]: Shared 4-column hairline telemetry strip and unified Quick-Setup layouts for Browser, Computer and Network pages (including multi-port Clash snippet card & AppDialog modal styles).
  * [POS]: Imported by browser.tsx, system.tsx and vps.tsx; scoped selectors (>= 0,2,0 / 0,3,0) cleanly supersede legacy card rules despite earlier import order in main.tsx.
  * [PROTOCOL]: Update src/CLAUDE.md with changes. */
 
@@ -1224,7 +1224,103 @@
   color: #fde68a;
 }
 
+.network-page .network-multiport-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 16px;
+}
+
+.network-page .network-multiport-copy {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.network-page .network-multiport-copy h2 {
+  margin: 0 0 2px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.network-page .network-multiport-copy p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
+
+.network-multiport-dialog .network-multiport-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.network-multiport-dialog .network-multiport-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 150px);
+  gap: 12px;
+  align-items: end;
+}
+
+.network-multiport-dialog .network-multiport-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.network-multiport-dialog .network-multiport-count-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.network-multiport-dialog .network-multiport-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.network-multiport-dialog .network-multiport-group-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.network-multiport-dialog .network-multiport-group-row code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+
+.network-multiport-dialog .network-multiport-yaml {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--landing-line);
+  background: var(--muted);
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
 @container network-env (max-width: 720px) {
+  .network-page .network-multiport-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
   .network-page .network-sections .network-action-list {
     grid-template-columns: minmax(0, 1fr);
     gap: 10px;

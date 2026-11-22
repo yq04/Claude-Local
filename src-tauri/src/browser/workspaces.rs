@@ -1,5 +1,5 @@
 // [INPUT]: 身份 SQLite 绑定、smart_relay_v1.json 槽位代理、独立浏览器根目录、受限配置和用户确认后的切换事务。
-// [OUTPUT]: CLI/养号独占资料与稳定种子、按需具化并自动修复已绑定身份资料槽位（按 slotProxies[owner_id] -> 活跃联动槽位 -> 根配置 -> ~/.claude 回环代理优先级继承或自愈空代理为 socks5://，受限主机对齐时区语言且绝不改动既有种子）、只读槽位查询、普通CLI事务保留养号会话、单重故障干净回滚后仅按需恢复原已运行浏览器、双重故障未恢复启动阻断。
+// [OUTPUT]: CLI/养号独占资料与稳定种子、按需具化并自动修复已绑定身份资料槽位（新建槽位按 slotProxies[owner_id] -> ~/.claude 回环代理 -> 根配置 -> 活跃联动槽位优先级继承，受限主机对齐时区语言且绝不改动既有种子）、只读槽位代理与运行状态快照（bound_slot_browser_proxies）、按账号同步 CLI 代理到绑定浏览器槽位（sync_identity_browser_proxy_in）、只读槽位查询、普通CLI事务保留养号会话、单重故障干净回滚后仅按需恢复原已运行浏览器、双重故障未恢复启动阻断。
 // [POS]: 身份与浏览器的协调边界；资料不压缩、不复制、不合并 Cookie，失败状态如实返回。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -148,12 +148,7 @@ fn convert_loopback_http_to_socks5(http_proxy: &str) -> Option<String> {
     if port == 0 {
         return None;
     }
-    let formatted_host = if host_clean.contains(':') {
-        format!("[{host_clean}]")
-    } else {
-        host_clean.to_string()
-    };
-    let candidate = format!("socks5://{formatted_host}:{port}");
+    let candidate = format!("socks5://127.0.0.1:{port}");
     config::proxy(&candidate).ok().flatten().map(|_| candidate)
 }
 
@@ -188,8 +183,72 @@ fn find_consensus_context_donor(root: &Path, skip_slot: &str) -> Option<config::
     donor
 }
 
+fn cli_http_proxy_to_browser_socks5(raw: &str) -> Option<String> {
+    let url = reqwest::Url::parse(raw.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !matches!(url.path(), "" | "/")
+    {
+        return None;
+    }
+    let host_raw = url.host_str()?.trim_matches(['[', ']']);
+    if host_raw.is_empty() {
+        return None;
+    }
+    let host = if host_raw.eq_ignore_ascii_case("localhost") || host_raw == "::1" {
+        "127.0.0.1".to_string()
+    } else if host_raw.contains(':') {
+        format!("[{host_raw}]")
+    } else {
+        host_raw.to_ascii_lowercase()
+    };
+    let port = url.port_or_known_default()?;
+    if port == 0 {
+        return None;
+    }
+    let candidate = format!("socks5://{host}:{port}");
+    config::proxy(&candidate).ok().flatten().map(|_| candidate)
+}
+
+fn sanitize_browser_proxy(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let Ok(url) = reqwest::Url::parse(trimmed) else {
+        return String::new();
+    };
+    if !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h") {
+        return String::new();
+    }
+    let Some(host_raw) = url.host_str() else {
+        return String::new();
+    };
+    let clean_host = host_raw.trim_matches(['[', ']']);
+    let host = if clean_host.eq_ignore_ascii_case("localhost") || clean_host == "::1" {
+        "127.0.0.1".to_string()
+    } else if clean_host.contains(':') {
+        format!("[{clean_host}]")
+    } else {
+        clean_host.to_ascii_lowercase()
+    };
+    let Some(port) = url.port_or_known_default() else {
+        return String::new();
+    };
+    if port == 0 {
+        return String::new();
+    }
+    format!("{}://{host}:{port}", url.scheme())
+}
+
 fn to_browser_proxy_from_raw(raw: &str) -> Option<String> {
     if let Some(socks) = convert_loopback_http_to_socks5(raw) {
+        return Some(socks);
+    }
+    if let Some(socks) = cli_http_proxy_to_browser_socks5(raw) {
         return Some(socks);
     }
     let trimmed = raw.trim();
@@ -310,20 +369,17 @@ pub(super) fn ensure_slot_with_home_and_policy(
                 base.timezone = active_cfg.timezone.clone();
                 base.native_graphics = active_cfg.native_graphics;
             }
+            let claude_socks = claude_home
+                .and_then(|home| crate::identities::read_claude_dir_http_proxy(&home.join(".claude")))
+                .and_then(|http_proxy| cli_http_proxy_to_browser_socks5(&http_proxy));
             if let Some(sp) = slot_proxy {
                 base.proxy = sp;
-            } else if let Some(active_cfg) = donor {
-                base.proxy = active_cfg.proxy;
+            } else if let Some(cs) = claude_socks {
+                base.proxy = cs;
             } else if !root_cfg.proxy.trim().is_empty() {
                 base.proxy = root_cfg.proxy;
-            } else if let Some(home) = claude_home {
-                if let Some(http_proxy) =
-                    crate::identities::read_claude_dir_http_proxy(&home.join(".claude"))
-                {
-                    if let Some(socks) = convert_loopback_http_to_socks5(&http_proxy) {
-                        base.proxy = socks;
-                    }
-                }
+            } else if let Some(active_cfg) = donor {
+                base.proxy = active_cfg.proxy;
             }
             base
         } else {
@@ -348,22 +404,22 @@ pub(super) fn ensure_slot_with_home_and_policy(
                     dirty = true;
                 }
             } else if existing.proxy.trim().is_empty() {
-                let candidate = donor
-                    .as_ref()
-                    .map(|d| d.proxy.clone())
-                    .filter(|p| is_loopback_browser_proxy(p))
+                let candidate = claude_home
+                    .and_then(|home| {
+                        crate::identities::read_claude_dir_http_proxy(&home.join(".claude"))
+                    })
+                    .and_then(|hp| cli_http_proxy_to_browser_socks5(&hp))
+                    .or_else(|| {
+                        donor
+                            .as_ref()
+                            .map(|d| d.proxy.clone())
+                            .filter(|p| is_loopback_browser_proxy(p))
+                    })
                     .or_else(|| {
                         config::load(root)
                             .ok()
                             .map(|r| r.proxy)
                             .filter(|p| is_loopback_browser_proxy(p))
-                    })
-                    .or_else(|| {
-                        claude_home
-                            .and_then(|home| {
-                                crate::identities::read_claude_dir_http_proxy(&home.join(".claude"))
-                            })
-                            .and_then(|hp| convert_loopback_http_to_socks5(&hp))
                     });
                 if let Some(healed_proxy) = candidate {
                     existing.proxy = healed_proxy;
@@ -397,6 +453,100 @@ pub(super) fn ensure_slot(root: &Path, db: &Database, slot: &str) -> Result<Path
     };
     ensure_slot_with_home(root, db, slot, claude_home.as_deref())
 }
+pub(crate) fn bound_slot_browser_proxies(
+    browser_root: &Path,
+    db: &Database,
+    records: &[crate::identities::database::Record],
+) -> std::collections::BTreeMap<String, crate::identities::SlotBrowserProxy> {
+    let mut out = std::collections::BTreeMap::new();
+    if !browser_root.is_dir() {
+        return out;
+    }
+    let mut running_slots: Option<std::collections::HashSet<String>> = None;
+    for rec in records {
+        if rec.empty {
+            continue;
+        }
+        let Ok(Some(slot)) = db.browser_for(&rec.id) else {
+            continue;
+        };
+        let Ok(scope) = slot_path(browser_root, &slot) else {
+            continue;
+        };
+        if !scope.join("config.json").is_file() {
+            continue;
+        }
+        let Ok(cfg) = config::load(&scope) else {
+            continue;
+        };
+        let running_set = running_slots.get_or_insert_with(|| {
+            super::kill_switch::running_managed_profiles(browser_root)
+                .into_iter()
+                .map(|(s, _)| s)
+                .collect()
+        });
+        out.insert(
+            rec.id.clone(),
+            crate::identities::SlotBrowserProxy {
+                proxy: sanitize_browser_proxy(&cfg.proxy),
+                running: running_set.contains(&slot),
+            },
+        );
+    }
+    out
+}
+
+pub(super) fn sync_identity_browser_proxy_in(
+    browser_root: &Path,
+    app_data_dir: &Path,
+    claude_home: &Path,
+    id: &str,
+    is_running: &dyn Fn(&Path) -> Result<bool, String>,
+) -> Result<(String, bool, bool), String> {
+    if !crate::identities::valid_id(id) {
+        return Err("身份编号无效。".into());
+    }
+    let mut db = database(browser_root)?;
+    if db.get("recovery")?.is_some() {
+        return Err("请先恢复未完成的身份切换。".into());
+    }
+    let exists = db.records()?.into_iter().any(|r| !r.empty && r.id == id);
+    if !exists {
+        return Err("未找到目标身份记录。".into());
+    }
+    let slot = match db.browser_for(id)? {
+        Some(s) => s,
+        None if db.browser_link()?.enabled => db.ensure_identity_binding(id)?.0,
+        None => return Err("未开启独立浏览器资料联动。".into()),
+    };
+    let scope = slot_path(browser_root, &slot)?;
+    let profile_dir = scope.join("profile");
+    profile::check_path(browser_root, &profile_dir)?;
+    if is_running(&profile_dir)? {
+        return Err("该身份绑定的浏览器正在运行，请先退出浏览器后再同步代理。".into());
+    }
+    ensure_slot_with_home(browser_root, &db, &slot, Some(claude_home))?;
+    let relay_cfg = crate::identities::orchestrator::load_config(app_data_dir);
+    let effective_http = relay_cfg
+        .slot_proxies
+        .get(id)
+        .and_then(|raw| crate::identities::orchestrator::config::normalize_proxy_to_http(raw))
+        .or_else(|| crate::identities::read_claude_dir_http_proxy(&claude_home.join(".claude")));
+    let target_proxy = match effective_http {
+        Some(ref http) => cli_http_proxy_to_browser_socks5(http)
+            .ok_or_else(|| "CLI 代理地址格式无效，无法同步到浏览器。".to_string())?,
+        None => String::new(),
+    };
+    let mut cfg = config::load(&scope)?;
+    let changed = cfg.proxy != target_proxy;
+    if changed {
+        cfg.proxy = target_proxy;
+        config::save(&scope, &cfg)?;
+    }
+    let is_active = db.browser_slot()? == slot;
+    Ok((slot, changed, is_active))
+}
+
 pub(crate) fn ensure_identity_slot(root: &Path, owner_id: &str) -> Result<PathBuf, String> {
     let mut db = database(root)?;
     if db.get("recovery")?.is_some() {

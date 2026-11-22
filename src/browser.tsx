@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生浏览器/CLI归属快照、网络防漏断路器状态与事件、轻量窗口采样、真实观测事件、共享活动日志、env-pages.css、Pika 图标与双语文案。
- * [OUTPUT]: 顶部浏览器操作卡（四列去重发丝遥测条 + 状态胶囊）、分组标头、两列边线核验矩阵、双列水平数据清理区、高级设置（含真实设备指纹 native_graphics 单号/多号 Sift 防关联说明 `[data-native-graphics-hint]`）与安全确认弹窗。
+ * [INPUT]: 原生浏览器/CLI归属快照、身份列表只读绑定数（identities_read.browser.bound_ids）、网络防漏断路器状态与事件、轻量窗口采样、真实观测事件、共享活动日志、env-pages.css、Pika 图标与双语文案。
+ * [OUTPUT]: 顶部浏览器操作卡（四列去重发丝遥测条 + 状态胶囊 + 多绑定账号真实指纹温和提示 `[data-native-graphics-multi-hint]`）、分组标头、两列边线核验矩阵、双列水平数据清理区、高级设置（含真实设备指纹 native_graphics 单号/多号 Sift 防关联说明 `[data-native-graphics-hint]`）与安全确认弹窗。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -13,6 +13,7 @@ import { listen } from '@tauri-apps/api/event';
 import { AppDialog } from './dialog';
 import { CleanupActivity, useCleanupActivity } from './cleaner-activity';
 import { type BrowserConfig, type BrowserState, type KillSwitchState } from './browser-model';
+import type { IdentityState } from './identity-model';
 import { formatBytes } from './cleaner-model';
 import { usePageRefresh } from './app-events';
 import {maskDisplayName, usePreferences} from './settings-model';
@@ -30,6 +31,7 @@ export function BrowserPanel({ onBusy }: {
     const gate = useRef(false), live = useRef(true), snapshotSequence = useRef(0);
     const [accepted, setAccepted] = useState(false), [advancedOpen, setAdvancedOpen] = useState(false);
     const [returnCliBrowser, setReturnCliBrowser] = useState<{expectedIdentity: string; name: string} | null>(null);
+    const [boundAccountCount, setBoundAccountCount] = useState(0);
     const browserRuntime = useBrowserRuntime(state?.active_browser_slot, !!state && !busy);
     const activity = useCleanupActivity();
     const [clock, setClock] = useState(Date.now);
@@ -76,6 +78,13 @@ export function BrowserPanel({ onBusy }: {
                 setDraft(next.config);
         }
         void refreshKillSwitch();
+        void invoke<IdentityState>('identities_read')
+            .then(idState => {
+                if (live.current && Array.isArray(idState?.browser?.bound_ids)) {
+                    setBoundAccountCount(idState.browser.bound_ids.length);
+                }
+            })
+            .catch(() => {});
         return next;
     }
     usePageRefresh(() => {
@@ -162,10 +171,12 @@ export function BrowserPanel({ onBusy }: {
     const profileTelemetryMeta = state?.engine_version ? `${profileBaseMeta} · ${state.engine_version}` : profileBaseMeta;
     const routeLabel = draft?.proxy ? draft.proxy : t('browserSafety.proxyManaged');
     const showTimestampPill = Boolean(state?.report_received_at || browserRuntime.status === 'running');
+    const multiBoundNativeGraphicsHint = Boolean(draft?.native_graphics && boundAccountCount >= 2);
     const showHeroAlerts = Boolean(
         (!!state && !state.cli_expected_identity) ||
         (state?.identity?.status && !['linked', 'draft', 'warming'].includes(state.identity.status)) ||
-        (state?.identity?.cli_proxy && !areCliAndBrowserProxiesAligned(draft?.proxy, state.identity.cli_proxy)),
+        (state?.identity?.cli_proxy && !areCliAndBrowserProxiesAligned(draft?.proxy, state.identity.cli_proxy)) ||
+        multiBoundNativeGraphicsHint,
     );
     function edit<K extends keyof BrowserConfig>(key: K, value: BrowserConfig[K]) { setDraft(old => old ? { ...old, [key]: value } : old); }
     return <section className="system-page browser-page">
@@ -265,6 +276,11 @@ export function BrowserPanel({ onBusy }: {
                             <p className="identity-policy-hint">
                                 {t("browserSafety.cliProxyMismatch", { cliProxy: state.identity.cli_proxy, browserProxy: (draft?.proxy || '').trim() || t("browserSafety.proxyManaged") })}{' '}
                                 <Button variant="secondary" size="small" disabled={disabled} onClick={() => { edit('proxy', toBrowserSocks5ProxyFromCli(state?.identity?.cli_proxy)); setAdvancedOpen(true); }}>{t("browserSafety.syncCliProxy")}</Button>
+                            </p>
+                        )}
+                        {multiBoundNativeGraphicsHint && (
+                            <p className="identity-policy-hint" data-native-graphics-multi-hint>
+                                {t('browserSafety.nativeGraphicsMultiBoundHint', { count: boundAccountCount })}
                             </p>
                         )}
                     </div>

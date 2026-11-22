@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 身份目录、加密压缩保险库、Cleaner 全局事务门与显式身份写入代次、Tauri 进度通道、SmartRelay 配置与 cli-slots 运行会话。
-// [OUTPUT]: 有界归档加载、单次解析共享额度账本的身份/网页摘要（含 Ultra/Team/Enterprise 套餐消歧）、轻量实时会话快照（identities_live_sessions，分离主配置 sessions、子代理 slot_sessions、纯后台守护态 background_only 与后台待接管作业 active_adopt_jobs）、防封交接检查点（handoff 子模块与 identities_latest_handoff / identities_dismiss_handoff 命令）、一键无残留恢复接线（recover_clean 与句柄排空等待）、浏览器独立养号卡及受控转正、手动订阅到期管理命令、原生 SmartRelay 接力与子代理隔离槽位编排（orchestrator）、轻量usage身份观察登记与唯一进程级唤醒owner。
+// [OUTPUT]: 有界归档加载、单次解析共享额度账本的身份/网页摘要（含 Ultra/Team/Enterprise 套餐消歧）、轻量实时会话快照（identities_live_sessions，分离主配置 sessions、子代理 slot_sessions、纯后台守护态 background_only 与后台待接管作业 active_adopt_jobs）、防封交接检查点（handoff 子模块与 identities_latest_handoff / identities_dismiss_handoff 命令）、一键无残留恢复接线（recover_clean 与句柄排空等待）、浏览器独立养号卡及受控转正、绑定浏览器槽位代理快照（slot_browser_proxies）与按账号单向同步代理命令（identities_sync_browser_proxy）、手动订阅到期管理命令、原生 SmartRelay 接力与子代理隔离槽位编排（orchestrator）、轻量usage身份观察登记与唯一进程级唤醒owner。
 // [POS]: GUI 身份管理与原生多路编排入口；在线子模块仅允许固定额度端点和白名单回执，不提供凭据读取或任意文件/网络接口。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 mod archive;
@@ -83,6 +83,11 @@ impl Policy {
         }
     }
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SlotBrowserProxy {
+    pub proxy: String,
+    pub running: bool,
+}
 #[derive(Serialize)]
 pub struct State {
     pub warming_cards: Vec<warming::WarmingCardView>,
@@ -94,6 +99,8 @@ pub struct State {
     pub sessions: Vec<profile::LiveSession>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub slot_sessions: std::collections::BTreeMap<String, Vec<profile::ActiveSession>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub slot_browser_proxies: std::collections::BTreeMap<String, SlotBrowserProxy>,
     pub active: String,
     pub recovery: Option<String>,
     pub running: bool,
@@ -340,6 +347,10 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
         cleaner.leave();
         cleanup?;
     }
+    let slot_browser_proxies = vault_path
+        .parent()
+        .map(|d| crate::browser::bound_slot_browser_proxies(&d.join("browser"), &db, &records))
+        .unwrap_or_default();
     let live_sessions = live_sessions_snapshot(vault_path.parent(), &root_path, include_sessions)?;
     Ok(State {
         warming_cards: warming::views(&vault_path, &db)?,
@@ -355,6 +366,7 @@ fn state_for(app: &tauri::AppHandle, include_sessions: bool) -> Result<State, St
         summaries,
         sessions: live_sessions.sessions,
         slot_sessions: live_sessions.slot_sessions,
+        slot_browser_proxies,
         active,
         recovery: db.get("recovery")?,
         running: live_sessions.running,
@@ -605,6 +617,28 @@ pub async fn identities_browser(
     })
     .await
     .map_err(|_| "浏览器联动设置被中断，请刷新。".to_string())
+    .and_then(|r| r);
+    cleaner.leave();
+    result
+}
+
+#[tauri::command]
+pub async fn identities_sync_browser_proxy(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<State, String> {
+    if !valid_id(&id) {
+        return Err("身份编号无效。".into());
+    }
+    let cleaner = app.state::<crate::cleaner::Cleaner>();
+    cleaner.enter()?;
+    let worker = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::browser::sync_identity_browser_proxy(&worker, &id)?;
+        state(&worker)
+    })
+    .await
+    .map_err(|_| "浏览器代理同步被中断，请刷新。".to_string())
     .and_then(|r| r);
     cleaner.leave();
     result

@@ -2011,3 +2011,99 @@ fn desktop_config_teams_growthbook_and_switch_handoff_isolation() {
     .is_none());
 }
 
+#[test]
+fn store_switch_restores_global_proxy_baseline_without_bleeding_slot_proxy_override() {
+    let f = Fixture::new();
+    let r = Reporter::channel(None);
+    let p_keep_settings = Policy::default();
+    let p_switch_settings = Policy {
+        settings: false,
+        ..Policy::default()
+    };
+
+    // Baseline: settings.json has 7897 and settings.local.json overrides to 18080.
+    f.write(
+        ".claude/settings.json",
+        br#"{"env":{"HTTP_PROXY":"http://127.0.0.1:7897","HTTPS_PROXY":"http://127.0.0.1:7897"}}"#,
+    );
+    f.write(
+        ".claude/settings.local.json",
+        br#"{"env":{"HTTPS_PROXY":"http://127.0.0.1:18080"}}"#,
+    );
+    f.login("acct-a", "org-a", "tok-a");
+
+    let mut store = store::Store::open(&f.vault, &f.home).unwrap();
+    let live_env = store.read_live_proxy_env_from_home().expect("live proxy");
+    assert_eq!(
+        live_env.get("HTTPS_PROXY").and_then(|v| v.as_str()),
+        Some("http://127.0.0.1:18080"),
+        "settings.local.json must take precedence over settings.json"
+    );
+
+    store.save_current("Acct A", &p_keep_settings, &r).unwrap();
+    let rec_a = store
+        .records()
+        .into_iter()
+        .find(|rec| rec.name == "Acct A")
+        .unwrap();
+
+    // Save Acct B without any proxy keys in its archived settings.json.
+    store.switch("empty", "Acct A", &p_keep_settings, &r).unwrap();
+    f.login("acct-b", "org-b", "tok-b");
+    f.write(".claude/settings.json", br#"{"env":{}}"#);
+    store.save_current("Acct B", &p_keep_settings, &r).unwrap();
+    let rec_b = store
+        .records()
+        .into_iter()
+        .find(|rec| rec.name == "Acct B")
+        .unwrap();
+
+    // Configure slotProxies only on Acct A (19090), leaving Acct B unset.
+    let mut relay_cfg = crate::identities::orchestrator::config::SmartRelayConfig::default();
+    relay_cfg
+        .slot_proxies
+        .insert(rec_a.id.clone(), "http://127.0.0.1:19090".into());
+    crate::identities::orchestrator::config::save_config(&f.root, &relay_cfg).unwrap();
+
+    // Switch B -> A applies 19090 override to settings.json and settings.local.json.
+    store.switch(&rec_a.id, "Acct B", &p_keep_settings, &r).unwrap();
+    let local_on_a: serde_json::Value = serde_json::from_slice(
+        &fs::read(f.home.join(".claude/settings.local.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(local_on_a["env"]["HTTPS_PROXY"], "http://127.0.0.1:19090");
+
+    // Switch A -> B (slotProxies[B] unset, policy.settings=true / keep settings):
+    // before B -> A, settings.json had {"env":{}} and settings.local.json had 18080; both revert cleanly without bleeding 19090!
+    store.switch(&rec_b.id, "Acct A", &p_keep_settings, &r).unwrap();
+    let settings_on_b: serde_json::Value = serde_json::from_slice(
+        &fs::read(f.home.join(".claude/settings.json")).unwrap(),
+    )
+    .unwrap();
+    let local_on_b: serde_json::Value = serde_json::from_slice(
+        &fs::read(f.home.join(".claude/settings.local.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(local_on_b["env"]["HTTPS_PROXY"], "http://127.0.0.1:18080");
+    assert!(local_on_b["env"].get("HTTP_PROXY").is_none());
+    assert!(settings_on_b["env"].get("HTTPS_PROXY").is_none());
+    assert!(settings_on_b["env"].get("HTTP_PROXY").is_none());
+
+    // Now seed 7897 in settings.json before switching B -> A -> B with policy.settings=false (switch settings per account):
+    // restore() + baseline preservation must keep baseline (18080), NEVER bleeding A's 19090!
+    f.write(
+        ".claude/settings.json",
+        br#"{"env":{"HTTP_PROXY":"http://127.0.0.1:7897","HTTPS_PROXY":"http://127.0.0.1:7897"}}"#,
+    );
+    store.switch(&rec_a.id, "Acct B", &p_keep_settings, &r).unwrap();
+    store
+        .switch(&rec_b.id, "Acct A", &p_switch_settings, &r)
+        .unwrap();
+    let settings_after_switch: serde_json::Value = serde_json::from_slice(
+        &fs::read(f.home.join(".claude/settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(settings_after_switch["env"]["HTTPS_PROXY"], "http://127.0.0.1:18080");
+    assert_ne!(settings_after_switch["env"].get("HTTP_PROXY"), Some(&serde_json::json!("http://127.0.0.1:19090")));
+}
+

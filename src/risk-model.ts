@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生只读环境快照（浏览器远程 DNS 锁、Mihomo 结构特征含 Sift/Hexagon 规则标志 has_sift_rules、Claude CLI 遥测护盾/MCP 供应链审计、网卡 RFC1918 候选）与三路边缘 trace 一致性实测结果。
- * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属（含 kyc_routing_rules 的 missingSift 细项提示）、多信号机房优先拦截与美区/主流地区家宽 ASN/ISP 分类（classifyRiskExitIsp / formatExitIspLabel）、因果对齐的顶栏态势文案路由（resolveRiskBanner）、严格 RFC1918 校验、Mihomo strict-route 覆写片段、桌面/移动端全量 Claude+Datadog+GrowthBook+Persona/Yoti+Sift/Hexagon 防漏分流规则、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段与安全边界纯函数审计（含统一护盾与 MCP 边界判定）、安全随机源缺失即失败的内存桥接凭据与双语提示词。
+ * [INPUT]: 原生只读环境快照（浏览器远程 DNS 锁、Mihomo 结构特征含 Sift/Hexagon 规则标志 has_sift_rules 与遥测规则标志 has_telemetry_rules、Claude CLI 遥测护盾/MCP 供应链审计、网卡 RFC1918 候选）与三路边缘 trace 一致性实测结果。
+ * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属（含 kyc_routing_rules 的 missingSift / missingTelemetry 细项告警）、多信号机房优先拦截与美区/主流地区家宽 ASN/ISP 分类（classifyRiskExitIsp / formatExitIspLabel）、因果对齐的顶栏态势文案路由（resolveRiskBanner）、严格 RFC1918 校验、Mihomo strict-route 覆写片段与只读多端口 Clash YAML 生成器（buildMultiPortClashYaml）、桌面/移动端全量 Claude+Datadog+GrowthBook+Persona/Yoti+Sift/Hexagon 防漏分流规则、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段与安全边界纯函数审计（含统一护盾、NO_PROXY loopback 必填与 MCP 边界判定）、安全随机源缺失即失败的内存桥接凭据与双语提示词。
  * [POS]: 风控验证纯模型层；不持有上游家宽密码、不落盘临时口令、不向公网暴露任何监听配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -582,34 +582,48 @@ export function evaluateRiskChecks(
     }
   } else if (local.mihomo.config_source !== 'running_core' || local.mihomo.config_source_status !== 'confirmed') {
     checks.push({id: 'kyc_routing_rules', status: 'pending', titleKey: 'risk.check.kycRoutingRules.title', summaryKey: 'risk.check.kycRoutingRules.unconfirmedSource'});
-  } else if (!local.mihomo.has_persona_rules) {
-    checks.push({
-      id: 'kyc_routing_rules',
-      status: 'warn',
-      titleKey: 'risk.check.kycRoutingRules.title',
-      summaryKey: 'risk.check.kycRoutingRules.missingPersona',
-    });
-  } else if (!local.mihomo.has_quic_reject || !local.mihomo.dedicated_listener_port) {
-    const siftDetail =
-      local.mihomo.has_sift_rules === false ? ['risk.check.kycRoutingRules.missingSift'] : undefined;
-    checks.push({
-      id: 'kyc_routing_rules',
-      status: 'warn',
-      titleKey: 'risk.check.kycRoutingRules.title',
-      summaryKey: 'risk.check.kycRoutingRules.warnMissingQuicOrListener',
-      ...(siftDetail ? {detailKeys: siftDetail} : {}),
-    });
   } else {
-    const siftDetail =
-      local.mihomo.has_sift_rules === false ? ['risk.check.kycRoutingRules.missingSift'] : undefined;
-    checks.push({
-      id: 'kyc_routing_rules',
-      status: 'ok',
-      titleKey: 'risk.check.kycRoutingRules.title',
-      summaryKey: 'risk.check.kycRoutingRules.okFull',
-      summaryParams: {port: local.mihomo.dedicated_listener_port},
-      ...(siftDetail ? {detailKeys: siftDetail} : {}),
-    });
+    const detailKeys: string[] = [];
+    if (local.mihomo.has_sift_rules === false) {
+      detailKeys.push('risk.check.kycRoutingRules.missingSift');
+    }
+    if (local.mihomo.has_telemetry_rules === false) {
+      detailKeys.push('risk.check.kycRoutingRules.missingTelemetry');
+    }
+    if (!local.mihomo.has_persona_rules) {
+      checks.push({
+        id: 'kyc_routing_rules',
+        status: 'warn',
+        titleKey: 'risk.check.kycRoutingRules.title',
+        summaryKey: 'risk.check.kycRoutingRules.missingPersona',
+        ...(detailKeys.length > 0 ? {detailKeys} : {}),
+      });
+    } else if (!local.mihomo.has_quic_reject || !local.mihomo.dedicated_listener_port) {
+      checks.push({
+        id: 'kyc_routing_rules',
+        status: 'warn',
+        titleKey: 'risk.check.kycRoutingRules.title',
+        summaryKey: 'risk.check.kycRoutingRules.warnMissingQuicOrListener',
+        ...(detailKeys.length > 0 ? {detailKeys} : {}),
+      });
+    } else if (detailKeys.length > 0) {
+      checks.push({
+        id: 'kyc_routing_rules',
+        status: 'warn',
+        titleKey: 'risk.check.kycRoutingRules.title',
+        summaryKey: 'risk.check.kycRoutingRules.warnIncompleteRules',
+        summaryParams: {port: local.mihomo.dedicated_listener_port},
+        detailKeys,
+      });
+    } else {
+      checks.push({
+        id: 'kyc_routing_rules',
+        status: 'ok',
+        titleKey: 'risk.check.kycRoutingRules.title',
+        summaryKey: 'risk.check.kycRoutingRules.okFull',
+        summaryParams: {port: local.mihomo.dedicated_listener_port},
+      });
+    }
   }
 
   // 6. 出口住宅 ISP / 机房属性核验
@@ -1307,16 +1321,24 @@ export function normalizeProxyEndpoint(raw: string | null | undefined): {
   const trimmed = (raw ?? '').trim();
   if (!trimmed) return null;
   try {
-    const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)
-      ? trimmed
-      : `http://${trimmed}`;
+    const normalizedV6 = trimmed.replace(
+      /^((?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)?(?:[^/@\s]+@)?)?::1:(\d{1,5})(\/.*)?$/,
+      (_m, prefix = '', portNum, tail = '') => `${prefix}[::1]:${portNum}${tail}`,
+    );
+    const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(normalizedV6)
+      ? normalizedV6
+      : `http://${normalizedV6}`;
     const parsed = new URL(withScheme);
     const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
     const rawHost = parsed.hostname.toLowerCase();
-    const host = rawHost === 'localhost' ? '127.0.0.1' : rawHost;
-    const port = parsed.port || (scheme === 'https' ? '443' : scheme === 'http' ? '80' : '1080');
+    const strippedHost = rawHost.replace(/^\[|\]$/g, '');
+    const host =
+      strippedHost === 'localhost' || strippedHost === '::1' ? '127.0.0.1' : rawHost;
+    const port = parsed.port;
     if (!host || !port) return null;
-    return {scheme, hostPort: `${host}:${port}`};
+    const portNum = Number(port);
+    if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) return null;
+    return {scheme, hostPort: `${host}:${portNum}`};
   } catch {
     return null;
   }
@@ -1427,13 +1449,17 @@ function normalizeHttpProxyHostPort(rawUrl: string): string | null {
   const trimmed = rawUrl.trim();
   if (!trimmed) return null;
   try {
-    const parsed = new URL(trimmed);
+    const normalizedV6 = trimmed.replace(
+      /^((?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)?(?:[^/@\s]+@)?)?::1:(\d{1,5})(\/.*)?$/,
+      (_m, prefix = '', portNum, tail = '') => `${prefix}[::1]:${portNum}${tail}`,
+    );
+    const parsed = new URL(normalizedV6);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
     const rawHost = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
     if (!rawHost) return null;
-    const host = rawHost === 'localhost' ? '127.0.0.1' : rawHost;
-    const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
-    const portNum = Number(port);
+    const host = rawHost === 'localhost' || rawHost === '::1' ? '127.0.0.1' : rawHost;
+    if (!parsed.port) return null;
+    const portNum = Number(parsed.port);
     if (!Number.isInteger(portNum) || portNum <= 0 || portNum > 65535) return null;
     return `${host}:${portNum}`;
   } catch {
@@ -1445,6 +1471,8 @@ function isSafeNoProxyValue(rawValue: string): boolean {
   const trimmed = rawValue.trim();
   if (!trimmed) return false;
   let hasEntry = false;
+  let hasLocalhost = false;
+  let hasLoopbackIp = false;
   for (const part of trimmed.split(',')) {
     const token = part.trim().toLowerCase();
     if (!token) continue;
@@ -1454,6 +1482,11 @@ function isSafeNoProxyValue(rawValue: string): boolean {
       ? token.split(']')[0].slice(1)
       : token.split(':')[0];
     const clean = hostPart.replace(/^\*\./, '').replace(/^\./, '');
+    if (clean === 'localhost') {
+      hasLocalhost = true;
+    } else if (clean === '127.0.0.1' || clean === '127.0.0.0/8') {
+      hasLoopbackIp = true;
+    }
     for (const domain of [
       'claude.ai',
       'anthropic.com',
@@ -1479,7 +1512,7 @@ function isSafeNoProxyValue(rawValue: string): boolean {
       }
     }
   }
-  return hasEntry;
+  return hasEntry && hasLocalhost && hasLoopbackIp;
 }
 
 function isEnglishLanguagePref(rawLang: string): boolean {
@@ -1615,7 +1648,7 @@ export function auditClaudeCliSecurityBoundary(input: {
     if (doc) {
       settings_present = true;
       if (Object.prototype.hasOwnProperty.call(doc, 'language')) {
-        effectiveLanguage = typeof doc.language === 'string' ? doc.language.trim() : '';
+        effectiveLanguage = typeof doc.language === 'string' ? doc.language.trim() : null;
       }
       inspectSettingsDoc(doc);
       if (doc.env && typeof doc.env === 'object' && !Array.isArray(doc.env)) {
@@ -1746,4 +1779,92 @@ export function isCliMcpBoundarySafe(cliSec: CliSecurityAudit | null | undefined
     && cliSec.windows_bare_npx_count === 0
     && !cliSec.has_custom_hooks_or_helpers,
   );
+}
+
+export const MULTI_PORT_CLASH_DOMAINS = [
+  'claude.ai',
+  'claude.com',
+  'anthropic.com',
+  'clau.de',
+  'claudeusercontent.com',
+  'sift.com',
+  'siftscience.com',
+  'hexagon-cdn.com',
+  'hexagon-analytics.com',
+  'withpersona.com',
+  'yoti.com',
+  'datadoghq.com',
+  'browser-intake-us5-datadoghq.com',
+  'http-intake.logs.us5.datadoghq.com',
+  'statsig.anthropic.com',
+  'growthbook.io',
+] as const;
+
+function sanitizeClashGroupName(raw: string | undefined, fallback: string): string {
+  const cleaned = (raw ?? '')
+    .replace(/[\r\n\0:#,{}\[\]]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || fallback;
+}
+
+/**
+ * Generates a strictly read-only, copy-only Clash/Mihomo multi-port configuration snippet
+ * (`listeners:` TCP-only on `127.0.0.1` + `prepend-rules:` pinning Claude, Anthropic, Sift, Hexagon,
+ * Persona, Yoti, and Datadog traffic per local exit slot).
+ */
+export function buildMultiPortClashYaml(opts?: {
+  count?: number;
+  startPort?: number;
+  groupNames?: ReadonlyArray<string>;
+}): {
+  ports: number[];
+  groups: string[];
+  yaml: string;
+} {
+  const countRaw = Math.floor(Number(opts?.count ?? 2));
+  const count = Number.isFinite(countRaw) ? Math.max(2, Math.min(5, countRaw)) : 2;
+  const startRaw = Math.floor(Number(opts?.startPort ?? DEFAULT_DEDICATED_LISTENER_PORT));
+  const maxStart = 65535 - count + 1;
+  const startPort =
+    Number.isFinite(startRaw) && startRaw >= 1024 && startRaw <= maxStart
+      ? startRaw
+      : DEFAULT_DEDICATED_LISTENER_PORT;
+  const ports = Array.from({length: count}, (_, i) => startPort + i);
+  const groups = Array.from({length: count}, (_, i) =>
+    sanitizeClashGroupName(opts?.groupNames?.[i], `Claude-Exit-${i + 1}`),
+  );
+
+  const listenerLines = ports.flatMap((port, idx) => [
+    `  - name: claude-slot-${idx + 1}`,
+    '    type: mixed',
+    '    listen: 127.0.0.1',
+    `    port: ${port}`,
+    '    udp: false',
+  ]);
+
+  const ruleLines = ports.flatMap((port, idx) => {
+    const slotName = `claude-slot-${idx + 1}`;
+    const groupName = groups[idx];
+    return [
+      `  # --- Slot ${idx + 1} (127.0.0.1:${port} -> ${groupName}) ---`,
+      `  - AND,((IN-NAME,${slotName}),(DOMAIN-KEYWORD,datadoghq)),${groupName}`,
+      ...MULTI_PORT_CLASH_DOMAINS.map(
+        domain => `  - AND,((IN-NAME,${slotName}),(DOMAIN-SUFFIX,${domain})),${groupName}`,
+      ),
+      `  - IN-NAME,${slotName},${groupName}`,
+    ];
+  });
+
+  const yaml = [
+    '# Claude-Local Read-Only Multi-Port Clash Override (Mihomo / Clash Verge Rev)',
+    '# TCP-only local mixed listeners on 127.0.0.1 (`udp: false` mitigates QUIC/WebRTC leaks).',
+    'listeners:',
+    ...listenerLines,
+    '',
+    'prepend-rules:',
+    ...ruleLines,
+  ].join('\n');
+
+  return {ports, groups, yaml};
 }

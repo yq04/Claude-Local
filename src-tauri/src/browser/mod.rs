@@ -12,12 +12,38 @@ mod oauth_route;
 mod profile;
 mod workspaces;
 use launch::{launch_locked, launch_with_urls_locked};
+pub(crate) use workspaces::bound_slot_browser_proxies;
 pub(crate) use workspaces::delete_saved;
 pub(crate) use workspaces::detach_warming_browser;
 pub(crate) use workspaces::identity_action;
 pub(crate) use workspaces::promote_warming_identity;
 pub(crate) use workspaces::switch_identity;
 pub(crate) use workspaces::switch_warming_browser;
+pub(crate) fn sync_identity_browser_proxy(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    let state = app.state::<Browser>();
+    let _guard = state.gate.lock().unwrap();
+    let browser_root = root(app)?;
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "应用目录不可用。".to_string())?;
+    let claude_home = crate::cleaner::identity::root()?;
+    let (slot, changed, is_active) = workspaces::sync_identity_browser_proxy_in(
+        &browser_root,
+        &app_dir,
+        &claude_home,
+        id,
+        &profile::running,
+    )?;
+    if changed {
+        state.last_observations.lock().unwrap().remove(&slot);
+    }
+    if is_active && (changed || !browser_root.join("launch.args").is_file()) {
+        refresh_launch_args(app)?;
+        renew_session(app);
+    }
+    Ok(())
+}
 pub(crate) fn configure_identity(
     app: &tauri::AppHandle,
     reporter: &Reporter,

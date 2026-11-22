@@ -10,6 +10,7 @@ import {
   buildDesktopMihomoAntiLeakYaml,
   buildMihomoStrictRouteSnippet,
   buildMobileBridgeConfig,
+  buildMultiPortClashYaml,
   buildShadowrocketSocksQrUri,
   buildShadowrocketUniversalAntiLeakConf,
   buildStandaloneMobilePrompt,
@@ -24,6 +25,7 @@ import {
   isValidBridgePort,
   isValidRfc1918Ipv4,
   maskIpAddress,
+  normalizeProxyEndpoint,
   parsePortInput,
   resolveRiskBanner,
   summarizeRiskChecks,
@@ -960,7 +962,7 @@ test('auditClaudeCliSecurityBoundary rejects NO_PROXY bypasses, case-clobbered o
   expect(mcpEdgeAudit.remote_http_mcp_count).toBe(1);
 });
 
-test('evaluateRiskChecks attaches missingSift detailKey only when has_sift_rules === false without downgrading okFull status', () => {
+test('evaluateRiskChecks marks kyc_routing_rules warn with missingSift / missingTelemetry details on confirmed running_core', () => {
   const baseLocal: LocalRiskSnapshot = {
     browser: {
       proxy_configured: true,
@@ -1002,48 +1004,160 @@ test('evaluateRiskChecks attaches missingSift detailKey only when has_sift_rules
     },
   };
 
-  // 1) undefined has_sift_rules keeps detailKeys undefined and status 'ok'
+  // 1) undefined flags keep detailKeys undefined and status 'ok'
   const kycUndefined = evaluateRiskChecks(baseLocal, null, false).find(c => c.id === 'kyc_routing_rules')!;
   expect(kycUndefined.status).toBe('ok');
   expect(kycUndefined.summaryKey).toBe('risk.check.kycRoutingRules.okFull');
   expect(kycUndefined.detailKeys).toBeUndefined();
 
-  // 2) has_sift_rules === true keeps detailKeys undefined and status 'ok'
+  // 2) both true keeps detailKeys undefined and status 'ok'
   const kycTrue = evaluateRiskChecks(
-    {...baseLocal, mihomo: {...baseLocal.mihomo, has_sift_rules: true}},
+    {...baseLocal, mihomo: {...baseLocal.mihomo, has_sift_rules: true, has_telemetry_rules: true}},
     null,
     false,
   ).find(c => c.id === 'kyc_routing_rules')!;
   expect(kycTrue.status).toBe('ok');
   expect(kycTrue.detailKeys).toBeUndefined();
 
-  // 3) has_sift_rules === false on okFull branch sets detailKeys without downgrading status or banner
-  const checksFalseOk = evaluateRiskChecks(
+  // 3) has_sift_rules === false on running_core marks kyc_routing_rules as warn with missingSift detail
+  const checksSiftFalse = evaluateRiskChecks(
     {...baseLocal, mihomo: {...baseLocal.mihomo, has_sift_rules: false}},
     null,
     false,
   );
-  const kycFalseOk = checksFalseOk.find(c => c.id === 'kyc_routing_rules')!;
-  expect(kycFalseOk.status).toBe('ok');
-  expect(kycFalseOk.summaryKey).toBe('risk.check.kycRoutingRules.okFull');
-  expect(kycFalseOk.detailKeys).toEqual(['risk.check.kycRoutingRules.missingSift']);
-  expect(resolveRiskBanner(baseLocal, null, checksFalseOk).status).toBe('ok');
+  const kycSiftFalse = checksSiftFalse.find(c => c.id === 'kyc_routing_rules')!;
+  expect(kycSiftFalse.status).toBe('warn');
+  expect(kycSiftFalse.summaryKey).toBe('risk.check.kycRoutingRules.warnIncompleteRules');
+  expect(kycSiftFalse.detailKeys).toEqual(['risk.check.kycRoutingRules.missingSift']);
+  expect(resolveRiskBanner(baseLocal, null, checksSiftFalse).status).toBe('warn');
 
-  // 4) has_sift_rules === false on warnMissingQuicOrListener branch also attaches detailKeys
-  const kycFalseWarn = evaluateRiskChecks(
+  // 4) has_telemetry_rules === false on running_core marks kyc_routing_rules as warn with missingTelemetry detail
+  const kycTelemetryFalse = evaluateRiskChecks(
+    {...baseLocal, mihomo: {...baseLocal.mihomo, has_sift_rules: true, has_telemetry_rules: false}},
+    null,
+    false,
+  ).find(c => c.id === 'kyc_routing_rules')!;
+  expect(kycTelemetryFalse.status).toBe('warn');
+  expect(kycTelemetryFalse.detailKeys).toEqual(['risk.check.kycRoutingRules.missingTelemetry']);
+
+  // 5) warnMissingQuicOrListener branch attaches both missingSift and missingTelemetry details
+  const kycBothFalseWarn = evaluateRiskChecks(
     {
       ...baseLocal,
-      mihomo: {...baseLocal.mihomo, has_quic_reject: false, has_sift_rules: false},
+      mihomo: {
+        ...baseLocal.mihomo,
+        has_quic_reject: false,
+        has_sift_rules: false,
+        has_telemetry_rules: false,
+      },
     },
     null,
     false,
   ).find(c => c.id === 'kyc_routing_rules')!;
-  expect(kycFalseWarn.status).toBe('warn');
-  expect(kycFalseWarn.summaryKey).toBe('risk.check.kycRoutingRules.warnMissingQuicOrListener');
-  expect(kycFalseWarn.detailKeys).toEqual(['risk.check.kycRoutingRules.missingSift']);
+  expect(kycBothFalseWarn.status).toBe('warn');
+  expect(kycBothFalseWarn.summaryKey).toBe('risk.check.kycRoutingRules.warnMissingQuicOrListener');
+  expect(kycBothFalseWarn.detailKeys).toEqual([
+    'risk.check.kycRoutingRules.missingSift',
+    'risk.check.kycRoutingRules.missingTelemetry',
+  ]);
 
   for (const locale of ['zh', 'en'] as const) {
-    const msg = translate('risk.check.kycRoutingRules.missingSift', {}, locale);
-    expect(msg).not.toBe('risk.check.kycRoutingRules.missingSift');
+    for (const key of [
+      'risk.check.kycRoutingRules.missingSift',
+      'risk.check.kycRoutingRules.missingTelemetry',
+      'risk.check.kycRoutingRules.warnIncompleteRules',
+      'risk.cliSecurity.telemetryRulesMissing',
+    ]) {
+      const msg = translate(key, {port: 7899}, locale);
+      expect(msg).not.toBe(key);
+    }
   }
+});
+
+test('normalizeProxyEndpoint unifies [::1] and ::1 loopback and returns null for portless endpoints', () => {
+  expect(normalizeProxyEndpoint('http://[::1]:7899')).toEqual({scheme: 'http', hostPort: '127.0.0.1:7899'});
+  expect(normalizeProxyEndpoint('socks5://::1:7899')).toEqual({scheme: 'socks5', hostPort: '127.0.0.1:7899'});
+  expect(normalizeProxyEndpoint('::1:7900')).toEqual({scheme: 'http', hostPort: '127.0.0.1:7900'});
+  expect(normalizeProxyEndpoint('http://localhost:7899')).toEqual({scheme: 'http', hostPort: '127.0.0.1:7899'});
+  expect(normalizeProxyEndpoint('http://127.0.0.1')).toBeNull();
+  expect(normalizeProxyEndpoint('https://proxy.example.com')).toBeNull();
+  expect(normalizeProxyEndpoint('socks5://localhost')).toBeNull();
+  expect(areCliAndBrowserProxiesAligned('socks5h://[::1]:7899', 'http://::1:7899')).toBe(true);
+});
+
+test('auditClaudeCliSecurityBoundary warns when NO_PROXY omits loopback and aligns settings.local.json non-string language with Rust', () => {
+  const baseEnv = {
+    HTTP_PROXY: 'http://[::1]:7899',
+    HTTPS_PROXY: 'http://localhost:7899',
+    ALL_PROXY: 'http://127.0.0.1:7899',
+    GRPC_PROXY: 'http://::1:7899',
+    DISABLE_TELEMETRY: '1',
+    DISABLE_ERROR_REPORTING: '1',
+    DO_NOT_TRACK: '1',
+  };
+
+  expect(
+    auditClaudeCliSecurityBoundary({
+      settingsJson: {env: {...baseEnv, NO_PROXY: '192.168.1.0/24'}},
+    }).proxy_env_complete,
+  ).toBe(false);
+  expect(
+    auditClaudeCliSecurityBoundary({
+      settingsJson: {env: {...baseEnv, NO_PROXY: 'localhost'}},
+    }).proxy_env_complete,
+  ).toBe(false);
+  expect(
+    auditClaudeCliSecurityBoundary({
+      settingsJson: {env: {...baseEnv, NO_PROXY: '127.0.0.1'}},
+    }).proxy_env_complete,
+  ).toBe(false);
+  expect(
+    auditClaudeCliSecurityBoundary({
+      settingsJson: {env: {...baseEnv, NO_PROXY: 'localhost,127.0.0.1'}},
+    }).proxy_env_complete,
+  ).toBe(true);
+
+  // settings.local.json overriding `language: null` clears settings.json `zh-CN`, matching Rust Option<String>
+  expect(
+    auditClaudeCliSecurityBoundary({
+      settingsJson: {language: 'zh-CN', env: {...baseEnv, NO_PROXY: 'localhost,127.0.0.1'}},
+      settingsLocalJson: {language: null},
+    }).non_english_language,
+  ).toBe(false);
+});
+
+test('buildMultiPortClashYaml clamps port counts, emits TCP-only local listeners, and covers KYC/Sift/Datadog rules', () => {
+  const snippet = buildMultiPortClashYaml({
+    count: 3,
+    startPort: 7899,
+    groupNames: ['US-Res-1', 'US-Res-2', 'US-Res-3'],
+  });
+  expect(snippet.ports).toEqual([7899, 7900, 7901]);
+  expect(snippet.groups).toEqual(['US-Res-1', 'US-Res-2', 'US-Res-3']);
+  expect(snippet.yaml).toContain('listeners:');
+  expect(snippet.yaml).toContain('type: mixed');
+  expect(snippet.yaml).toContain('listen: 127.0.0.1');
+  expect(snippet.yaml).toContain('udp: false');
+  expect(snippet.yaml).toContain('port: 7899');
+  expect(snippet.yaml).toContain('port: 7900');
+  expect(snippet.yaml).toContain('port: 7901');
+  expect(snippet.yaml).toContain('prepend-rules:');
+  for (const domain of [
+    'claude.ai',
+    'anthropic.com',
+    'sift.com',
+    'siftscience.com',
+    'hexagon-cdn.com',
+    'hexagon-analytics.com',
+    'withpersona.com',
+    'yoti.com',
+    'datadoghq',
+  ]) {
+    expect(snippet.yaml).toContain(domain);
+  }
+  expect(snippet.yaml).toContain('US-Res-1');
+  expect(snippet.yaml).toContain('US-Res-3');
+  const clamped = buildMultiPortClashYaml({count: 9, startPort: 80});
+  expect(clamped.ports).toHaveLength(5);
+  expect(clamped.ports[0]).toBe(7899);
 });

@@ -3317,3 +3317,171 @@ fn spent_thresholds_80_85_and_default_concurrency_one() {
     assert_eq!(load_config(&fx.app_data).spent_threshold_pct, 98);
 }
 
+#[test]
+fn cooldown_bumps_tick_survives_gui_save_and_clear_cooldown_converges() {
+    let fx = TempFixture::new("cd-converge");
+    let now_sec = now_epoch_sec();
+    let rec_a = fx.seed_saved_account("Acct-A", "u-cd-a", "cda@example.invalid", "ta", "ra");
+    let rec_b = fx.seed_saved_account("Acct-B", "u-cd-b", "cdb@example.invalid", "tb", "rb");
+    let db = database::Database::open(&fx.vault).unwrap();
+    set_summary_quota(&db, &rec_a.id, Some(10), Some(now_sec + 3600), Some(10), Some(now_sec + 86400), None);
+    set_summary_quota(&db, &rec_b.id, Some(15), Some(now_sec + 3600), Some(15), Some(now_sec + 86400), None);
+
+    let mut cfg = SmartRelayConfig::default();
+    cfg.cooldown_until_sec.insert("current".into(), now_sec + 120);
+    cfg.rotation_tick.insert(rec_a.id.clone(), 4);
+    save_config(&fx.app_data, &cfg).unwrap();
+
+    // apply_slot_failure_cooldown bumps rotation_tick[rec_a] and removes stray "current".
+    let cd = super::slots::apply_slot_failure_cooldown(
+        &fx.app_data,
+        &fx.vault,
+        &rec_a.id,
+        Some(true),
+        None,
+        Some(300),
+        now_sec,
+    );
+    assert_eq!(cd, Some(now_sec + 300));
+    let disk_after_cd = load_config(&fx.app_data);
+    assert!(!disk_after_cd.cooldown_until_sec.contains_key("current"));
+    assert_eq!(disk_after_cd.rotation_tick.get(&rec_a.id).copied(), Some(5));
+
+    // Stale GUI save carrying old tick 4 must preserve rec_a cooldown.
+    let mut stale_gui = SmartRelayConfig::default();
+    stale_gui.rotation_tick.insert(rec_a.id.clone(), 4);
+    let merged_stale = super::merge_config_preserving_runtime(&disk_after_cd, stale_gui, now_sec);
+    assert_eq!(
+        merged_stale.cooldown_until_sec.get(&rec_a.id).copied(),
+        Some(now_sec + 300)
+    );
+
+    // clear_cooldown_in clears cooldown + matching no_return and bumps rotation_tick again.
+    let mut with_no_return = disk_after_cd.clone();
+    with_no_return.no_return_account_id = Some(rec_a.id.clone());
+    with_no_return.no_return_until_sec = now_sec + 600;
+    save_config(&fx.app_data, &with_no_return).unwrap();
+
+    let view = clear_cooldown_in(&fx.app_data, &fx.vault, &fx.home, &rec_a.id, now_sec, &[])
+        .expect("clear cooldown");
+    assert!(!view.config.cooldown_until_sec.contains_key(&rec_a.id));
+    assert!(view.config.no_return_account_id.is_none());
+    assert_eq!(view.config.no_return_until_sec, 0);
+    assert_eq!(view.config.rotation_tick.get(&rec_a.id).copied(), Some(6));
+    assert!(clear_cooldown_in(&fx.app_data, &fx.vault, &fx.home, "current", now_sec, &[]).is_err());
+}
+
+#[test]
+fn loopback_proxy_variants_unify_and_orchestrator_state_exposes_cli_default_proxy() {
+    let fx = TempFixture::new("loopback-cli-def");
+    let now_sec = now_epoch_sec();
+
+    for raw in [
+        "http://localhost:7899",
+        "http://127.0.0.1:7899",
+        "http://[::1]:7899",
+        "http://::1:7899",
+        "socks5h://[::1]:7899",
+    ] {
+        assert_eq!(
+            super::config::exit_key(Some(raw)),
+            "127.0.0.1:7899",
+            "exit_key mismatch for {raw}"
+        );
+    }
+    for http_raw in [
+        "http://localhost:7899",
+        "http://127.0.0.1:7899",
+        "http://[::1]:7899",
+        "http://::1:7899",
+    ] {
+        assert_eq!(
+            super::config::normalize_proxy_to_http(http_raw).as_deref(),
+            Some("http://127.0.0.1:7899"),
+            "normalize_proxy_to_http mismatch for {http_raw}"
+        );
+    }
+
+    fs::write(
+        fx.home.join(".claude/settings.local.json"),
+        br#"{"env":{"HTTPS_PROXY":"http://user:pw@[::1]:18080"}}"#,
+    )
+    .unwrap();
+    let st_cred = orchestrator_state_in(&fx.app_data, &fx.vault, &fx.home, now_sec, &[]).unwrap();
+    assert!(st_cred.cli_default_proxy.is_none());
+
+    fs::write(
+        fx.home.join(".claude/settings.local.json"),
+        br#"{"env":{"HTTPS_PROXY":"http://[::1]:18080"}}"#,
+    )
+    .unwrap();
+    let st = orchestrator_state_in(&fx.app_data, &fx.vault, &fx.home, now_sec, &[]).unwrap();
+    assert_eq!(st.cli_default_proxy.as_deref(), Some("http://127.0.0.1:18080"));
+}
+
+#[test]
+fn relay_switch_with_reason_records_explicit_handoff_reason_and_pro_pool_md_uses_default_1() {
+    let fx = TempFixture::new("handoff-reason");
+    let now_sec = now_epoch_sec();
+    let md = super::tooling::pro_pool_worker_markdown();
+    assert!(md.contains("default 1"), "expected default 1 in markdown");
+    assert!(!md.contains("default 2"), "stale default 2 must be updated");
+
+    let rec_a = fx.seed_saved_account("Acct-A", "u-hr-a", "hra@example.invalid", "ta", "ra");
+    let rec_b = fx.seed_saved_account("Acct-B", "u-hr-b", "hrb@example.invalid", "tb", "rb");
+
+    // Put rec_a live + synthetic transcript so Store::switch captures and commits a handoff.
+    let mut store = Store::open(&fx.vault, &fx.home).unwrap();
+    store.switch(&rec_a.id, "Empty", &Policy::all(), &Reporter::channel(None)).unwrap();
+    drop(store);
+    let db = database::Database::open(&fx.vault).unwrap();
+    set_summary_quota(&db, &rec_a.id, Some(90), Some(now_sec + 3600), Some(10), Some(now_sec + 86400), None);
+    set_summary_quota(&db, &rec_b.id, Some(5), Some(now_sec + 3600), Some(5), Some(now_sec + 86400), None);
+    drop(db);
+    fs::write(
+        fx.home.join(".claude.json"),
+        serde_json::to_vec_pretty(&json!({
+            "oauthAccount": { "accountUuid": "u-hr-a", "emailAddress": "hra@example.invalid" },
+            "cachedUsageUtilization": {
+                "accountUuid": "u-hr-a",
+                "fetchedAtMs": now_sec * 1000,
+                "utilization": {
+                    "five_hour": { "utilization": 90, "resets_at": now_sec + 3600 },
+                    "seven_day": { "utilization": 10, "resets_at": now_sec + 86400 }
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let sess_dir = fx.home.join(".claude/projects/demo");
+    fs::create_dir_all(&sess_dir).unwrap();
+    fs::write(
+        sess_dir.join("33333333-4444-4555-8666-777777777777.jsonl"),
+        format!(
+            "{}\n{}\n",
+            json!({"type":"user","message":{"role":"user","content":"Test handoff"}}),
+            json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Step done."}]}})
+        ),
+    )
+    .unwrap();
+
+    let res = super::tooling::relay_switch_with_reason_in(
+        &fx.app_data,
+        &fx.vault,
+        &fx.home,
+        None,
+        None,
+        Some(false),
+        None,
+        Some("external_worker_timeout"),
+        now_sec,
+        &[],
+    );
+    assert!(res.ok && res.switched, "switch result: {res:?}");
+    let latest = crate::identities::handoff::latest_handoff_in(&fx.app_data, now_sec)
+        .unwrap()
+        .expect("latest handoff");
+    assert_eq!(latest.handoff_reason.as_deref(), Some("external_worker_timeout"));
+}
+

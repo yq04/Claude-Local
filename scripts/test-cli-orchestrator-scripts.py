@@ -3856,6 +3856,169 @@ class CliOrchestratorScriptsTests(unittest.TestCase):
             self.assertGreaterEqual(sum(1 for c in tr_te["orchestrate_calls"] if c.get("op") == "status"), 4)
             self.assertFalse(tr_te["claude_calls"][0]["ephemeral_after_sleep"]["threshold_armed_exists"])
             self.assertFalse(tr_te["claude_calls"][0]["ephemeral_after_sleep"]["proactive_handoff_exists"])
+
+            # 3. forced_stop respects internal bg subagent (defers then times out -> external_worker_timeout),
+            # skips waiting once spentPct >= hard_cap_pct (-> handoff_reason=forced_stop),
+            # Remove-HandoffSensitiveText redacts 64-hex, and claude-subagent.ps1 defaults maxSameExitConcurrency to 1.
+            st_85_pre = {
+                "ok": True, "cli_running": False, "should_relay_now": False,
+                "active": id_a, "active_name": "Acct-A", "ranked_auto_targets": [id_b],
+                "accounts": [{"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 60, "used_7d": 25, "effective_rem": 40},
+                             {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 90}],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+            st_85_post = {
+                "ok": True, "cli_running": False, "should_relay_now": False,
+                "active": id_b, "active_name": "Acct-B", "ranked_auto_targets": [],
+                "accounts": [{"id": id_b, "name": "Acct-B", "is_current": True, "used_5h": 10, "used_7d": 10, "effective_rem": 90}],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+            # 3a. Internal background subagent defers forced_stop until timeout and forwards external_worker_timeout
+            d_bg = stub_root / "forced_internal_bg"
+            d_bg.mkdir()
+            home_bg = d_bg / "home"
+            (home_bg / ".claude" / "agents").mkdir(parents=True)
+            (home_bg / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+            t_bg = home_bg / ".claude" / "projects" / slug / "sess-bg-meta.jsonl"
+            sub_meta_rel = f".claude/projects/{slug}/sess-bg-meta/subagents/agent-bg1.meta.json"
+            l_bg, c_bg, tr_bg_p, _ = _write_mock_shims(d_bg, {
+                "orchestrate": {
+                    "status": [st_85_pre, st_armed, st_armed, st_armed, st_85_post],
+                    "relay_switch": {
+                        "ok": True, "switched": True, "from_record_id": id_a, "target_id": id_b,
+                        "from_name": "Acct-A", "target_name": "Acct-B", "target_effective_rem": 90, "reason": "threshold_reached",
+                    },
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 0,
+                        "write_files": {
+                            "AppData/Roaming/ai.local.claude-local/quota_ledger.json": json.dumps({"accounts": {"a@example.invalid": {"quota_5h_used": 86}}}),
+                            ".claude/sessions/99913.json": json.dumps({"pid": 99913, "sessionId": "sess-bg-meta", "cwd": str(work)}),
+                            f".claude/projects/{slug}/sess-bg-meta.jsonl": json.dumps({"type": "user", "sessionId": "sess-bg-meta", "message": {"role": "user", "content": "Work"}}) + "\n",
+                            sub_meta_rel: json.dumps({"agentType": "Explore", "finished": False}),
+                        },
+                        "wait_for_armed_timeout_ms": 4000,
+                        "fire_post_tool_use": [
+                            {"hook_event_name": "PostToolUse", "tool_name": "Read", "session_id": "sess-bg-meta", "transcript_path": str(t_bg)},
+                            {"hook_event_name": "PostToolUse", "tool_name": "Edit", "session_id": "sess-bg-meta", "transcript_path": str(t_bg)},
+                            {"hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": "sess-bg-meta", "transcript_path": str(t_bg)},
+                        ],
+                        "sleep_after_hook_ms": 2300,
+                    },
+                    {"exit_code": 0, "stdout": "resumed after internal bg timeout\n"},
+                ],
+            })
+            r_bg = _run_ps(
+                ps_exe,
+                RELAY_PS1,
+                ["-AutoContinue", "-ThresholdPct", "85"],
+                _mock_env(home_bg, l_bg, c_bg, CLAUDE_RELAY_TEST_EXT_TIMEOUT_SEC="1.1"),
+                work,
+            )
+            self.assertEqual(r_bg.returncode, 0, r_bg.stderr + "\n" + r_bg.stdout)
+            self.assertIn("Internal background subagent(s) are still running; deferring /exit up to 300s until completion", r_bg.stdout)
+            tr_bg = json.loads(tr_bg_p.read_text(encoding="utf-8"))
+            bg_switches = [c for c in tr_bg["orchestrate_calls"] if c.get("op") == "relay_switch"]
+            self.assertEqual(len(bg_switches), 1)
+            self.assertEqual(bg_switches[0].get("handoff_reason"), "external_worker_timeout")
+
+            # 3b. When spentPct >= hard_cap_pct, forced_stop does NOT wait 30s on internal bg subagents and passes forced_stop
+            st_hc_armed = {
+                "ok": True, "cli_running": True, "should_relay_now": True, "relay_trigger_kind": "threshold_reached",
+                "active": id_a, "active_name": "Acct-A", "ranked_auto_targets": [id_b],
+                "accounts": [{"id": id_a, "name": "Acct-A", "is_current": True, "used_5h": 93, "used_7d": 25, "effective_rem": 7},
+                             {"id": id_b, "name": "Acct-B", "is_current": False, "effective_rem": 90}],
+                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 85},
+            }
+            d_hc = stub_root / "forced_internal_bg_hardcap"
+            d_hc.mkdir()
+            home_hc = d_hc / "home"
+            (home_hc / ".claude" / "agents").mkdir(parents=True)
+            (home_hc / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+            t_hc = home_hc / ".claude" / "projects" / slug / "sess-bg-hc.jsonl"
+            sub_hc_rel = f".claude/projects/{slug}/sess-bg-hc/subagents/agent-bg2.meta.json"
+            l_hc, c_hc, tr_hc_p, _ = _write_mock_shims(d_hc, {
+                "orchestrate": {
+                    "status": [st_85_pre, st_hc_armed, st_hc_armed, st_hc_armed, st_85_post],
+                    "relay_switch": {
+                        "ok": True, "switched": True, "from_record_id": id_a, "target_id": id_b,
+                        "from_name": "Acct-A", "target_name": "Acct-B", "target_effective_rem": 90, "reason": "threshold_reached",
+                    },
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 0,
+                        "write_files": {
+                            "AppData/Roaming/ai.local.claude-local/quota_ledger.json": json.dumps({"accounts": {"a@example.invalid": {"quota_5h_used": 93}}}),
+                            ".claude/sessions/99914.json": json.dumps({"pid": 99914, "sessionId": "sess-bg-hc", "cwd": str(work)}),
+                            f".claude/projects/{slug}/sess-bg-hc.jsonl": json.dumps({"type": "user", "sessionId": "sess-bg-hc", "message": {"role": "user", "content": "Work"}}) + "\n",
+                            sub_hc_rel: json.dumps({"agentType": "Explore", "finished": False}),
+                        },
+                        "wait_for_armed_timeout_ms": 4000,
+                        "fire_post_tool_use": [
+                            {"hook_event_name": "PostToolUse", "tool_name": "Read", "session_id": "sess-bg-hc", "transcript_path": str(t_hc)},
+                            {"hook_event_name": "PostToolUse", "tool_name": "Edit", "session_id": "sess-bg-hc", "transcript_path": str(t_hc)},
+                            {"hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": "sess-bg-hc", "transcript_path": str(t_hc)},
+                        ],
+                        "sleep_after_hook_ms": 950,
+                    },
+                    {"exit_code": 0, "stdout": "resumed after hard_cap forced_stop bypass\n"},
+                ],
+            })
+            r_hc = _run_ps(
+                ps_exe,
+                RELAY_PS1,
+                ["-AutoContinue", "-ThresholdPct", "85"],
+                _mock_env(home_hc, l_hc, c_hc, CLAUDE_RELAY_TEST_EXT_TIMEOUT_SEC="30"),
+                work,
+            )
+            self.assertEqual(r_hc.returncode, 0, r_hc.stderr + "\n" + r_hc.stdout)
+            self.assertNotIn("deferring /exit up to 300s", r_hc.stdout)
+            tr_hc = json.loads(tr_hc_p.read_text(encoding="utf-8"))
+            hc_switches = [c for c in tr_hc["orchestrate_calls"] if c.get("op") == "relay_switch"]
+            self.assertEqual(len(hc_switches), 1)
+            self.assertEqual(hc_switches[0].get("handoff_reason"), "forced_stop")
+
+            # 3c. Remove-HandoffSensitiveText redacts 64-hex -> [redacted-hex] while preserving 32-hex -> [id]
+            d_red = stub_root / "redact_64hex"
+            d_red.mkdir()
+            sample_64 = "AbCdEf0123456789" * 4
+            sample_32 = "0123456789abcdef0123456789abcdef"
+            relay_lines = RELAY_PS1.read_text(encoding="utf-8-sig").splitlines()
+            fn_start = next(i for i, ln in enumerate(relay_lines) if ln.startswith("function Remove-HandoffSensitiveText"))
+            fn_end = next(i for i in range(fn_start, len(relay_lines)) if relay_lines[i] == "}")
+            fn_body = "\n".join(relay_lines[fn_start:fn_end + 1])
+            red_ps1 = d_red / "redact_check.ps1"
+            red_ps1.write_text(
+                f"{fn_body}\n"
+                f"$out = Remove-HandoffSensitiveText -Text 'digest={sample_64} rec={sample_32}'\n"
+                "Write-Output $out\n",
+                encoding="utf-8",
+            )
+            r_red = subprocess.run(
+                [ps_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(red_ps1)],
+                capture_output=True, text=True, encoding="utf-8", timeout=20,
+            )
+            self.assertEqual(r_red.returncode, 0, r_red.stderr)
+            self.assertIn("digest=[redacted-hex]", r_red.stdout)
+            self.assertIn("rec=[id]", r_red.stdout)
+            self.assertNotIn(sample_64, r_red.stdout)
+
+            # 3d. claude-subagent.ps1 -Status defaults maxSameExitConcurrency fallback to 1 (not 2)
+            d_sub = stub_root / "subagent_default_conc"
+            d_sub.mkdir()
+            home_sub = d_sub / "home"
+            (home_sub / ".claude").mkdir(parents=True)
+            l_sub, c_sub, _, _ = _write_mock_shims(d_sub, {
+                "orchestrate": {
+                    "status": [{"ok": True, "config": {}, "accounts": [], "pool": {"readyCount": 0, "lowCount": 0}}],
+                },
+                "claude_runs": [],
+            })
+            r_sub = _run_ps(ps_exe, SUBAGENT_PS1, ["-Status"], _mock_env(home_sub, l_sub, c_sub), work)
+            self.assertEqual(r_sub.returncode, 0, r_sub.stderr + "\n" + r_sub.stdout)
+            self.assertIn("Max Same-Exit Concurrency : 1", r_sub.stdout)
         finally:
             shutil.rmtree(stub_root, ignore_errors=True)
 

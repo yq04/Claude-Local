@@ -301,6 +301,17 @@ fn sanitize_record_map(map: BTreeMap<String, u64>) -> BTreeMap<String, u64> {
     out
 }
 
+fn normalize_loopback_host(host: &str) -> String {
+    let clean = host.trim().trim_matches(['[', ']']);
+    if clean.eq_ignore_ascii_case("localhost") || clean == "127.0.0.1" || clean == "::1" {
+        "127.0.0.1".to_string()
+    } else if clean.contains(':') {
+        format!("[{clean}]")
+    } else {
+        clean.to_ascii_lowercase()
+    }
+}
+
 fn parse_host_port(authority: &str) -> Option<(String, u16)> {
     if authority.is_empty()
         || authority.chars().any(|c| {
@@ -308,6 +319,16 @@ fn parse_host_port(authority: &str) -> Option<(String, u16)> {
         })
     {
         return None;
+    }
+    if let Some(port_part) = authority.strip_prefix("::1:") {
+        if port_part.is_empty() || !port_part.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let port = port_part.parse::<u16>().ok()?;
+        if port == 0 {
+            return None;
+        }
+        return Some(("[::1]".to_string(), port));
     }
     if let Some(rest) = authority.strip_prefix('[') {
         let close = rest.find(']')?;
@@ -391,7 +412,8 @@ pub(crate) fn normalize_proxy_to_http(raw: &str) -> Option<String> {
     };
     let clean_auth = authority.trim_end_matches('/');
     let (host, port) = parse_host_port(clean_auth)?;
-    Some(format!("http://{host}:{port}"))
+    let norm_host = normalize_loopback_host(&host);
+    Some(format!("http://{norm_host}:{port}"))
 }
 
 pub(crate) fn exit_key(proxy: Option<&str>) -> String {

@@ -212,3 +212,124 @@ fn cli_transition_preserves_only_verified_warming_and_coordinates_promotion_or_r
     drop(db);
     fs::remove_dir_all(fixture).unwrap();
 }
+
+#[test]
+fn new_slot_proxy_priority_prefers_slot_proxy_then_claude_home_over_donor_and_syncs_cleanly() {
+    let fixture = tests::sample();
+    let root = fixture.join("browser");
+    let home = fixture.join("home");
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    let mut db = workspaces::database(&root).unwrap();
+
+    let id_a = crate::identities::new_id().unwrap();
+    let id_b = crate::identities::new_id().unwrap();
+    let id_c = crate::identities::new_id().unwrap();
+    let now_s = 1_760_000_000u64;
+    for (id, name, acct) in [
+        (&id_a, "Acct-A", "acct-a"),
+        (&id_b, "Acct-B", "acct-b"),
+        (&id_c, "Acct-C", "acct-c"),
+    ] {
+        db.remember(&crate::identities::database::Record {
+            id: id.clone(),
+            name: name.into(),
+            archive: format!("{id}.baga"),
+            saved_at: now_s,
+            bytes: 1,
+            policy: crate::identities::Policy::default(),
+            empty: false,
+            account_key: Some(acct.into()),
+        })
+        .unwrap();
+    }
+    db.configure_browser(true, false, Some(&id_a)).unwrap();
+    let (slot_a, _) = db.ensure_identity_binding(&id_a).unwrap();
+    let (slot_b, _) = db.ensure_identity_binding(&id_b).unwrap();
+    let (slot_c, _) = db.ensure_identity_binding(&id_c).unwrap();
+    db.switch_browser_slot_only(&slot_a).unwrap();
+
+    // Seed active slot A with a custom browser port (19991) and credentials in root_cfg (17897).
+    let mut root_cfg = config::load(&root).unwrap();
+    root_cfg.proxy = "socks5://127.0.0.1:17897".into();
+    config::save(&root, &root_cfg).unwrap();
+    let scope_a = workspaces::ensure_slot_with_home_and_policy(&root, &db, &slot_a, Some(&home), true)
+        .unwrap();
+    let mut cfg_a = config::load(&scope_a).unwrap();
+    cfg_a.proxy = "socks5://user:pass@127.0.0.1:19991".into();
+    config::save(&scope_a, &cfg_a).unwrap();
+
+    // Global ~/.claude baseline in settings.local.json (takes precedence over settings.json) -> 18080.
+    fs::write(
+        claude_dir.join("settings.json"),
+        br#"{"env":{"HTTP_PROXY":"http://127.0.0.1:7897"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        claude_dir.join("settings.local.json"),
+        br#"{"env":{"HTTPS_PROXY":"http://localhost:18080"}}"#,
+    )
+    .unwrap();
+    // Configure slotProxies only on id_c -> [::1]:19090.
+    let mut relay_cfg = crate::identities::orchestrator::SmartRelayConfig::default();
+    relay_cfg
+        .slot_proxies
+        .insert(id_c.clone(), "http://[::1]:19090".into());
+    crate::identities::orchestrator::save_config(&fixture, &relay_cfg).unwrap();
+
+    // New unbound slot B: ~/.claude (18080 -> socks5://127.0.0.1:18080) beats root_cfg (17897) and active donor A (19991).
+    let scope_b = workspaces::ensure_slot_with_home_and_policy(&root, &db, &slot_b, Some(&home), true)
+        .unwrap();
+    assert_eq!(config::load(&scope_b).unwrap().proxy, "socks5://127.0.0.1:18080");
+
+    // Existing manually configured slot B keeps its manual proxy unless synced explicitly.
+    let mut manual_b = config::load(&scope_b).unwrap();
+    manual_b.proxy = "socks5://127.0.0.1:22222".into();
+    config::save(&scope_b, &manual_b).unwrap();
+    workspaces::ensure_slot_with_home_and_policy(&root, &db, &slot_b, Some(&home), true).unwrap();
+    assert_eq!(config::load(&scope_b).unwrap().proxy, "socks5://127.0.0.1:22222");
+
+    // New slot C with slotProxies[id_c] beats ~/.claude baseline.
+    let scope_c = workspaces::ensure_slot_with_home_and_policy(&root, &db, &slot_c, Some(&home), true)
+        .unwrap();
+    assert_eq!(config::load(&scope_c).unwrap().proxy, "socks5://127.0.0.1:19090");
+
+    // bound_slot_browser_proxies strips user:pass credentials cleanly.
+    let records = db.records().unwrap();
+    let proxies_view = workspaces::bound_slot_browser_proxies(&root, &db, &records);
+    assert_eq!(
+        proxies_view.get(&id_a).map(|v| v.proxy.as_str()),
+        Some("socks5://127.0.0.1:19991")
+    );
+    assert_eq!(
+        proxies_view.get(&id_b).map(|v| v.proxy.as_str()),
+        Some("socks5://127.0.0.1:22222")
+    );
+
+    // sync_identity_browser_proxy_in refuses while running, and updates config.json when stopped.
+    let err_running = workspaces::sync_identity_browser_proxy_in(
+        &root,
+        &fixture,
+        &home,
+        &id_b,
+        &|_| Ok(true),
+    )
+    .unwrap_err();
+    assert!(err_running.contains("正在运行"));
+
+    let (synced_slot, changed, is_active) = workspaces::sync_identity_browser_proxy_in(
+        &root,
+        &fixture,
+        &home,
+        &id_b,
+        &|_| Ok(false),
+    )
+    .unwrap();
+    assert_eq!(synced_slot, slot_b);
+    assert!(changed);
+    assert!(!is_active);
+    assert_eq!(config::load(&scope_b).unwrap().proxy, "socks5://127.0.0.1:18080");
+
+    drop(db);
+    fs::remove_dir_all(fixture).unwrap();
+}

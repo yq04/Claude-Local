@@ -41,8 +41,13 @@ pub(super) fn needs_identity_guard(urls: &[String]) -> bool {
 }
 
 /// This is an intentionally narrow policy, not a claim to recognize every CLI
-/// OAuth endpoint/version. Other hosts and ordinary login/payment pages retain
-/// their normal behavior. A malformed request at this exact endpoint fails safe.
+/// OAuth endpoint/version. Console/API OAuth (`platform.claude.com/oauth/authorize`)
+/// is deliberately excluded: it authorizes developer Console / API-key billing
+/// accounts rather than `claude.ai` / `claude.com` subscription CLI sessions, so
+/// routing it through the CLI identity guard could misbind Console credentials
+/// into an isolated subscription profile instead of the user's normal browser.
+/// Other hosts and ordinary login/payment pages retain their normal behavior. A
+/// malformed request at this exact endpoint fails safe.
 fn validate_authorization(value: &str) -> Result<ValidatedClaudeOAuthUrl, String> {
     if value.len() > 16 * 1024 || !authorization_endpoint(value) {
         return Err(FAILED.into());

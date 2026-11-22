@@ -6,7 +6,7 @@ risk_check.rs: 本地快照可携带同context_id核对后的遮罩浏览器归�
 identities/wakeup.rs: setup创建唯一进程级自动续杯owner（禁用/不可写/忙时在 Condvar 上无限期驻留零唤醒，`candidates()` 单次加载路由上下文且不扫描受管浏览器，仅 dispatch-time 核对同出口并发上限）；Root前端仅迁移/订阅，切页/托盘隐藏不中断，实际Exit停止。与手动入口共用既有collect门禁与预算，不添加服务、计划任务或新HTTP。
 清理在本机执行；网络页仅提供用户触发的固定 Claude 服务连通性诊断，没有供应商导航或 Skill 依赖。生产命令提供身份压缩暂存、空身份切换、恢复、独立确认的直接删除及当前默认 Claude 文件残留维护。用户选择保留或随身份暂存，文件残留另经扫描和选择清理，系统设置独立。
 identities/ - SQLite 身份目录、用户保留策略、加密压缩暂存、空身份切换、恢复、选择性直接删除与独立本地 Token 统计账本；见其 CLAUDE.md。
-identities/handoff.rs - 零配置扰动防封交接检查点（在 `Store::switch` 清理前捕获只读 `HandoffDraft`、硬防封脱敏防火墙剥离账号/组织/邮箱/UUID/路径/凭据/思考签名并在切换提交后原子写入 `<app_data_dir>/handoff/latest-handoff.{json,md}` 与 `subagent-outputs/sub-XX.md`，暴露 `identities_latest_handoff` / `identities_dismiss_handoff`；绝不写入 `~/.claude/settings.json` 或 `~/.claude/projects/*.jsonl`）。
+identities/handoff.rs - 零配置扰动防封交接检查点（在 `Store::switch` 清理前捕获只读 `HandoffDraft`、过滤元数据/用户消息与 >400 字符普通正文以防 429 误判、硬防封脱敏防火墙剥离账号/组织/邮箱/UUID/路径/凭据/思考签名并在切换提交后原子写入 `<app_data_dir>/handoff/latest-handoff.{json,md}`［含可选 `handoffReason`］与 `subagent-outputs/sub-XX.md`，暴露 `identities_latest_handoff` / `identities_dismiss_handoff`；绝不写入 `~/.claude/settings.json` 或 `~/.claude/projects/*.jsonl`）。
 identities/warming.rs - 独立私有 warming_cards.json 与 Free 浏览器养号卡命令（含注册国家/时区锁定、出口国家与配置时区一致性探针 `identities_warming_probe_check`），普通操作不停止 CLI、不更改 CLI 身份；显式转正继承原 ID/槽位/种子与手动订阅到期日，当前卡删除先脱离到全新空白浏览器槽位。
 identities/online.rs - 固定端点在线额度与账号绑定的网页元数据桥，原生仅编排隐藏Python进程并读取白名单摘要；前台近实时需用户显式开启，后台不轮询。
 identities/subscription.rs - 独立于 SQLite user_version=3 与 Python quota_ledger 的手动订阅到期/充值日私有原子存储（identity-vault/manual_subscriptions.json），支持按 +1 自然月安全推算到期日、UTC 正午跨时区无偏移时间戳与较新网页账单优先合并，绝不终止运行中的 claude.exe。

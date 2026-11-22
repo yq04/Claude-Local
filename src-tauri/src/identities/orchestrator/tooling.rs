@@ -111,6 +111,7 @@ where
     false
 }
 
+#[cfg(test)]
 pub(crate) fn relay_switch_in(
     app_data_dir: &Path,
     vault: &Path,
@@ -119,6 +120,33 @@ pub(crate) fn relay_switch_in(
     threshold_override: Option<u8>,
     rate_limited: Option<bool>,
     from_record_id: Option<&str>,
+    now_sec: u64,
+    procs: &[ClaudeProcess],
+) -> RelaySwitchResult {
+    relay_switch_with_reason_in(
+        app_data_dir,
+        vault,
+        home,
+        strategy_override,
+        threshold_override,
+        rate_limited,
+        from_record_id,
+        None,
+        now_sec,
+        procs,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn relay_switch_with_reason_in(
+    app_data_dir: &Path,
+    vault: &Path,
+    home: &Path,
+    strategy_override: Option<&str>,
+    threshold_override: Option<u8>,
+    rate_limited: Option<bool>,
+    from_record_id: Option<&str>,
+    handoff_reason_override: Option<&str>,
     now_sec: u64,
     procs: &[ClaudeProcess],
 ) -> RelaySwitchResult {
@@ -529,6 +557,37 @@ pub(crate) fn relay_switch_in(
         "threshold_reached"
     };
 
+    if handoff_json_path.is_some() {
+        let explicit_reason = handoff_reason_override
+            .map(str::trim)
+            .filter(|r| {
+                matches!(
+                    *r,
+                    "threshold_reached"
+                        | "rate_limited"
+                        | "preferred_recovered"
+                        | "external_worker_timeout"
+                        | "forced_stop"
+                        | "awaiting_manual_reset"
+                )
+            });
+        let effective_handoff_reason = explicit_reason.unwrap_or_else(|| {
+            if rate_limited == Some(true) {
+                "rate_limited"
+            } else if eval.preferred_return_target.as_deref() == Some(target_id.as_str()) {
+                "preferred_recovered"
+            } else if eval.relay_trigger_kind.as_deref() == Some("awaiting_manual_reset") {
+                "awaiting_manual_reset"
+            } else {
+                reason
+            }
+        });
+        let _ = crate::identities::handoff::set_handoff_reason_in(
+            app_data_dir,
+            effective_handoff_reason,
+        );
+    }
+
     RelaySwitchResult {
         schema: 1,
         ok: true,
@@ -601,7 +660,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File \"$HOME/.local/bin/claude-subagent
 ```\n\
 \n\
 Guidelines:\n\
-- Before fanning out 3+ parallel subagents, run `pwsh -NoProfile -ExecutionPolicy Bypass -File \"$HOME/.local/bin/claude-subagent.ps1\" -Status` once to inspect `ready` slots and `Max Same-Exit Concurrency` (default 2), dispatching in waves of 2 to avoid `concurrency_capped` waits.\n\
+- Before fanning out 3+ parallel subagents, run `pwsh -NoProfile -ExecutionPolicy Bypass -File \"$HOME/.local/bin/claude-subagent.ps1\" -Status` once to inspect `ready` slots and `Max Same-Exit Concurrency` (default 1), dispatching in waves within that exit cap to avoid `concurrency_capped` waits.\n\
 - Omit `-AccountId` to let the pool auto-select and automatically fail over across healthy Pro slots on 429/auth errors.\n\
 - Omit `-ReadOnly` only when the worker owns disjoint file edits.\n\
 - Pass `-Resume <session-uuid>` from `[CL-SLOT-TRACE]` for follow-up turns on the same slot.\n"

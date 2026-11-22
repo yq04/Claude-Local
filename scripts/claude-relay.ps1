@@ -1,5 +1,5 @@
-﻿# [INPUT]: CLI relay switches (-AutoContinue override, -MaxRelays, -ThresholdPct, -Strategy, -ContinuationPrompt, -HandoffMode clean_handoff|fork_resume, -Status), optional ClaudeArgs, local HTTP proxy config (~/.claude/settings(.local).json prioritized ahead of shell env), %APPDATA%\ai.local.claude-local\quota_ledger.json change stamp, and claude-local.exe --orchestrate JSON status/relay_switch state (including defaultCliModel / defaultCliEffort, relayHandoffMode, relay_trigger_kind and handoff_md_path).
-# [OUTPUT]: Interactive TTY or print Claude Code execution with value/variadic-safe persistent-flag preservation, persistent default --model / --effort injection, telemetry/credential/CLAUDE_CONFIG_DIR env scrubbing, explicit HTTP proxy + NO_PROXY injection with retryable preflight, humanized 429/exit breather plus 6-15s anti-ban cross-account breather, ephemeral StopFailure/Stop/PostToolUse hooks (Python WindowsApps stub rejection -> ps1 fallback, Stop-prose rate-limit guard, 2-stage proactive threshold wrap-up & forced_stop safety net via quota_ledger.json watcher), live transcript 429/auto-wait polling (ignoring api-request-blob/metadata and non-error assistant prose), external worker deferral, Ctrl+C rescue, TUI raw-mode-gated phased CONIN$ WriteConsoleInputW (MapVirtualKeyW scan codes, sleep exit checks, cooked-mode pause, Esc x1-2, Ctrl+E/U, /exit, conditional Option '2' with 4s migration grace), daemon stop before breather, relay_switch retries, synthetic-error-filtered continued-in validation, parent-first source selection for cross-account clean_handoff/fork_resume (1200-char final progress digest), single-shot rapid-exit self-healing fallback with diagnostics, disk script drift warning, and --resume continuation strictly on the same account.
+﻿# [INPUT]: CLI relay switches (-AutoContinue override, -MaxRelays, -ThresholdPct, -Strategy, -ContinuationPrompt, -HandoffMode clean_handoff|fork_resume, -Status), optional ClaudeArgs, local HTTP proxy config (~/.claude/settings(.local).json prioritized ahead of shell env), %APPDATA%\ai.local.claude-local\quota_ledger.json change stamp, and claude-local.exe --orchestrate JSON status/relay_switch state (including defaultCliModel / defaultCliEffort, relayHandoffMode, relay_trigger_kind, handoff_reason and handoff_md_path).
+# [OUTPUT]: Interactive TTY or print Claude Code execution with value/variadic-safe persistent-flag preservation, persistent default --model / --effort injection, telemetry/credential/CLAUDE_CONFIG_DIR env scrubbing, explicit HTTP proxy + NO_PROXY injection with retryable preflight, humanized 429/exit breather plus 6-15s anti-ban cross-account breather, ephemeral StopFailure/Stop/PostToolUse hooks (Python WindowsApps stub rejection -> ps1 fallback, Stop-prose rate-limit guard, 2-stage proactive threshold wrap-up & forced_stop safety net respecting external workers + internal bg subagents up to 300s unless spent >= hard_cap_pct), live transcript 429/auto-wait polling (ignoring api-request-blob/metadata and non-error assistant prose), external worker deferral, Ctrl+C rescue, TUI raw-mode-gated phased CONIN$ WriteConsoleInputW (MapVirtualKeyW scan codes, sleep exit checks, cooked-mode pause, Esc x1-2, Ctrl+E/U, /exit, conditional Option '2' with 4s migration grace), daemon stop before breather, relay_switch retries (forwarding external_worker_timeout / forced_stop handoff_reason), synthetic-error-filtered continued-in validation, parent-first source selection for cross-account clean_handoff/fork_resume (1200-char final progress digest + 64-hex redaction), single-shot rapid-exit self-healing fallback with diagnostics, disk script drift warning, and --resume continuation strictly on the same account.
 # [POS]: Independent CLI relay wrapper installed to ~/.local/bin/claude-relay.ps1; never kills unrelated live claude.exe or edits ~/.claude/settings.json.
 # [PROTOCOL]: Update this header and scripts/CLAUDE.md when changing relay parameters or orchestrator schema.
 $ErrorActionPreference = 'Stop'
@@ -2861,6 +2861,7 @@ function Remove-HandoffSensitiveText {
     $t = [regex]::Replace($t, '(?i)\b(?:session|agent)_?id\b["'']?\s*[:=]\s*["'']?[A-Za-z0-9_\-]+["'']?', '[redacted]')
     $t = [regex]::Replace($t, '(?i)[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+', '[email]')
     $t = [regex]::Replace($t, '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', '[id]')
+    $t = [regex]::Replace($t, '\b[0-9a-fA-F]{64}\b', '[redacted-hex]')
     $t = [regex]::Replace($t, '(?i)\b[0-9a-f]{32}\b', '[id]')
     $t = [regex]::Replace($t, '(?i)[^\s"'']*[\\/]\.claude[\\/]projects[\\/][^\s"'']*', '[transcript]')
     $t = [regex]::Replace($t, '(?i)[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s"'']+', '~')
@@ -3405,6 +3406,10 @@ function Invoke-ClaudeRelayChild {
         $waitingExternalLogged = $false
         $externalWaitStartUtc = [DateTime]::MinValue
         $turnEndExternalDeferred = $false
+        $turnEndBgObserved = $false
+        $turnEndBgSawMeta = $false
+        $extWaitTimedOutFinal = $false
+        $forcedStopTriggered = $false
         $extWaitTimeoutSec = Get-ExternalWorkerTimeoutSec
         $discoveredSessionId = ''
         $lastKnownJsonl = ''
@@ -3603,6 +3608,7 @@ function Invoke-ClaudeRelayChild {
                         Write-Host '[Claude-Local Relay] External non-Claude worker agent is still running; deferring /exit up to 300s until completion...'
                     }
                     if (([DateTime]::UtcNow - $externalWaitStartUtc).TotalSeconds -ge $extWaitTimeoutSec) {
+                        $extWaitTimedOutFinal = $true
                         $pendingExitInjection = $true
                     }
                 } else {
@@ -3647,6 +3653,7 @@ function Invoke-ClaudeRelayChild {
                                 if (([DateTime]::UtcNow - $externalWaitStartUtc).TotalSeconds -ge $extWaitTimeoutSec) {
                                     $hasExtWorker = $false
                                     $extWaitTimedOut = $true
+                                    $extWaitTimedOutFinal = $true
                                 }
                             }
                             if (-not $hasExtWorker) {
@@ -3658,6 +3665,15 @@ function Invoke-ClaudeRelayChild {
                                     $false
                                 } else {
                                     Test-HasUnfinishedSubagentMeta -JsonlPath $tPath -RunStartUtc $RunStartUtc -ExternalOnly $false
+                                }
+                                if ($unfinishedSubMeta) {
+                                    $turnEndBgSawMeta = $true
+                                }
+                                if ($turnEnd.HasBg -and (-not $extWaitTimedOut)) {
+                                    $turnEndBgObserved = $true
+                                } elseif (-not $unfinishedSubMeta) {
+                                    $turnEndBgObserved = $false
+                                    $turnEndBgSawMeta = $false
                                 }
                                 $skipCleanBg = $turnEnd.HasBg -or $unfinishedSubMeta -or $hasExtWorker
                                 if (-not $skipCleanBg) {
@@ -3700,19 +3716,67 @@ function Invoke-ClaudeRelayChild {
                         $tOffset = if ($tPath -and $PreRunOffsets -and $PreRunOffsets.ContainsKey($tPath)) { [int64]$PreRunOffsets[$tPath] } else { [int64]0 }
                         if (-not (Test-TranscriptHasPendingToolUse -JsonlPath $tPath -StartOffset $tOffset -MaxTail 120)) {
                             $hasForcedExtWorker = Test-HasActiveExternalWorker -ChildPid $childPid -JsonlPath $tPath -RunStartUtc $RunStartUtc
-                            if ($hasForcedExtWorker) {
+                            $hasForcedSubMeta = Test-HasUnfinishedSubagentMeta -JsonlPath $tPath -RunStartUtc $RunStartUtc -ExternalOnly $false
+                            if ($hasForcedSubMeta) {
+                                $turnEndBgSawMeta = $true
+                            } elseif ($turnEndBgSawMeta) {
+                                $turnEndBgObserved = $false
+                                $turnEndBgSawMeta = $false
+                            }
+                            $teForced = Read-TurnEndMarker $TurnEndPath
+                            if ($teForced.Present -and $teForced.HasBg) {
+                                $turnEndBgObserved = $true
+                            }
+                            $hasForcedInternalBg = $hasForcedSubMeta -or $turnEndBgObserved -or ($teForced.Present -and $teForced.HasBg)
+
+                            $armedObj = $null
+                            if ($ThresholdArmedPath -and (Test-Path -LiteralPath $ThresholdArmedPath -PathType Leaf)) {
+                                try {
+                                    $armedObj = (Get-Content -LiteralPath $ThresholdArmedPath -Raw -Encoding UTF8) | ConvertFrom-Json
+                                } catch {
+                                    $armedObj = $null
+                                }
+                            }
+                            $forcedThresh = $EffectiveThreshold
+                            $armedThresh = if ($null -ne $armedObj) { Get-SafeProp $armedObj @('threshold_pct', 'thresholdPct') $null } else { $null }
+                            if ($null -ne $armedThresh -and [int]$armedThresh -gt 0) {
+                                $forcedThresh = [int]$armedThresh
+                            } elseif ($proState.ThresholdPct -gt 0) {
+                                $forcedThresh = [int]$proState.ThresholdPct
+                            }
+                            $defaultForcedHardCap = if ($forcedThresh -ge 98) { [Math]::Min($forcedThresh + 1, 99) } else { [Math]::Min($forcedThresh + 5, 97) }
+                            $armedHardCap = if ($null -ne $armedObj) { Get-SafeProp $armedObj @('hard_cap_pct', 'hardCapPct') $null } else { $null }
+                            $hardCapPct = if ($null -ne $armedHardCap -and [int]$armedHardCap -gt 0) { [int]$armedHardCap } else { [int]$defaultForcedHardCap }
+                            $spentPct = 0
+                            foreach ($pctCand in @($proState.Used5h, $proState.Used7d, $(if ($null -ne $armedObj) { Get-SafeProp $armedObj @('used_5h', 'used5h') $null } else { $null }), $(if ($null -ne $armedObj) { Get-SafeProp $armedObj @('used_7d', 'used7d') $null } else { $null }))) {
+                                if ($null -ne $pctCand) {
+                                    $pctInt = [int]$pctCand
+                                    if ($pctInt -gt $spentPct) { $spentPct = $pctInt }
+                                }
+                            }
+                            $hitHardCap = ($hardCapPct -gt 0) -and ($spentPct -ge $hardCapPct)
+
+                            $deferForcedExit = ($hasForcedExtWorker -or $hasForcedInternalBg) -and (-not $hitHardCap)
+                            if ($deferForcedExit) {
                                 if ($externalWaitStartUtc -eq [DateTime]::MinValue) {
                                     $externalWaitStartUtc = [DateTime]::UtcNow
                                 }
                                 if (-not $waitingExternalLogged) {
                                     $waitingExternalLogged = $true
-                                    Write-Host '[Claude-Local Relay] External non-Claude worker agent is still running; deferring /exit up to 300s until completion...'
+                                    if ($hasForcedExtWorker) {
+                                        Write-Host '[Claude-Local Relay] External non-Claude worker agent is still running; deferring /exit up to 300s until completion...'
+                                    } else {
+                                        Write-Host '[Claude-Local Relay] Internal background subagent(s) are still running; deferring /exit up to 300s until completion...'
+                                    }
                                 }
                                 if (([DateTime]::UtcNow - $externalWaitStartUtc).TotalSeconds -ge $extWaitTimeoutSec) {
-                                    $hasForcedExtWorker = $false
+                                    $deferForcedExit = $false
+                                    $extWaitTimedOutFinal = $true
+                                    $turnEndBgObserved = $false
+                                    $turnEndBgSawMeta = $false
                                 }
                             }
-                            if (-not $hasForcedExtWorker) {
+                            if (-not $deferForcedExit) {
                                 $externalWaitStartUtc = [DateTime]::MinValue
                                 $waitingExternalLogged = $false
                                 $stForced = $null
@@ -3725,6 +3789,7 @@ function Invoke-ClaudeRelayChild {
                                     if ($proState.SessionId) { $discoveredSessionId = $proState.SessionId }
                                     $proactiveHandoffTriggered = $true
                                     $cleanThresholdTriggered = $true
+                                    $forcedStopTriggered = $true
                                     $pendingExitInjection = $true
                                 } elseif ($null -ne $stForced -and [bool](Get-SafeProp $stForced @('ok') $false)) {
                                     Clear-ProactiveRelayStateFiles -ThresholdArmedPath $ThresholdArmedPath -ProactiveStatePath $ProactiveStatePath
@@ -3822,6 +3887,7 @@ function Invoke-ClaudeRelayChild {
                     if ($fallbackSid -and (-not $discoveredSessionId)) {
                         $discoveredSessionId = $fallbackSid
                     }
+                    if ($proFinal.Stage -eq 'forced_stop') { $forcedStopTriggered = $true }
                     $proactiveHandoffTriggered = $true
                     $cleanThresholdTriggered = $true
                     $proactiveExitFallback = $true
@@ -3833,6 +3899,8 @@ function Invoke-ClaudeRelayChild {
             CleanThresholdRelay   = [bool]$cleanThresholdTriggered
             ProactiveHandoffRelay = [bool]$proactiveHandoffTriggered
             ProactiveExitFallback = [bool]$proactiveExitFallback
+            ForcedStopRelay       = [bool]$forcedStopTriggered
+            ExtWorkerTimedOut     = [bool]$extWaitTimedOutFinal
             LiveDetectedRateLimit = [bool]$liveDetectedRateLimit
             HasBackgroundWork     = [bool]$hasBackgroundWork
             DiscoveredSessionId   = [string]$discoveredSessionId
@@ -4203,6 +4271,8 @@ try {
         $cleanThresholdRelay = [bool]$childOutcome.CleanThresholdRelay
         $proactiveHandoffRelay = [bool]$childOutcome.ProactiveHandoffRelay
         $proactiveExitFallback = [bool]$childOutcome.ProactiveExitFallback
+        $forcedStopRelay = [bool](Get-SafeProp $childOutcome @('ForcedStopRelay') $false)
+        $extWorkerTimedOut = [bool](Get-SafeProp $childOutcome @('ExtWorkerTimedOut') $false)
         $liveRateLimited = [bool]$childOutcome.LiveDetectedRateLimit
         $childHasBg = [bool]$childOutcome.HasBackgroundWork
         $lastChildPid = [int]$childOutcome.ChildPid
@@ -4372,6 +4442,11 @@ try {
         if ($Strategy) { $switchPayload['strategy'] = $Strategy }
         if ($ThresholdPct -gt 0) { $switchPayload['threshold_pct'] = $ThresholdPct }
         if ($rateLimited) { $switchPayload['rate_limited'] = $true }
+        if ($extWorkerTimedOut) {
+            $switchPayload['handoff_reason'] = 'external_worker_timeout'
+        } elseif ($forcedStopRelay) {
+            $switchPayload['handoff_reason'] = 'forced_stop'
+        }
         $postActive = Get-SafeProp $postStatus @('active', 'active_account') $null
         $postActiveId = $null
         if ($postActive -is [string]) {

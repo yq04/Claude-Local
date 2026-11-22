@@ -1731,6 +1731,38 @@ html[data-window-hidden="true"] *::after {
   color: var(--destructive, #dc2626);
   border-color: var(--destructive, #dc2626);
 }
+:root.dark .identity-relay-proxy-pill.is-invalid {
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.55);
+}
+.identity-relay-proxy-pill.is-mismatch {
+  gap: 4px;
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.1);
+}
+:root.dark .identity-relay-proxy-pill.is-mismatch {
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.5);
+  background: rgba(251, 191, 36, 0.14);
+}
+.identity-relay-proxy-warn-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: #d97706;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+:root.dark .identity-relay-proxy-warn-dot {
+  background: #f59e0b;
+  color: #111827;
+}
 .identity-relay-awaiting-pill {
   background: rgba(245, 158, 11, 0.16);
   color: #b45309;
@@ -1812,6 +1844,50 @@ html[data-window-hidden="true"] *::after {
   flex: 1 1 100%;
   font-size: 10.5px;
   color: var(--destructive, #dc2626);
+}
+:root.dark .identity-relay-proxy-error {
+  color: #f87171;
+}
+.identity-relay-browser-slot-row {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 2px;
+}
+.identity-relay-browser-slot-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+.identity-relay-browser-running-hint {
+  font-size: 10.5px;
+  color: #b45309;
+}
+:root.dark .identity-relay-browser-running-hint {
+  color: #fcd34d;
+}
+.identity-relay-browser-synced-hint {
+  font-size: 10.5px;
+  color: #059669;
+  font-weight: 500;
+}
+:root.dark .identity-relay-browser-synced-hint {
+  color: #34d399;
+}
+.identity-relay-handoff-reason-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--local-accent) 34%, var(--border));
+  background: color-mix(in srgb, var(--local-accent) 10%, var(--background));
+  color: var(--foreground);
+  font-size: 10.5px;
+  font-weight: 550;
+  white-space: nowrap;
 }
 
 .identity-relay-cli-rows {

@@ -202,7 +202,7 @@ function projectSnapshot(snapshot, selected) {
 
 function projectKycStatus(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const status = typeof raw.status === "string" ? raw.status.trim() : "";
+  const status = typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "";
   if (!status || status.length > 32) return undefined;
   const rawKind = typeof raw.check_kind === "string" ? raw.check_kind.trim().toLowerCase() : "";
   const check_kind = /^[a-z0-9_-]{1,32}$/.test(rawKind) ? rawKind : undefined;

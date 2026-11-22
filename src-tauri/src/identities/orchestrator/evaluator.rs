@@ -137,6 +137,8 @@ pub struct OrchestratorStateView {
     pub active_slots: Vec<ActiveSlotView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recovery: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_default_proxy: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1316,6 +1318,7 @@ pub(crate) fn orchestrator_state_with_overrides_in(
             && m.len() <= SMART_RELAY_MAX_BYTES as u64
             && private::safe(&cfg_path).is_ok()
     });
+    let cli_default_proxy = read_claude_dir_http_proxy(&home.join(".claude"));
     Ok(OrchestratorStateView {
         schema: 1,
         ok: true,
@@ -1337,6 +1340,7 @@ pub(crate) fn orchestrator_state_with_overrides_in(
         reset_card_accounts: eval.reset_card_accounts,
         active_slots: eval.active_slots,
         recovery: eval.recovery,
+        cli_default_proxy,
     })
 }
 

@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 目录、用户策略、白名单源、已验收归档代次、认证加密与平台凭据桥。
-// [OUTPUT]: 有界主密钥读取、切号前纯后台守护进程优雅挂起（自动落盘 `adopt.json` 并保活脱离 Shell）、跨切号 `.claude/jobs/*/adopt.json` 保护（即使不保留历史也绝不误删待接管后台 Shell 句柄）、先暂存后切换（保留 120 秒内并发 .stage-* 目录）、`empty`/`delete("current")` 隔离设备 ID 预置与 `save_current` 碰撞保护、防封交接检查点（清理前只读捕获 `HandoffDraft` 并仅在 `db.complete` 后原子提交）、`settings.local.json` 代理对齐与切换后 `anonymousId`/`firstStartTime`/代理核验、Pass #4 `account`/`settings` TOCTOU 校验、子代理隔离槽位忙锁/租约拒绝与轮换凭据单调 expiresAt 安全回灌（sync_slot_credentials）、Windows 文件锁退避、单重故障自动无残留回滚、双重故障一键干净恢复（recover_clean）与显式命名恢复检查点（recover）、窄账号缓存与残留锁清场、独立养号转正草稿保护与真实阶段进度。
+// [OUTPUT]: 有界主密钥读取、切号前纯后台守护进程优雅挂起（自动落盘 `adopt.json` 并保活脱离 Shell）、跨切号 `.claude/jobs/*/adopt.json` 保护（即使不保留历史也绝不误删待接管后台 Shell 句柄）、先暂存后切换（保留 120 秒内并发 .stage-* 目录）、`empty`/`delete("current")` 隔离设备 ID 预置与 `save_current` 碰撞保护、防封交接检查点（清理前只读捕获 `HandoffDraft` 并仅在 `db.complete` 后原子提交）、`settings.local.json` 优先与代理基线快照回退（`slotProxies` 覆写跨切号零串扰）、切换后 `anonymousId`/`firstStartTime`/代理核验、Pass #4 `account`/`settings` TOCTOU 校验、子代理隔离槽位忙锁/租约拒绝与轮换凭据单调 expiresAt 安全回灌（sync_slot_credentials）、Windows 文件锁退避、单重故障自动无残留回滚、双重故障一键干净恢复（recover_clean）与显式命名恢复检查点（recover）、窄账号缓存与残留锁清场、独立养号转正草稿保护与真实阶段进度。
 // [POS]: 身份的文件事务；SQLite 与文件系统由恢复日志与切换前目录快照协调，优先自动自愈回滚，极端中断保底零丢数据。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -8,6 +8,27 @@ use super::{
     database::{Database, Record},
     private, Policy,
 };
+
+const PROXY_BASELINE_STATE_KEY: &str = "proxy_baseline";
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct ProxyBaselineSnapshot {
+    #[serde(default)]
+    settings_env: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    settings_local_env: Option<serde_json::Map<String, serde_json::Value>>,
+    applied_slot_id: String,
+    applied_proxy: String,
+}
+
+impl ProxyBaselineSnapshot {
+    fn effective_global_proxy(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
+        self.settings_local_env
+            .clone()
+            .filter(|m| !m.is_empty())
+            .or_else(|| self.settings_env.clone().filter(|m| !m.is_empty()))
+    }
+}
 use crate::{
     cleaner::identity::{self, Source},
     native,
@@ -733,12 +754,93 @@ impl Store {
         }
         has_active_proxy.then_some(preserved)
     }
-    fn read_live_proxy_env_from_home(
+    pub(super) fn read_live_proxy_env_from_home(
         &self,
     ) -> Option<serde_json::Map<String, serde_json::Value>> {
-        Self::read_live_settings_proxy_env(&self.home.join(".claude/settings.json")).or_else(|| {
-            Self::read_live_settings_proxy_env(&self.home.join(".claude/settings.local.json"))
-        })
+        Self::read_live_settings_proxy_env(&self.home.join(".claude/settings.local.json"))
+            .or_else(|| Self::read_live_settings_proxy_env(&self.home.join(".claude/settings.json")))
+    }
+    fn read_proxy_baseline(&self) -> Option<ProxyBaselineSnapshot> {
+        let raw = self.db.get(PROXY_BASELINE_STATE_KEY).ok().flatten()?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        serde_json::from_str::<ProxyBaselineSnapshot>(trimmed).ok()
+    }
+    fn save_proxy_baseline(
+        &self,
+        snapshot: Option<&ProxyBaselineSnapshot>,
+    ) -> Result<(), String> {
+        match snapshot {
+            Some(snap) => {
+                let encoded = serde_json::to_string(snap).map_err(problem)?;
+                self.db.set_state(PROXY_BASELINE_STATE_KEY, &encoded)
+            }
+            None => self.db.set_state(PROXY_BASELINE_STATE_KEY, ""),
+        }
+    }
+    fn restore_settings_proxy_env_baseline(
+        &self,
+        settings_path: &Path,
+        baseline_env: Option<&serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<(), String> {
+        const ALIGN_KEYS: &[&str] = &[
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "GRPC_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "grpc_proxy",
+        ];
+        let Ok(meta) = fs::symlink_metadata(settings_path) else {
+            return Ok(());
+        };
+        if crate::cleaner::linked(&meta)
+            || !meta.is_file()
+            || meta.len() > 2 * 1024 * 1024
+        {
+            return Err("设置文件路径异常。".into());
+        }
+        private::safe(settings_path)?;
+        let bytes = crate::cleaner::file_io::read_bytes_retry(settings_path).map_err(problem)?;
+        let mut root_val: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| "设置文件不是有效 JSON。".to_string())?;
+        let Some(root_obj) = root_val.as_object_mut() else {
+            return Err("设置文件不是 JSON 对象。".into());
+        };
+        for k in ALIGN_KEYS {
+            root_obj.remove(&format!("env.{k}"));
+        }
+        if let Some(env_map) = root_obj.get_mut("env").and_then(serde_json::Value::as_object_mut) {
+            for k in ALIGN_KEYS {
+                env_map.remove(*k);
+            }
+        }
+        if let Some(baseline) = baseline_env.filter(|m| !m.is_empty()) {
+            let env_entry = root_obj
+                .entry("env")
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+            if !env_entry.is_object() {
+                *env_entry = serde_json::Value::Object(serde_json::Map::new());
+            }
+            if let Some(env_map) = env_entry.as_object_mut() {
+                for (k, v) in baseline {
+                    if ALIGN_KEYS.contains(&k.as_str()) {
+                        env_map.insert(k.clone(), v.clone());
+                    } else {
+                        env_map.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+                }
+            }
+        }
+        let text = serde_json::to_string_pretty(&root_val).map_err(problem)?;
+        let payload = format!("{text}\n");
+        crate::cleaner::file_io::atomic_write(settings_path, payload.as_bytes(), 0o600)
+            .map_err(problem)?;
+        Ok(())
     }
     fn restore_missing_settings_proxy_env(
         &self,
@@ -1036,7 +1138,11 @@ impl Store {
         }
         let settings_path = self.home.join(".claude/settings.json");
         let preserved_proxy = if phase != "rollback" {
-            self.read_live_proxy_env_from_home()
+            if let Some(base) = self.read_proxy_baseline() {
+                base.effective_global_proxy()
+            } else {
+                self.read_live_proxy_env_from_home()
+            }
         } else {
             None
         };
@@ -1521,6 +1627,7 @@ impl Store {
             .map(|s| Self::selected(s, policy))
             .unwrap_or_default();
         let settings_path = self.home.join(".claude/settings.json");
+        let settings_local_path = self.home.join(".claude/settings.local.json");
         let outgoing_ledger = super::profile::read_ledger_root(&self.vault);
         let outgoing_live = super::profile::read_live_with_ledger(
             &self.home,
@@ -1529,11 +1636,45 @@ impl Store {
         );
         let outgoing_live_proxy = outgoing_live.proxy.clone();
         let outgoing_summary = super::profile::Summary::from_current(&outgoing_live);
-        let pre_switch_proxy = if target != "empty" {
-            self.read_live_proxy_env_from_home()
+        let active_proxy_baseline = self.read_proxy_baseline();
+        let incoming_slot_proxy = if target != "empty" && policy.settings {
+            self.vault.parent().and_then(|app_dir| {
+                let relay_cfg = super::orchestrator::config::load_config(app_dir);
+                relay_cfg
+                    .slot_proxies
+                    .get(target)
+                    .and_then(|raw| super::orchestrator::config::normalize_proxy_to_http(raw))
+            })
         } else {
             None
         };
+        let baseline_settings_env = if let Some(ref base) = active_proxy_baseline {
+            base.settings_env.clone()
+        } else {
+            Self::read_live_settings_proxy_env(&settings_path)
+        };
+        let baseline_settings_local_env = if let Some(ref base) = active_proxy_baseline {
+            base.settings_local_env.clone()
+        } else {
+            Self::read_live_settings_proxy_env(&settings_local_path)
+        };
+        let baseline_global_proxy = baseline_settings_local_env
+            .clone()
+            .filter(|m| !m.is_empty())
+            .or_else(|| baseline_settings_env.clone().filter(|m| !m.is_empty()));
+        let pre_switch_proxy = if target != "empty" {
+            baseline_global_proxy.clone()
+        } else {
+            None
+        };
+        let next_proxy_baseline = incoming_slot_proxy
+            .as_ref()
+            .map(|proxy| ProxyBaselineSnapshot {
+                settings_env: baseline_settings_env.clone(),
+                settings_local_env: baseline_settings_local_env.clone(),
+                applied_slot_id: target.to_string(),
+                applied_proxy: proxy.clone(),
+            });
         let mut mutated = false;
         let mut handoff_draft: Option<super::handoff::HandoffDraft> = None;
         let mut committed_handoff: Option<(PathBuf, PathBuf)> = None;
@@ -1630,29 +1771,40 @@ impl Store {
                     cleanroom_warning = true;
                 }
             }
-            if target != "empty" && policy.settings {
-                if let Some(app_dir) = self.vault.parent() {
-                    let relay_cfg = super::orchestrator::config::load_config(app_dir);
-                    if let Some(raw_proxy) = relay_cfg.slot_proxies.get(target) {
-                        if let Some(norm_proxy) =
-                            super::orchestrator::config::normalize_proxy_to_http(raw_proxy)
-                        {
-                            if self
-                                .align_settings_proxy_env(&settings_path, &norm_proxy)
-                                .is_err()
-                            {
-                                cleanroom_warning = true;
-                            }
-                            let settings_local_path = self.home.join(".claude/settings.local.json");
-                            if Self::settings_has_proxy_env_keys(&settings_local_path)
-                                && self
-                                    .align_settings_proxy_env(&settings_local_path, &norm_proxy)
-                                    .is_err()
-                            {
-                                cleanroom_warning = true;
-                            }
-                        }
-                    }
+            if let Some(ref norm_proxy) = incoming_slot_proxy {
+                if self
+                    .align_settings_proxy_env(&settings_path, norm_proxy)
+                    .is_err()
+                {
+                    cleanroom_warning = true;
+                }
+                if Self::settings_has_proxy_env_keys(&settings_local_path)
+                    && self
+                        .align_settings_proxy_env(&settings_local_path, norm_proxy)
+                        .is_err()
+                {
+                    cleanroom_warning = true;
+                }
+            } else if let Some(ref prev_base) = active_proxy_baseline {
+                if Self::settings_proxy_aligned(&settings_local_path, &prev_base.applied_proxy)
+                    && self
+                        .restore_settings_proxy_env_baseline(
+                            &settings_local_path,
+                            prev_base.settings_local_env.as_ref(),
+                        )
+                        .is_err()
+                {
+                    cleanroom_warning = true;
+                }
+                if Self::settings_proxy_aligned(&settings_path, &prev_base.applied_proxy)
+                    && self
+                        .restore_settings_proxy_env_baseline(
+                            &settings_path,
+                            prev_base.settings_env.as_ref(),
+                        )
+                        .is_err()
+                {
+                    cleanroom_warning = true;
                 }
             }
             if identity::maintain_account_caches_report(&self.home).is_err() {
@@ -1693,6 +1845,7 @@ impl Store {
             );
             self.db
                 .complete_with_pending(target, pending_empty_device_id.as_deref())?;
+            self.save_proxy_baseline(next_proxy_baseline.as_ref())?;
             if let (Some(app_dir), Some(draft)) = (self.vault.parent(), handoff_draft.as_ref()) {
                 if let Ok(paths) = super::handoff::commit_handoff_draft(app_dir, draft) {
                     committed_handoff = Some(paths);

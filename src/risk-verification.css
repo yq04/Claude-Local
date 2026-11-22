@@ -334,6 +334,15 @@
   color: #34d399;
 }
 
+.risk-page .risk-telemetry-cell small.is-warn {
+  color: #b45309;
+  font-weight: 500;
+}
+
+:root.dark .risk-page .risk-telemetry-cell small.is-warn {
+  color: #fbbf24;
+}
+
 .risk-page .risk-cell-tags {
   display: flex;
   flex-direction: column;

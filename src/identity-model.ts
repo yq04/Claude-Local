@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生 SQLite 身份目录、只读本地 OAuth 有效期/刷新到期元数据、实时会话存活快照（含 cli-slots 并发子代理槽位、后台守护角色标记 background、前台交互子 Shell 列表 child_shells 与待接管后台任务 ID active_adopt_jobs）与用户的数据保留选择。
- * [OUTPUT]: 身份/策略/账号显示信息、实时 CLI/桌面/子代理槽位/后台守护会话状态（LiveSessionsSnapshot、ActiveCliSession、isBackgroundOnlyState、collectInteractiveChildShells、normalizeAdoptJobIds）、可选独立养号卡与当前浏览器槽位、离线额度（含 Ultra 无 5h 上限、非活跃静置 5h 窗口 quota_5h_rested 与 Fable 7d 专项池）、手动订阅到期与套餐覆写（subscription_renews_at / manual_plan）、重置次数及逐份 active grant 到期明细、只读 KYC 状态投影（kyc_status / kyc_check_kind / kyc_observed_at_ms）、保留选项与浏览器警告。
+ * [OUTPUT]: 身份/策略/账号显示信息、实时 CLI/桌面/子代理槽位/后台守护会话状态（LiveSessionsSnapshot、ActiveCliSession、isBackgroundOnlyState、collectInteractiveChildShells、normalizeAdoptJobIds）、可选独立养号卡与当前浏览器槽位（含 slot_browser_proxies 绑定代理对齐信息）、离线额度（含 Ultra 无 5h 上限、非活跃静置 5h 窗口 quota_5h_rested 与 Fable 7d 专项池）、手动订阅到期与套餐覆写（subscription_renews_at / manual_plan）、重置次数及逐份 active grant 到期明细、只读 KYC 状态投影（kyc_status / kyc_check_kind / kyc_observed_at_ms）、HandoffSummary/HandoffReason 类型转发、保留选项与浏览器警告。
  * [POS]: 身份管理的脱敏契约；只有明确允许的账号显示字段、离线额度百分比与有界来源/观测时间，不含凭据、原始文件正文或任意路径。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -41,7 +41,9 @@ export type ActiveCliSession=ActiveSession;
 export type LiveSessionsSnapshot={running:boolean;cli_running:boolean;sessions:ActiveSession[];slot_sessions?:Record<string,ActiveSession[]>;background_only?:boolean;active_adopt_jobs?:string[]};
 export type CurrentIdentity={present:boolean;display_name:string|null;email:string|null;organization:string|null;plan:string|null;auth_status:string|null;auth_expires_at?:number|null;auth_has_refresh?:boolean|null;refresh_token_expires_at?:number|null;proxy:string|null;quota_5h_used?:number|null;quota_5h_reset_at?:number|null;quota_no_5h_limit?:boolean;quota_7d_used?:number|null;quota_7d_reset_at?:number|null;quota_7d_fable_used?:number|null;quota_7d_fable_reset_at?:number|null;subscription_expires_at?:number|null;unavailable:boolean;sessions?:ActiveSession[]}&QuotaEvidence&IdentitySubscriptionMetadata;
 export type BrowserLink={enabled:boolean;bound_ids:string[]};
-export type IdentityState={browser:BrowserLink;browser_warning:string|null;records:Identity[];summaries:Record<string,IdentitySummary>;sessions:ActiveSession[];slot_sessions?:Record<string,ActiveSession[]>;active:string;recovery:string|null;running:boolean;cli_running?:boolean;background_only?:boolean;active_adopt_jobs?:string[];current:CurrentIdentity;warming_cards?:WarmingCard[];active_browser_slot?:string};
+export type SlotBrowserProxy={proxy:string;running:boolean};
+export type {HandoffItem,HandoffReason,HandoffSummary} from './smart-relay-model';
+export type IdentityState={browser:BrowserLink;browser_warning:string|null;records:Identity[];summaries:Record<string,IdentitySummary>;sessions:ActiveSession[];slot_sessions?:Record<string,ActiveSession[]>;slot_browser_proxies?:Record<string,SlotBrowserProxy>;active:string;recovery:string|null;running:boolean;cli_running?:boolean;background_only?:boolean;active_adopt_jobs?:string[];current:CurrentIdentity;warming_cards?:WarmingCard[];active_browser_slot?:string};
 export const defaultPolicy:IdentityPolicy={skills:true,plugins:true,mcp:true,settings:true,projects:true,history:true,cache:false};
 export const policyRows:readonly [keyof IdentityPolicy,string][]=[['skills','Skills 与命令'],['plugins','插件'],['mcp','MCP 配置'],['settings','个人设置'],['projects','项目记录'],['history','会话历史'],['cache','缓存与日志']];
 

@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生身份命令、轻量实时会话存活命令（identities_live_sessions，含 cli-slots 子代理槽位、后台守护标记 background、前台交互子 Shell child_shells 与待接管任务 active_adopt_jobs）、可选编排状态/安装命令（identities_orchestrator_* / identities_install_cli_wrappers）、手动/自动订阅到期、充值日与套餐层级校准命令（manualPlan）、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、Ultra无上限/Fable专项池/离线刷新凭据到期元数据、智能接力池摘要与悬浮窗穿透态、保留策略、逐窗观测、隐私偏好、顶部横条卡片拖拽排序、跨页卡片定位及本地额度修订轮询。
- * [OUTPUT]: 同风格计数的166×286 CLI身份/养号工牌（语义套餐色标 Free/Pro/Max/Ultra/Team、72h临期提醒、清晰区分当前使用/CLI运行中/桌面端运行与脉冲子代理槽位状态、快速筛选与可选多行平铺、切换前三态运行中CLI引导［后台守护无损保活挂起 / 前台子Shell防断管告警 / 标准无感接力直达］、顶部横条拖拽排序与共享弹簧滚轮）、单滚动容器无嵌套双滚的智能接力与自动续杯弹窗（2分区账号行、语义5h/7d微缩条、≥3号同出口聚集温和提示 `[data-relay-exit-cluster-hint]`、同轴全宽路由与CLI无感接力分组卡、80%~100%换号阈值、OpusPlan模型说明、重置卡一键同步验证与差值回执、未入库当前号提示、错峰打开多号用量页）、额度详情5h/7d燃尽ETA/套餐校准与只读KYC核验状态、跨机防关联环境交接卡复制及悬浮窗穿透态恢复。
+ * [INPUT]: 原生身份命令、轻量实时会话存活命令（identities_live_sessions，含 cli-slots 子代理槽位、后台守护标记 background、前台交互子 Shell child_shells 与待接管任务 active_adopt_jobs）、可选编排状态/清冷却/安装与最新交接检查点命令（identities_orchestrator_* / identities_sync_browser_proxy / identities_latest_handoff / identities_install_cli_wrappers）、手动/自动订阅到期、充值日与套餐层级校准命令（manualPlan）、可恢复的原生额度批次状态/取消、5h到期自动续杯配置/状态、Ultra无上限/Fable专项池/离线刷新凭据到期元数据、智能接力池摘要与悬浮窗穿透态、保留策略、逐窗观测、隐私偏好、顶部横条卡片拖拽排序、跨页卡片定位及本地额度修订轮询。
+ * [OUTPUT]: 同风格计数的166×286 CLI身份/养号工牌（语义套餐色标 Free/Pro/Max/Ultra/Team、72h临期提醒、清晰区分当前使用/CLI运行中/桌面端运行与脉冲子代理槽位状态、快速筛选与可选多行平铺、切换前三态运行中CLI引导［后台守护无损保活挂起 / 前台子Shell防断管告警 / 标准无感接力直达］、顶部横条拖拽排序与共享弹簧滚轮）、单滚动容器无嵌套双滚的智能接力与自动续杯弹窗（2分区账号行、语义5h/7d微缩条、CLI 与绑定浏览器槽位代理对齐警告及一键同步至浏览器 `[data-relay-sync-browser-proxy]`、≥3号同出口聚集温和提示 `[data-relay-exit-cluster-hint]`、CLI 无感接力分组卡可选 handoffReason 胶囊、同轴全宽路由分组卡、80%~100%换号阈值、OpusPlan模型说明、重置卡一键同步验证与差值回执、未入库当前号提示、错峰打开多号用量页）、额度详情5h/7d燃尽ETA/套餐校准与只读KYC核验状态（含观测相对时间与 expired/failed 区分）、跨机防关联环境交接卡复制及悬浮窗穿透态恢复。
  * [POS]: 身份管理 GUI；额度工作由原生任务所有，页面挂载只恢复运行中的在线批次，导航不取消工作，身份破坏性操作在批次期间锁定；后台 revision 触发的读取在原生快照内容未变时保留现有状态对象，避免整页重渲染。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -36,6 +36,8 @@ import {toBrowserSocks5ProxyFromCli, toCliHttpProxy} from './risk-model';
 import {MONITOR_BUS_CHANNEL, postMonitorBusMessage, writeMonitorRelayStandbyHint, type MonitorBusMessage, type MonitorWindowState} from './floating-monitor-model';
 import {
   useSmartRelayConfig,
+  useCliDefaultProxy,
+  canSyncNativeSmartRelay,
   updateSmartRelayConfig,
   resetSmartRelayConfig,
   syncNativeSmartRelayConfigIfLive,
@@ -43,6 +45,7 @@ import {
   evaluateSmartRelay,
   extractResetCardInfo,
   isAccountInCooldown,
+  isSlotBrowserProxyAligned,
   summarizeRelayPool,
   computeResetCardExpiryUrgency,
   computeWindowBurnEta,
@@ -69,6 +72,7 @@ import {
   RELAY_AFFINITY_MODES,
   RELAY_SPENT_THRESHOLDS,
   RELAY_HANDOFF_MODES,
+  type HandoffSummary,
   type RelayAccountInput,
   type RelayCandidate,
 } from './smart-relay-model';
@@ -380,9 +384,13 @@ export function IdentityPanel({
   const [slotProxyDrafts, setSlotProxyDrafts] = useState<Record<string, string>>({});
   const [slotProxyErrors, setSlotProxyErrors] = useState<Record<string, string>>({});
   const [expandedProxyIds, setExpandedProxyIds] = useState<Record<string, boolean>>({});
+  const [syncingBrowserProxyIds, setSyncingBrowserProxyIds] = useState<Record<string, boolean>>({});
+  const [browserProxySyncFeedback, setBrowserProxySyncFeedback] = useState<Record<string, {text: string; isError?: boolean}>>({});
+  const [latestHandoff, setLatestHandoff] = useState<HandoffSummary | null>(null);
   const focusedSlotProxyIdRef = useRef<string | null>(null);
   const [syncCliBrowserOnSwitch, setSyncCliBrowserOnSwitch] = useState(true);
   const smartRelay = useSmartRelayConfig();
+  const cliDefaultProxy = useCliDefaultProxy();
   const recentLaunchDirs = useRelayLaunchDirs();
   const nativeWakeup = useSyncExternalStore(subscribeNativeWakeup, readNativeWakeupSnapshot);
   const autoWakeConfig = nativeWakeup.config;
@@ -729,8 +737,8 @@ export function IdentityPanel({
   const relayEval = useMemo(() => evaluateSmartRelay(relayAccounts, smartRelay, nowSec), [relayAccounts, smartRelay, nowSec]);
   const relayPoolSummary = useMemo(() => summarizeRelayPool(relayEval.candidates, nowSec), [relayEval.candidates, nowSec]);
   const sameExitCluster = useMemo(
-    () => findSameExitClusterWarning(relayEval.candidates, smartRelay.slotProxies),
-    [relayEval.candidates, smartRelay.slotProxies],
+    () => findSameExitClusterWarning(relayEval.candidates, smartRelay.slotProxies, cliDefaultProxy),
+    [relayEval.candidates, smartRelay.slotProxies, cliDefaultProxy],
   );
   const relayTargetCand = relayEval.recommended ?? relayEval.standbyCandidate ?? null;
   const relayRecommendedSaved =
@@ -872,10 +880,21 @@ export function IdentityPanel({
     }
     focusedSlotProxyIdRef.current = null;
     setCliWrappersFeedback(null);
+    setBrowserProxySyncFeedback({});
+    setLatestHandoff(null);
     setSlotProxyErrors({});
     setSlotProxyDrafts({...smartRelay.slotProxies});
     setExpandedProxyIds({});
     void syncNativeSmartRelayConfigIfLive();
+    if (canSyncNativeSmartRelay()) {
+      void invoke<HandoffSummary | null>('identities_latest_handoff')
+        .then(res => {
+          if (mountedRef.current && res && typeof res === 'object') {
+            setLatestHandoff(res);
+          }
+        })
+        .catch(() => {});
+    }
   }, [relayPanelOpen]);
 
   useEffect(() => {
@@ -2443,6 +2462,44 @@ export function IdentityPanel({
     return String(err).replace(/^Error:\s*/i, '').trim();
   }
 
+  async function syncSlotBrowserProxy(accountId: string): Promise<void> {
+    if (!accountId || accountId === 'current' || syncingBrowserProxyIds[accountId]) return;
+    setSyncingBrowserProxyIds(prev => ({...prev, [accountId]: true}));
+    setBrowserProxySyncFeedback(prev => {
+      if (!(accountId in prev)) return prev;
+      const next = {...prev};
+      delete next[accountId];
+      return next;
+    });
+    try {
+      await flushNativeSmartRelaySync();
+      const nextState = await invoke<IdentityState>('identities_sync_browser_proxy', {id: accountId});
+      if (mountedRef.current && nextState && typeof nextState === 'object') {
+        setState(nextState);
+        setBrowserProxySyncFeedback(prev => ({
+          ...prev,
+          [accountId]: {text: tRef.current('relay.browserSlotSynced')},
+        }));
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        const msgKey = normalizeNativeErrorKey(err);
+        setBrowserProxySyncFeedback(prev => ({
+          ...prev,
+          [accountId]: {text: tRef.current(msgKey), isError: true},
+        }));
+      }
+    } finally {
+      if (mountedRef.current) {
+        setSyncingBrowserProxyIds(prev => {
+          const next = {...prev};
+          delete next[accountId];
+          return next;
+        });
+      }
+    }
+  }
+
   async function installCliWrappers(): Promise<void> {
     if (cliWrappersBusy) return;
     setCliWrappersBusy(true);
@@ -3133,7 +3190,16 @@ export function IdentityPanel({
             </div>
             {sameExitCluster && (
               <div className="identity-unsaved-pool-hint identity-relay-cluster-hint" role="note" data-relay-exit-cluster-hint>
-                <span>{t('relay.sameExitClusterHint', {count: sameExitCluster.count, endpoint: sameExitCluster.endpoint})}</span>
+                <span>
+                  {sameExitCluster.clusterCount && sameExitCluster.clusterCount > 1 && sameExitCluster.clusters
+                    ? t('relay.sameExitMultiClusterHint', {
+                        clusterCount: sameExitCluster.clusterCount,
+                        count: sameExitCluster.count,
+                        endpoint: sameExitCluster.endpoint,
+                        endpoints: sameExitCluster.clusters.map(c => `${c.endpoint} (${c.count})`).join(', '),
+                      })
+                    : t('relay.sameExitClusterHint', {count: sameExitCluster.count, endpoint: sameExitCluster.endpoint})}
+                </span>
               </div>
             )}
             <div className="identity-relay-account-list">
@@ -3164,19 +3230,29 @@ export function IdentityPanel({
                   const accSlotSessions = state?.slot_sessions?.[acc.id] ?? [];
                   const accSummary = acc.isCurrent ? current : state?.summaries?.[acc.id];
                   const accIdentity = accSummary?.quota_identity;
+                  const cliFallbackHttp = cliDefaultProxy ? toCliHttpProxy(cliDefaultProxy) : '';
                   const summaryHttpProxy = accSummary?.proxy ? toCliHttpProxy(accSummary.proxy) : '';
-                  const proxyPlaceholder = summaryHttpProxy || 'http://127.0.0.1:7899';
+                  const inheritedCliHttp =
+                    cliDefaultProxy !== undefined ? cliFallbackHttp : summaryHttpProxy;
+                  const proxyPlaceholder = inheritedCliHttp || 'http://127.0.0.1:7899';
                   const savedSlotProxy = smartRelay.slotProxies[acc.id] ?? '';
+                  const effectiveCliProxy = savedSlotProxy || inheritedCliHttp;
+                  const slotBrowserProxy =
+                    acc.id && acc.id !== 'current' ? state?.slot_browser_proxies?.[acc.id] : undefined;
+                  const hasBrowserProxyMismatch = Boolean(
+                    slotBrowserProxy && !isSlotBrowserProxyAligned(slotBrowserProxy.proxy, effectiveCliProxy),
+                  );
+                  const browserSyncFeedback = browserProxySyncFeedback[acc.id];
                   const slotProxyDraft = slotProxyDrafts[acc.id] ?? savedSlotProxy;
                   const slotProxyError = slotProxyErrors[acc.id];
                   const isProxyExpanded = Boolean(expandedProxyIds[acc.id] || slotProxyError);
                   const customEndpointShort = savedSlotProxy
                     ? savedSlotProxy.replace(/^http:\/\//i, '').replace(/^127\.0\.0\.1:/, ':').replace(/^localhost:/i, ':')
                     : '';
-                  const inheritedPort = summaryHttpProxy.match(/:(\d+)$/)?.[1] ?? '7899';
+                  const inheritedPort = inheritedCliHttp.match(/:(\d+)$/)?.[1] ?? '7899';
                   const proxyPillLabel = savedSlotProxy
                     ? t('relay.proxyCustomPill', {endpoint: customEndpointShort})
-                    : summaryHttpProxy
+                    : inheritedCliHttp
                       ? t('relay.proxyInheritedPill', {port: inheritedPort})
                       : t('relay.proxyDefaultPill');
                   const resetTier = computeResetCardExpiryUrgency(
@@ -3261,9 +3337,14 @@ export function IdentityPanel({
                           )}
                           <button
                             type="button"
-                            className={`identity-relay-proxy-pill${savedSlotProxy ? ' is-custom' : ''}${slotProxyError ? ' is-invalid' : ''}`}
+                            className={`identity-relay-proxy-pill${savedSlotProxy ? ' is-custom' : ''}${slotProxyError ? ' is-invalid' : ''}${hasBrowserProxyMismatch ? ' is-mismatch' : ''}`}
                             data-relay-proxy-toggle={acc.id}
-                            title={`${t('relay.slotProxyLabel')}: ${savedSlotProxy || proxyPlaceholder}`}
+                            data-relay-proxy-mismatch={hasBrowserProxyMismatch ? 'true' : undefined}
+                            title={
+                              hasBrowserProxyMismatch && slotBrowserProxy
+                                ? `${t('relay.slotProxyLabel')}: ${effectiveCliProxy || t('relay.browserSlotDirect')} · ${t('relay.browserSlotMismatchHint', {browserProxy: slotBrowserProxy.proxy || t('relay.browserSlotDirect')})}`
+                                : `${t('relay.slotProxyLabel')}: ${savedSlotProxy || proxyPlaceholder}`
+                            }
                             onClick={() =>
                               setExpandedProxyIds(prev => ({
                                 ...prev,
@@ -3272,6 +3353,14 @@ export function IdentityPanel({
                             }
                           >
                             {proxyPillLabel}
+                            {hasBrowserProxyMismatch && (
+                              <span
+                                className="identity-relay-proxy-warn-dot"
+                                aria-label={t('relay.browserSlotMismatchBadge')}
+                              >
+                                !
+                              </span>
+                            )}
                           </button>
                           {isPreferred ? (
                             <button
@@ -3425,6 +3514,46 @@ export function IdentityPanel({
                               {t(slotProxyError)}
                             </span>
                           )}
+                          {slotBrowserProxy && (
+                            <div className="identity-relay-browser-slot-row" data-relay-browser-slot={acc.id}>
+                              <span className="identity-relay-browser-slot-label">
+                                {t('relay.browserSlotLabel', {
+                                  proxy: slotBrowserProxy.proxy || t('relay.browserSlotDirect'),
+                                })}
+                              </span>
+                              {hasBrowserProxyMismatch && (
+                                <button
+                                  type="button"
+                                  className="identity-relay-set-preferred identity-relay-browser-sync-btn"
+                                  data-relay-sync-browser-proxy={acc.id}
+                                  disabled={slotBrowserProxy.running || Boolean(syncingBrowserProxyIds[acc.id])}
+                                  title={slotBrowserProxy.running ? t('relay.browserSlotRunningHint') : undefined}
+                                  onClick={() => void syncSlotBrowserProxy(acc.id)}
+                                >
+                                  {syncingBrowserProxyIds[acc.id]
+                                    ? t('relay.browserSlotSyncingBtn')
+                                    : t('relay.browserSlotSyncBtn')}
+                                </button>
+                              )}
+                              {slotBrowserProxy.running && hasBrowserProxyMismatch && (
+                                <span className="identity-relay-browser-running-hint">
+                                  {t('relay.browserSlotRunningHint')}
+                                </span>
+                              )}
+                              {browserSyncFeedback && (
+                                <span
+                                  className={
+                                    browserSyncFeedback.isError
+                                      ? 'identity-relay-proxy-error'
+                                      : 'identity-relay-browser-synced-hint'
+                                  }
+                                  role={browserSyncFeedback.isError ? 'alert' : 'status'}
+                                >
+                                  {browserSyncFeedback.text}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -3519,6 +3648,26 @@ export function IdentityPanel({
           <section className="identity-relay-section identity-relay-cli-section" aria-label={t('relay.cliSectionTitle')}>
             <div className="identity-relay-section-head">
               <h3>{t('relay.cliSectionTitle')}</h3>
+              {latestHandoff?.handoffReason && (
+                <span
+                  className="identity-relay-handoff-reason-pill"
+                  data-relay-handoff-reason={latestHandoff.handoffReason}
+                  title={t('relay.handoffReasonTooltip')}
+                >
+                  {(() => {
+                    const reason = latestHandoff.handoffReason;
+                    const reasonKeyMap: Record<string, string> = {
+                      threshold_reached: 'relay.handoffReason.threshold_reached',
+                      rate_limited: 'relay.handoffReason.rate_limited',
+                      preferred_recovered: 'relay.handoffReason.preferred_recovered',
+                      awaiting_manual_reset: 'relay.handoffReason.awaiting_manual_reset',
+                      external_worker_timeout: 'relay.handoffReason.external_worker_timeout',
+                      forced_stop: 'relay.handoffReason.forced_stop',
+                    };
+                    return reasonKeyMap[reason] ? t(reasonKeyMap[reason]) : reason;
+                  })()}
+                </span>
+              )}
             </div>
             <div className="identity-relay-form-rows identity-relay-cli-rows">
               <div className="identity-relay-form-row" data-relay-cli-model-row>
@@ -4409,17 +4558,22 @@ export function IdentityPanel({
               /^[a-z0-9_-]{1,32}$/.test(detailsSummary.kyc_check_kind.trim().toLowerCase())
               ? detailsSummary.kyc_check_kind.trim().toLowerCase()
               : '';
+            const kycAge = formatObservationAge(quotaObservationAge(detailsSummary?.kyc_observed_at_ms, nowSec * 1000));
+            const observedAge = kycAge ? t('identitySearch.age.' + kycAge.unit, {v0: kycAge.value}) : '';
             if (status === 'not_required') {
-              return {status, tone: 'neutral' as const, labelKey: 'quota.kycStatus.notRequired', checkKind};
+              return {status, tone: 'neutral' as const, labelKey: 'quota.kycStatus.notRequired', checkKind, observedAge};
             }
             if (status === 'pending' || status === 'required' || status === 'in_progress') {
-              return {status, tone: 'warn' as const, labelKey: 'quota.kycStatus.pending', checkKind};
+              return {status, tone: 'warn' as const, labelKey: 'quota.kycStatus.pending', checkKind, observedAge};
             }
             if (status === 'completed' || status === 'approved' || status === 'verified') {
-              return {status, tone: 'ok' as const, labelKey: 'quota.kycStatus.verified', checkKind};
+              return {status, tone: 'ok' as const, labelKey: 'quota.kycStatus.verified', checkKind, observedAge};
             }
-            if (status === 'failed' || status === 'declined' || status === 'expired') {
-              return {status, tone: 'danger' as const, labelKey: 'quota.kycStatus.issue', checkKind};
+            if (status === 'expired') {
+              return {status, tone: 'danger' as const, labelKey: 'quota.kycStatus.expired', checkKind, observedAge};
+            }
+            if (status === 'failed' || status === 'declined') {
+              return {status, tone: 'danger' as const, labelKey: 'quota.kycStatus.issue', checkKind, observedAge};
             }
             return null;
           })();
@@ -4601,7 +4755,11 @@ export function IdentityPanel({
                       ) : (
                         <span className="quota-details-chip" data-tone={kycInfo.tone}>{t(kycInfo.labelKey)}</span>
                       )}
-                      {kycInfo.checkKind && <small className="quota-details-kyc-kind">{kycInfo.checkKind}</small>}
+                      {(kycInfo.checkKind || kycInfo.observedAge) && (
+                        <small className="quota-details-kyc-kind">
+                          {[kycInfo.checkKind, kycInfo.observedAge].filter(Boolean).join(' · ')}
+                        </small>
+                      )}
                     </dd>
                   </div>
                 )}

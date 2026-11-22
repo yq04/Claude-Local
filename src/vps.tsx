@@ -1,15 +1,16 @@
 /**
- * [INPUT]: Claude 四个固定服务域名、用户触发的原生只读诊断、发行者固定的 iKuuu/Kookeey 推广链接、AI 配置提示词、隐私遮罩偏好、Pika 图标、env-pages.css 与双语文案。
- * [OUTPUT]: 顶部内联复制状态胶囊、四栏链式拓扑发丝遥测条、三列紧凑代理配置卡（徽章 + 角色标签 + 步骤脚注与单复制按钮）、支持隐私遮罩的 2×2 边线四域名连通性矩阵及含 Persona/Yoti/Sift/Hexagon 分流规则的双语 AI 配置提示词。
- * [POS]: 固定链接随软件分享，不接受本机自定义覆盖或外部自动导航；仅在点击检测后发起连通性探测。
+ * [INPUT]: Claude 四个固定服务域名、用户触发的原生只读诊断、发行者固定的 iKuuu/Kookeey 推广链接、AI 配置提示词、多端口 Clash YAML 生成器（buildMultiPortClashYaml）、隐私遮罩偏好、Pika 图标、env-pages.css 与双语文案。
+ * [OUTPUT]: 顶部内联复制状态胶囊、四栏链式拓扑发丝遥测条、三列紧凑代理配置卡（徽章 + 角色标签 + 步骤脚注与单复制按钮）、只读多端口 Clash 配置生成入口及 Portaled `AppDialog` 弹窗（2-5 端口、起始端口、代理组名、纯复制 YAML）、支持隐私遮罩的 2×2 边线四域名连通性矩阵及含 Persona/Yoti/Sift/Hexagon 分流规则的双语 AI 配置提示词。
+ * [POS]: 固定链接随软件分享，不接受本机自定义覆盖或外部自动导航；仅在点击检测后发起连通性探测；多端口生成器仅只读复制 YAML，不写入任何磁盘配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {Button} from 'cromma-ui';
+import {Button, Input} from 'cromma-ui';
 import {Refresh, CheckTickCircle, Share01, Server, Settings01, Globe} from 'cromma-ui/pika';
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useMemo, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
+import {AppDialog} from './dialog';
 import {useI18n, type Locale} from './i18n';
-import {maskIpAddress} from './risk-model';
+import {buildMultiPortClashYaml, maskIpAddress} from './risk-model';
 import {usePreferences} from './settings-model';
 import './env-pages.css';
 
@@ -83,6 +84,25 @@ export function VpsPanel() {
         : t('检测中');
 
   const aiPrompt = buildAiProxyPrompt(locale);
+  const [multiPortOpen, setMultiPortOpen] = useState(false);
+  const [multiPortCount, setMultiPortCount] = useState(2);
+  const [multiPortStartInput, setMultiPortStartInput] = useState('7899');
+  const [multiPortGroups, setMultiPortGroups] = useState<string[]>([
+    'Claude-Exit-1',
+    'Claude-Exit-2',
+    'Claude-Exit-3',
+    'Claude-Exit-4',
+    'Claude-Exit-5',
+  ]);
+  const multiPortSnippet = useMemo(
+    () =>
+      buildMultiPortClashYaml({
+        count: multiPortCount,
+        startPort: Number(multiPortStartInput),
+        groupNames: multiPortGroups,
+      }),
+    [multiPortCount, multiPortStartInput, multiPortGroups],
+  );
 
   async function copyText(id: string, value: string) {
     if (copyingId) return;
@@ -255,6 +275,24 @@ export function VpsPanel() {
           </article>
         </div>
 
+        <section className="settings-card network-multiport-card" aria-labelledby="multiport-setup-title">
+          <div className="network-multiport-copy">
+            <span className="settings-icon-badge" aria-hidden="true"><Settings01 size={16} /></span>
+            <div>
+              <h2 id="multiport-setup-title">{t('network.multiPortTitle')}</h2>
+              <p>{t('network.multiPortDesc')}</p>
+            </div>
+          </div>
+          <Button
+            variant="secondary"
+            size="small"
+            data-open-multiport-generator
+            onClick={() => setMultiPortOpen(true)}
+          >
+            {t('network.multiPortOpen')}
+          </Button>
+        </section>
+
         <div className="settings-group-heading">
           <span className="settings-group-bar" aria-hidden="true" />
           <h2>{t('network.probeGroupTitle')}</h2>
@@ -326,6 +364,88 @@ export function VpsPanel() {
           </ul>
         </section>
       </div>
+
+      <AppDialog
+        open={multiPortOpen}
+        onOpenChange={setMultiPortOpen}
+        width={620}
+        className="network-multiport-dialog"
+        title={t('network.multiPortTitle')}
+        description={t('network.multiPortDialogDesc')}
+        footer={
+          <>
+            <Button variant="secondary" size="small" onClick={() => setMultiPortOpen(false)}>
+              {t('关闭')}
+            </Button>
+            <Button
+              variant="primary"
+              size="small"
+              data-copy-multiport-yaml
+              disabled={copyingId !== ''}
+              leftIcon={copiedId === 'multiport-yaml' ? <CheckTickCircle size={14} aria-hidden /> : undefined}
+              onClick={() => void copyText('multiport-yaml', multiPortSnippet.yaml)}
+            >
+              {copiedId === 'multiport-yaml' ? t('已复制') : t('network.multiPortCopyYaml')}
+            </Button>
+          </>
+        }
+      >
+        <div className="network-multiport-form">
+          <div className="network-multiport-controls">
+            <div className="network-multiport-field">
+              <span>{t('network.multiPortCountLabel')}</span>
+              <div className="network-multiport-count-row" role="group" aria-label={t('network.multiPortCountLabel')}>
+                {[2, 3, 4, 5].map(countOption => (
+                  <Button
+                    key={countOption}
+                    size="small"
+                    variant={multiPortCount === countOption ? 'primary' : 'secondary'}
+                    data-multiport-count={countOption}
+                    onClick={() => setMultiPortCount(countOption)}
+                  >
+                    {countOption}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <label className="network-multiport-field" htmlFor="multiport-start-port">
+              <span>{t('network.multiPortStartLabel')}</span>
+              <Input
+                id="multiport-start-port"
+                type="number"
+                min={1024}
+                max={65530}
+                value={multiPortStartInput}
+                onChange={e => setMultiPortStartInput(e.currentTarget.value)}
+              />
+            </label>
+          </div>
+          <div className="network-multiport-groups">
+            {multiPortSnippet.ports.map((port, idx) => (
+              <label key={port} className="network-multiport-group-row" htmlFor={`multiport-group-${idx}`}>
+                <code>127.0.0.1:{port}</code>
+                <Input
+                  id={`multiport-group-${idx}`}
+                  value={multiPortGroups[idx] ?? `Claude-Exit-${idx + 1}`}
+                  placeholder={`Claude-Exit-${idx + 1}`}
+                  onChange={e => {
+                    const nextVal = e.currentTarget.value;
+                    setMultiPortGroups(prev => {
+                      const next = [...prev];
+                      next[idx] = nextVal;
+                      return next;
+                    });
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+          <p className="system-hint">{t('network.multiPortReadonlyNote')}</p>
+          <pre className="network-multiport-yaml" data-multiport-yaml-preview>
+            {multiPortSnippet.yaml}
+          </pre>
+        </div>
+      </AppDialog>
     </section>
   );
 }
