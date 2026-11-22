@@ -1,16 +1,16 @@
 <!--
-[INPUT]: Final owner decisions, v0.4.0 candidate (proactive 2-stage threshold auto-relay, single-axis Smart Relay UI alignment & >=3 same-exit cluster hint, Sift v122/Yoti Mihomo audit & read-only /kyc_status observation, and multi-account browser fingerprint guidance), built atop published v0.3.7 (commit edfda1ffbd5267f5096ebd11af010245319bbc49 / tag v0.3.7, Stage-2 081ca8b78457eb84e5e58cb0eec7fdb65143406e, GitHub Release Latest 2026-11-21T06:00:52Z, verified in docs/RELEASE_VERIFICATION_0.3.7.md), consolidating 2.15–2.28 upgrades and immutable prior baselines v0.3.6 (1b4cfcd / 61be76a), v0.3.5 (966a2e6 / fa8342f), v0.3.3 (01f7085 / c443015) and v0.3.2 (260f80e / a72a145).
+[INPUT]: Final owner decisions, published v0.4.0 baseline (commit 0d9fc2b0e874a4193d02f647631c5bfb49693f65 / tag v0.4.0, GitHub Release Latest published 2026-11-22T08:43:37Z, verified in docs/RELEASE_VERIFICATION_0.4.0.md), consolidating proactive 2-stage threshold auto-relay, single-axis Smart Relay UI alignment & >=3 same-exit cluster hint, Sift v122/Yoti Mihomo audit & read-only /kyc_status observation, and multi-account browser fingerprint guidance atop immutable prior baselines v0.3.7 (edfda1f / 081ca8b), v0.3.6 (1b4cfcd / 61be76a), v0.3.5 (966a2e6 / fa8342f), v0.3.3 (01f7085 / c443015) and v0.3.2 (260f80e / a72a145).
 [OUTPUT]: Context-free session handoff covering: (1) what task we are doing, (2) what is completed, (3) where we are stuck, (4) next-step plan, and (5) pitfalls never to repeat.
 [POS]: Root maintenance handoff for a zero-context successor session. Real identities, emails, IP/proxy credentials, process IDs, browser seeds, private probe values, workstation paths and screenshots stay out of tracked files.
-[PROTOCOL]: Updated on 2026-11-22 03:27 EST for v0.4.0 release preparation; workstation-specific CLI/proxy/Magpie/binary tooling handoff is kept strictly in the gitignored .local/tasks/20261112-session-handoff/HANDOFF.local.md file.
+[PROTOCOL]: Updated on 2026-11-22 03:45 EST after v0.4.0 release publish; workstation-specific CLI/proxy/Magpie/binary tooling handoff is kept strictly in the gitignored .local/tasks/20261112-session-handoff/HANDOFF.local.md file.
 -->
 # Claude-Local 会话交接（HANDOFF.md）
 
-更新时间：2026-11-22 03:27，America/New_York（EST）。
+更新时间：2026-11-22 03:45，America/New_York（EST）。
 
 ## 接手先读：30 秒全局速览
 
-1. **当前版本与 Git 基线**：正在基于已发布远程基线 **`v0.3.7`**（`edfda1f` / Stage-2 `081ca8b`）完成 **`v0.4.0`** 版本元数据同步、全量回归验收、中性目录 NSIS 构建审计与 GitHub Release 发布（详见 [`docs/RELEASE_NOTES_0.4.0.md`](docs/RELEASE_NOTES_0.4.0.md) 与即将提交的 `docs/RELEASE_VERIFICATION_0.4.0.md`）；此前 `v0.3.7`、`v0.3.6`、`v0.3.5`、`v0.3.3`、`v0.3.2` 及更早标签与资产保持不可变。
+1. **当前版本与 Git 基线**：最新已发布远程基线 **`v0.4.0`** 于 `2026-11-22T08:43:37Z` 正式提交打标并发布至 GitHub Release `Latest`（源码 commit [`0d9fc2b0e874a4193d02f647631c5bfb49693f65`](https://github.com/yq04/Claude-Local/commit/0d9fc2b0e874a4193d02f647631c5bfb49693f65) / tag `v0.4.0`，Release 地址 [`https://github.com/yq04/Claude-Local/releases/tag/v0.4.0`](https://github.com/yq04/Claude-Local/releases/tag/v0.4.0)；Stage-2 核验文档随 [`docs/RELEASE_VERIFICATION_0.4.0.md`](docs/RELEASE_VERIFICATION_0.4.0.md) 提交至 `origin/main` 且不移动 `v0.4.0` 标签，详见 [`docs/RELEASE_NOTES_0.4.0.md`](docs/RELEASE_NOTES_0.4.0.md)）；此前 `v0.3.7`、`v0.3.6`、`v0.3.5`、`v0.3.3`、`v0.3.2` 及更早标签与资产保持不可变。
 2. **当前工作区与演进脉络（已纳入 `v0.4.0` 提交序列：两阶段主动阈值自动换号接力、智能接力单轴对齐与同出口聚集提醒、`Sift v122`/`Yoti`/`/kyc_status` 风控升级与 `native_graphics` 多号指纹指引）**：
    - **2.29–2.31 节（2026-11-22，归口至 `v0.4.0`）**：实现两阶段主动阈值自动换号接力（`80%–100%` 阈值、`PostToolUse` 两阶段收尾 + `forced_stop`、外部子代理 300s 超时 fallthrough 与中途 5h 重置清理、`1200` 字符脱敏摘要、`OpusPlan` 说明、默认并发收敛为 `1` 保留 `1..=5` 兼容）；重构智能接力弹窗 10 行统一单轴对齐（`108px` 标签列、`0px` 偏移）并新增 `findSameExitClusterWarning`（≥3 启用账号同出口聚集提醒）；吸收 Sift v122 与 `/kyc_status` 调研升级桌面/移动端规则与提示词（`hexagon-cdn.com`、`hexagon-analytics.com`、`yoti.com`）、原生 Mihomo `has_sift_rules` 与 Persona+Yoti 同组校验、`probeClientHintsAndScreen()` 防篡改校验、MV3 → Rust → Python → UI 仅在手动同步时并发抓取的严格白名单 `/kyc_status`（剔除 `vendor_inquiry_id`/`vendor_inquiry_url`），以及浏览设置 `native_graphics` 多号指纹取舍说明。
    - **2.7 节（2026-11-12 晚）**：完成了 **CLI 代理/遥测安全边界统一判定与防断流界面提示增强**；
