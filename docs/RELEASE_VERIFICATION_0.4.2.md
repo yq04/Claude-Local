@@ -34,8 +34,7 @@ Claude-Local 基于 CCBaga 二次开发并独立维护，保留原贡献者版�
 
 ## 本机无感同步情况
 
-- `--orchestrate install_wrappers`（`ok: true`，`6` 文件 SHA-256 精确对齐）、`~/.local/bin/{claude_quota.py,quota_archive.py}` 原子同步以及只读 `claude-relay.ps1 -Status` 冒烟核验已全部完成（运行中 `claude.exe` 会话全程未受干扰）。
-- 由于同步期间用户桌面端 `claude-local.exe` 处于主动运行状态，本轮严格恪守**不强杀/不打断运行中桌面端**原则，已安全暂缓覆盖 `%LOCALAPPDATA%\Programs\Claude-Local` 桌面程序目录（退出桌面端后运行 [`scripts/deploy-local.ps1`](../scripts/deploy-local.ps1) 或执行安装包即可切换桌面端至 `v0.4.2`）。
+- 在用户主动退出桌面端 `claude-local.exe` 后，经 [`scripts/deploy-local.ps1`](../scripts/deploy-local.ps1) 完成本机安装目录 `%LOCALAPPDATA%\Programs\Claude-Local` 升级至 `0.4.2`（二进制 SHA-256 `0a0b4d858d6815fd0cdf0fc7f5587f06ade3bc05d8373e30de0a09b548e15cc9` 100% 匹配），配合 `--orchestrate install_wrappers`（`ok: true`，`6` 文件 SHA-256 精确对齐）、`~/.local/bin/{claude_quota.py,quota_archive.py}` 原子同步以及只读 `claude-relay.ps1 -Status` 冒烟核验（全程未中断在线 `claude.exe` 会话）。
 
 ## 范围与兼容
 
