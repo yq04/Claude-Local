@@ -57,7 +57,7 @@ fn current_session(session: &Option<super::Session>, token: &str) -> bool {
     session.as_ref().is_some_and(|s| s.token == token)
 }
 fn answer(stream: &mut TcpStream, status: &str, kind: &str, body: &[u8]) {
-    let header = format!("HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; frame-ancestors 'none'; connect-src 'self' https://ipwho.is https://ipapi.co https://api.ipquery.io; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'\r\n\r\n", body.len());
+    let header = format!("HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; frame-ancestors 'none'; connect-src 'self' https://api.ipquery.io https://ipinfo.io https://api.ip.sb https://get.geojs.io https://ipwho.is; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'\r\n\r\n", body.len());
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body);
 }
@@ -632,8 +632,22 @@ mod tests {
         assert!(header.contains("X-Frame-Options: DENY"));
         assert!(header.contains("frame-ancestors 'none'"));
         assert!(header.contains(
-            "connect-src 'self' https://ipwho.is https://ipapi.co https://api.ipquery.io;"
+            "connect-src 'self' https://api.ipquery.io https://ipinfo.io https://api.ip.sb https://get.geojs.io https://ipwho.is;"
         ));
+        for service_url in crate::browser::network::SERVICES
+            .iter()
+            .copied()
+            .chain(std::iter::once(
+                crate::browser::network::CLASSIFICATION_SERVICE,
+            ))
+        {
+            let parsed = reqwest::Url::parse(service_url).unwrap();
+            let origin = parsed.origin().ascii_serialization();
+            assert!(
+                header.contains(&origin),
+                "Production browser CSP must allow configured exit origin {origin}"
+            );
+        }
         assert!(!header.contains("connect-src *"));
         assert!(!header.contains("unsafe-eval"));
         assert_eq!(&response[split..], logo);

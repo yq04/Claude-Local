@@ -1,12 +1,22 @@
-// [INPUT]: 冻结的显式代理（SOCKS 自动升级 socks5h/socks4a 锁远程 DNS）、ipwho.is/ipapi.co 地理信息、可选固定 IPQuery 分类与版本化浏览器观测。
-// [OUTPUT]: 多信号住宅宽带 ISP / IDC 机房 ASN+关键词分类（含 RCN/Astound AS6079 等北美及主流地区家宽识别与机房硬阻断优先）、同 IP 布尔分类/受控失败诊断、本机与网页上报平台/CPU对比、去重有界 WebRTC 原因/耗时与探针核验；缺少观测保持 pending。
+// [INPUT]: 冻结的显式代理（SOCKS 自动升级 socks5h/socks4a 锁远程 DNS）、多源 HTTPS 地理服务（ipquery.io / ipinfo.io / api.ip.sb / get.geojs.io / ipwho.is）、可选固定 IPQuery 分类、Cloudflare trace 轻量国家探针与版本化浏览器观测。
+// [OUTPUT]: 多信号住宅宽带 ISP / IDC 机房 ASN+关键词分类（含 RCN/Astound AS6079 等北美及主流地区家宽识别与机房硬阻断优先）、多源故障备援与同源限流去重、同 IP 布尔分类/受控失败诊断、轻量出口国家检测（probe_country）、本机与网页上报平台/CPU对比、去重有界 WebRTC 原因/耗时与探针核验；缺少观测保持 pending。
 // [POS]: 环境核验边界；WebRTC 仅为无 STUN 本地候选观察，不证明 DNS 或公网 STUN 状态。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
-pub const SERVICES: [&str; 2] = ["https://ipwho.is/", "https://ipapi.co/json/"];
+pub const SERVICES: [&str; 5] = [
+    "https://api.ipquery.io/?format=json",
+    "https://ipinfo.io/json",
+    "https://api.ip.sb/geoip",
+    "https://get.geojs.io/v1/ip/geo.json",
+    "https://ipwho.is/",
+];
 pub const CLASSIFICATION_SERVICE: &str = "https://api.ipquery.io/";
+const COUNTRY_TRACE_URLS: [&str; 2] = [
+    "https://1.1.1.1/cdn-cgi/trace",
+    "https://www.cloudflare.com/cdn-cgi/trace",
+];
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct Exit {
     pub ip: String,
@@ -23,32 +33,102 @@ pub struct Exit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hosting_error: Option<String>,
 }
-pub fn parse(data: &Value) -> Result<Exit, String> {
-    if data["success"].as_bool() == Some(false) || data["error"].as_bool() == Some(true) {
-        return Err("出口服务未返回有效结果。".into());
-    }
-    let ip = data["ip"].as_str().ok_or("出口 IP 缺失。")?;
-    ip.parse::<std::net::IpAddr>()
-        .map_err(|_| "出口 IP 无效。")?;
-    let country = data["country_code"]
-        .as_str()
-        .filter(|x| x.len() == 2 && x.bytes().all(|c| c.is_ascii_uppercase()))
-        .ok_or("出口国家无效。")?;
-    let raw_asn = data
-        .get("asn")
-        .or_else(|| data.get("connection").and_then(|c| c.get("asn")));
-    let asn = match raw_asn {
-        Some(Value::Number(n)) => Some(format!("AS{n}")),
-        Some(Value::String(s)) if !s.trim().is_empty() && s.len() < 60 => {
+fn parse_asn_value(raw: Option<&Value>) -> Option<String> {
+    match raw {
+        Some(Value::Number(n)) => n.as_u64().filter(|v| *v > 0).map(|v| format!("AS{v}")),
+        Some(Value::String(s)) => {
             let trimmed = s.trim();
-            if trimmed.to_ascii_uppercase().starts_with("AS") {
-                Some(trimmed.to_string())
+            if trimmed.is_empty()
+                || trimmed.len() >= 60
+                || trimmed == "0"
+                || trimmed.eq_ignore_ascii_case("AS0")
+            {
+                return None;
+            }
+            if trimmed.len() >= 2 && trimmed[..2].eq_ignore_ascii_case("AS") {
+                Some(format!("AS{}", &trimmed[2..]))
             } else {
                 Some(format!("AS{trimmed}"))
             }
         }
         _ => None,
-    };
+    }
+}
+fn split_leading_asn(raw: &str) -> Option<(String, String)> {
+    let trimmed = raw.trim();
+    if trimmed.len() < 4 || !trimmed[..2].eq_ignore_ascii_case("AS") {
+        return None;
+    }
+    let after_prefix = &trimmed[2..];
+    let digit_len = after_prefix
+        .bytes()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    if digit_len == 0 || digit_len > 10 {
+        return None;
+    }
+    let digits = &after_prefix[..digit_len];
+    if digits.bytes().all(|b| b == b'0') {
+        return None;
+    }
+    let rest = &after_prefix[digit_len..];
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let org = rest.trim();
+    if org.is_empty() {
+        return None;
+    }
+    Some((format!("AS{digits}"), org.to_string()))
+}
+pub fn parse(data: &Value) -> Result<Exit, String> {
+    if data["success"].as_bool() == Some(false)
+        || data["error"].as_bool() == Some(true)
+        || data
+            .get("error")
+            .is_some_and(|v| v.is_object() || v.is_string())
+    {
+        return Err("出口服务未返回有效结果。".into());
+    }
+    let ip = data["ip"].as_str().ok_or("出口 IP 缺失。")?;
+    ip.parse::<std::net::IpAddr>()
+        .map_err(|_| "出口 IP 无效。")?;
+    let raw_country = data
+        .get("country_code")
+        .filter(|v| !v.is_null())
+        .or_else(|| {
+            data.get("location")
+                .and_then(|loc| loc.get("country_code"))
+                .filter(|v| !v.is_null())
+        })
+        .or_else(|| data.get("country").filter(|v| !v.is_null()));
+    let country = raw_country
+        .and_then(Value::as_str)
+        .filter(|x| x.len() == 2 && x.bytes().all(|c| c.is_ascii_uppercase()))
+        .ok_or("出口国家无效。")?;
+    fn non_empty(v: &Value) -> Option<&str> {
+        v.as_str().map(str::trim).filter(|s| !s.is_empty())
+    }
+    let mut asn = parse_asn_value(data.get("asn"))
+        .or_else(|| parse_asn_value(data.get("connection").and_then(|c| c.get("asn"))))
+        .or_else(|| parse_asn_value(data.get("isp").and_then(|c| c.get("asn"))));
+    let raw_isp = non_empty(&data["org"])
+        .or_else(|| non_empty(&data["connection"]["isp"]))
+        .or_else(|| non_empty(&data["connection"]["org"]))
+        .or_else(|| non_empty(&data["isp"]["isp"]))
+        .or_else(|| non_empty(&data["isp"]["org"]))
+        .or_else(|| non_empty(&data["isp"]))
+        .or_else(|| non_empty(&data["organization_name"]))
+        .or_else(|| non_empty(&data["organization"]))
+        .or_else(|| non_empty(&data["asn_organization"]))
+        .unwrap_or("");
+    let mut isp = raw_isp.to_string();
+    if asn.is_none() {
+        if let Some((parsed_asn, stripped_org)) = split_leading_asn(&isp) {
+            asn = Some(parsed_asn);
+            isp = stripped_org;
+        }
+    }
     let hosting = data["hosting"]
         .as_bool()
         .or_else(|| data["security"]["hosting"].as_bool())
@@ -66,38 +146,17 @@ pub fn parse(data: &Value) -> Result<Exit, String> {
     let mut exit = Exit {
         ip: ip.into(),
         country: country.into(),
-        city: data["city"]
-            .as_str()
-            .or_else(|| data["location"]["city"].as_str())
+        city: non_empty(&data["city"])
+            .or_else(|| non_empty(&data["location"]["city"]))
             .unwrap_or("")
             .into(),
-        timezone: data["timezone"]
-            .as_str()
-            .or_else(|| data["timezone"]["id"].as_str())
-            .or_else(|| data["location"]["timezone"].as_str())
+        timezone: non_empty(&data["timezone"])
+            .or_else(|| non_empty(&data["timezone"]["id"]))
+            .or_else(|| non_empty(&data["location"]["timezone"]))
             .unwrap_or("")
             .into(),
-        isp: data["org"]
-            .as_str()
-            .or_else(|| data["connection"]["isp"].as_str())
-            .or_else(|| data["connection"]["org"].as_str())
-            .or_else(|| data["isp"]["isp"].as_str())
-            .or_else(|| data["isp"]["org"].as_str())
-            .unwrap_or("")
-            .into(),
-        asn: asn.or_else(|| {
-            data["isp"]["asn"]
-                .as_str()
-                .map(str::trim)
-                .filter(|s| !s.is_empty() && s.len() < 60)
-                .map(|s| {
-                    if s.to_ascii_uppercase().starts_with("AS") {
-                        s.to_string()
-                    } else {
-                        format!("AS{s}")
-                    }
-                })
-        }),
+        isp,
+        asn,
         hosting,
         ..Default::default()
     };
@@ -106,6 +165,70 @@ pub fn parse(data: &Value) -> Result<Exit, String> {
 }
 pub async fn probe(proxy: &str) -> Result<Exit, String> {
     probe_with_classification(proxy, &SERVICES, Some(CLASSIFICATION_SERVICE)).await
+}
+fn parse_trace_country(body: &str) -> Option<String> {
+    for line in body.lines().take(64) {
+        if let Some((k, v)) = line.trim().split_once('=') {
+            if k == "loc" {
+                let cc = v.trim();
+                if cc.len() == 2 && cc.bytes().all(|b| b.is_ascii_alphabetic()) {
+                    return Some(cc.to_ascii_uppercase());
+                }
+            }
+        }
+    }
+    None
+}
+pub(crate) async fn probe_country(proxy: &str) -> Result<String, String> {
+    probe_country_with_urls(proxy, &COUNTRY_TRACE_URLS, &SERVICES).await
+}
+pub(super) async fn probe_country_with_urls(
+    proxy: &str,
+    trace_urls: &[&str],
+    geo_services: &[&str],
+) -> Result<String, String> {
+    let normalized_proxy = super::config::normalize_reqwest_proxy(proxy);
+    if !normalized_proxy.is_empty() && !trace_urls.is_empty() {
+        if let Ok(req_proxy) = reqwest::Proxy::all(&normalized_proxy) {
+            if let Ok(client) = reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+                .connect_timeout(Duration::from_secs(4))
+                .timeout(Duration::from_secs(5))
+                .proxy(req_proxy)
+                .build()
+            {
+                for url in trace_urls {
+                    let Ok(mut resp) = client.get(*url).send().await else {
+                        continue;
+                    };
+                    if !resp.status().is_success() {
+                        continue;
+                    }
+                    let mut bytes = Vec::with_capacity(512);
+                    let mut ok_body = true;
+                    while let Ok(Some(chunk)) = resp.chunk().await {
+                        if bytes.len() + chunk.len() > 8_192 {
+                            ok_body = false;
+                            break;
+                        }
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    if ok_body {
+                        if let Ok(text) = std::str::from_utf8(&bytes) {
+                            if let Some(cc) = parse_trace_country(text) {
+                                return Ok(cc);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    probe_with_classification(proxy, geo_services, None)
+        .await
+        .map(|e| e.country)
 }
 #[cfg(test)]
 pub(super) async fn probe_urls(proxy: &str, services: &[&str]) -> Result<Exit, String> {
@@ -120,6 +243,7 @@ pub(super) async fn probe_with_classification(
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+        .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(8));
     let normalized_proxy = super::config::normalize_reqwest_proxy(proxy);
     if !normalized_proxy.is_empty() {
@@ -128,54 +252,93 @@ pub(super) async fn probe_with_classification(
         );
     }
     let client = client.build().map_err(|_| "无法建立出口检查。")?;
+    let classification_origin = classification_service
+        .and_then(|s| reqwest::Url::parse(s).ok())
+        .map(|u| u.origin().ascii_serialization());
+    let mut prior_classification_error: Option<&'static str> = None;
     let mut errors = Vec::new();
     for address in services {
-        let name = reqwest::Url::parse(address)
-            .ok()
+        let parsed_url = reqwest::Url::parse(address).ok();
+        let name = parsed_url
+            .as_ref()
             .and_then(|u| u.host_str().map(str::to_owned))
             .unwrap_or_default();
-        let result = async {
+        let same_origin_as_classifier = classification_origin.as_deref().is_some_and(|origin| {
+            parsed_url
+                .as_ref()
+                .is_some_and(|u| u.origin().ascii_serialization() == origin)
+        });
+        let result: Result<(Exit, Option<bool>), (String, Option<&'static str>)> = async {
             let mut response = client.get(*address).send().await.map_err(|e| {
                 if e.is_timeout() {
-                    "请求超时"
+                    ("请求超时".to_string(), Some("timeout"))
                 } else {
-                    "网络连接失败"
+                    ("网络连接失败".to_string(), Some("network_error"))
                 }
-                .to_string()
             })?;
             if !response.status().is_success() {
-                return Err(format!("HTTP {}", response.status().as_u16()));
+                let status = response.status().as_u16();
+                let code = if status == 429 {
+                    "rate_limited"
+                } else {
+                    "http_error"
+                };
+                return Err((format!("HTTP {status}"), Some(code)));
             }
             let mut bytes = Vec::new();
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| "出口响应读取失败".to_string())?
-            {
+            while let Some(chunk) = response.chunk().await.map_err(|e| {
+                if e.is_timeout() {
+                    ("请求超时".to_string(), Some("timeout"))
+                } else {
+                    ("出口响应读取失败".to_string(), Some("network_error"))
+                }
+            })? {
                 if bytes.len() + chunk.len() > 32_768 {
-                    return Err("出口响应过大".into());
+                    return Err(("出口响应过大".into(), Some("response_too_large")));
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            parse(&serde_json::from_slice(&bytes).map_err(|_| "出口响应格式错误".to_string())?)
+            let raw: Value = serde_json::from_slice(&bytes)
+                .map_err(|_| ("出口响应格式错误".to_string(), None))?;
+            let ipquery_hosting = if name == "api.ipquery.io" {
+                raw["risk"]["is_datacenter"].as_bool()
+            } else {
+                None
+            };
+            let exit = parse(&raw).map_err(|e| (e, None))?;
+            Ok((exit, ipquery_hosting))
         }
         .await;
         match result {
-            Ok(mut exit) => {
+            Ok((mut exit, ipquery_hosting)) => {
+                if let Some(ipq_flag) = ipquery_hosting {
+                    if exit.hosting == Some(ipq_flag) {
+                        exit.hosting_source = Some("ipquery".into());
+                    }
+                }
                 if exit.hosting.is_none() {
                     if let Some(service) = classification_service {
-                        match supplement_hosting(&client, &exit.ip, service).await {
-                            Ok(hosting) => {
-                                exit.hosting = Some(hosting);
-                                exit.hosting_source = Some("ipquery".into());
+                        if let Some(err) = prior_classification_error {
+                            exit.hosting_error = Some(err.into());
+                        } else {
+                            match supplement_hosting(&client, &exit.ip, service).await {
+                                Ok(hosting) => {
+                                    exit.hosting = Some(hosting);
+                                    exit.hosting_source = Some("ipquery".into());
+                                }
+                                Err(error) => exit.hosting_error = Some(error.into()),
                             }
-                            Err(error) => exit.hosting_error = Some(error.into()),
                         }
                     }
                 }
                 return Ok(exit);
             }
-            Err(error) => errors.push(format!("{name}：{error}")),
+            Err((error, classifier_code)) => {
+                if same_origin_as_classifier && prior_classification_error.is_none() {
+                    prior_classification_error = classifier_code;
+                }
+                errors.push(format!("{name}：{error}"));
+            }
         }
     }
     Err(format!(
@@ -192,6 +355,7 @@ pub(crate) async fn probe_ip_via_ipquery(proxy: &str, ip: &str) -> Result<Exit, 
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+        .connect_timeout(Duration::from_secs(4))
         .timeout(Duration::from_secs(6));
     let normalized_proxy = super::config::normalize_reqwest_proxy(proxy);
     if !normalized_proxy.is_empty() {
@@ -240,9 +404,12 @@ pub(crate) async fn probe_ip_via_ipquery(proxy: &str, ip: &str) -> Result<Exit, 
     } else {
         data["ip"] = Value::String(parsed_ip.to_string());
     }
+    let ipquery_hosting = data["risk"]["is_datacenter"].as_bool();
     let mut exit = parse(&data)?;
-    if exit.hosting.is_some() {
-        exit.hosting_source = Some("ipquery".into());
+    if let Some(ipq_flag) = ipquery_hosting {
+        if exit.hosting == Some(ipq_flag) {
+            exit.hosting_source = Some("ipquery".into());
+        }
     }
     Ok(exit)
 }

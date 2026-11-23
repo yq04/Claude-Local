@@ -1205,3 +1205,255 @@ fn slot_materialization_prioritizes_slot_proxies_and_auto_heals_empty_proxy_with
     drop(db);
     fs::remove_dir_all(fixture).unwrap();
 }
+
+#[test]
+fn parse_supports_multi_provider_geo_schemas_and_rejects_errors() {
+    let ipq = network::parse(&serde_json::json!({
+        "ip": "203.0.113.51",
+        "isp": { "asn": "AS6079", "org": "RCN", "isp": "RCN" },
+        "location": { "country": "United States", "country_code": "US", "city": "Ashburn", "timezone": "America/New_York" },
+        "risk": { "is_datacenter": false }
+    }))
+    .unwrap();
+    assert_eq!(ipq.country, "US");
+    assert_eq!(ipq.city, "Ashburn");
+    assert_eq!(ipq.timezone, "America/New_York");
+    assert_eq!(ipq.asn.as_deref(), Some("AS6079"));
+    assert_eq!(ipq.hosting, Some(false));
+
+    let ipinfo = network::parse(&serde_json::json!({
+        "ip": "203.0.113.52",
+        "city": "Ashburn",
+        "country": "US",
+        "org": "AS6079 RCN",
+        "timezone": "America/New_York"
+    }))
+    .unwrap();
+    assert_eq!(ipinfo.country, "US");
+    assert_eq!(ipinfo.asn.as_deref(), Some("AS6079"));
+    assert_eq!(ipinfo.hosting, Some(false));
+
+    let ipsb = network::parse(&serde_json::json!({
+        "ip": "203.0.113.53",
+        "country_code": "US",
+        "city": "Ashburn",
+        "timezone": "America/New_York",
+        "asn": 6079,
+        "isp": "Astound Broadband"
+    }))
+    .unwrap();
+    assert_eq!(ipsb.country, "US");
+    assert_eq!(ipsb.asn.as_deref(), Some("AS6079"));
+    assert_eq!(ipsb.hosting, Some(false));
+
+    let geojs = network::parse(&serde_json::json!({
+        "ip": "203.0.113.54",
+        "country_code": "US",
+        "city": "Los Angeles",
+        "timezone": "America/Los_Angeles",
+        "asn": 0,
+        "organization_name": "Unlisted Carrier"
+    }))
+    .unwrap();
+    assert_eq!(geojs.country, "US");
+    assert_eq!(geojs.isp, "Unlisted Carrier");
+    assert!(geojs.asn.is_none());
+    assert!(geojs.hosting.is_none());
+
+    assert!(network::parse(&serde_json::json!({"ip":"203.0.113.55","country":"United States"})).is_err());
+    assert!(network::parse(&serde_json::json!({"ip":"203.0.113.55","country_code":"USA","country":"US"})).is_err());
+    assert!(network::parse(&serde_json::json!({"ip":"203.0.113.55","country":"US","error":{"title":"Rate limit"}})).is_err());
+
+    // Hard datacenter ASN must override false is_datacenter from upstream without claiming ipquery source.
+    let idc_override = network::parse(&serde_json::json!({
+        "ip": "203.0.113.56",
+        "isp": { "asn": "AS14061", "org": "DigitalOcean, LLC", "isp": "DigitalOcean" },
+        "location": { "country_code": "US", "city": "New York", "timezone": "America/New_York" },
+        "risk": { "is_datacenter": false }
+    }))
+    .unwrap();
+    assert_eq!(idc_override.hosting, Some(true));
+    assert!(idc_override.hosting_source.is_none());
+}
+
+#[test]
+fn probe_deduplicates_failed_ipquery_origin_and_sets_source_on_direct_ipquery() {
+    use std::io::{BufRead, BufReader, Write};
+
+    // Case 1: api.ipquery.io returns 200 with risk.is_datacenter -> 1 request total, hosting_source="ipquery".
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
+        let mut reader = BufReader::new(&stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(line.trim_end(), "GET http://api.ipquery.io/?format=json HTTP/1.1");
+        loop {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+        }
+        let body = r#"{"ip":"203.0.113.60","isp":{"asn":"AS12345","org":"Unlisted Carrier","isp":"Unlisted Carrier"},"location":{"country_code":"US","city":"Ashburn","timezone":"America/New_York"},"risk":{"is_datacenter":false}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
+    let exit = tauri::async_runtime::block_on(network::probe_with_classification(
+        &proxy,
+        &["http://api.ipquery.io/?format=json", "http://ipinfo.io/json"],
+        Some("http://api.ipquery.io/"),
+    ))
+    .unwrap();
+    assert_eq!(exit.ip, "203.0.113.60");
+    assert_eq!(exit.country, "US");
+    assert_eq!(exit.hosting, Some(false));
+    assert_eq!(exit.hosting_source.as_deref(), Some("ipquery"));
+    server.join().unwrap();
+
+    // Case 2: api.ipquery.io returns 429 -> falls back to ipinfo.io, skips duplicate classifier call, records rate_limited.
+    let listener2 = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy2 = format!("http://{}", listener2.local_addr().unwrap());
+    let server2 = std::thread::spawn(move || {
+        for (expected, status, body) in [
+            (
+                "GET http://api.ipquery.io/?format=json HTTP/1.1",
+                "429 Too Many Requests",
+                "rate limit",
+            ),
+            (
+                "GET http://ipinfo.io/json HTTP/1.1",
+                "200 OK",
+                r#"{"ip":"203.0.113.61","country":"US","city":"Ashburn","timezone":"America/New_York","org":"AS12345 Unlisted Carrier"}"#,
+            ),
+        ] {
+            let (mut stream, _) = listener2.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let mut reader = BufReader::new(&stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert_eq!(line.trim_end(), expected);
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    let fallback = tauri::async_runtime::block_on(network::probe_with_classification(
+        &proxy2,
+        &["http://api.ipquery.io/?format=json", "http://ipinfo.io/json"],
+        Some("http://api.ipquery.io/"),
+    ))
+    .unwrap();
+    assert_eq!(fallback.ip, "203.0.113.61");
+    assert_eq!(fallback.country, "US");
+    assert_eq!(fallback.asn.as_deref(), Some("AS12345"));
+    assert_eq!(fallback.isp, "Unlisted Carrier");
+    assert!(fallback.hosting.is_none());
+    assert_eq!(fallback.hosting_error.as_deref(), Some("rate_limited"));
+    server2.join().unwrap();
+}
+
+#[test]
+fn probe_country_uses_trace_for_explicit_proxy_and_falls_back() {
+    use std::io::{BufRead, BufReader, Write};
+
+    // Case 1: Explicit proxy succeeds on lightweight trace without touching GeoIP services.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
+        let mut reader = BufReader::new(&stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(line.trim_end(), "GET http://trace.invalid/cdn-cgi/trace HTTP/1.1");
+        loop {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+        }
+        let body = "fl=123\nip=203.0.113.70\nloc=US\n";
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
+    let cc = tauri::async_runtime::block_on(network::probe_country_with_urls(
+        &proxy,
+        &["http://trace.invalid/cdn-cgi/trace"],
+        &["http://geo-unused.invalid/"],
+    ))
+    .unwrap();
+    assert_eq!(cc, "US");
+    server.join().unwrap();
+
+    // Case 2: Trace returns 503 -> falls back to GeoIP service.
+    let listener2 = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy2 = format!("http://{}", listener2.local_addr().unwrap());
+    let server2 = std::thread::spawn(move || {
+        for (expected, status, body) in [
+            ("GET http://trace.invalid/cdn-cgi/trace HTTP/1.1", "503 Service Unavailable", "err"),
+            (
+                "GET http://geo.invalid/ HTTP/1.1",
+                "200 OK",
+                r#"{"ip":"203.0.113.71","country":"JP","timezone":"Asia/Tokyo"}"#,
+            ),
+        ] {
+            let (mut stream, _) = listener2.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let mut reader = BufReader::new(&stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert_eq!(line.trim_end(), expected);
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    let cc2 = tauri::async_runtime::block_on(network::probe_country_with_urls(
+        &proxy2,
+        &["http://trace.invalid/cdn-cgi/trace"],
+        &["http://geo.invalid/"],
+    ))
+    .unwrap();
+    assert_eq!(cc2, "JP");
+    server2.join().unwrap();
+}

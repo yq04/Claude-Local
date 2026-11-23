@@ -678,9 +678,7 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                         for route in &routes {
                             let key = route.effective_proxy.trim().to_string();
                             if !probe_cache.contains_key(&key) {
-                                let res = super::network::probe(&key)
-                                    .await
-                                    .map(|e| e.country);
+                                let res = super::network::probe_country(&key).await;
                                 probe_cache.insert(key, res);
                             }
                         }
@@ -781,9 +779,7 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                                 };
                                 let key = route2.effective_proxy.trim().to_string();
                                 if !reprobe_cache.contains_key(&key) {
-                                    let res = super::network::probe(&key)
-                                        .await
-                                        .map(|e| e.country);
+                                    let res = super::network::probe_country(&key).await;
                                     reprobe_cache.insert(key.clone(), res);
                                 }
                                 let res_ref = reprobe_cache[&key]

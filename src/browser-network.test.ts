@@ -96,3 +96,95 @@ test('Windows 设备核验接受真实 Win32，拒绝其他平台、CPU 与版�
     expect(matchesDevice(machine,{...report,cores:8})).toBe(false);
     expect(matchesDevice(machine,{...report,platform_version:'15.0.0'})).toBe(false);
 });
+
+test('多源地理响应（ipquery.io / ipinfo.io / api.ip.sb / get.geojs.io）准确解析并拒绝错误载荷',()=>{
+  const ipq=parseExit({
+    ip:'203.0.113.51',
+    isp:{asn:'AS6079',org:'RCN',isp:'RCN'},
+    location:{country:'United States',country_code:'US',city:'Ashburn',timezone:'America/New_York'},
+    risk:{is_datacenter:false},
+  });
+  expect(ipq).toEqual({ip:'203.0.113.51',country:'US',city:'Ashburn',timezone:'America/New_York',isp:'RCN',asn:'AS6079',hosting:false});
+
+  const ipinfo=parseExit({
+    ip:'203.0.113.52',
+    city:'Ashburn',
+    country:'US',
+    org:'AS6079 RCN',
+    timezone:'America/New_York',
+  });
+  expect(ipinfo).toEqual({ip:'203.0.113.52',country:'US',city:'Ashburn',timezone:'America/New_York',isp:'RCN',asn:'AS6079'});
+
+  const ipsb=parseExit({
+    ip:'203.0.113.53',
+    country_code:'US',
+    country:'United States',
+    city:'Ashburn',
+    timezone:'America/New_York',
+    asn:6079,
+    isp:'Astound Broadband',
+    organization:'Astound Broadband',
+    asn_organization:'RCN',
+  });
+  expect(ipsb).toEqual({ip:'203.0.113.53',country:'US',city:'Ashburn',timezone:'America/New_York',isp:'Astound Broadband',asn:'AS6079'});
+
+  const geojs=parseExit({
+    ip:'203.0.113.54',
+    country_code:'US',
+    city:'Los Angeles',
+    timezone:'America/Los_Angeles',
+    asn:0,
+    organization_name:'Fixture Broadband',
+    organization:'AS0 Fixture Broadband',
+  });
+  expect(geojs).toEqual({ip:'203.0.113.54',country:'US',city:'Los Angeles',timezone:'America/Los_Angeles',isp:'Fixture Broadband'});
+  expect(geojs.asn).toBeUndefined();
+
+  expect(()=>parseExit({ip:'203.0.113.55',country:'United States'})).toThrow();
+  expect(()=>parseExit({ip:'203.0.113.55',country_code:'USA',country:'US'})).toThrow();
+  expect(()=>parseExit({ip:'203.0.113.55',country:'US',error:{title:'Rate limit exceeded'}})).toThrow();
+});
+
+test('api.ipquery.io 主服务单次返回全量地理与分类；其 429 时无缝切至备用源且不重复请求分类服务',async()=>{
+  const directCalls:string[]=[];
+  const directExit=await probeBrowserExit(
+    ['https://api.ipquery.io/?format=json','https://ipinfo.io/json'],
+    async(url:string)=>{
+      directCalls.push(url);
+      return Response.json({
+        ip:'203.0.113.60',
+        isp:{asn:'AS6079',org:'RCN',isp:'RCN'},
+        location:{country_code:'US',city:'Ashburn',timezone:'America/New_York'},
+        risk:{is_datacenter:false},
+      });
+    },
+    classifier,
+  );
+  expect(directCalls).toEqual(['https://api.ipquery.io/?format=json']);
+  expect(directExit).toMatchObject({ip:'203.0.113.60',country:'US',city:'Ashburn',timezone:'America/New_York',asn:'AS6079',isp:'RCN',hosting:false,hosting_source:'ipquery'});
+
+  const fallbackCalls:string[]=[];
+  const fallbackExit=await probeBrowserExit(
+    ['https://api.ipquery.io/?format=json','https://ipinfo.io/json'],
+    async(url:string)=>{
+      fallbackCalls.push(url);
+      if(fallbackCalls.length===1)return new Response('rate limit',{status:429});
+      return Response.json({ip:'203.0.113.61',country:'US',city:'Ashburn',timezone:'America/New_York',org:'AS12345 Unlisted Carrier'});
+    },
+    classifier,
+  );
+  expect(fallbackCalls).toEqual(['https://api.ipquery.io/?format=json','https://ipinfo.io/json']);
+  expect(fallbackExit).toMatchObject({ip:'203.0.113.61',country:'US',city:'Ashburn',timezone:'America/New_York',asn:'AS12345',isp:'Unlisted Carrier',hosting_error:'rate_limited'});
+  expect(fallbackExit.hosting).toBeUndefined();
+
+  const htmlAndNetErr=probeBrowserExit(
+    ['https://api.ipquery.io/?format=json','https://ipinfo.io/json','https://api.ip.sb/geoip'],
+    async(url:string)=>{
+      if(url.includes('ipquery'))return new Response('<html>Just a moment...</html>',{status:200});
+      if(url.includes('ipinfo'))throw new TypeError('Failed to fetch');
+      throw new DOMException('timed out','TimeoutError');
+    },
+    classifier,
+  );
+  await expect(htmlAndNetErr).rejects.toThrow('api.ipquery.io：出口检测返回无效数据；ipinfo.io：网络连接失败；api.ip.sb：请求超时');
+});

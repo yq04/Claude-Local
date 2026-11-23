@@ -25,13 +25,23 @@ export async function testBrowserVerification(browser:Browser,base:string) {
  const nativePolicy=readFileSync(new URL('../src-tauri/src/browser/server.rs',import.meta.url),'utf8').match(/connect-src ([^;]+);/);
  assert(nativePolicy,'Production browser network policy must exist.');
  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
- let first=true, failure=false, unknown=false, partial=false, mismatch=false, language='zh', reports=0, classifications=0;
+ let first=true, failure=false, unknown=false, partial=false, mismatch=false, multiProviderMode:'fixture'|'ipquery-direct'|'fallback-ipinfo'='fixture', language='zh', reports=0, classifications=0, fallbackHits=0;
  let identity={linked:true,status:'linked',name:'Fixture identity',email:'fixture@example.invalid' as string|null,organization:'Fixture team' as string|null};
  await context.route('**/*',async route=>{
   const url=route.request().url();
   if(url===base+'/browser.html'){
    const response=await route.fetch();
    return route.fulfill({response,headers:{...response.headers(),'Content-Security-Policy':`connect-src ${nativePolicy[1]};`}});
+  }
+  if(url==='https://api.ipquery.io/?format=json'){
+   if(multiProviderMode==='ipquery-direct'){
+    return route.fulfill({status:200,headers:{'Access-Control-Allow-Origin':'*'},json:{ip:'203.0.113.1',isp:{asn:'AS6079',org:'RCN',isp:'RCN'},location:{country_code:'US',city:'Fixture',timezone:'America/Los_Angeles'},risk:{is_datacenter:false}}});
+   }
+   return route.fulfill({status:429,headers:{'Access-Control-Allow-Origin':'*'},json:{error:'rate limit'}});
+  }
+  if(url==='https://ipinfo.io/json'){
+   fallbackHits++;
+   return route.fulfill({status:200,headers:{'Access-Control-Allow-Origin':'*'},json:{ip:'203.0.113.1',country:'US',city:'Fixture',timezone:'America/Los_Angeles',org:'AS6079 RCN'}});
   }
   if(url==='https://api.ipquery.io/203.0.113.1?format=json'){
    classifications++;
@@ -44,7 +54,10 @@ export async function testBrowserVerification(browser:Browser,base:string) {
     const high=await (navigator as any).userAgentData?.getHighEntropyValues(['platformVersion','uaFullVersion']);
     return {platform:navigator.platform.toLowerCase().includes('mac')?'macos':navigator.platform==='Win32'?'windows':'linux',version:high?.platformVersion||'',cores:navigator.hardwareConcurrency,engine:high?.uaFullVersion||navigator.userAgent.match(/(?:Chrome|Chromium)\/([\d.]+)/)?.[1]||''};
    });
-   return route.fulfill({json:{identity,ui_language:language,exit_services:[base+'/fixture-exit'],exit_classification_service:'https://api.ipquery.io/',region:unknown?null:{id:'us-la',country:'US',language:'en-US',locale:'en_US',timezone:'America/Los_Angeles'},config:{follow_machine:false,language:'en-US',timezone:'America/Los_Angeles'},machine:{platform:observed.platform,version:observed.version,cores:observed.cores,timezone:'America/Los_Angeles',languages:['en-US'],locale:'en_US',locale_country:'US',location_enabled:false},engine_version:observed.engine}});
+   const exitServices=multiProviderMode==='fixture'
+    ?[base+'/fixture-exit']
+    :['https://api.ipquery.io/?format=json','https://ipinfo.io/json'];
+   return route.fulfill({json:{identity,ui_language:language,exit_services:exitServices,exit_classification_service:'https://api.ipquery.io/',region:unknown?null:{id:'us-la',country:'US',language:'en-US',locale:'en_US',timezone:'America/Los_Angeles'},config:{follow_machine:false,language:'en-US',timezone:'America/Los_Angeles'},machine:{platform:observed.platform,version:observed.version,cores:observed.cores,timezone:'America/Los_Angeles',languages:['en-US'],locale:'en_US',locale_country:'US',location_enabled:false},engine_version:observed.engine}});
   }
   if(url===base+'/fixture-exit')return route.fulfill({json:{ip:'203.0.113.1',country_code:failure?'JP':'US',city:'Fixture',timezone:'America/Los_Angeles',org:'Fixture carrier'}});
   if(url===base+'/report'){reports++;return route.fulfill({json:{ok:true}});}
@@ -119,6 +132,21 @@ export async function testBrowserVerification(browser:Browser,base:string) {
   await page.locator('.verification-identity').getByText('Not linked',{exact:true}).waitFor();
   assert.equal(await page.locator('.verification-identity.linked').count(),0);
 
-  return 10;
+  // Production CSP multi-provider checks: direct ipquery.io and 429 fallback to ipinfo.io.
+  const prevClassifications=classifications;
+  multiProviderMode='ipquery-direct';
+  await page.getByRole('button',{name:'Run check',exact:true}).click();
+  await page.getByRole('heading',{name:'Checks passed',exact:true}).waitFor();
+  assert.equal(await page.locator('.verification-check.ok').count(),20);
+  assert.equal(classifications,prevClassifications,'Direct api.ipquery.io response already includes hosting classification.');
+
+  multiProviderMode='fallback-ipinfo';
+  await page.getByRole('button',{name:'Run check',exact:true}).click();
+  await page.getByRole('heading',{name:'Checks passed',exact:true}).waitFor();
+  assert.equal(await page.locator('.verification-check.ok').count(),20);
+  assert.equal(fallbackHits,1,'Rate-limited api.ipquery.io must fall back to ipinfo.io under production CSP.');
+  assert.equal(classifications,prevClassifications,'Rate-limited api.ipquery.io must not be re-queried for supplementary classification.');
+
+  return 12;
  } finally {release();await context.close();}
 }

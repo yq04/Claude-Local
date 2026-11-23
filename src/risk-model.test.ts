@@ -616,6 +616,11 @@ test('CLI and Companion Browser dual-protocol proxy alignment recognizes same mi
     'yoti.com',
     'hexagon-cdn.com',
     'hexagon-analytics.com',
+    'ipquery.io',
+    'ipinfo.io',
+    'ip.sb',
+    'geojs.io',
+    'ipwho.is',
   ]) {
     expect(desktopYamlFull).toContain(`DOMAIN-SUFFIX,${portfolioDomain},`);
     expect(zhPromptFull).toContain(portfolioDomain);
