@@ -333,3 +333,58 @@ fn new_slot_proxy_priority_prefers_slot_proxy_then_claude_home_over_donor_and_sy
     drop(db);
     fs::remove_dir_all(fixture).unwrap();
 }
+
+#[test]
+fn restricted_host_disables_follow_machine_without_donor_and_preserves_non_restricted_host() {
+    let fixture = tests::sample();
+    let root = fixture.join("browser");
+    let mut db = workspaces::database(&root).unwrap();
+
+    let id_restricted = crate::identities::new_id().unwrap();
+    let id_unrestricted = crate::identities::new_id().unwrap();
+    for (id, name, acct) in [
+        (&id_restricted, "Restricted", "acct-r"),
+        (&id_unrestricted, "Unrestricted", "acct-u"),
+    ] {
+        db.remember(&crate::identities::database::Record {
+            id: id.clone(),
+            name: name.into(),
+            archive: format!("{id}.baga"),
+            saved_at: 1_760_000_000,
+            bytes: 1,
+            policy: crate::identities::Policy::default(),
+            empty: false,
+            account_key: Some(acct.into()),
+        })
+        .unwrap();
+    }
+    let (slot_r, _) = db.ensure_identity_binding(&id_restricted).unwrap();
+    let (slot_u, _) = db.ensure_identity_binding(&id_unrestricted).unwrap();
+
+    // 1) First slot on restricted host without any donor defaults follow_machine=false + en-US/America/New_York.
+    let scope_r = workspaces::ensure_slot_with_home_and_policy(&root, &db, &slot_r, None, true).unwrap();
+    let cfg_r = config::load(&scope_r).unwrap();
+    assert!(!cfg_r.follow_machine);
+    assert_eq!(cfg_r.language, "en-US");
+    assert_eq!(cfg_r.timezone, "America/New_York");
+
+    // 2) Manually flipping a stopped slot back to follow_machine=true + zh-Hans/Asia/Shanghai heals cleanly.
+    let mut dirty = cfg_r.clone();
+    dirty.follow_machine = true;
+    dirty.language = "zh-Hans".into();
+    dirty.timezone = "Asia/Shanghai".into();
+    config::save(&scope_r, &dirty).unwrap();
+    workspaces::ensure_slot_with_home_and_policy(&root, &db, &slot_r, None, true).unwrap();
+    let healed = config::load(&scope_r).unwrap();
+    assert!(!healed.follow_machine);
+    assert_eq!(healed.language, "en-US");
+    assert_eq!(healed.timezone, "America/New_York");
+
+    // 3) Non-restricted host without donor preserves follow_machine=true.
+    let scope_u = workspaces::ensure_slot_with_home_and_policy(&root, &db, &slot_u, None, false).unwrap();
+    let cfg_u = config::load(&scope_u).unwrap();
+    assert!(cfg_u.follow_machine);
+
+    drop(db);
+    fs::remove_dir_all(fixture).unwrap();
+}

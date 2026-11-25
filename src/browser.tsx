@@ -197,7 +197,11 @@ export function BrowserPanel({ onBusy }: {
                                       expected: killSwitch.expected_country || '-',
                                       observed: killSwitch.observed_country || '-',
                                   })
-                                : t('browser.killSwitch.reasonGeneric')}
+                                : killSwitch.reason_code === 'exit_datacenter'
+                                    ? t('browser.killSwitch.reasonExitDatacenter', {
+                                          observed: killSwitch.observed_country || '-',
+                                      })
+                                    : t('browser.killSwitch.reasonGeneric')}
                     </p>
                 </div>
                 <Button size="small" variant="secondary" data-kill-switch-dismiss disabled={killSwitchBusy} onClick={() => void dismissKillSwitch()}>

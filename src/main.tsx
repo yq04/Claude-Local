@@ -23,6 +23,7 @@ import {pageIcons as icons} from './page-icons';
 import {HelpPanel} from './help';
 import {SettingsPanel} from './settings';
 import {UsageStatisticsPanel} from './usage-statistics';
+import {RequestLogsPanel} from './request-logs';
 import {CommandPalette} from './command-palette';
 import {APP_REFRESH_EVENT, type IdentityReviewRequest} from './app-events';
 import {commandPaletteShortcutAction} from './command-model';
@@ -33,12 +34,14 @@ import appLogo from '../assets/claude-local-mark.svg';
 import './index.css';
 import './style.css';
 import './usage-statistics.css';
+import './request-logs.css';
 import './productivity-shell.css';
 
 const titles: Record<Page, string> = {
   quick: '快速配置',
   cleaner: '身份管理',
   usage: 'usage.title',
+  logs: 'logs.title',
   browser: '浏览环境',
   system: '电脑环境',
   vps: '网络环境',
@@ -47,7 +50,7 @@ const titles: Record<Page, string> = {
   settings: '软件设置',
 };
 
-const PAGE_ORDER: readonly Page[] = ['quick', 'browser', 'system', 'vps', 'risk', 'cleaner', 'usage', 'help', 'settings'];
+const PAGE_ORDER: readonly Page[] = ['quick', 'browser', 'system', 'vps', 'risk', 'cleaner', 'usage', 'logs', 'help', 'settings'];
 
 function App() {
   useEffect(() => { void initializeNativeWakeupBridge(); }, []);
@@ -189,7 +192,7 @@ function App() {
             </button>
           </div>
           <nav aria-label={t('主要页面')}>
-            {(['quick', 'browser', 'system', 'vps', 'risk', 'cleaner', 'usage', 'help', 'settings'] as const).map(p => {
+            {(['quick', 'browser', 'system', 'vps', 'risk', 'cleaner', 'usage', 'logs', 'help', 'settings'] as const).map(p => {
               const Icon = icons[p];
               return (
                 <Fragment key={p}>
@@ -235,6 +238,7 @@ function App() {
             )}
             {page === 'browser' && <BrowserPanel onBusy={setAdvancedBusy} />}
             {page === 'usage' && <UsageStatisticsPanel onFocusAccount={focusIdentityAccount} />}
+            {page === 'logs' && <RequestLogsPanel onFocusAccount={focusIdentityAccount} />}
             {page === 'system' && <SystemPanel onBusy={setAdvancedBusy} />}
             {page === 'vps' && <VpsPanel />}
             {page === 'risk' && <RiskVerificationPanel onNavigate={setPage} />}

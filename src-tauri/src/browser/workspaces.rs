@@ -327,6 +327,19 @@ fn find_active_or_consensus_donor(
         .or_else(|| find_consensus_context_donor(root, slot))
 }
 
+fn sanitize_non_restricted_locale(cfg: &mut config::Config) {
+    let lang_low = cfg.language.trim().to_ascii_lowercase();
+    if lang_low.is_empty() || lang_low.starts_with("zh") || lang_low.starts_with("ru") {
+        cfg.language = "en-US".into();
+    }
+    let tz_restricted = cfg.timezone.trim().is_empty()
+        || crate::regions::timezone_country(&cfg.timezone)
+            .is_some_and(crate::regions::is_unsupported_exit_country);
+    if tz_restricted {
+        cfg.timezone = "America/New_York".into();
+    }
+}
+
 pub(super) fn ensure_slot_with_home(
     root: &Path,
     db: &Database,
@@ -381,6 +394,10 @@ pub(super) fn ensure_slot_with_home_and_policy(
             } else if let Some(active_cfg) = donor {
                 base.proxy = active_cfg.proxy;
             }
+            if host_restricted && base.follow_machine {
+                base.follow_machine = false;
+                sanitize_non_restricted_locale(&mut base);
+            }
             base
         } else {
             config::load(&path)?
@@ -434,6 +451,11 @@ pub(super) fn ensure_slot_with_home_and_policy(
                         existing.timezone = d.timezone.clone();
                         dirty = true;
                     }
+                }
+                if existing.follow_machine {
+                    existing.follow_machine = false;
+                    sanitize_non_restricted_locale(&mut existing);
+                    dirty = true;
                 }
             }
             if dirty {

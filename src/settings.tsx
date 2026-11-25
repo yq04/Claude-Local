@@ -109,6 +109,7 @@ const startupOptions: readonly [StartupPage, string][] = [
   ['vps', '网络环境'],
   ['risk', '风控验证'],
   ['usage', 'usage.title'],
+  ['logs', 'logs.title'],
   ['help', '使用说明'],
 ];
 

@@ -1,5 +1,5 @@
 <!--
-[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.4.3 5-provider resilient exit verification (api.ipquery.io / ipinfo.io / api.ip.sb / get.geojs.io / ipwho.is), production CSP alignment & zero-quota-burn Kill-Switch trace guard, atop 0.4.2 zero-warning Rust cleanup, cross-stack dead-code/CSS/i18n pruning & zero-behavior-change modular splits (risk_check/, identities/profile/, src/identities/), 0.4.1 CLI-browser exit sync, cooldown convergence, read-only multi-port Clash helper & Sift/Yoti/handoff hardening, 0.4.0 proactive 2-stage threshold auto-relay, aligned Smart Relay UI & same-exit cluster hint, Sift v122/Yoti Mihomo audit & read-only /kyc_status observation, and multi-account browser fingerprint guidance, 0.3.7 Strategy A1 reset_harvest & modular --orchestrate CLI relay, 0.3.6 workbench overhaul, 0.3.5 UI De-AI unification across all 9 pages, 0.3.3 kernel-handle CLI liveness & zero-residue rollback, 0.3.2 five-core-area polish, 0.3.1 Usage Analytics 2.1, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
+[INPUT]: Independent Windows x64 product, retained CCBaga/MIT attribution, 0.4.4 per-request Request Logs workspace (usage_request_logs_read / RequestLogsPanel) & companion browser anti-leak / 30s datacenter Kill-Switch hardening, atop 0.4.3 5-provider resilient exit verification (api.ipquery.io / ipinfo.io / api.ip.sb / get.geojs.io / ipwho.is), production CSP alignment & zero-quota-burn Kill-Switch trace guard, 0.4.2 zero-warning Rust cleanup, cross-stack dead-code/CSS/i18n pruning & zero-behavior-change modular splits (risk_check/, identities/profile/, src/identities/), 0.4.1 CLI-browser exit sync, cooldown convergence, read-only multi-port Clash helper & Sift/Yoti/handoff hardening, 0.4.0 proactive 2-stage threshold auto-relay, aligned Smart Relay UI & same-exit cluster hint, Sift v122/Yoti Mihomo audit & read-only /kyc_status observation, and multi-account browser fingerprint guidance, 0.3.7 Strategy A1 reset_harvest & modular --orchestrate CLI relay, 0.3.6 workbench overhaul, 0.3.5 UI De-AI unification across all 9 pages, 0.3.3 kernel-handle CLI liveness & zero-residue rollback, 0.3.2 five-core-area polish, 0.3.1 Usage Analytics 2.1, and 0.3.0 cleanroom/Smart Relay 2.0/HUD 2.0 foundation.
 [OUTPUT]: Bilingual-linked flagship project presentation foregrounding anti-ban engineering, isolated Fingerprint Chromium, KYC/WebRTC/DNS/IPv6 protection, zero-kill encrypted vault switching, full-lifecycle warming cards, and 2x Usage Analytics.
 [POS]: Primary repository introduction (Simplified Chinese default, linked to README_EN.md).
 [PROTOCOL]: Keep private data, format compatibility and distribution boundaries in linked project documents.
@@ -15,7 +15,7 @@
 
 基于开源项目 [CCBaga](https://github.com/liseami/CCBaga)（[@liseami](https://github.com/liseami)）二次开发并独立维护，保留原贡献者版权与 [MIT 许可](LICENSE) · 纯本地单机优先（Local-First） · 零云端凭据托管 · 绝不强杀运行中的 `claude.exe`
 
-[![Latest Release](https://img.shields.io/badge/Release-v0.4.3-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.4.3)
+[![Latest Release](https://img.shields.io/badge/Release-v0.4.4-d97757?style=flat-square)](https://github.com/yq04/Claude-Local/releases/tag/v0.4.4)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4?style=flat-square)](https://github.com/yq04/Claude-Local/releases)
 [![Tech Stack](https://img.shields.io/badge/Stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019%20%C2%B7%20Python-2b3137?style=flat-square)](docs/DEVELOPMENT.md)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@
 </p>
 
 <p>
-  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.4.3/Claude-Local_0.4.3_x64-setup.exe"><strong>⬇️ 下载 v0.4.3 安装包 (Windows x64)</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/download/v0.4.4/Claude-Local_0.4.4_x64-setup.exe"><strong>⬇️ 下载 v0.4.4 安装包 (Windows x64)</strong></a>
   ·
-  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.4.3"><strong>✨ v0.4.3 Release 页面</strong></a>
+  <a href="https://github.com/yq04/Claude-Local/releases/tag/v0.4.4"><strong>✨ v0.4.4 Release 页面</strong></a>
   ·
   <a href="#-为什么选择-claude-local直击多账号风控四大痛点"><strong>🔥 四大防封壁垒</strong></a>
   ·
@@ -186,29 +186,30 @@ Claude-Local 在完整保留上游数据格式兼容性的前提下，围绕 **W
 
 ## 📦 获取、安装与版本记录
 
-### 1. 下载最新安装包（`v0.4.3`）
+### 1. 下载最新安装包（`v0.4.4`）
 
 | 发行资产 | 适用系统 | 文件大小 | SHA-256 校验和 |
 | :--- | :--- | :--- | :--- |
-| **[Claude-Local_0.4.3_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.4.3/Claude-Local_0.4.3_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | 见 Release 资产 | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.4.3/SHA256SUMS.txt) |
+| **[Claude-Local_0.4.4_x64-setup.exe](https://github.com/yq04/Claude-Local/releases/download/v0.4.4/Claude-Local_0.4.4_x64-setup.exe)** | Windows 10 / 11 (64-bit x64) | 见 Release 资产 | [SHA256SUMS.txt](https://github.com/yq04/Claude-Local/releases/download/v0.4.4/SHA256SUMS.txt) |
 
-下载后在 PowerShell 中计算 SHA-256，并与 [v0.4.3 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.4.3) 公布的校验值比对：
+下载后在 PowerShell 中计算 SHA-256，并与 [v0.4.4 Release](https://github.com/yq04/Claude-Local/releases/tag/v0.4.4) 公布的校验值比对：
 
 ```powershell
-Get-FileHash .\Claude-Local_0.4.3_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Claude-Local_0.4.4_x64-setup.exe -Algorithm SHA256
 ```
 
 ### 2. 安装与无损升级说明
 
 1. **安装位置与标识**：采用当前用户模式 NSIS 安装程序，默认安装至 `%LOCALAPPDATA%\Programs\Claude-Local`；主程序为 `claude-local.exe`，应用包标识为 `ai.local.claude-local`，伴侣浏览器注册名为 `Claude-Local-Browser`。
 2. **用户数据目录**：所有加密身份库、主密钥、额度/用量账本、外观壁纸配置与隔离浏览器个人资料均独立保存在 `%APPDATA%\ai.local.claude-local`。
-3. **平滑升级**：从 `0.1.x`、`0.2.x`、`0.3.x` 与 `0.4.0`–`0.4.2` 升级至 `0.4.3` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
+3. **平滑升级**：从 `0.1.x`、`0.2.x`、`0.3.x` 与 `0.4.0`–`0.4.3` 升级至 `0.4.4` 保留已有身份库、密钥与浏览器登录状态，无需重建身份；升级过程不强制关闭正在运行的 `claude.exe` 会话。建议升级前在「软件设置 → 数据管理」中导出一份口令加密备份。
 
 ### 3. 发行版本演进记录
 
 | 版本 | 发布日期 | 核心演进内容 | 详细文档 |
 | :--- | :--- | :--- | :--- |
-| **`v0.4.3`** *(Latest)* | 2026-11-23 | **五源高可用出口核验链、生产 CSP 零漂移校验与断路器零 GeoIP 配额消耗优化**：彻底根治 `ipwho.is` HTTP 429 与 `ipapi.co` Cloudflare 质询无 CORS（`Failed to fetch`）导致的伴生浏览器 17/20 出口核验失败；升级为 `api.ipquery.io/?format=json`（单次请求返回全量地理 + `risk.is_datacenter` 分类）→ `ipinfo.io/json` → `api.ip.sb/geoip` → `get.geojs.io/v1/ip/geo.json` → `ipwho.is/` 五源备援，补齐同源分类故障去重、受控双语网络错误归一与生产 `connect-src` 全源断言；`kill_switch.rs` 显式代理模式改走轻量 Cloudflare `/cdn-cgi/trace` 保护 GeoIP 限额，并同步补全 Mihomo 覆写 YAML/提示词分流与 `NOTICE.md` | [发布说明](docs/RELEASE_NOTES_0.4.3.md) · [交付核验](docs/RELEASE_VERIFICATION_0.4.3.md) |
+| **`v0.4.4`** *(Latest)* | 2026-11-25 | **独立「请求日志」观测工作台与伴生浏览器防泄露 / 30 秒机房 IP 急停加固**：新增独立第 10 页「请求日志」（`usage_request_logs_read` + `RequestLogsPanel`，支持毫秒时间戳、耗时与 P95、有效输出 TPS、精确 USD 花费/缓存节省、筛选检索、请求详情弹窗与 TSV/JSON 导出，严守零原始提示词/路径/凭据泄露）；伴生浏览器同步落地四项加固——全部有效显式代理统一锁定远程 DNS（`--host-resolver-rules`）、受限宿主机新建/自愈自动关闭 `follow_machine` 并设为 `en-US` / `America/New_York`、禁用网络预测（`network_prediction_options=2`）与 `Local State` 内置 DoH（`off`），并将显式代理断路器缩至 30 秒且支持运行中同国跳变机房 IP 二次复核熔断（`exit_datacenter`） | [发布说明](docs/RELEASE_NOTES_0.4.4.md) · [交付核验](docs/RELEASE_VERIFICATION_0.4.4.md) |
+| **`v0.4.3`** | 2026-11-23 | **五源高可用出口核验链、生产 CSP 零漂移校验与断路器零 GeoIP 配额消耗优化**：彻底根治 `ipwho.is` HTTP 429 与 `ipapi.co` Cloudflare 质询无 CORS（`Failed to fetch`）导致的伴生浏览器 17/20 出口核验失败；升级为 `api.ipquery.io/?format=json`（单次请求返回全量地理 + `risk.is_datacenter` 分类）→ `ipinfo.io/json` → `api.ip.sb/geoip` → `get.geojs.io/v1/ip/geo.json` → `ipwho.is/` 五源备援，补齐同源分类故障去重、受控双语网络错误归一与生产 `connect-src` 全源断言；`kill_switch.rs` 显式代理模式改走轻量 Cloudflare `/cdn-cgi/trace` 保护 GeoIP 限额，并同步补全 Mihomo 覆写 YAML/提示词分流与 `NOTICE.md` | [发布说明](docs/RELEASE_NOTES_0.4.3.md) · [交付核验](docs/RELEASE_VERIFICATION_0.4.3.md) |
 | **`v0.4.2`** | 2026-11-22 | **全栈去冗余、Rust 零警告收敛与零行为变化模块化拆分**：消除全部 `7` 处 Rust `dead_code` 告警并收口 `9` 个仅测试会话清理辅助项、合并共享 `valid_fingerprint`；删除跨栈死函数、废弃嵌套弹窗 `TaskHandoff` 及其 `6` 份遗留文件、净减 `497` 行死 CSS 并精简 `743` 条零引用双语键（`3,165 → 2,422` 1:1 对齐、`en.yaml` `0` CJK）；将 `risk_check.rs` 拆为 `risk_check/`（`6` 模块）、`identities/profile.rs` 拆为 `identities/profile/`（`5` 模块）、`src/identities.tsx`（`5,443 → 3,018` 行）拆出 `src/identities/` `5` 组件，并递归升级 `i18n.test.ts` 子目录扫描 | [发布说明](docs/RELEASE_NOTES_0.4.2.md) · [交付核验](docs/RELEASE_VERIFICATION_0.4.2.md) |
 | **`v0.4.1`** | 2026-11-22 | **CLI ↔ 浏览器出口同步、冷却单源收敛、只读多端口 Clash 生成器与全栈风控加固**：修复子代理 `rotation_tick` 冷却丢失、新增 `identities_orchestrator_clear_cooldown` 与 `wakeup` 被动 `429` 回写并移除冗余 `autoSwitchWhenIdle`；修复未绑定浏览器槽位被他号 `donor.proxy` 抢先继承、切号 `slotProxies` 跨号串流与 `[::1]` 回环归一，在智能接力弹窗提供出口失配徽章与 `identities_sync_browser_proxy` 一键对齐；网络页新增只读 Clash 多监听端口（`2–5` 口）YAML 生成弹窗；修复 `risk_check` 跨段规则泄漏并收紧 Sift+Hexagon/Telemetry 与防篡改探针、`/kyc_status` 归一及 `forced_stop` / `handoff` 误报与 `handoffReason` 提示 | [发布说明](docs/RELEASE_NOTES_0.4.1.md) · [交付核验](docs/RELEASE_VERIFICATION_0.4.1.md) |
 | **`v0.4.0`** | 2026-11-22 | **两阶段主动阈值自动换号接力、智能接力单轴对齐与同出口聚集提示、Sift v122/Yoti/只读 `/kyc_status` 全链路风控升级**：阈值扩展至 `80%–100%` 并通过 `PostToolUse` 两阶段平滑收尾避免打满 5h、修复外部子代理 300s 超时与中途 5h 重置状态清理、收敛默认同出口并发为 `1`；弹窗 10 行统一对齐 `108px` 纵轴并新增 ≥3 号同出口聚集提醒；补全 Sift/Hexagon/Yoti 规则与 Rust `has_sift_rules` 审计、显式网页同步白名单 `/kyc_status`（去隐私字段）及 `native_graphics` 多号指纹指引 | [发布说明](docs/RELEASE_NOTES_0.4.0.md) · [交付核验](docs/RELEASE_VERIFICATION_0.4.0.md) |

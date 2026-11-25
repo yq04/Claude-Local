@@ -1,5 +1,5 @@
 // [INPUT]: 宿主独立资料目录、原生进程核验、本人目录继承权限补齐、Unix 所有权/权限元数据与已验证配置。
-// [OUTPUT]: 浏览资料占用保护、窄范围 Preferences 更新、缓存/登录数据清理及全资料重置。
+// [OUTPUT]: 浏览资料占用保护、窄范围 Preferences/Local State 更新（禁用网络预测与内置 DoH）、缓存/登录数据清理及全资料重置。
 // [POS]: 文件边界；常规清理遍历固定位置，全清理枚举并清空独立资料目录，拒绝链接，不生成备份。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #[cfg(target_os = "linux")]
@@ -132,6 +132,7 @@ pub fn preferences(
         "/intl",
         "/webrtc",
         "/dns_prefetching",
+        "/net",
         "/profile",
         "/profile/default_content_setting_values",
         "/profile/content_settings",
@@ -149,6 +150,7 @@ pub fn preferences(
     data["intl"]["accept_languages"] = json!(super::config::accept_languages(&lang));
     data["intl"]["selected_languages"] = data["intl"]["accept_languages"].clone();
     data["dns_prefetching"]["enabled"] = json!(false);
+    data["net"]["network_prediction_options"] = json!(2);
     data["webrtc"]["ip_handling_policy"] = json!("disable_non_proxied_udp");
     data["webrtc"]["multiple_routes_enabled"] = json!(false);
     data["webrtc"]["nonproxied_udp_enabled"] = json!(false);
@@ -158,6 +160,31 @@ pub fn preferences(
         json!({"approximate":2,"precise":2});
     data["profile"]["content_settings"]["exceptions"]["geolocation"] = json!({});
     data["profile"]["content_settings"]["exceptions"]["geolocation_with_options"] = json!({});
+    write_json(&path, &data)?;
+    disable_local_state_doh(profile)
+}
+
+fn disable_local_state_doh(profile: &Path) -> Result<(), String> {
+    let path = profile.join("Local State");
+    check_path(profile, &path)?;
+    let mut data: Value = match fs::read(&path) {
+        Ok(bytes) => {
+            serde_json::from_slice(&bytes).map_err(|_| "Local State 损坏，未覆盖原文件。".to_string())?
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(_) => return Err("无法读取 Local State。".into()),
+    };
+    if !data.is_object() {
+        return Err("Local State 格式错误。".into());
+    }
+    if data
+        .pointer("/dns_over_https")
+        .map(|v| !v.is_object() && !v.is_null())
+        .unwrap_or(false)
+    {
+        return Err("Local State 字段格式错误，未修改原文件。".into());
+    }
+    data["dns_over_https"]["mode"] = json!("off");
     write_json(&path, &data)
 }
 pub const CACHE: &[&str] = &[

@@ -421,6 +421,11 @@ fn reject_links_and_malformed_preferences() {
     fs::write(&prefs, b"{\"intl\":\"wrong\"}").unwrap();
     assert!(profile::preferences(&root, &Config::default(), &machine()).is_err());
     assert_eq!(fs::read(&prefs).unwrap(), b"{\"intl\":\"wrong\"}");
+    fs::write(&prefs, b"{}").unwrap();
+    let local_state = root.join("Local State");
+    fs::write(&local_state, b"{\"dns_over_https\":\"wrong\"}").unwrap();
+    assert!(profile::preferences(&root, &Config::default(), &machine()).is_err());
+    assert_eq!(fs::read(&local_state).unwrap(), b"{\"dns_over_https\":\"wrong\"}");
     assert!(server::resource(&root, "../keep").is_none());
     assert!(server::resource(&root, "Default/Cache/keep").is_none());
     fs::remove_dir_all(root).unwrap();
@@ -431,6 +436,11 @@ fn preferences_preserve_assets_and_block_both_geolocation_modes() {
     let root = sample();
     fs::create_dir(root.join("Default")).unwrap();
     fs::write(root.join("Default/Preferences"),br#"{"bookmarks":{"keep":true},"profile":{"content_settings":{"exceptions":{"geolocation_with_options":{"site":{"setting":1}}}}}}"#).unwrap();
+    fs::write(
+        root.join("Local State"),
+        br#"{"os_crypt":{"encrypted_key":"keep-synthetic"}}"#,
+    )
+    .unwrap();
     profile::preferences(&root, &Config::default(), &machine()).unwrap();
     let value: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("Default/Preferences")).unwrap()).unwrap();
@@ -444,6 +454,20 @@ fn preferences_preserve_assets_and_block_both_geolocation_modes() {
         serde_json::json!({})
     );
     assert_eq!(value["dns_prefetching"]["enabled"], serde_json::json!(false));
+    assert_eq!(
+        value["net"]["network_prediction_options"],
+        serde_json::json!(2)
+    );
+    let local_state: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("Local State")).unwrap()).unwrap();
+    assert_eq!(
+        local_state["os_crypt"]["encrypted_key"],
+        serde_json::json!("keep-synthetic")
+    );
+    assert_eq!(
+        local_state["dns_over_https"]["mode"],
+        serde_json::json!("off")
+    );
     assert_eq!(config::accept_languages("ja"), "ja");
     assert_eq!(config::accept_languages("en-US"), "en-US,en");
     fs::remove_dir_all(root).unwrap();
@@ -1456,4 +1480,12 @@ fn probe_country_uses_trace_for_explicit_proxy_and_falls_back() {
     .unwrap();
     assert_eq!(cc2, "JP");
     server2.join().unwrap();
+
+    let parsed = network::parse_trace_exit("fl=123\nip=198.51.100.42\nloc=us\n").unwrap();
+    assert_eq!(parsed.country, "US");
+    assert_eq!(parsed.ip.as_deref(), Some("198.51.100.42"));
+    let bad_ip = network::parse_trace_exit("ip=not-an-ip\nloc=US\n").unwrap();
+    assert_eq!(bad_ip.country, "US");
+    assert_eq!(bad_ip.ip, None);
+    assert!(network::parse_trace_exit("ip=198.51.100.42\n").is_none());
 }

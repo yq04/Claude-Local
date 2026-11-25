@@ -21,10 +21,18 @@ const RiskIcon: typeof HomeDefault = ({size = 18, ...props}) => (
   </svg>
 );
 
+const LogsIcon: typeof HomeDefault = ({size = 18, ...props}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <rect x="4" y="3.5" width="16" height="17" rx="2.5" />
+    <path d="M8 8.5h8M8 12.5h8M8 16.5h5" />
+  </svg>
+);
+
 export const pageIcons: Record<Page, typeof HomeDefault> = {
   quick: HomeDefault,
   cleaner: ShieldCheck,
   usage: UsageIcon,
+  logs: LogsIcon,
   browser: WindowBrowser,
   system: Server,
   vps: Share01,

@@ -4,10 +4,10 @@
  * [POS]: 独立产品导航偏好，存储失败不阻止应用使用。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-export type Page='quick'|'cleaner'|'usage'|'browser'|'system'|'vps'|'risk'|'help'|'settings';
+export type Page='quick'|'cleaner'|'usage'|'logs'|'browser'|'system'|'vps'|'risk'|'help'|'settings';
 const key='claude-local.page.v1';
 export function validPage(value:unknown):value is Page{
-  return typeof value==='string'&&['quick','cleaner','usage','browser','system','vps','risk','help','settings'].includes(value);
+  return typeof value==='string'&&['quick','cleaner','usage','logs','browser','system','vps','risk','help','settings'].includes(value);
 }
 export function readPage():Page{
   try{

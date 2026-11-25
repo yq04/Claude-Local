@@ -783,6 +783,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .network-header h1,
 .risk-header h1,
 .usage-header h1,
+.logs-header h1,
 .help-header h1,
 .settings-header h1 {
   margin: 0;
@@ -808,6 +809,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 .network-header,
 .risk-header,
 .usage-header,
+.logs-header,
 .help-header,
 .settings-header,
 .system-page > .cleanup-title,
@@ -2910,13 +2912,13 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
 }
 
 /* ----- 点击物理回弹反馈（Tactile Press Feedback）、设置分栏入场动效与主题/字体预览控件 ----- */
-:where(.system-page, .identity-page, .quick-page, .network-page, .usage-page, .help-page, [role="dialog"], [role="alertdialog"]) button.isolate:not(:disabled),
+:where(.system-page, .identity-page, .quick-page, .network-page, .usage-page, .logs-page, .help-page, [role="dialog"], [role="alertdialog"]) button.isolate:not(:disabled),
 .sidebar-collapse-btn:not(:disabled),
 .cli-path-copy:not(:disabled),
 .theme-preset-btn:not(:disabled) {
   transition: transform 110ms cubic-bezier(0.22, 1, 0.36, 1), background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
 }
-:where(.system-page, .identity-page, .quick-page, .network-page, .usage-page, .help-page, [role="dialog"], [role="alertdialog"]) button.isolate:active:not(:disabled),
+:where(.system-page, .identity-page, .quick-page, .network-page, .usage-page, .logs-page, .help-page, [role="dialog"], [role="alertdialog"]) button.isolate:active:not(:disabled),
 .sidebar-collapse-btn:active:not(:disabled),
 .cli-path-copy:active:not(:disabled),
 .theme-preset-btn:active:not(:disabled),
@@ -3085,7 +3087,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 550; }
   .browser-check-grid { grid-template-columns: 1fr; }
 }
 @media (max-height: 760px) {
-  .quick-header, .browser-header, .system-header, .network-header, .risk-header, .usage-header, .help-header, .settings-header, .system-page > .cleanup-title, .identity-page > .cleanup-title { min-height: 44px; padding: 0 0 10px; margin-bottom: 10px; }
+  .quick-header, .browser-header, .system-header, .network-header, .risk-header, .usage-header, .logs-header, .help-header, .settings-header, .system-page > .cleanup-title, .identity-page > .cleanup-title { min-height: 44px; padding: 0 0 10px; margin-bottom: 10px; }
   .identity-onboarding-bar { margin-bottom: 8px; padding-block: 6px; }
   .identity-library, .identity-policy, .claude-residue, .identity-cli { margin-bottom: 8px; }
   .network-sections, .system-sections { gap: 8px; }

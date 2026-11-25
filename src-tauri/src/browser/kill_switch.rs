@@ -1,5 +1,5 @@
 // [INPUT]: 受管伴侣浏览器全部运行中资料目录（legacy/profile 与 contexts/*/profile）、各槽位独立 config.json 有效代理/预期国家、本机 TUN/DNS 快照及用户解警/开关动作。
-// [OUTPUT]: 按需激活的多槽位伴侣浏览器断线保护（单快照批量探活受管资料，无受管浏览器时 60s 空闲退避并由 notify_browser_activity 即时唤醒、运行期保持 15s；任一运行槽位为空代理即启用 TUN 监控，逐槽位核验出口国家漂移与不受支持国家首轮即刻熔断，避免受限主机 follow_machine=true 误伤美区出口）、全槽位浏览器关闭、红色告警托盘图标与零后续阻断恢复。
+// [OUTPUT]: 按需激活的多槽位伴侣浏览器断线保护（单快照批量探活受管资料，无受管浏览器时 60s 空闲退避并由 notify_browser_activity 即时唤醒、运行期保持 15s；任一运行槽位为空代理即启用 TUN 监控，显式代理每 30s / TUN 模式每 120s 逐槽位核验出口国家漂移、不受支持国家首轮即刻熔断及运行中同国 IP 跳变至机房地址二次复核熔断，避免受限主机 follow_machine=true 误伤美区出口）、全槽位浏览器关闭、红色告警托盘图标与零后续阻断恢复。
 // [POS]: 伴侣浏览器运行期非阻断守护；无受管浏览器运行时零 ipconfig/HTTP 探测，绝不触碰 claude.exe，重开浏览器自动解警。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use tauri::{Emitter, Manager};
 pub struct KillSwitchState {
     pub enabled: bool,
     pub triggered: bool,
-    pub reason_code: Option<String>, // "tun_dropped" | "country_drift"
+    pub reason_code: Option<String>, // "tun_dropped" | "country_drift" | "exit_datacenter"
     pub expected_country: Option<String>,
     pub observed_country: Option<String>,
     pub triggered_at: Option<u64>,
@@ -233,6 +233,7 @@ pub struct MonitorTracker {
     pub tun_drop_streak: u32,
     pub country_drift_streak: u32,
     pub slot_drift_streaks: std::collections::BTreeMap<String, u32>,
+    pub slot_baseline_ips: std::collections::BTreeMap<String, String>,
     pub tick_count: u64,
     pub last_local_net: Option<(bool, bool, String)>,
 }
@@ -261,6 +262,7 @@ impl MonitorTracker {
         self.tun_drop_streak = 0;
         self.country_drift_streak = 0;
         self.slot_drift_streaks.clear();
+        self.slot_baseline_ips.clear();
         self.tick_count = 0;
         self.last_local_net = None;
     }
@@ -305,8 +307,34 @@ impl MonitorTracker {
             return LocalCheckAction::RecheckTunAfterDelay;
         }
 
-        let should_probe_exit = self.tick_count % 8 == 0 || net_changed;
+        let exit_probe_mod = if effective_proxy.trim().is_empty() { 8 } else { 2 };
+        let should_probe_exit = self.tick_count % exit_probe_mod == 0 || net_changed;
         LocalCheckAction::Healthy { should_probe_exit }
+    }
+
+    /// Records the baseline exit IP for `slot`. Returns `true` only when a
+    /// previously recorded IP changed mid-session to a different non-empty IP.
+    pub fn observe_slot_ip(&mut self, slot: &str, observed_ip: Option<&str>) -> bool {
+        let Some(ip) = observed_ip.map(str::trim).filter(|s| !s.is_empty()) else {
+            return false;
+        };
+        match self.slot_baseline_ips.get(slot) {
+            None => {
+                self.slot_baseline_ips
+                    .insert(slot.to_string(), ip.to_string());
+                false
+            }
+            Some(prev) if prev == ip => false,
+            Some(_) => true,
+        }
+    }
+
+    pub fn accept_slot_ip(&mut self, slot: &str, ip: &str) {
+        let trimmed = ip.trim();
+        if !trimmed.is_empty() {
+            self.slot_baseline_ips
+                .insert(slot.to_string(), trimmed.to_string());
+        }
     }
 
     pub fn on_tun_recheck(
@@ -597,6 +625,9 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
             tracker
                 .slot_drift_streaks
                 .retain(|slot, _| active_slots.contains(slot.as_str()));
+            tracker
+                .slot_baseline_ips
+                .retain(|slot, _| active_slots.contains(slot.as_str()));
 
             let tun_proxy = aggregate_tun_proxy(&routes).to_string();
             let tun_expected = tun_alert_expected_country(&routes);
@@ -673,29 +704,34 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                     if should_probe_exit && !routes.is_empty() {
                         let mut probe_cache: std::collections::BTreeMap<
                             String,
-                            Result<String, String>,
+                            Result<super::network::ExitTrace, String>,
                         > = std::collections::BTreeMap::new();
                         for route in &routes {
                             let key = route.effective_proxy.trim().to_string();
                             if !probe_cache.contains_key(&key) {
-                                let res = super::network::probe_country(&key).await;
+                                let res = super::network::probe_exit_trace(&key).await;
                                 probe_cache.insert(key, res);
                             }
                         }
 
                         let mut immediate_drift: Option<(String, String)> = None;
                         let mut recheck_slots: Vec<String> = Vec::new();
+                        let mut ip_changed_slots: Vec<(String, String, Option<String>, String)> =
+                            Vec::new();
                         for route in &routes {
                             let key = route.effective_proxy.trim();
                             let Some(res) = probe_cache.get(key) else {
                                 continue;
                             };
-                            let res_ref = res.as_deref().map_err(|e| e.as_str());
+                            let res_ref = res
+                                .as_ref()
+                                .map(|t| t.country.as_str())
+                                .map_err(|e| e.as_str());
                             match tracker.on_slot_exit_probe(
                                 &route.slot,
                                 route.expected_country.as_deref(),
                                 res_ref,
-                                false,
+                               false,
                             ) {
                                 ExitProbeAction::TriggerCountryDrift {
                                     expected_country: exp,
@@ -707,8 +743,21 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                                 ExitProbeAction::RecheckExitAfterDelay { .. } => {
                                     recheck_slots.push(route.slot.clone());
                                 }
-                                ExitProbeAction::Healthy
-                                | ExitProbeAction::IgnoredTransientError => {}
+                                ExitProbeAction::Healthy => {
+                                    if let Ok(trace) = res {
+                                        if let Some(ip) = trace.ip.as_deref() {
+                                            if tracker.observe_slot_ip(&route.slot, Some(ip)) {
+                                                ip_changed_slots.push((
+                                                    route.slot.clone(),
+                                                    key.to_string(),
+                                                    route.expected_country.clone(),
+                                                    ip.trim().to_string(),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                                ExitProbeAction::IgnoredTransientError => {}
                             }
                         }
 
@@ -765,7 +814,7 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                             }
                             let mut reprobe_cache: std::collections::BTreeMap<
                                 String,
-                                Result<String, String>,
+                                Result<super::network::ExitTrace, String>,
                             > = std::collections::BTreeMap::new();
                             let mut confirmed_drift: Option<(String, String)> = None;
                             for slot_name in &recheck_slots {
@@ -779,11 +828,12 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                                 };
                                 let key = route2.effective_proxy.trim().to_string();
                                 if !reprobe_cache.contains_key(&key) {
-                                    let res = super::network::probe_country(&key).await;
+                                    let res = super::network::probe_exit_trace(&key).await;
                                     reprobe_cache.insert(key.clone(), res);
                                 }
                                 let res_ref = reprobe_cache[&key]
-                                    .as_deref()
+                                    .as_ref()
+                                    .map(|t| t.country.as_str())
                                     .map_err(|e| e.as_str());
                                 if let ExitProbeAction::TriggerCountryDrift {
                                     expected_country: exp,
@@ -811,6 +861,116 @@ pub fn spawn_monitor(app: tauri::AppHandle) {
                                 .await;
                                 tracker.reset();
                                 continue;
+                            }
+                        }
+
+                        if !ip_changed_slots.is_empty() {
+                            let mut hosting_cache: std::collections::BTreeMap<
+                                String,
+                                Result<super::network::Exit, String>,
+                            > = std::collections::BTreeMap::new();
+                            for (_, key, _, _) in &ip_changed_slots {
+                                if !hosting_cache.contains_key(key) {
+                                    hosting_cache.insert(
+                                        key.clone(),
+                                        super::network::probe(key).await,
+                                    );
+                                }
+                            }
+                            let mut suspect_slots: Vec<(String, Option<String>, String)> =
+                                Vec::new();
+                            for (slot, key, exp, new_ip) in &ip_changed_slots {
+                                match hosting_cache.get(key) {
+                                    Some(Ok(exit)) if exit.hosting == Some(true) => {
+                                        suspect_slots.push((
+                                            slot.clone(),
+                                            exp.clone(),
+                                            new_ip.clone(),
+                                        ));
+                                    }
+                                    _ => tracker.accept_slot_ip(slot, new_ip),
+                                }
+                            }
+                            if !suspect_slots.is_empty() {
+                                tokio::time::sleep(Duration::from_secs(3)).await;
+                                let re_app = app.clone();
+                                let Some((still_enabled, routes2)) =
+                                    tauri::async_runtime::spawn_blocking(move || {
+                                        let en = re_app
+                                            .try_state::<super::Browser>()
+                                            .map(|s| s.kill_switch.lock().unwrap().enabled)
+                                            .unwrap_or(false);
+                                        if !en {
+                                            return (false, Vec::new());
+                                        }
+                                        let Ok(root) = super::root(&re_app) else {
+                                            return (en, Vec::new());
+                                        };
+                                        let profiles = running_managed_profiles(&root);
+                                        if profiles.is_empty() {
+                                            return (en, Vec::new());
+                                        }
+                                        let machine = super::config::machine().ok();
+                                        let routes2 = inspect_slot_routes_for_profiles(
+                                            &root,
+                                            &profiles,
+                                            machine.as_ref(),
+                                        );
+                                        (en, routes2)
+                                    })
+                                    .await
+                                    .ok()
+                                else {
+                                    continue;
+                                };
+                                if !still_enabled || routes2.is_empty() {
+                                    tracker.reset();
+                                    continue;
+                                }
+                                let mut rehosting_cache: std::collections::BTreeMap<
+                                    String,
+                                    Result<super::network::Exit, String>,
+                                > = std::collections::BTreeMap::new();
+                                let mut confirmed_datacenter: Option<(Option<String>, String)> =
+                                    None;
+                                for (slot_name, exp, new_ip) in &suspect_slots {
+                                    let Some(route2) =
+                                        routes2.iter().find(|r| &r.slot == slot_name)
+                                    else {
+                                        continue;
+                                    };
+                                    let key = route2.effective_proxy.trim().to_string();
+                                    if !rehosting_cache.contains_key(&key) {
+                                        rehosting_cache.insert(
+                                            key.clone(),
+                                            super::network::probe(&key).await,
+                                        );
+                                    }
+                                    match rehosting_cache.get(&key) {
+                                        Some(Ok(exit2)) if exit2.hosting == Some(true) => {
+                                            confirmed_datacenter = Some((
+                                                exp.clone().or_else(|| route2.expected_country.clone()),
+                                                exit2.country.clone(),
+                                            ));
+                                            break;
+                                        }
+                                        _ => tracker.accept_slot_ip(slot_name, new_ip),
+                                    }
+                                }
+                                if let Some((exp, obs_country)) = confirmed_datacenter {
+                                    let trig_app = app.clone();
+                                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                                        trigger_kill_switch(
+                                            &trig_app,
+                                            "exit_datacenter",
+                                            exp,
+                                            Some(obs_country),
+                                        );
+                                    })
+                                    .await;
+                                    tracker.reset();
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -1158,5 +1318,74 @@ mod tests {
             tracker.on_tun_recheck(true, true, aggregate_tun_proxy(&routes), false),
             LocalCheckAction::TriggerTunDropped
         );
+    }
+
+    #[test]
+    fn explicit_proxy_probes_every_30s_and_tracks_slot_ip_baselines() {
+        let mut tracker = MonitorTracker::default();
+        // Tick 1: explicit proxy establishes baseline -> no exit probe yet.
+        assert_eq!(
+            tracker.on_local_tick(true, true, "socks5://127.0.0.1:7899", true, false),
+            LocalCheckAction::Healthy {
+                should_probe_exit: false
+            }
+        );
+        // Tick 2 (30s): explicit proxy probes every 2nd tick.
+        assert_eq!(
+            tracker.on_local_tick(true, true, "socks5://127.0.0.1:7899", true, false),
+            LocalCheckAction::Healthy {
+                should_probe_exit: true
+            }
+        );
+        // Tick 3: false, Tick 4 (60s): true.
+        assert_eq!(
+            tracker.on_local_tick(true, true, "socks5://127.0.0.1:7899", true, false),
+            LocalCheckAction::Healthy {
+                should_probe_exit: false
+            }
+        );
+        assert_eq!(
+            tracker.on_local_tick(true, true, "socks5://127.0.0.1:7899", true, false),
+            LocalCheckAction::Healthy {
+                should_probe_exit: true
+            }
+        );
+
+        // Baseline IP tracking: first IP records without alert; same IP stays false; changed IP returns true.
+        assert!(!tracker.observe_slot_ip("slot-a", Some("198.51.100.10")));
+        assert!(!tracker.observe_slot_ip("slot-a", Some("198.51.100.10")));
+        assert!(tracker.observe_slot_ip("slot-a", Some("198.51.100.20")));
+        tracker.accept_slot_ip("slot-a", "198.51.100.20");
+        assert!(!tracker.observe_slot_ip("slot-a", Some("198.51.100.20")));
+
+        tracker.reset();
+        assert!(tracker.slot_baseline_ips.is_empty());
+
+        // Empty proxy (TUN mode) keeps 120s (every 8th tick) cadence after initial tick.
+        assert_eq!(
+            tracker.on_local_tick(true, true, "", true, false),
+            LocalCheckAction::Healthy {
+                should_probe_exit: false
+            }
+        );
+        for expected in [false, false, false, false, false, false, true] {
+            assert_eq!(
+                tracker.on_local_tick(true, true, "", true, false),
+                LocalCheckAction::Healthy {
+                    should_probe_exit: expected
+                }
+            );
+        }
+
+        let mut ks = KillSwitchState::default();
+        apply_trigger(
+            &mut ks,
+            "exit_datacenter",
+            Some("US".into()),
+            Some("US".into()),
+            vec!["slot-a".into()],
+            1_700_000_001,
+        );
+        assert_eq!(ks.reason_code.as_deref(), Some("exit_datacenter"));
     }
 }

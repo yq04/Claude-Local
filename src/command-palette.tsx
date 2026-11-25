@@ -23,11 +23,12 @@ import {pageIcons} from './page-icons';
 import type {IdentityState} from './identity-model';
 import type {Page} from './navigation';
 
-const pages: readonly Page[] = ['quick', 'vps', 'risk', 'cleaner', 'usage', 'browser', 'system', 'help', 'settings'];
+const pages: readonly Page[] = ['quick', 'vps', 'risk', 'cleaner', 'usage', 'logs', 'browser', 'system', 'help', 'settings'];
 const pageTitles: Record<Page, string> = {
   quick: '快速配置',
   cleaner: '身份管理',
   usage: 'usage.title',
+  logs: 'logs.title',
   browser: '浏览环境',
   system: '电脑环境',
   vps: '网络环境',
@@ -35,7 +36,7 @@ const pageTitles: Record<Page, string> = {
   help: '使用说明',
   settings: '软件设置',
 };
-const refreshable = new Set<Page>(['cleaner', 'quick', 'browser', 'system', 'risk', 'usage']);
+const refreshable = new Set<Page>(['cleaner', 'quick', 'browser', 'system', 'risk', 'usage', 'logs']);
 
 type PaletteGroup = 'pages' | 'actions' | 'identities';
 

@@ -111,7 +111,7 @@ fn usage_perf_heavy_workstation() {
     let known = load_cursors(&conn);
     timed("scan_dir unchanged tree", || {
         let (mut ev, mut warn, mut cache) = (HashMap::new(), Vec::new(), Vec::new());
-        scan_dir(&projects, 0, &mut ev, &mut warn, &mut cache, &known);
+        scan_dir(&projects, 0, &mut ev, &mut warn, &mut cache, &known, "main");
         assert!(ev.is_empty(), "unchanged (including damaged) files must not be re-parsed");
         assert!(cache.is_empty());
         assert!(warn.contains(&"invalid_records".to_string()));

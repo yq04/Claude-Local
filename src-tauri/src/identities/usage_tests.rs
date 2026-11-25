@@ -29,8 +29,15 @@ fn event(key: &str, ts: u64, counts: Counts) -> Event {
         session_key: None,
         session_start: None,
         ts,
+        ts_ms: Some(ts.saturating_mul(1000)),
+        duration_ms: None,
+        request_start_ms: None,
         model: "sonnet".into(),
         effort: String::new(),
+        stop_reason: String::new(),
+        tool_count: 0,
+        speed: String::new(),
+        source_kind: "main".into(),
         counts,
         account: None,
         weak: false,
@@ -2080,7 +2087,7 @@ fn object_shaped_effort_and_output_config_backfill_from_parser_v2() {
         .query_row("SELECT parser_version FROM files", [], |r| r.get(0))
         .unwrap();
     assert_eq!(preserved_owner_count, 3);
-    assert_eq!(ver, 3);
+    assert_eq!(ver, usage::USAGE_PARSER_VERSION);
     drop(conn);
 
     let _ = fs::remove_dir_all(dir);
@@ -2168,6 +2175,410 @@ fn per_account_models_exposed_and_transient_identity_db_error_skips_false_gap() 
         "Transient identity DB open/query failure must not insert a permanent NULL boundary gap"
     );
     drop(ledger);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn request_logs_parse_duration_tps_tools_incremental_boundary_and_filters() {
+    assert_eq!(
+        usage::parse_iso_epoch_ms("2026-10-17T06:59:59.4Z"),
+        Some(1_792_220_399_400)
+    );
+    assert_eq!(
+        usage::parse_iso_epoch_ms("2026-10-17T06:59:59.45Z"),
+        Some(1_792_220_399_450)
+    );
+    assert_eq!(
+        usage::parse_iso_epoch_ms("2026-10-17T06:59:59.456789+00:00"),
+        Some(1_792_220_399_456)
+    );
+    assert_eq!(
+        usage::parse_iso_epoch_ms("2026-10-17T02:59:59-04:00"),
+        Some(1_792_220_399_000)
+    );
+
+    let dir = temp_dir("request-logs-full");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    let projects = home.join(".claude").join("projects").join("demo");
+    super::private::directory(&vault).unwrap();
+    super::private::directory(&projects).unwrap();
+
+    // Seed a synthetic JSONL with:
+    // 1) Normal user prompt -> 2 streamed assistant chunks (with tool_use + final stop_reason) -> 2500ms duration, 200 output => 80.0 TPS
+    // 2) Huge (>1500 byte) tool_result user line (tests LightEnvelope fast path!) -> assistant response 4000ms, 100 output => 25.0 TPS
+    // 3) Idle gap > 10 min (15 min delta) -> duration_ms=None, tps=None (never fabricated)
+    let jsonl = projects.join("sess-alpha.jsonl");
+    let huge_payload = "x".repeat(1600);
+    let mut f = fs::File::create(&jsonl).unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-1",
+            "sessionId": "sess-alpha",
+            "timestamp": "2026-10-25T10:00:00.000Z",
+            "message": { "role": "user", "content": "hello" }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-1a",
+            "parentUuid": "u-1",
+            "sessionId": "sess-alpha",
+            "requestId": "req-1",
+            "timestamp": "2026-10-25T10:00:01.200Z",
+            "effort": "high",
+            "message": {
+                "id": "msg-1",
+                "model": "claude-opus-4-6",
+                "content": [{ "type": "tool_use", "id": "tu-1", "name": "Read" }],
+                "usage": { "input_tokens": 500, "output_tokens": 80, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 1800 }
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-1b",
+            "parentUuid": "a-1a",
+            "sessionId": "sess-alpha",
+            "requestId": "req-1",
+            "timestamp": "2026-10-25T10:00:02.500Z",
+            "message": {
+                "id": "msg-1",
+                "model": "claude-opus-4-6",
+                "stop_reason": "tool_use",
+                "content": [
+                    { "type": "tool_use", "id": "tu-1", "name": "Read" },
+                    { "type": "tool_use", "id": "tu-2", "name": "Grep" }
+                ],
+                "usage": { "input_tokens": 500, "output_tokens": 200, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 1800, "speed": "fast" }
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-2-huge",
+            "parentUuid": "a-1b",
+            "sessionId": "sess-alpha",
+            "timestamp": "2026-10-25T10:00:03.000Z",
+            "message": { "role": "user", "content": huge_payload }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-2",
+            "parentUuid": "u-2-huge",
+            "sessionId": "sess-alpha",
+            "requestId": "req-2",
+            "isSidechain": true,
+            "timestamp": "2026-10-25T10:00:07.000Z",
+            "effort": "low",
+            "message": {
+                "id": "msg-2",
+                "model": "claude-haiku-4-5",
+                "stop_reason": "end_turn",
+                "usage": { "input_tokens": 100, "output_tokens": 100, "cache_read_input_tokens": 900 }
+            }
+        })
+    )
+    .unwrap();
+    // Write a user prompt whose assistant reply will arrive in a SECOND incremental scan!
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-3-split",
+            "parentUuid": "a-2",
+            "sessionId": "sess-alpha",
+            "timestamp": "2026-10-25T10:01:00.000Z",
+            "message": { "role": "user", "content": "next turn" }
+        })
+    )
+    .unwrap();
+    drop(f);
+
+    let snapshot_now = usage::parse_iso_epoch_ms("2026-10-25T12:00:00.000Z").unwrap() / 1000;
+    let base_query = usage::logs::RequestLogsQuery {
+        period: "all",
+        account_id: None,
+        model: None,
+        effort: None,
+        source_filter: None,
+        session_key: None,
+        search: None,
+        sort_by: "time",
+        sort_desc: true,
+        page: 1,
+        page_size: 25,
+        offset_minutes: 0,
+        timezone: None,
+    };
+    let snap1 = usage::logs::read_request_logs_at(&vault, &home, &base_query, snapshot_now).unwrap();
+    assert_eq!(snap1.total_count, 2);
+    assert_eq!(snap1.items.len(), 2);
+
+    // Item 0 is newer (a-2, sidechain, 4000ms, 25.0 TPS)
+    let r2 = &snap1.items[0];
+    assert_eq!(r2.model, "claude-haiku-4-5");
+    assert!(r2.sidechain);
+    assert_eq!(r2.duration_ms, Some(4000));
+    assert_eq!(r2.tps, Some(25.0));
+    assert_eq!(r2.stop_reason, "end_turn");
+    assert_eq!(r2.tool_count, 0);
+
+    // Item 1 is older (a-1, streamed across 2 chunks, 2500ms, 200 out => 80.0 TPS, 2 unique tools, fast)
+    let r1 = &snap1.items[1];
+    assert_eq!(r1.model, "claude-opus-4-6");
+    assert!(!r1.sidechain);
+    assert_eq!(r1.duration_ms, Some(2500));
+    assert_eq!(r1.tps, Some(80.0));
+    assert_eq!(r1.stop_reason, "tool_use");
+    assert_eq!(r1.tool_count, 2);
+    assert_eq!(r1.speed, "fast");
+    assert_eq!(r1.effort, "high");
+    // Weighted avg TPS = (200 + 100) / (2.5 + 4.0) = 300 / 6.5 = 46.2
+    assert_eq!(snap1.summary.avg_tps, Some(46.2));
+    assert_eq!(snap1.summary.peak_tps, Some(80.0));
+    assert_eq!(snap1.summary.timed_requests, 2);
+    assert_eq!(snap1.summary.avg_duration_ms, Some(3250));
+    assert!(snap1.summary.total_cost_usd > 0.0);
+
+    // Now append assistant reply to u-3-split (2000ms later) AND an idle-gap reply (>10m) in Scan 2!
+    let mut append = fs::OpenOptions::new().append(true).open(&jsonl).unwrap();
+    writeln!(
+        append,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-3-split",
+            "parentUuid": "u-3-split",
+            "sessionId": "sess-alpha",
+            "requestId": "req-3",
+            "timestamp": "2026-10-25T10:01:02.000Z",
+            "message": {
+                "id": "msg-3",
+                "model": "claude-sonnet-4-6",
+                "stop_reason": "end_turn",
+                "usage": { "input_tokens": 300, "output_tokens": 120 }
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        append,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-4-idle",
+            "parentUuid": "u-3-split",
+            "sessionId": "sess-alpha",
+            "requestId": "req-4",
+            "timestamp": "2026-10-25T10:25:00.000Z",
+            "message": {
+                "id": "msg-4",
+                "model": "claude-sonnet-4-6",
+                "stop_reason": "end_turn",
+                "usage": { "input_tokens": 50, "output_tokens": 50 }
+            }
+        })
+    )
+    .unwrap();
+    drop(append);
+
+    let snap2 = usage::logs::read_request_logs_at(&vault, &home, &base_query, snapshot_now).unwrap();
+    assert_eq!(snap2.total_count, 4);
+    // a-4-idle has 24min gap -> duration_ms None, tps None
+    assert_eq!(snap2.items[0].duration_ms, None);
+    assert_eq!(snap2.items[0].tps, None);
+    // a-3-split paired across incremental cursor via recover_prefix_timestamps! 2000ms, 120 out => 60.0 TPS
+    assert_eq!(snap2.items[1].duration_ms, Some(2000));
+    assert_eq!(snap2.items[1].tps, Some(60.0));
+    assert_eq!(snap2.summary.timed_requests, 3);
+
+    // Filter by source_filter = "subagent"
+    let mut sub_query = base_query.clone();
+    sub_query.source_filter = Some("subagent");
+    let snap_sub = usage::logs::read_request_logs_at(&vault, &home, &sub_query, snapshot_now).unwrap();
+    assert_eq!(snap_sub.total_count, 1);
+    assert_eq!(snap_sub.items[0].model, "claude-haiku-4-5");
+
+    // Sort by TPS descending -> 80.0 first, 60.0 second, 25.0 third, None last
+    let mut tps_query = base_query.clone();
+    tps_query.sort_by = "tps";
+    tps_query.sort_desc = true;
+    let snap_tps = usage::logs::read_request_logs_at(&vault, &home, &tps_query, snapshot_now).unwrap();
+    assert_eq!(snap_tps.items[0].tps, Some(80.0));
+    assert_eq!(snap_tps.items[1].tps, Some(60.0));
+    assert_eq!(snap_tps.items[2].tps, Some(25.0));
+    assert_eq!(snap_tps.items[3].tps, None);
+
+    // Sort by TPS ascending -> NULLS LAST! 25.0 first, 60.0 second, 80.0 third, None STILL last!
+    let mut tps_asc_query = base_query.clone();
+    tps_asc_query.sort_by = "tps";
+    tps_asc_query.sort_desc = false;
+    let snap_tps_asc =
+        usage::logs::read_request_logs_at(&vault, &home, &tps_asc_query, snapshot_now).unwrap();
+    assert_eq!(snap_tps_asc.items[0].tps, Some(25.0));
+    assert_eq!(snap_tps_asc.items[1].tps, Some(60.0));
+    assert_eq!(snap_tps_asc.items[2].tps, Some(80.0));
+    assert_eq!(snap_tps_asc.items[3].tps, None);
+
+    // Sort by duration ascending -> NULLS LAST! 2000ms first, 2500ms second, 4000ms third, None last!
+    let mut dur_asc_query = base_query.clone();
+    dur_asc_query.sort_by = "duration";
+    dur_asc_query.sort_desc = false;
+    let snap_dur_asc =
+        usage::logs::read_request_logs_at(&vault, &home, &dur_asc_query, snapshot_now).unwrap();
+    assert_eq!(snap_dur_asc.items[0].duration_ms, Some(2000));
+    assert_eq!(snap_dur_asc.items[1].duration_ms, Some(2500));
+    assert_eq!(snap_dur_asc.items[2].duration_ms, Some(4000));
+    assert_eq!(snap_dur_asc.items[3].duration_ms, None);
+
+    // Filter by session_key prefix
+    let session_prefix = snap2.items[0].session_key.as_deref().unwrap()[..8].to_string();
+    let mut sess_query = base_query.clone();
+    sess_query.session_key = Some(&session_prefix);
+    let snap_sess = usage::logs::read_request_logs_at(&vault, &home, &sess_query, snapshot_now).unwrap();
+    assert_eq!(snap_sess.total_count, 4);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn request_logs_stream_chunks_across_cursor_and_intermediate_progress_preserve_duration_and_tools()
+{
+    let dir = temp_dir("request-logs-stream-boundary");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    let projects = home.join(".claude").join("projects").join("demo");
+    super::private::directory(&vault).unwrap();
+    super::private::directory(&projects).unwrap();
+
+    let jsonl = projects.join("sess-stream.jsonl");
+    let mut f = fs::File::create(&jsonl).unwrap();
+    // Turn 1: user -> intermediate progress record (2.9s later) -> assistant chunk 1 (3.0s later, tool tu-1)
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-1",
+            "sessionId": "sess-stream",
+            "timestamp": "2026-10-25T10:00:00.000Z",
+            "message": { "role": "user", "content": "run checks" }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "progress",
+            "uuid": "p-1",
+            "parentUuid": "u-1",
+            "sessionId": "sess-stream",
+            "timestamp": "2026-10-25T10:00:02.900Z",
+            "data": { "type": "hook_progress" }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-1a",
+            "parentUuid": "p-1",
+            "sessionId": "sess-stream",
+            "requestId": "req-stream-1",
+            "timestamp": "2026-10-25T10:00:03.000Z",
+            "message": {
+                "id": "msg-stream-1",
+                "model": "claude-sonnet-4-6",
+                "content": [{ "type": "tool_use", "id": "tu-1", "name": "Read" }],
+                "usage": { "input_tokens": 200, "output_tokens": 60, "cache_read_input_tokens": 800 }
+            }
+        })
+    )
+    .unwrap();
+    drop(f);
+
+    let snapshot_now = usage::parse_iso_epoch_ms("2026-10-25T12:00:00.000Z").unwrap() / 1000;
+    let query = usage::logs::RequestLogsQuery {
+        period: "all",
+        account_id: None,
+        model: None,
+        effort: None,
+        source_filter: None,
+        session_key: None,
+        search: None,
+        sort_by: "time",
+        sort_desc: true,
+        page: 1,
+        page_size: 25,
+        offset_minutes: 0,
+        timezone: None,
+    };
+
+    // Scan 1: intermediate progress must NOT reset start time (must be 3000ms, not 100ms!)
+    let snap1 = usage::logs::read_request_logs_at(&vault, &home, &query, snapshot_now).unwrap();
+    assert_eq!(snap1.total_count, 1);
+    assert_eq!(snap1.items[0].duration_ms, Some(3000));
+    assert_eq!(snap1.items[0].tps, Some(20.0));
+    assert_eq!(snap1.items[0].tool_count, 1);
+
+    // Scan 2: streaming chunk 2 arrives AFTER incremental cursor with ONLY tool tu-2 and 5.0s total elapsed!
+    let mut append = fs::OpenOptions::new().append(true).open(&jsonl).unwrap();
+    writeln!(
+        append,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-1b",
+            "parentUuid": "a-1a",
+            "sessionId": "sess-stream",
+            "requestId": "req-stream-1",
+            "timestamp": "2026-10-25T10:00:05.000Z",
+            "message": {
+                "id": "msg-stream-1",
+                "model": "claude-sonnet-4-6",
+                "stop_reason": "tool_use",
+                "content": [{ "type": "tool_use", "id": "tu-2", "name": "Bash" }],
+                "usage": { "input_tokens": 200, "output_tokens": 250, "cache_read_input_tokens": 800 }
+            }
+        })
+    )
+    .unwrap();
+    drop(append);
+
+    let snap2 = usage::logs::read_request_logs_at(&vault, &home, &query, snapshot_now).unwrap();
+    assert_eq!(snap2.total_count, 1);
+    // Duration must trace back through a-1a -> p-1 -> u-1 => 5000ms (NOT 2000ms from a-1a!)
+    assert_eq!(snap2.items[0].duration_ms, Some(5000));
+    assert_eq!(snap2.items[0].tps, Some(50.0));
+    // Tool count must combine tu-1 from prefix + tu-2 from incremental append => 2!
+    assert_eq!(snap2.items[0].tool_count, 2);
+    assert_eq!(snap2.items[0].stop_reason, "tool_use");
 
     let _ = fs::remove_dir_all(dir);
 }

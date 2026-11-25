@@ -314,6 +314,7 @@ fn main() {
             identities::identities_sync_browser_proxy,
             browser::quota_bridge::identities_sync_subscription,
             identities::usage::usage_statistics_read,
+            identities::usage::logs::usage_request_logs_read,
             identities::usage::usage_attribution_read,
             identities::usage::usage_attribution_set,
             identities::usage::usage_attribution_clear,

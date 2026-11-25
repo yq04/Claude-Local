@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Native numeric usage aggregates, shared locale and display/privacy preferences.
- * [OUTPUT]: Token-first overview with four-part composition and per-bucket USD cost, per-request token/cost telemetry, top-aligned 2x2 equivalent API USD cost & per-session efficiency cards with atomic nowrap sub-items, compact label-fit account filter, one-click Retina Token consumption screenshots (overview & trend) plus export menu, full model distribution with aligned 2x2 micro-metric stats and effort popovers, 5-column per-account breakdown (two-line account cell with plan tier, Subscription ROI multiplier, live slot badge & card quick-jump; total tokens, output, Est. API cost & cache hit rate) & concise earlier-log scope summary, and responsive trend/data views.
+ * [OUTPUT]: Token-first overview with four-part composition and per-bucket USD cost, per-request token/cost telemetry, top-aligned 2x2 equivalent API USD cost & per-session efficiency cards with atomic nowrap sub-items, compact label-fit account filter, one-click Retina Token consumption screenshots (overview & trend) plus export menu, full model distribution with aligned 2x2 micro-metric stats and effort popovers, balanced centered per-account breakdown (two-line account cell with plan tier, Subscription ROI multiplier & live slot badge; centered total tokens, output, Est. API cost, cache hit rate & dedicated card quick-jump column) & concise earlier-log scope summary, and responsive trend/data views.
  * [POS]: Local statistics page; sequential 30-second visible-page/manual refresh with a per-query session snapshot cache (instant revisit, background revalidation), no credential or conversation-body access.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -680,7 +680,15 @@ export function UsageStatisticsPanel({onFocusAccount}: {onFocusAccount?: (accoun
           <section className="settings-card usage-accounts-card">
             <div className="usage-panel-header"><div><GroupTitle aside={String(accountRows.length)}>{t('usage.accounts')}</GroupTitle></div></div>
             <div className="usage-table-wrap" role="region" aria-label={t('usage.accounts')} tabIndex={0}>
-              <table className="usage-table" aria-label={t('usage.accounts')}>
+              <table className={`usage-table${onFocusAccount ? ' has-actions' : ''}`} aria-label={t('usage.accounts')}>
+                <colgroup>
+                  <col className="usage-col-account" />
+                  <col className="usage-col-total" />
+                  <col className="usage-col-output" />
+                  <col className="usage-col-cost" />
+                  <col className="usage-col-cache" />
+                  {onFocusAccount && <col className="usage-col-action" />}
+                </colgroup>
                 <thead>
                   <tr>
                     <th scope="col">{t('usage.account')}</th>
@@ -688,6 +696,7 @@ export function UsageStatisticsPanel({onFocusAccount}: {onFocusAccount?: (accoun
                     {accountSortHeader('output', t('usage.output'))}
                     {accountSortHeader('cost', t('usage.estimatedCost'))}
                     {accountSortHeader('cache_hit', t('usage.cacheHit'))}
+                    {onFocusAccount && <th scope="col" className="usage-action-col">{t('usage.actions')}</th>}
                   </tr>
                 </thead>
                 <tbody>{accountRows.map(row => {
@@ -746,17 +755,6 @@ export function UsageStatisticsPanel({onFocusAccount}: {onFocusAccount?: (accoun
                               </small>
                             )}
                           </button>
-                          {onFocusAccount && (
-                            <button
-                              type="button"
-                              className="usage-locate-btn"
-                              data-usage-locate-account={row.id}
-                              title={t('usage.focusCardHint')}
-                              onClick={() => onFocusAccount(row.id)}
-                            >
-                              {t('usage.focusCardBtn')}
-                            </button>
-                          )}
                         </div>
                       </th>
                       <td
@@ -770,6 +768,19 @@ export function UsageStatisticsPanel({onFocusAccount}: {onFocusAccount?: (accoun
                       <td title={`${t('usage.cacheWrite')}: ${num(row.totals.cache_creation_tokens, true)} · ${t('usage.cacheRead')}: ${num(row.totals.cache_read_tokens, true)}`}>
                         {rate(row.totals)}
                       </td>
+                      {onFocusAccount && (
+                        <td className="usage-action-col">
+                          <button
+                            type="button"
+                            className="usage-locate-btn"
+                            data-usage-locate-account={row.id}
+                            title={t('usage.focusCardHint')}
+                            onClick={() => onFocusAccount(row.id)}
+                          >
+                            {t('usage.focusCardBtn')}
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

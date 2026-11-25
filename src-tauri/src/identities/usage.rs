@@ -20,6 +20,8 @@ use tauri::Manager;
 
 #[path = "usage_attribution.rs"]
 mod attribution;
+#[path = "usage_logs.rs"]
+pub mod logs;
 #[cfg(test)]
 #[path = "usage_reliability_tests.rs"]
 mod reliability_tests;
@@ -29,6 +31,8 @@ mod perf_tests;
 
 const MAX_DEPTH: usize = 6;
 const MAX_LINE_BYTES: usize = 2 * 1024 * 1024;
+const MIN_DURATION_MS: u64 = 50;
+const MAX_DURATION_MS: u64 = 600_000;
 const MONITOR_INGEST_INTERVAL_SEC: u64 = 15;
 static USAGE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -200,8 +204,15 @@ pub(super) struct Event {
     pub session_key: Option<String>,
     pub session_start: Option<u64>,
     pub ts: u64,
+    pub ts_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
+    pub request_start_ms: Option<u64>,
     pub model: String,
     pub effort: String,
+    pub stop_reason: String,
+    pub tool_count: u32,
+    pub speed: String,
+    pub source_kind: String,
     pub counts: Counts,
     pub account: Option<String>,
     pub weak: bool,
@@ -220,7 +231,7 @@ fn now() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
-pub(super) const USAGE_PARSER_VERSION: i64 = 3;
+pub(super) const USAGE_PARSER_VERSION: i64 = 4;
 pub(super) const MAX_EFFORT_RECOVERY_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug)]
@@ -374,6 +385,341 @@ fn clean_effort(obj: &Value, msg: &Value) -> String {
     clean_effort_str(raw)
 }
 
+pub(super) fn parse_iso_epoch_ms(raw: &str) -> Option<u64> {
+    let s = raw.trim();
+    if let Ok(epoch) = s.parse::<u64>() {
+        if epoch > 1_000_000_000_000 {
+            return Some(epoch);
+        }
+        return (epoch > 1_000_000_000).then(|| epoch.saturating_mul(1000));
+    }
+    let sec = super::profile::parse_iso_epoch_sec(s)?;
+    let mut ms: u64 = 0;
+    if let Some(rest) = s.get(19..) {
+        if let Some(frac) = rest.strip_prefix('.') {
+            let digits: Vec<u8> = frac
+                .bytes()
+                .take_while(|b| b.is_ascii_digit())
+                .take(3)
+                .collect();
+            if !digits.is_empty() {
+                let mut val: u64 = 0;
+                for &d in &digits {
+                    val = val * 10 + (d - b'0') as u64;
+                }
+                for _ in digits.len()..3 {
+                    val *= 10;
+                }
+                ms = val;
+            }
+        }
+    }
+    sec.checked_mul(1000)?.checked_add(ms)
+}
+
+fn clean_stop_reason(msg: &Value) -> String {
+    let raw = msg
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    match raw.as_str() {
+        "end_turn"
+        | "tool_use"
+        | "max_tokens"
+        | "stop_sequence"
+        | "refusal"
+        | "pause_turn"
+        | "model_context_window_exceeded" => raw,
+        _ => String::new(),
+    }
+}
+
+fn clean_speed(usage: &Value) -> String {
+    let raw = usage
+        .get("speed")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    match raw.as_str() {
+        "standard" | "fast" | "ultrafast" => raw,
+        _ => String::new(),
+    }
+}
+
+fn extract_tool_use_ids(msg: &Value, line_seq: usize) -> Vec<String> {
+    let Some(arr) = msg.get("content").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (i, item) in arr.iter().enumerate() {
+        if item.get("type").and_then(Value::as_str) == Some("tool_use") {
+            if let Some(id) = item
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+            {
+                out.push(id.to_string());
+            } else {
+                out.push(format!("anon:{line_seq}:{i}"));
+            }
+        }
+    }
+    out
+}
+
+fn bounded_duration_ms(start_ms: Option<u64>, end_ms: u64) -> Option<u64> {
+    let start = start_ms?;
+    let delta = end_ms.checked_sub(start)?;
+    (MIN_DURATION_MS..=MAX_DURATION_MS)
+        .contains(&delta)
+        .then_some(delta)
+}
+
+#[derive(Deserialize)]
+struct LightEnvelope<'a> {
+    #[serde(default, borrow)]
+    uuid: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, rename = "parentUuid", borrow)]
+    parent_uuid: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, borrow)]
+    timestamp: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, rename = "type", borrow)]
+    record_type: Option<std::borrow::Cow<'a, str>>,
+}
+
+#[derive(Clone, Debug)]
+struct UuidNode {
+    ts_ms: u64,
+    parent_uuid: Option<String>,
+    event_key: Option<String>,
+    is_user: bool,
+    request_start_ms: Option<u64>,
+}
+
+fn derive_event_key(
+    obj: &Value,
+    msg: &Value,
+    file_tag: &str,
+    current_ts: u64,
+    counts: Option<Counts>,
+) -> String {
+    let msg_id = msg.get("id").and_then(Value::as_str).unwrap_or("");
+    let request_id = obj.get("requestId").and_then(Value::as_str).unwrap_or("");
+    let explicit_session = obj
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty() && s.len() <= 254);
+    let session = explicit_session.unwrap_or(file_tag);
+    let line_uuid = obj
+        .get("uuid")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    let identity = if !msg_id.is_empty() && !request_id.is_empty() {
+        format!("{msg_id}\0{request_id}")
+    } else if !msg_id.is_empty() {
+        format!("{session}\0message\0{msg_id}")
+    } else if !request_id.is_empty() {
+        format!("{session}\0request\0{request_id}")
+    } else if let Some(uuid) = line_uuid {
+        format!("uuid\0{uuid}")
+    } else {
+        let c = counts.unwrap_or_default();
+        format!(
+            "weak\0{session}\0{current_ts}\0{}\0{}\0{}\0{}",
+            c.input, c.output, c.creation, c.read
+        )
+    };
+    hex_hash(identity.as_bytes())
+}
+
+fn resolve_request_start_ms(
+    uuid_nodes: &HashMap<String, UuidNode>,
+    parent_uuid: Option<&str>,
+    current_event_key: &str,
+    current_ts_ms: u64,
+) -> Option<u64> {
+    let mut cursor = parent_uuid?;
+    let mut visited: HashSet<&str> = HashSet::new();
+    for _ in 0..32 {
+        if !visited.insert(cursor) {
+            return None;
+        }
+        let node = uuid_nodes.get(cursor)?;
+        if node.is_user {
+            return (node.ts_ms < current_ts_ms).then_some(node.ts_ms);
+        }
+        if node.event_key.as_deref() == Some(current_event_key) {
+            if let Some(start) = node.request_start_ms {
+                return (start < current_ts_ms).then_some(start);
+            }
+            if let Some(ref next) = node.parent_uuid {
+                cursor = next.as_str();
+                continue;
+            }
+            return None;
+        }
+        if node.event_key.is_some() {
+            return (node.ts_ms < current_ts_ms).then_some(node.ts_ms);
+        }
+        if let Some(start) = node.request_start_ms {
+            return (start < current_ts_ms).then_some(start);
+        }
+        if let Some(ref next) = node.parent_uuid {
+            cursor = next.as_str();
+            continue;
+        }
+        return (node.ts_ms < current_ts_ms).then_some(node.ts_ms);
+    }
+    None
+}
+
+fn recover_prefix_context(
+    path: &Path,
+    start_offset: u64,
+    file_tag: &str,
+    uuid_nodes: &mut HashMap<String, UuidNode>,
+    event_tools: &mut HashMap<String, HashSet<String>>,
+) {
+    if start_offset == 0 {
+        return;
+    }
+    let Ok(mut file) = File::open(path) else {
+        return;
+    };
+    let scan_start = start_offset.saturating_sub(MAX_EFFORT_RECOVERY_BYTES);
+    if file.seek(SeekFrom::Start(scan_start)).is_err() {
+        return;
+    }
+    let mut reader = BufReader::new(file);
+    if scan_start > 0 {
+        match bounded_line(&mut reader) {
+            Ok(Some((_, true))) => {}
+            _ => return,
+        }
+    }
+    let has_byte_seq = |haystack: &[u8], needle: &[u8]| {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    };
+    let mut line_seq: usize = 0;
+    loop {
+        line_seq = line_seq.saturating_add(1);
+        let pos = match reader.stream_position() {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        if pos >= start_offset {
+            break;
+        }
+        let (line, terminated) = match bounded_line(&mut reader) {
+            Ok(Some(v)) => v,
+            _ => break,
+        };
+        if !terminated {
+            break;
+        }
+        let end_pos = match reader.stream_position() {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        if end_pos > start_offset {
+            break;
+        }
+        if line.is_empty() {
+            continue;
+        }
+        if !has_byte_seq(&line, b"\"assistant\"") {
+            if let Ok(env) = serde_json::from_slice::<LightEnvelope>(&line) {
+                if let (Some(u), Some(ts_str)) = (env.uuid, env.timestamp) {
+                    if !u.is_empty() {
+                        if let Some(ts_ms) = parse_iso_epoch_ms(&ts_str) {
+                            let is_user = env.record_type.as_deref() == Some("user");
+                            let parent_uuid = env
+                                .parent_uuid
+                                .filter(|s| !s.is_empty())
+                                .map(std::borrow::Cow::into_owned);
+                            uuid_nodes.entry(u.into_owned()).or_insert(UuidNode {
+                                ts_ms,
+                                parent_uuid,
+                                event_key: None,
+                                is_user,
+                                request_start_ms: None,
+                            });
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        let Ok(obj) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
+        let line_uuid = obj
+            .get("uuid")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        let line_parent = obj
+            .get("parentUuid")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let line_ts_ms = obj
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_iso_epoch_ms);
+        let record_type = obj.get("type").and_then(Value::as_str).unwrap_or("");
+        if record_type != "assistant" {
+            if let (Some(u), Some(ts_ms)) = (line_uuid, line_ts_ms) {
+                uuid_nodes.entry(u.to_string()).or_insert(UuidNode {
+                    ts_ms,
+                    parent_uuid: line_parent,
+                    event_key: None,
+                    is_user: record_type == "user",
+                    request_start_ms: None,
+                });
+            }
+            continue;
+        }
+        let Some(ts_ms) = line_ts_ms else {
+            continue;
+        };
+        let Some(msg) = obj.get("message") else {
+            if let Some(u) = line_uuid {
+                uuid_nodes.entry(u.to_string()).or_insert(UuidNode {
+                    ts_ms,
+                    parent_uuid: line_parent,
+                    event_key: None,
+                    is_user: false,
+                    request_start_ms: None,
+                });
+            }
+            continue;
+        };
+        let counts = msg.get("usage").and_then(Counts::from_usage);
+        let ev_key = derive_event_key(&obj, msg, file_tag, ts_ms / 1000, counts);
+        let tool_ids = extract_tool_use_ids(msg, line_seq);
+        if !tool_ids.is_empty() {
+            let set = event_tools.entry(ev_key.clone()).or_default();
+            for tid in tool_ids {
+                set.insert(tid);
+            }
+        }
+        if let Some(u) = line_uuid {
+            let start_ms =
+                resolve_request_start_ms(uuid_nodes, line_parent.as_deref(), &ev_key, ts_ms);
+            uuid_nodes.entry(u.to_string()).or_insert(UuidNode {
+                ts_ms,
+                parent_uuid: line_parent,
+                event_key: Some(ev_key),
+                is_user: false,
+                request_start_ms: start_ms,
+            });
+        }
+    }
+}
+
 fn recover_prefix_effort(path: &Path, start_offset: u64) -> String {
     if start_offset == 0 {
         return String::new();
@@ -512,7 +858,15 @@ pub(super) fn parse_file_from_with_context(
     start_offset: u64,
     initial_effort: &str,
 ) -> Option<(u64, u64, u64, bool, String)> {
-    let outcome = parse_file_core(path, file_tag, events, warnings, start_offset, initial_effort)?;
+    let outcome = parse_file_core(
+        path,
+        file_tag,
+        events,
+        warnings,
+        start_offset,
+        initial_effort,
+        "main",
+    )?;
     Some((
         outcome.size,
         outcome.mtime,
@@ -541,6 +895,7 @@ fn parse_file_core(
     warnings: &mut Vec<String>,
     start_offset: u64,
     initial_effort: &str,
+    source_kind: &str,
 ) -> Option<ParseOutcome> {
     let meta = match fs::symlink_metadata(path) {
         Ok(v) => v,
@@ -586,7 +941,13 @@ fn parse_file_core(
     let mut damaged = false;
     let mut last_effort = clean_effort_str(initial_effort);
     let session_roots = attribution::session_roots(path);
+    // Maps record uuid -> timestamp, parentUuid chain, and turn metadata for accurate duration recovery.
+    let mut uuid_nodes: HashMap<String, UuidNode> = HashMap::new();
+    let mut prefix_ctx_loaded = false;
+    let mut event_tools: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut line_seq: usize = 0;
     loop {
+        line_seq = line_seq.saturating_add(1);
         let (line, terminated) = match bounded_line(&mut reader) {
             Ok(Some(v)) => v,
             Ok(None) => break,
@@ -616,9 +977,34 @@ fn parse_file_core(
             && !has_byte_seq(&line, b"\"effortLevel\"")
             && !has_byte_seq(&line, b"\\u")
         {
-            if serde_json::from_slice::<serde::de::IgnoredAny>(&line).is_err() {
-                warnings.push("invalid_records".into());
-                damaged = true;
+            match serde_json::from_slice::<LightEnvelope>(&line) {
+                Ok(env) => {
+                    if let (Some(u), Some(ts_str)) = (env.uuid, env.timestamp) {
+                        if !u.is_empty() {
+                            if let Some(ts_ms) = parse_iso_epoch_ms(&ts_str) {
+                                let is_user = env.record_type.as_deref() == Some("user");
+                                let parent_uuid = env
+                                    .parent_uuid
+                                    .filter(|s| !s.is_empty())
+                                    .map(std::borrow::Cow::into_owned);
+                                uuid_nodes.insert(
+                                    u.into_owned(),
+                                    UuidNode {
+                                        ts_ms,
+                                        parent_uuid,
+                                        event_key: None,
+                                        is_user,
+                                        request_start_ms: None,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    warnings.push("invalid_records".into());
+                    damaged = true;
+                }
             }
             continue;
         }
@@ -631,22 +1017,83 @@ fn parse_file_core(
         if !line_effort.is_empty() {
             last_effort = line_effort.clone();
         }
-        if obj.get("type").and_then(Value::as_str) != Some("assistant") {
-            continue;
-        }
-        let Some(current_ts) = obj
+        let line_uuid = obj
+            .get("uuid")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        let line_parent_uuid = obj
+            .get("parentUuid")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        let line_ts_ms = obj
             .get("timestamp")
             .and_then(Value::as_str)
-            .and_then(super::profile::parse_iso_epoch_sec)
-        else {
+            .and_then(parse_iso_epoch_ms);
+        let record_type = obj.get("type").and_then(Value::as_str).unwrap_or("");
+        if record_type != "assistant" {
+            if let (Some(u), Some(ts_ms)) = (line_uuid, line_ts_ms) {
+                uuid_nodes.insert(
+                    u.to_string(),
+                    UuidNode {
+                        ts_ms,
+                        parent_uuid: line_parent_uuid.map(str::to_string),
+                        event_key: None,
+                        is_user: record_type == "user",
+                        request_start_ms: None,
+                    },
+                );
+            }
+            continue;
+        }
+        let Some(current_ts_ms) = line_ts_ms else {
             warnings.push("invalid_records".into());
             damaged = true;
             continue;
         };
+        let current_ts = current_ts_ms / 1000;
         let Some(msg) = obj.get("message") else {
+            if let Some(u) = line_uuid {
+                uuid_nodes.insert(
+                    u.to_string(),
+                    UuidNode {
+                        ts_ms: current_ts_ms,
+                        parent_uuid: line_parent_uuid.map(str::to_string),
+                        event_key: None,
+                        is_user: false,
+                        request_start_ms: None,
+                    },
+                );
+            }
             continue;
         };
-        let Some(counts) = msg.get("usage").and_then(Counts::from_usage) else {
+        let Some(usage_obj) = msg.get("usage") else {
+            if let Some(u) = line_uuid {
+                uuid_nodes.insert(
+                    u.to_string(),
+                    UuidNode {
+                        ts_ms: current_ts_ms,
+                        parent_uuid: line_parent_uuid.map(str::to_string),
+                        event_key: None,
+                        is_user: false,
+                        request_start_ms: None,
+                    },
+                );
+            }
+            continue;
+        };
+        let Some(counts) = Counts::from_usage(usage_obj) else {
+            if let Some(u) = line_uuid {
+                uuid_nodes.insert(
+                    u.to_string(),
+                    UuidNode {
+                        ts_ms: current_ts_ms,
+                        parent_uuid: line_parent_uuid.map(str::to_string),
+                        event_key: None,
+                        is_user: false,
+                        request_start_ms: None,
+                    },
+                );
+            }
             continue;
         };
         if current_ts == 0 {
@@ -663,13 +1110,14 @@ fn parse_file_core(
         } else {
             last_effort.clone()
         };
+        let stop_reason = clean_stop_reason(msg);
+        let speed = clean_speed(usage_obj);
         let msg_id = msg.get("id").and_then(Value::as_str).unwrap_or("");
         let request_id = obj.get("requestId").and_then(Value::as_str).unwrap_or("");
         let explicit_session = obj
             .get("sessionId")
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty() && s.len() <= 254);
-        let session = explicit_session.unwrap_or(file_tag);
         let session_key = explicit_session.map(attribution::session_hash);
         let session_start = session_key
             .as_ref()
@@ -678,38 +1126,72 @@ fn parse_file_core(
         let is_weak = msg_id.is_empty() || request_id.is_empty();
         weak |= is_weak;
         // Hash all identifiers at the boundary. The ledger never stores raw IDs, paths, or message bodies.
-        let identity = if !msg_id.is_empty() && !request_id.is_empty() {
-            format!("{msg_id}\0{request_id}")
-        } else if !msg_id.is_empty() {
-            format!("{session}\0message\0{msg_id}")
-        } else if !request_id.is_empty() {
-            format!("{session}\0request\0{request_id}")
-        } else if let Some(uuid) = obj
-            .get("uuid")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-        {
-            format!("uuid\0{uuid}")
-        } else {
-            format!(
-                "weak\0{session}\0{current_ts}\0{}\0{}\0{}\0{}",
-                counts.input, counts.output, counts.creation, counts.read
-            )
-        };
-        let event_key = hex_hash(identity.as_bytes());
+        let event_key = derive_event_key(&obj, msg, file_tag, current_ts, Some(counts));
         let message_key = (!msg_id.is_empty()).then(|| hex_hash(msg_id.as_bytes()));
         let sidechain = obj
             .get("isSidechain")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+
+        // Resolve request start timestamp from parentUuid (with bounded prefix recovery on incremental scans).
+        if let Some(parent_u) = line_parent_uuid {
+            if !uuid_nodes.contains_key(parent_u) && start_offset > 0 && !prefix_ctx_loaded {
+                prefix_ctx_loaded = true;
+                recover_prefix_context(
+                    path,
+                    start_offset,
+                    file_tag,
+                    &mut uuid_nodes,
+                    &mut event_tools,
+                );
+            }
+        }
+        let request_start_ms =
+            resolve_request_start_ms(&uuid_nodes, line_parent_uuid, &event_key, current_ts_ms);
+        if let Some(u) = line_uuid {
+            let effective_start = request_start_ms
+                .or_else(|| events.get(&event_key).and_then(|e| e.request_start_ms));
+            uuid_nodes.insert(
+                u.to_string(),
+                UuidNode {
+                    ts_ms: current_ts_ms,
+                    parent_uuid: line_parent_uuid.map(str::to_string),
+                    event_key: Some(event_key.clone()),
+                    is_user: false,
+                    request_start_ms: effective_start,
+                },
+            );
+        }
+
+        let tool_ids = extract_tool_use_ids(msg, line_seq);
+        let tool_count = if !tool_ids.is_empty() {
+            let set = event_tools.entry(event_key.clone()).or_default();
+            for tid in tool_ids {
+                set.insert(tid);
+            }
+            set.len() as u32
+        } else {
+            event_tools
+                .get(&event_key)
+                .map(|s| s.len() as u32)
+                .unwrap_or(0)
+        };
+        let duration_ms = bounded_duration_ms(request_start_ms, current_ts_ms);
         let event = Event {
             event_key: event_key.clone(),
             message_key,
             session_key,
             session_start,
             ts: current_ts,
+            ts_ms: Some(current_ts_ms),
+            duration_ms,
+            request_start_ms,
             model,
             effort,
+            stop_reason,
+            tool_count,
+            speed,
+            source_kind: source_kind.to_string(),
             counts,
             account: None,
             weak: is_weak,
@@ -732,11 +1214,30 @@ fn parse_file_core(
                 if event.ts > old.ts {
                     old.ts = event.ts;
                 }
+                old.ts_ms = match (old.ts_ms, event.ts_ms) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    (a, None) | (None, a) => a,
+                };
+                old.request_start_ms = old.request_start_ms.or(event.request_start_ms);
+                let end_ms = old.ts_ms.unwrap_or_else(|| old.ts.saturating_mul(1000));
+                old.duration_ms = bounded_duration_ms(old.request_start_ms, end_ms)
+                    .or(old.duration_ms)
+                    .or(event.duration_ms);
                 if old.model == "unknown" {
                     old.model = event.model.clone();
                 }
                 if old.effort.is_empty() && !event.effort.is_empty() {
                     old.effort = event.effort.clone();
+                }
+                if !event.stop_reason.is_empty() {
+                    old.stop_reason = event.stop_reason.clone();
+                }
+                old.tool_count = old.tool_count.max(event.tool_count);
+                if old.speed.is_empty() && !event.speed.is_empty() {
+                    old.speed = event.speed.clone();
+                }
+                if old.source_kind == "main" && event.source_kind != "main" {
+                    old.source_kind = event.source_kind.clone();
                 }
             })
             .or_insert(event);
@@ -773,6 +1274,7 @@ fn scan_dir(
     warnings: &mut Vec<String>,
     cache: &mut Vec<CursorUpdate>,
     known: &HashMap<String, FileCursor>,
+    source_kind: &str,
 ) {
     if depth > MAX_DEPTH {
         warnings.push("partial_scan".into());
@@ -803,7 +1305,7 @@ fn scan_dir(
                 warnings.push("partial_scan".into());
                 continue;
             }
-            scan_dir(&path, depth + 1, events, warnings, cache, known);
+            scan_dir(&path, depth + 1, events, warnings, cache, known, source_kind);
         } else if meta.is_file() && path.extension().is_some_and(|x| x == "jsonl") {
             let tag = hex_hash(path.to_string_lossy().as_bytes());
             let mtime = meta
@@ -862,6 +1364,7 @@ fn scan_dir(
                 warnings,
                 start_offset,
                 &initial_effort,
+                source_kind,
             ) {
                 // Read failures retry from the old cursor. Invalid or oversized terminated
                 // lines are permanent in an append-only log, so their cursor is cached with a
@@ -888,7 +1391,7 @@ fn scan_dir(
 }
 
 /// Incrementally ingest `~/.claude/projects` and non-drifted `cli-slots/<record_id>/projects`
-/// into the ledger. Shared by the statistics page, the HUD tick and the pre-switch collection;
+/// into the ledger. Shared by the statistics page, request logs, HUD tick and pre-switch collection;
 /// aggregation is left to the caller.
 fn ingest_projects(
     conn: &Connection,
@@ -906,7 +1409,15 @@ fn ingest_projects(
     let projects = home.join(".claude").join("projects");
     if let Ok(meta) = fs::symlink_metadata(&projects) {
         if meta.is_dir() && !crate::cleaner::linked(&meta) && private::safe(&projects).is_ok() {
-            scan_dir(&projects, 0, &mut events, warnings, &mut cache, &known);
+            scan_dir(
+                &projects,
+                0,
+                &mut events,
+                warnings,
+                &mut cache,
+                &known,
+                "main",
+            );
         }
     }
     attribution::observe(conn, vault, home, clock);
@@ -993,6 +1504,7 @@ fn ingest_live_slots(
             warnings,
             &mut slot_cache,
             known,
+            "slot",
         );
         if slot_events.is_empty() && slot_cache.is_empty() {
             continue;
@@ -1134,45 +1646,25 @@ fn open_ledger_full(path: &Path) -> Result<Connection, String> {
         )
         .map_err(|_| "usage ledger migration failed")?;
     }
-    let has_message: bool = conn
+    let event_cols: HashSet<String> = conn
         .prepare("PRAGMA table_info(events)")
-        .ok()
         .and_then(|mut q| {
-            q.query_map([], |r| r.get::<_, String>(1))
-                .ok()
-                .map(|rows| rows.flatten().any(|n| n == "message_key"))
+            let rows = q.query_map([], |r| r.get::<_, String>(1))?;
+            Ok(rows.flatten().collect())
         })
-        .unwrap_or(false);
-    if !has_message {
+        .map_err(|_| "usage ledger schema unavailable")?;
+    if !event_cols.contains("message_key") {
         conn.execute("ALTER TABLE events ADD COLUMN message_key TEXT", [])
             .map_err(|_| "usage ledger migration failed")?;
     }
-    let has_sidechain: bool = conn
-        .prepare("PRAGMA table_info(events)")
-        .ok()
-        .and_then(|mut q| {
-            q.query_map([], |r| r.get::<_, String>(1))
-                .ok()
-                .map(|rows| rows.flatten().any(|n| n == "sidechain"))
-        })
-        .unwrap_or(false);
-    if !has_sidechain {
+    if !event_cols.contains("sidechain") {
         conn.execute(
             "ALTER TABLE events ADD COLUMN sidechain INTEGER NOT NULL DEFAULT 0",
             [],
         )
         .map_err(|_| "usage ledger migration failed")?;
     }
-    let has_effort: bool = conn
-        .prepare("PRAGMA table_info(events)")
-        .ok()
-        .and_then(|mut q| {
-            q.query_map([], |r| r.get::<_, String>(1))
-                .ok()
-                .map(|rows| rows.flatten().any(|n| n == "effort"))
-        })
-        .unwrap_or(false);
-    if !has_effort {
+    if !event_cols.contains("effort") {
         conn.execute(
             "ALTER TABLE events ADD COLUMN effort TEXT NOT NULL DEFAULT ''",
             [],
@@ -1181,7 +1673,43 @@ fn open_ledger_full(path: &Path) -> Result<Connection, String> {
         conn.execute("UPDATE files SET guard=''", [])
             .map_err(|_| "usage ledger migration failed")?;
     }
-    conn.execute_batch("CREATE INDEX IF NOT EXISTS events_timestamp ON events(ts); CREATE INDEX IF NOT EXISTS events_message ON events(message_key,sidechain); CREATE INDEX IF NOT EXISTS events_account ON events(account_key);")
+    if !event_cols.contains("ts_ms") {
+        conn.execute("ALTER TABLE events ADD COLUMN ts_ms INTEGER", [])
+            .map_err(|_| "usage ledger migration failed")?;
+    }
+    if !event_cols.contains("duration_ms") {
+        conn.execute("ALTER TABLE events ADD COLUMN duration_ms INTEGER", [])
+            .map_err(|_| "usage ledger migration failed")?;
+    }
+    if !event_cols.contains("stop_reason") {
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN stop_reason TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(|_| "usage ledger migration failed")?;
+    }
+    if !event_cols.contains("tool_count") {
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN tool_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|_| "usage ledger migration failed")?;
+    }
+    if !event_cols.contains("speed") {
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN speed TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(|_| "usage ledger migration failed")?;
+    }
+    if !event_cols.contains("source_kind") {
+        conn.execute(
+            "ALTER TABLE events ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'main'",
+            [],
+        )
+        .map_err(|_| "usage ledger migration failed")?;
+    }
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS events_timestamp ON events(ts); CREATE INDEX IF NOT EXISTS events_message ON events(message_key,sidechain); CREATE INDEX IF NOT EXISTS events_account ON events(account_key); CREATE INDEX IF NOT EXISTS events_ts_desc ON events(ts DESC, ts_ms DESC);")
         .map_err(|_| "usage ledger index unavailable")?;
     attribution::migrate(&conn)?;
     Ok(conn)
@@ -1420,7 +1948,12 @@ fn persist_scan_with_resolver(
                 .map_err(|_| "usage replay cleanup failed")?;
             }
         }
-        tx.execute("INSERT INTO events(event_key,message_key,session_key,ts,model,effort,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,?2,?14,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(event_key) DO UPDATE SET ts=MAX(events.ts,excluded.ts),session_key=COALESCE(events.session_key,excluded.session_key),input=MAX(events.input,excluded.input),output=MAX(events.output,excluded.output),creation=MAX(events.creation,excluded.creation),cache_read=MAX(events.cache_read,excluded.cache_read),reasoning=CASE WHEN events.reasoning IS NULL THEN excluded.reasoning WHEN excluded.reasoning IS NULL THEN events.reasoning ELSE MAX(events.reasoning,excluded.reasoning) END,model=CASE WHEN events.model='unknown' THEN excluded.model ELSE events.model END,effort=CASE WHEN excluded.effort!='' THEN excluded.effort ELSE events.effort END,weak=MIN(events.weak,excluded.weak)",params![e.event_key,e.message_key,e.ts as i64,e.model,e.effort,e.counts.input as i64,e.counts.output as i64,e.counts.creation as i64,e.counts.read as i64,e.counts.reasoning.map(|x|x as i64),e.account,e.weak as i64,e.sidechain as i64,e.session_key]).map_err(|_|"usage event write failed")?;
+        let src_kind = if e.source_kind.is_empty() {
+            "main"
+        } else {
+            e.source_kind.as_str()
+        };
+        tx.execute("INSERT INTO events(event_key,message_key,session_key,ts,ts_ms,duration_ms,model,effort,stop_reason,tool_count,speed,source_kind,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,?2,?14,?3,?15,?16,?4,?5,?17,?18,?19,?20,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(event_key) DO UPDATE SET ts=MAX(events.ts,excluded.ts),ts_ms=CASE WHEN events.ts_ms IS NULL THEN excluded.ts_ms WHEN excluded.ts_ms IS NULL THEN events.ts_ms ELSE MAX(events.ts_ms,excluded.ts_ms) END,duration_ms=CASE WHEN events.duration_ms IS NULL THEN excluded.duration_ms WHEN excluded.duration_ms IS NULL THEN events.duration_ms ELSE MAX(events.duration_ms,excluded.duration_ms) END,session_key=COALESCE(events.session_key,excluded.session_key),input=MAX(events.input,excluded.input),output=MAX(events.output,excluded.output),creation=MAX(events.creation,excluded.creation),cache_read=MAX(events.cache_read,excluded.cache_read),reasoning=CASE WHEN events.reasoning IS NULL THEN excluded.reasoning WHEN excluded.reasoning IS NULL THEN events.reasoning ELSE MAX(events.reasoning,excluded.reasoning) END,model=CASE WHEN events.model='unknown' THEN excluded.model ELSE events.model END,effort=CASE WHEN excluded.effort!='' THEN excluded.effort ELSE events.effort END,stop_reason=CASE WHEN excluded.stop_reason!='' THEN excluded.stop_reason ELSE events.stop_reason END,tool_count=MAX(events.tool_count,excluded.tool_count),speed=CASE WHEN excluded.speed!='' THEN excluded.speed ELSE events.speed END,source_kind=CASE WHEN excluded.source_kind!='main' THEN excluded.source_kind ELSE events.source_kind END,weak=MIN(events.weak,excluded.weak)",params![e.event_key,e.message_key,e.ts as i64,e.model,e.effort,e.counts.input as i64,e.counts.output as i64,e.counts.creation as i64,e.counts.read as i64,e.counts.reasoning.map(|x|x as i64),e.account,e.weak as i64,e.sidechain as i64,e.session_key,e.ts_ms.map(|x|x as i64),e.duration_ms.map(|x|x as i64),e.stop_reason,e.tool_count as i64,e.speed,src_kind]).map_err(|_|"usage event write failed")?;
     }
     for update in cache {
         tx.execute(
@@ -1796,7 +2329,15 @@ pub(crate) fn collect_slot_usage(vault: &Path, slot_dir: &Path, account_key: &st
     let mut warnings = Vec::new();
     let mut cache = Vec::new();
     let known = load_cursors(&conn);
-    scan_dir(&projects, 0, &mut events, &mut warnings, &mut cache, &known);
+    scan_dir(
+        &projects,
+        0,
+        &mut events,
+        &mut warnings,
+        &mut cache,
+        &known,
+        "slot",
+    );
     let event_count = events.len();
     if persist_scan_with_resolver(&conn, events, &cache, false, |_, _| {
         Some(account_key.to_string())

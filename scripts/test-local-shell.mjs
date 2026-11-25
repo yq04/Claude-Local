@@ -86,7 +86,7 @@ try{
  await page.goto(base+'/__local-preview.html');
  await page.evaluate(async()=>{const prefs=await import('/src/settings-model.ts');await prefs.synchronizePrivacyPreference(false);});
  await page.getByRole('group',{name:'本地版本信息',exact:true}).waitFor();
- assert.deepEqual((await page.locator('.workspace-nav').allTextContents()).map(value=>value.trim()),['快速配置','浏览环境','电脑环境','网络环境','风控验证','身份管理','用量分析','使用说明','软件设置']);
+ assert.deepEqual((await page.locator('.workspace-nav').allTextContents()).map(value=>value.trim()),['快速配置','浏览环境','电脑环境','网络环境','风控验证','身份管理','用量分析','请求日志','使用说明','软件设置']);
  await page.getByRole('button',{name:'快速配置',exact:true}).click();
  await page.locator('.quick-overview[aria-busy="false"]').waitFor();
  await page.mouse.move(2,2);

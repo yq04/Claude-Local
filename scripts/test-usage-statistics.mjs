@@ -137,6 +137,26 @@ mockIPC(async (command,args)=>{
     window.usageFixture.lastSnapshot=structuredClone(snapshot);
     return snapshot;
   }
+  if(command==='usage_request_logs_read'){
+    const logItems=[
+      {id:'a1b2c3d4e5f6',event_key:'a1b2c3d4e5f60000111122223333444455556666777788889999aaaabbbbcccc',session_key:'99887766554433221100ffeeddccbbaa99887766554433221100ffeeddccbbaa',ts:now-120,ts_ms:(now-120)*1000+450,account_id:id(1),account_name:'Alpha workspace',account_email:'alpha@example.invalid',account_plan:'Pro',account_current:true,model:'claude-opus-4-6-20260205',effort:'high',speed:'fast',stop_reason:'tool_use',input_tokens:500,output_tokens:200,cache_creation_tokens:200,cache_read_tokens:1800,total_tokens:2700,reasoning_tokens:null,estimated_cost_usd:0.0543,cache_savings_usd:0.0081,cache_hit_rate:0.72,duration_ms:2500,tps:80.0,tool_count:2,sidechain:false,source_kind:'main',weak:false},
+      {id:'b2c3d4e5f601',event_key:'b2c3d4e5f6010000111122223333444455556666777788889999aaaabbbbcccd',session_key:'11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff',ts:now-360,ts_ms:(now-360)*1000+120,account_id:id(2),account_name:'Beta workspace',account_email:'beta@example.invalid',account_plan:'Max',account_current:false,model:'claude-sonnet-4-6',effort:'medium',speed:'standard',stop_reason:'end_turn',input_tokens:300,output_tokens:150,cache_creation_tokens:100,cache_read_tokens:1200,total_tokens:1750,reasoning_tokens:null,estimated_cost_usd:0.0039,cache_savings_usd:0.0032,cache_hit_rate:0.75,duration_ms:4000,tps:37.5,tool_count:0,sidechain:true,source_kind:'slot',weak:false},
+    ];
+    return {
+      generated_at:Math.floor(Date.now()/1000),
+      timezone:args.timezone||null,
+      total_count:logItems.length,
+      page:args.page||1,
+      page_size:args.pageSize||25,
+      summary:{total_requests:2,total_tokens:4450,input_tokens:800,output_tokens:350,cache_creation_tokens:300,cache_read_tokens:3000,total_cost_usd:0.0582,total_cache_savings_usd:0.0113,avg_cost_usd:0.0291,avg_tokens:2225,timed_requests:2,avg_duration_ms:3250,p95_duration_ms:4000,avg_tps:53.8,peak_tps:80.0,overall_cache_hit_rate:0.7317},
+      items:logItems,
+      available_accounts:accounts.map(a=>({id:a.id,name:a.name,email:a.email,plan:'Pro',current:a.current,requests:1})),
+      available_models:['claude-opus-4-6-20260205','claude-sonnet-4-6'],
+      available_efforts:['high','medium'],
+      has_unattributed:false,
+      warnings:[],
+    };
+  }
   if(command==='ui_privacy_read')return false;
   if(command==='ui_privacy_write')return;
   if(command==='quota_setup_status')return {state:'not_configured',collector_bundled:false,has_statusline:false};

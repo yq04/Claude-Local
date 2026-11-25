@@ -1,5 +1,5 @@
 // [INPUT]: 原生机器快照、独立浏览器配置和实际引擎版本。
-// [OUTPUT]: 含有效国家的机器快照、独立目标地区与 Default 资料参数；显式 SOCKS/回环 HTTP 代理锁定远程 DNS 规则与回环正向豁免、reqwest 代理远程 DNS 归一化（socks5h/socks4a）、本机回环代理 300ms TCP 预检及启动前受限主机直连阻断与 60s 缓存出口国家门禁。
+// [OUTPUT]: 含有效国家的机器快照、独立目标地区与 Default 资料参数；所有显式代理统一锁定远程 DNS 规则与回环正向豁免、reqwest 代理远程 DNS 归一化（socks5h/socks4a）、本机回环代理 300ms TCP 预检及启动前受限主机直连阻断与 60s 缓存出口国家门禁。
 // [POS]: 浏览器配置真相源；路径来自宿主，输入不能变成额外命令参数。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #[cfg(target_os = "linux")]
@@ -222,24 +222,18 @@ pub fn arguments(
         args.push("--proxy-bypass-list=127.0.0.1;localhost;[::1]".into());
         if let Ok(Some(url)) = proxy(&config.proxy) {
             let host = url.host_str().unwrap().trim_matches(['[', ']']);
-            let is_loopback_http = matches!(url.scheme(), "http" | "https")
-                && (host.eq_ignore_ascii_case("localhost")
-                    || host == "127.0.0.1"
-                    || host == "::1");
-            if url.scheme().starts_with("socks") || is_loopback_http {
-                let mut excludes = Vec::with_capacity(4);
-                excludes.push(format!("EXCLUDE {host}"));
-                for loopback in ["127.0.0.1", "localhost", "::1"] {
-                    if !host.eq_ignore_ascii_case(loopback) {
-                        excludes.push(format!("EXCLUDE {loopback}"));
-                    }
+            let mut excludes = Vec::with_capacity(4);
+            excludes.push(format!("EXCLUDE {host}"));
+            for loopback in ["127.0.0.1", "localhost", "::1"] {
+                if !host.eq_ignore_ascii_case(loopback) {
+                    excludes.push(format!("EXCLUDE {loopback}"));
                 }
-                args.push(format!(
-                    "--host-resolver-rules=MAP * ~NOTFOUND, {}",
-                    excludes.join(", ")
-                ));
-                args.push("--test-type".into());
             }
+            args.push(format!(
+                "--host-resolver-rules=MAP * ~NOTFOUND, {}",
+                excludes.join(", ")
+            ));
+            args.push("--test-type".into());
         }
     }
     #[cfg(target_os = "windows")]
@@ -559,6 +553,41 @@ mod unit_tests {
         assert!(preflight_loopback_proxy_with_flag(&format!("socks5://127.0.0.1:{port}"), true).is_ok());
         drop(listener);
         assert!(preflight_loopback_proxy_with_flag(&format!("socks5://127.0.0.1:{port}"), true).is_err());
+    }
+
+    #[test]
+    fn explicit_http_and_https_proxies_also_lock_host_resolver_and_empty_skips() {
+        let m = Machine {
+            platform: "windows".into(),
+            version: "10.0".into(),
+            cores: 8,
+            timezone: "America/New_York".into(),
+            languages: vec!["en-US".into()],
+            locale: "en_US".into(),
+            locale_country: "US".into(),
+            location_enabled: Some(false),
+            timezones: vec!["America/New_York".into()],
+            system_proxy: String::new(),
+        };
+        let mut cfg = Config::default();
+        cfg.proxy = "http://192.168.1.10:7890".into();
+        let lan_args = arguments(&cfg, &m, Path::new("/profile"), "about:blank", "148.0.0.0");
+        assert!(lan_args.contains(
+            &"--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 192.168.1.10, EXCLUDE 127.0.0.1, EXCLUDE localhost, EXCLUDE ::1".into()
+        ));
+        assert!(lan_args.contains(&"--test-type".into()));
+
+        cfg.proxy = "https://proxy.example.com:443".into();
+        let https_args = arguments(&cfg, &m, Path::new("/profile"), "about:blank", "148.0.0.0");
+        assert!(https_args.contains(
+            &"--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE proxy.example.com, EXCLUDE 127.0.0.1, EXCLUDE localhost, EXCLUDE ::1".into()
+        ));
+        assert!(https_args.contains(&"--test-type".into()));
+
+        cfg.proxy.clear();
+        let direct_args = arguments(&cfg, &m, Path::new("/profile"), "about:blank", "148.0.0.0");
+        assert!(!direct_args.iter().any(|arg| arg.starts_with("--host-resolver-rules=")));
+        assert!(!direct_args.contains(&"--test-type".into()));
     }
 }
 

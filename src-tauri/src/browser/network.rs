@@ -1,5 +1,5 @@
 // [INPUT]: 冻结的显式代理（SOCKS 自动升级 socks5h/socks4a 锁远程 DNS）、多源 HTTPS 地理服务（ipquery.io / ipinfo.io / api.ip.sb / get.geojs.io / ipwho.is）、可选固定 IPQuery 分类、Cloudflare trace 轻量国家探针与版本化浏览器观测。
-// [OUTPUT]: 多信号住宅宽带 ISP / IDC 机房 ASN+关键词分类（含 RCN/Astound AS6079 等北美及主流地区家宽识别与机房硬阻断优先）、多源故障备援与同源限流去重、同 IP 布尔分类/受控失败诊断、轻量出口国家检测（probe_country）、本机与网页上报平台/CPU对比、去重有界 WebRTC 原因/耗时与探针核验；缺少观测保持 pending。
+// [OUTPUT]: 多信号住宅宽带 ISP / IDC 机房 ASN+关键词分类（含 RCN/Astound AS6079 等北美及主流地区家宽识别与机房硬阻断优先）、多源故障备援与同源限流去重、同 IP 布尔分类/受控失败诊断、轻量出口国家与 IP 探针（probe_exit_trace）、本机与网页上报平台/CPU对比、去重有界 WebRTC 原因/耗时与探针核验；缺少观测保持 pending。
 // [POS]: 环境核验边界；WebRTC 仅为无 STUN 本地候选观察，不证明 DNS 或公网 STUN 状态。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde::{Deserialize, Serialize};
@@ -166,27 +166,46 @@ pub fn parse(data: &Value) -> Result<Exit, String> {
 pub async fn probe(proxy: &str) -> Result<Exit, String> {
     probe_with_classification(proxy, &SERVICES, Some(CLASSIFICATION_SERVICE)).await
 }
-fn parse_trace_country(body: &str) -> Option<String> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExitTrace {
+    pub country: String,
+    pub ip: Option<String>,
+}
+
+pub(super) fn parse_trace_exit(body: &str) -> Option<ExitTrace> {
+    let mut country = None;
+    let mut ip = None;
     for line in body.lines().take(64) {
         if let Some((k, v)) = line.trim().split_once('=') {
-            if k == "loc" {
-                let cc = v.trim();
-                if cc.len() == 2 && cc.bytes().all(|b| b.is_ascii_alphabetic()) {
-                    return Some(cc.to_ascii_uppercase());
+            match k {
+                "loc" => {
+                    let cc = v.trim();
+                    if cc.len() == 2 && cc.bytes().all(|b| b.is_ascii_alphabetic()) {
+                        country = Some(cc.to_ascii_uppercase());
+                    }
                 }
+                "ip" => {
+                    let raw_ip = v.trim();
+                    if raw_ip.parse::<std::net::IpAddr>().is_ok() {
+                        ip = Some(raw_ip.to_string());
+                    }
+                }
+                _ => {}
             }
         }
     }
-    None
+    country.map(|country| ExitTrace { country, ip })
 }
-pub(crate) async fn probe_country(proxy: &str) -> Result<String, String> {
-    probe_country_with_urls(proxy, &COUNTRY_TRACE_URLS, &SERVICES).await
+
+pub(crate) async fn probe_exit_trace(proxy: &str) -> Result<ExitTrace, String> {
+    probe_exit_trace_with_urls(proxy, &COUNTRY_TRACE_URLS, &SERVICES).await
 }
-pub(super) async fn probe_country_with_urls(
+
+pub(super) async fn probe_exit_trace_with_urls(
     proxy: &str,
     trace_urls: &[&str],
     geo_services: &[&str],
-) -> Result<String, String> {
+) -> Result<ExitTrace, String> {
     let normalized_proxy = super::config::normalize_reqwest_proxy(proxy);
     if !normalized_proxy.is_empty() && !trace_urls.is_empty() {
         if let Ok(req_proxy) = reqwest::Proxy::all(&normalized_proxy) {
@@ -217,8 +236,8 @@ pub(super) async fn probe_country_with_urls(
                     }
                     if ok_body {
                         if let Ok(text) = std::str::from_utf8(&bytes) {
-                            if let Some(cc) = parse_trace_country(text) {
-                                return Ok(cc);
+                            if let Some(trace) = parse_trace_exit(text) {
+                                return Ok(trace);
                             }
                         }
                     }
@@ -228,7 +247,21 @@ pub(super) async fn probe_country_with_urls(
     }
     probe_with_classification(proxy, geo_services, None)
         .await
-        .map(|e| e.country)
+        .map(|e| ExitTrace {
+            country: e.country,
+            ip: (!e.ip.trim().is_empty()).then_some(e.ip),
+        })
+}
+
+#[cfg(test)]
+pub(super) async fn probe_country_with_urls(
+    proxy: &str,
+    trace_urls: &[&str],
+    geo_services: &[&str],
+) -> Result<String, String> {
+    probe_exit_trace_with_urls(proxy, trace_urls, geo_services)
+        .await
+        .map(|trace| trace.country)
 }
 #[cfg(test)]
 pub(super) async fn probe_urls(proxy: &str, services: &[&str]) -> Result<Exit, String> {
