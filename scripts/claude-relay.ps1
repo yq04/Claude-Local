@@ -1,5 +1,5 @@
 ﻿# [INPUT]: CLI relay switches (-AutoContinue override, -MaxRelays, -ThresholdPct, -Strategy, -ContinuationPrompt, -HandoffMode clean_handoff|fork_resume, -Status), optional ClaudeArgs, local HTTP proxy config (~/.claude/settings(.local).json prioritized ahead of shell env), %APPDATA%\ai.local.claude-local\quota_ledger.json change stamp, and claude-local.exe --orchestrate JSON status/relay_switch state (including defaultCliModel / defaultCliEffort, relayHandoffMode, relay_trigger_kind, handoff_reason and handoff_md_path).
-# [OUTPUT]: Interactive TTY or print Claude Code execution with value/variadic-safe persistent-flag preservation, persistent default --model / --effort injection, telemetry/credential/CLAUDE_CONFIG_DIR env scrubbing, explicit HTTP proxy + NO_PROXY injection with retryable preflight, humanized 429/exit breather plus 6-15s anti-ban cross-account breather, ephemeral StopFailure/Stop/PostToolUse hooks (Python WindowsApps stub rejection -> ps1 fallback, Stop-prose rate-limit guard, 2-stage proactive threshold wrap-up & forced_stop safety net respecting external workers + internal bg subagents up to 300s unless spent >= hard_cap_pct), live transcript 429/auto-wait polling (ignoring api-request-blob/metadata and non-error assistant prose), external worker deferral, Ctrl+C rescue, TUI raw-mode-gated phased CONIN$ WriteConsoleInputW (MapVirtualKeyW scan codes, sleep exit checks, cooked-mode pause, Esc x1-2, Ctrl+E/U, /exit, conditional Option '2' with 4s migration grace), daemon stop before breather, relay_switch retries (forwarding external_worker_timeout / forced_stop handoff_reason), synthetic-error-filtered continued-in validation, parent-first source selection for cross-account clean_handoff/fork_resume (1200-char final progress digest + 64-hex redaction), single-shot rapid-exit self-healing fallback with diagnostics, disk script drift warning, and --resume continuation strictly on the same account.
+# [OUTPUT]: Interactive TTY or print Claude Code execution with value/variadic-safe persistent-flag preservation, persistent default --model / --effort injection, telemetry/credential/CLAUDE_CONFIG_DIR env scrubbing, explicit HTTP proxy + NO_PROXY injection with retryable preflight, humanized 429/exit breather plus 6-15s anti-ban cross-account breather, ephemeral StopFailure/Stop/PostToolUse hooks (Python WindowsApps stub rejection -> ps1 fallback, Stop-prose rate-limit guard, Stop non-429 API-error turn_end suppression, 2-stage proactive threshold wrap-up & forced_stop safety net respecting external workers + internal bg subagents up to 300s unless spent >= hard_cap_pct), live transcript 429/auto-wait polling (ignoring api-request-blob/metadata and non-error assistant prose, preserving prior 429 across synthetic errors), external worker deferral, Ctrl+C rescue, TUI raw-mode-gated phased CONIN$ WriteConsoleInputW (MapVirtualKeyW scan codes, sleep exit checks, cooked-mode pause, Esc x1-2, Ctrl+E/U, /exit, conditional Option '2' with 4s migration grace), daemon stop before breather, relay_switch retries (forwarding external_worker_timeout / forced_stop handoff_reason), synthetic-error-filtered continued-in validation, parent-first source selection for cross-account clean_handoff/fork_resume (1200-char final progress digest + 64-hex redaction), single-shot rapid-exit self-healing fallback with diagnostics, disk script drift warning, and --resume continuation strictly on the same account.
 # [POS]: Independent CLI relay wrapper installed to ~/.local/bin/claude-relay.ps1; never kills unrelated live claude.exe or edits ~/.claude/settings.json.
 # [PROTOCOL]: Update this header and scripts/CLAUDE.md when changing relay parameters or orchestrator schema.
 $ErrorActionPreference = 'Stop'
@@ -959,7 +959,7 @@ function Get-JsonlEntryErrorState {
     $isErrFlag = [bool](Get-SafeProp $Parsed @('is_error', 'isError') $false)
     $errProp = Get-SafeProp $Parsed @('error') $null
     $apiErrStatus = Get-SafeProp $Parsed @('apiErrorStatus', 'api_error_status') $null
-    $errText = if ($errProp -is [string]) { $errProp } elseif ($null -ne $errProp) { ($errProp | ConvertTo-Json -Depth 5 -Compress) } else { '' }
+    $errText = if ($errProp -is [string]) { $errProp } elseif ($errProp -is [bool]) { if ($errProp) { 'true' } else { '' } } elseif ($null -ne $errProp) { ($errProp | ConvertTo-Json -Depth 5 -Compress) } else { '' }
     $msgObj = Get-SafeProp $Parsed @('message') $null
     $msgModel = ([string](Get-SafeProp $msgObj @('model') (Get-SafeProp $Parsed @('model') ''))).Trim()
     $isSyntheticModel = ($msgModel -eq '<synthetic>')
@@ -1033,11 +1033,11 @@ function Test-SingleJsonlRateLimited {
             if ($entryState.SkipNonResponse -or $entryState.IsUser) {
                 continue
             }
-            if ($null -ne $entryState.ApiErrStatus -and ([string]$entryState.ApiErrStatus).Trim() -eq '429') {
+            if ($null -ne $entryState.ApiErrStatus -and (([string]$entryState.ApiErrStatus).Trim() -in @('429', '529'))) {
                 $sawRateLimit = $true
                 continue
             }
-            if ($entryState.ErrText -match '(?i)(rate[_\s-]?limit|billing_error|spend limit|usage credits required|out of extra usage|429|5h|5-hour|weekly limit|usage limit|overloaded|authentication_failed|authentication_error|invalid_grant)') {
+            if ($entryState.ErrText -match '(?i)(rate[_\s-]?limit|billing_error|spend limit|usage credits required|out of extra usage|(?<!\d)(?:429|529)(?!\d)|5h|5-hour|weekly limit|usage limit|overloaded|authentication_failed|authentication_error|invalid_grant)') {
                 $sawRateLimit = $true
                 continue
             }
@@ -1046,7 +1046,7 @@ function Test-SingleJsonlRateLimited {
                 $sawRateLimit = $true
                 continue
             }
-            if (($entryState.RecType -eq 'assistant' -or $entryState.RecType -eq 'result') -and (-not $entryState.IsApiErr) -and (-not $entryState.IsErrFlag) -and (-not $entryState.ErrText) -and ($null -eq $entryState.ApiErrStatus)) {
+            if (($entryState.RecType -eq 'assistant' -or $entryState.RecType -eq 'result') -and (-not $entryState.IsApiErr) -and (-not $entryState.IsErrFlag) -and (-not $entryState.IsSyntheticModel) -and (-not $entryState.ErrText) -and ($null -eq $entryState.ApiErrStatus)) {
                 if (Test-EntryHasMeaningfulContent -Entry $parsed -BodyText $bodyText) {
                     $sawRateLimit = $false
                 }
@@ -1729,8 +1729,10 @@ if event_name == "PostToolUse":
         print(json.dumps(out, ensure_ascii=False), flush=True)
     sys.exit(0)
 
-broad_re = r"(rate[_\s-]?limit|overloaded|billing_error|authentication_failed|authentication_error|invalid_grant|429|hit your limit|hit your 5-hour limit|5-hour limit|5h limit|weekly limit|session limit reached|usage limit reached|spend limit|out of extra usage|exceeded your current quota|usage credits required)"
-synthetic_banner_re = r"^\s*(?:api\s+error\s*:\s*429|you(?:'ve| have)\s+hit\s+your\s+(?:5-hour\s+|weekly\s+)?limit|usage\s+limit\s+reached|session\s+limit\s+reached|spend\s+limit|out\s+of\s+extra\s+usage|exceeded\s+your\s+current\s+quota|usage\s+credits\s+required|rate[_\s-]?limit(?:_error)?|billing_error|overloaded_error|authentication_failed|authentication_error|invalid_grant)"
+bullet_cls = "\u25cf\u2022\u23fa\ufffd?"
+bullet_prefix = r"^\s*(?:[" + bullet_cls + r"]{1,4}\s*)?"
+broad_re = r"(rate[_\s-]?limit|overloaded|billing_error|authentication_failed|authentication_error|invalid_grant|(?<!\d)429(?!\d)|api\s+error\s*:\s*529\b|hit your limit|hit your 5-hour limit|5-hour limit|5h limit|weekly limit|session limit reached|usage limit reached|spend limit|out of extra usage|exceeded your current quota|usage credits required)"
+synthetic_banner_re = bullet_prefix + r"(?:api\s+error\s*:\s*(?:429|529)\b|you(?:'ve| have)\s+hit\s+your\s+(?:5-hour\s+|weekly\s+)?limit|usage\s+limit\s+reached|session\s+limit\s+reached|spend\s+limit|out\s+of\s+extra\s+usage|exceeded\s+your\s+current\s+quota|usage\s+credits\s+required|rate[_\s-]?limit(?:_error)?|billing_error|overloaded_error|authentication_failed|authentication_error|invalid_grant)"
 err_details = (err + " " + details).strip().lower()
 last_stripped = last_msg.strip()
 is_rate = bool(err_details and re.search(broad_re, err_details))
@@ -1749,8 +1751,10 @@ if is_rate:
     })
     sys.exit(0)
 
+api_err_banner_re = bullet_prefix + r"(?:api\s+error\s*:|connection\s+lost\s+mid-response\b)"
 if event_name == "Stop":
-    if (not stop_active) and (not has_bg) and turn_end_path:
+    is_non_rl_api_err = bool(last_stripped and len(last_stripped) <= 400 and re.search(api_err_banner_re, last_stripped, re.IGNORECASE))
+    if (not stop_active) and (not has_bg) and (not is_non_rl_api_err) and turn_end_path:
         pstate = read_json_dict(proactive_state_path)
         proactive_wrapup = bool(pstate and pstate.get("stage") in ("wrapping_up", "forced_stop"))
         write_atomic(turn_end_path, {
@@ -1940,8 +1944,9 @@ if ($eventName -eq 'PostToolUse') {
     }
     exit 0
 }
-$broadPattern = '(?i)(rate[_\s-]?limit|overloaded|billing_error|authentication_failed|authentication_error|invalid_grant|429|hit your limit|hit your 5-hour limit|5-hour limit|5h limit|weekly limit|session limit reached|usage limit reached|spend limit|out of extra usage|exceeded your current quota|usage credits required)'
-$syntheticBannerPattern = '(?i)^\s*(?:api\s+error\s*:\s*429|you(?:''ve| have)\s+hit\s+your\s+(?:5-hour\s+|weekly\s+)?limit|usage\s+limit\s+reached|session\s+limit\s+reached|spend\s+limit|out\s+of\s+extra\s+usage|exceeded\s+your\s+current\s+quota|usage\s+credits\s+required|rate[_\s-]?limit(?:_error)?|billing_error|overloaded_error|authentication_failed|authentication_error|invalid_grant)'
+$bulletPrefix = '^\s*(?:[\u25CF\u2022\u23FA\uFFFD?]{1,4}\s*)?'
+$broadPattern = '(?i)(rate[_\s-]?limit|overloaded|billing_error|authentication_failed|authentication_error|invalid_grant|(?<!\d)429(?!\d)|api\s+error\s*:\s*529\b|hit your limit|hit your 5-hour limit|5-hour limit|5h limit|weekly limit|session limit reached|usage limit reached|spend limit|out of extra usage|exceeded your current quota|usage credits required)'
+$syntheticBannerPattern = '(?i)' + $bulletPrefix + '(?:api\s+error\s*:\s*(?:429|529)\b|you(?:''ve| have)\s+hit\s+your\s+(?:5-hour\s+|weekly\s+)?limit|usage\s+limit\s+reached|session\s+limit\s+reached|spend\s+limit|out\s+of\s+extra\s+usage|exceeded\s+your\s+current\s+quota|usage\s+credits\s+required|rate[_\s-]?limit(?:_error)?|billing_error|overloaded_error|authentication_failed|authentication_error|invalid_grant)'
 $errDetails = ($err + ' ' + $details).Trim()
 $lastTrimmed = if ($lastMsg) { $lastMsg.Trim() } else { '' }
 $isRateLimit = [bool]($errDetails -and ($errDetails -match $broadPattern))
@@ -1962,8 +1967,10 @@ if ($isRateLimit) {
     }
     exit 0
 }
+$apiErrBannerPattern = '(?i)' + $bulletPrefix + '(?:api\s+error\s*:|connection\s+lost\s+mid-response\b)'
 if ($eventName -eq 'Stop') {
-    if ((-not $stopActive) -and (-not $hasBg) -and $TurnEndPath) {
+    $isNonRlApiErr = [bool]($lastTrimmed -and ($lastTrimmed.Length -le 400) -and ($lastTrimmed -match $apiErrBannerPattern))
+    if ((-not $stopActive) -and (-not $hasBg) -and (-not $isNonRlApiErr) -and $TurnEndPath) {
         $pState = Read-SafeJson $ProactiveStatePath
         $pStage = [string](Get-JsonProp $pState 'stage' '')
         $proactiveWrapup = ($pStage -in @('wrapping_up', 'forced_stop'))
@@ -2603,8 +2610,8 @@ function Classify-SubagentTranscript {
                 if ($entryState.IsUser) { continue }
 
                 $bodyText = Get-EntryText $parsed
-                $isRl = ($null -ne $entryState.ApiErrStatus -and ([string]$entryState.ApiErrStatus).Trim() -eq '429') -or
-                    ($entryState.ErrText -match '(?i)(rate[_\s-]?limit|billing_error|429|5h|5-hour|weekly limit|usage limit|overloaded|authentication_failed)') -or
+                $isRl = ($null -ne $entryState.ApiErrStatus -and (([string]$entryState.ApiErrStatus).Trim() -in @('429', '529'))) -or
+                    ($entryState.ErrText -match '(?i)(rate[_\s-]?limit|billing_error|(?<!\d)(?:429|529)(?!\d)|5h|5-hour|weekly limit|usage limit|overloaded|authentication_failed)') -or
                     ($entryState.IsEligible -and ($bodyText -match $script:RelayRatePattern))
                 if ($isRl) {
                     $lastRateLimitIdx = $i
@@ -2927,10 +2934,11 @@ function Get-HandoffTranscriptDigest {
             $obj = $null
             try { $obj = $ln | ConvertFrom-Json } catch { $obj = $null }
             if ($null -eq $obj) { continue }
-            if ([bool](Get-SafeProp $obj @('isApiErrorMessage') $false)) { continue }
+            if ([bool](Get-SafeProp $obj @('isApiErrorMessage', 'is_api_error_message') $false)) { continue }
             $recType = [string](Get-SafeProp $obj @('type') '')
             if ($recType -ne 'user' -and $recType -ne 'assistant') { continue }
             $msg = Get-SafeProp $obj @('message') $obj
+            if (([string](Get-SafeProp $msg @('model') (Get-SafeProp $obj @('model') ''))).Trim() -eq '<synthetic>') { continue }
             $content = Get-SafeProp $msg @('content') $null
             $texts = New-Object System.Collections.Generic.List[string]
             if ($content -is [string]) {
@@ -3214,7 +3222,9 @@ function New-ScrubbedForkTranscript {
             if ($null -eq $obj) { continue }
             $recType = [string](Get-SafeProp $obj @('type') '')
             if ($recType -eq 'session-owner') { continue }
-            if ([bool](Get-SafeProp $obj @('isApiErrorMessage') $false)) { continue }
+            if ([bool](Get-SafeProp $obj @('isApiErrorMessage', 'is_api_error_message') $false)) { continue }
+            $forkMsg = Get-SafeProp $obj @('message') $obj
+            if (([string](Get-SafeProp $forkMsg @('model') (Get-SafeProp $obj @('model') ''))).Trim() -eq '<synthetic>') { continue }
             $clean = Remove-TranscriptForkMarkers $obj
             if ($null -ne $clean.PSObject.Properties['sessionId']) { $clean.sessionId = $newId }
             $outLine = ($clean | ConvertTo-Json -Depth 64 -Compress)

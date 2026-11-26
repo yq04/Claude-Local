@@ -32,7 +32,7 @@ mod perf_tests;
 const MAX_DEPTH: usize = 6;
 const MAX_LINE_BYTES: usize = 2 * 1024 * 1024;
 const MIN_DURATION_MS: u64 = 50;
-const MAX_DURATION_MS: u64 = 600_000;
+const MAX_DURATION_MS: u64 = 1_200_000;
 const MONITOR_INGEST_INTERVAL_SEC: u64 = 15;
 static USAGE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -231,7 +231,7 @@ fn now() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
-pub(super) const USAGE_PARSER_VERSION: i64 = 4;
+pub(super) const USAGE_PARSER_VERSION: i64 = 6;
 pub(super) const MAX_EFFORT_RECOVERY_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug)]
@@ -535,6 +535,34 @@ fn derive_event_key(
     hex_hash(identity.as_bytes())
 }
 
+fn has_same_event_ancestor(
+    uuid_nodes: &HashMap<String, UuidNode>,
+    start_uuid: &str,
+    current_event_key: &str,
+) -> bool {
+    let mut cursor = start_uuid;
+    let mut visited: HashSet<&str> = HashSet::new();
+    for _ in 0..32 {
+        if !visited.insert(cursor) {
+            return false;
+        }
+        let Some(node) = uuid_nodes.get(cursor) else {
+            return false;
+        };
+        if node.event_key.as_deref() == Some(current_event_key) {
+            return true;
+        }
+        if node.event_key.is_some() {
+            return false;
+        }
+        match node.parent_uuid.as_deref() {
+            Some(next) => cursor = next,
+            None => return false,
+        }
+    }
+    false
+}
+
 fn resolve_request_start_ms(
     uuid_nodes: &HashMap<String, UuidNode>,
     parent_uuid: Option<&str>,
@@ -549,6 +577,16 @@ fn resolve_request_start_ms(
         }
         let node = uuid_nodes.get(cursor)?;
         if node.is_user {
+            // In multi-tool assistant turns, Claude Code can interleave one or more `user`
+            // tool_result (and progress) lines whose ancestor chain belongs to an earlier chunk
+            // of the SAME assistant event_key. Keep walking back past them to anchor on the true
+            // request start.
+            if let Some(ref next) = node.parent_uuid {
+                if has_same_event_ancestor(uuid_nodes, next.as_str(), current_event_key) {
+                    cursor = next.as_str();
+                    continue;
+                }
+            }
             return (node.ts_ms < current_ts_ms).then_some(node.ts_ms);
         }
         if node.event_key.as_deref() == Some(current_event_key) {
@@ -574,6 +612,56 @@ fn resolve_request_start_ms(
         return (node.ts_ms < current_ts_ms).then_some(node.ts_ms);
     }
     None
+}
+
+fn chain_needs_prefix_context(
+    uuid_nodes: &HashMap<String, UuidNode>,
+    parent_uuid: &str,
+    current_event_key: &str,
+) -> bool {
+    let mut cursor = parent_uuid;
+    let mut visited: HashSet<&str> = HashSet::new();
+    for _ in 0..32 {
+        if !visited.insert(cursor) {
+            return false;
+        }
+        let Some(node) = uuid_nodes.get(cursor) else {
+            return true;
+        };
+        if node.event_key.as_deref() == Some(current_event_key) {
+            if node.request_start_ms.is_some() {
+                return false;
+            }
+            match node.parent_uuid.as_deref() {
+                Some(next) => {
+                    cursor = next;
+                    continue;
+                }
+                None => return false,
+            }
+        }
+        if node.event_key.is_some() {
+            return false;
+        }
+        if node.is_user {
+            // A post-offset `user` tool_result may bridge back to a pre-offset chunk of the same event.
+            match node.parent_uuid.as_deref() {
+                Some(next) => {
+                    cursor = next;
+                    continue;
+                }
+                None => return false,
+            }
+        }
+        if node.request_start_ms.is_some() {
+            return false;
+        }
+        match node.parent_uuid.as_deref() {
+            Some(next) => cursor = next,
+            None => return false,
+        }
+    }
+    false
 }
 
 fn recover_prefix_context(
@@ -697,6 +785,19 @@ fn recover_prefix_context(
             }
             continue;
         };
+        let raw_model = msg.get("model").and_then(Value::as_str).unwrap_or("");
+        if raw_model.trim().eq_ignore_ascii_case("<synthetic>") {
+            if let Some(u) = line_uuid {
+                uuid_nodes.entry(u.to_string()).or_insert(UuidNode {
+                    ts_ms,
+                    parent_uuid: line_parent,
+                    event_key: None,
+                    is_user: false,
+                    request_start_ms: None,
+                });
+            }
+            continue;
+        }
         let counts = msg.get("usage").and_then(Counts::from_usage);
         let ev_key = derive_event_key(&obj, msg, file_tag, ts_ms / 1000, counts);
         let tool_ids = extract_tool_use_ids(msg, line_seq);
@@ -1102,6 +1203,18 @@ fn parse_file_core(
         }
         let raw_model = msg.get("model").and_then(Value::as_str).unwrap_or("");
         if raw_model.trim().eq_ignore_ascii_case("<synthetic>") {
+            if let Some(u) = line_uuid {
+                uuid_nodes.insert(
+                    u.to_string(),
+                    UuidNode {
+                        ts_ms: current_ts_ms,
+                        parent_uuid: line_parent_uuid.map(str::to_string),
+                        event_key: None,
+                        is_user: false,
+                        request_start_ms: None,
+                    },
+                );
+            }
             continue;
         }
         let model = clean_model(&msg["model"]);
@@ -1133,9 +1246,13 @@ fn parse_file_core(
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        // Resolve request start timestamp from parentUuid (with bounded prefix recovery on incremental scans).
+        // Resolve request start timestamp from parentUuid (with bounded prefix recovery on incremental scans,
+        // including when a post-offset bridge node like `<synthetic>`, `progress`, or `tool_result` points before `start_offset`).
         if let Some(parent_u) = line_parent_uuid {
-            if !uuid_nodes.contains_key(parent_u) && start_offset > 0 && !prefix_ctx_loaded {
+            if start_offset > 0
+                && !prefix_ctx_loaded
+                && chain_needs_prefix_context(&uuid_nodes, parent_u, &event_key)
+            {
                 prefix_ctx_loaded = true;
                 recover_prefix_context(
                     path,
@@ -1218,11 +1335,16 @@ fn parse_file_core(
                     (Some(a), Some(b)) => Some(a.max(b)),
                     (a, None) | (None, a) => a,
                 };
-                old.request_start_ms = old.request_start_ms.or(event.request_start_ms);
+                old.request_start_ms = match (old.request_start_ms, event.request_start_ms) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
                 let end_ms = old.ts_ms.unwrap_or_else(|| old.ts.saturating_mul(1000));
-                old.duration_ms = bounded_duration_ms(old.request_start_ms, end_ms)
-                    .or(old.duration_ms)
-                    .or(event.duration_ms);
+                old.duration_ms = if old.request_start_ms.is_some() {
+                    bounded_duration_ms(old.request_start_ms, end_ms)
+                } else {
+                    old.duration_ms.or(event.duration_ms)
+                };
                 if old.model == "unknown" {
                     old.model = event.model.clone();
                 }
@@ -1711,6 +1833,25 @@ fn open_ledger_full(path: &Path) -> Result<Connection, String> {
     }
     conn.execute_batch("CREATE INDEX IF NOT EXISTS events_timestamp ON events(ts); CREATE INDEX IF NOT EXISTS events_message ON events(message_key,sidechain); CREATE INDEX IF NOT EXISTS events_account ON events(account_key); CREATE INDEX IF NOT EXISTS events_ts_desc ON events(ts DESC, ts_ms DESC);")
         .map_err(|_| "usage ledger index unavailable")?;
+    let repaired_v5: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE key='duration_outlier_repaired_v5')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
+    if !repaired_v5 {
+        // Clear physically impossible legacy duration_ms (>2000 tok/s caused by interleaved
+        // multi-tool chunks exceeding the old 10min cap) so parser v5 repopulates true latency.
+        let _ = conn.execute(
+            "UPDATE events SET duration_ms=NULL WHERE duration_ms IS NOT NULL AND (duration_ms <= 0 OR (output > 0 AND (CAST(output AS REAL) * 1000.0 / CAST(duration_ms AS REAL)) > 2000.0))",
+            [],
+        );
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO meta(key,value) VALUES('duration_outlier_repaired_v5','1')",
+            [],
+        );
+    }
     attribution::migrate(&conn)?;
     Ok(conn)
 }

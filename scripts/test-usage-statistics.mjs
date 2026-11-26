@@ -138,22 +138,71 @@ mockIPC(async (command,args)=>{
     return snapshot;
   }
   if(command==='usage_request_logs_read'){
-    const logItems=[
-      {id:'a1b2c3d4e5f6',event_key:'a1b2c3d4e5f60000111122223333444455556666777788889999aaaabbbbcccc',session_key:'99887766554433221100ffeeddccbbaa99887766554433221100ffeeddccbbaa',ts:now-120,ts_ms:(now-120)*1000+450,account_id:id(1),account_name:'Alpha workspace',account_email:'alpha@example.invalid',account_plan:'Pro',account_current:true,model:'claude-opus-4-6-20260205',effort:'high',speed:'fast',stop_reason:'tool_use',input_tokens:500,output_tokens:200,cache_creation_tokens:200,cache_read_tokens:1800,total_tokens:2700,reasoning_tokens:null,estimated_cost_usd:0.0543,cache_savings_usd:0.0081,cache_hit_rate:0.72,duration_ms:2500,tps:80.0,tool_count:2,sidechain:false,source_kind:'main',weak:false},
-      {id:'b2c3d4e5f601',event_key:'b2c3d4e5f6010000111122223333444455556666777788889999aaaabbbbcccd',session_key:'11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff',ts:now-360,ts_ms:(now-360)*1000+120,account_id:id(2),account_name:'Beta workspace',account_email:'beta@example.invalid',account_plan:'Max',account_current:false,model:'claude-sonnet-4-6',effort:'medium',speed:'standard',stop_reason:'end_turn',input_tokens:300,output_tokens:150,cache_creation_tokens:100,cache_read_tokens:1200,total_tokens:1750,reasoning_tokens:null,estimated_cost_usd:0.0039,cache_savings_usd:0.0032,cache_hit_rate:0.75,duration_ms:4000,tps:37.5,tool_count:0,sidechain:true,source_kind:'slot',weak:false},
-    ];
+    const octDstTs=Math.floor(Date.UTC(2026,9,25,14,0,0)/1000);
+    const allItems=Array.from({length:60},(_,idx)=>{
+      const isUnattr=idx===3;
+      const isOctDst=idx===1;
+      const isArchived=idx>=30;
+      const seq=idx+1;
+      const hex=String(seq).padStart(4,'0');
+      const ts=isOctDst?octDstTs:now-seq*120;
+      return {
+        id:'a1b2c3d4'+hex,
+        event_key:'a1b2c3d4'+hex+'0000111122223333444455556666777788889999aaaabbbb',
+        session_key:'99887766554433221100ffeeddccbbaa99887766554433221100ffeeddccbbaa',
+        ts,
+        ts_ms:ts*1000+(isArchived?0:450),
+        ts_precise:!isArchived,
+        account_id:isUnattr?null:idx%2===0?id(1):id(2),
+        account_name:isUnattr?null:idx%2===0?'Alpha workspace':'Beta workspace',
+        account_email:isUnattr?null:idx%2===0?'alpha@example.invalid':'beta@example.invalid',
+        account_plan:isUnattr?null:idx%2===0?'Pro':'Max',
+        account_current:!isUnattr&&idx%2===0,
+        model:idx%2===0?'claude-opus-4-6-20260205':'claude-sonnet-4-6',
+        effort:idx%2===0?'high':'medium',
+        speed:idx%2===0?'fast':'standard',
+        stop_reason:isArchived?'':idx%2===0?'tool_use':'end_turn',
+        input_tokens:500,
+        output_tokens:200,
+        cache_creation_tokens:200,
+        cache_read_tokens:1800,
+        total_tokens:2700,
+        reasoning_tokens:null,
+        estimated_cost_usd:0.0543,
+        cache_savings_usd:0.0081,
+        cache_hit_rate:0.72,
+        duration_ms:isArchived?null:2500,
+        tps:isArchived?null:80.0,
+        tool_count:isArchived?0:2,
+        sidechain:idx===30||idx%3===0,
+        source_kind:idx===30||idx%4===0?'slot':'main',
+        weak:false,
+      };
+    });
+    const filtered=allItems.filter(item=>{
+      if(args.accountId==='unattributed')return item.account_id===null;
+      if(args.accountId)return item.account_id===args.accountId;
+      return true;
+    });
+    if(args.sortDir==='asc')filtered.reverse();
+    const pageSize=Math.min(100,Math.max(10,Number(args.pageSize||25)));
+    const totalPages=Math.max(1,Math.ceil(filtered.length/pageSize));
+    const page=Math.min(totalPages,Math.max(1,Number(args.page||1)));
+    const start=(page-1)*pageSize;
     return {
       generated_at:Math.floor(Date.now()/1000),
+      tracking_since:now-86400,
       timezone:args.timezone||null,
-      total_count:logItems.length,
-      page:args.page||1,
-      page_size:args.pageSize||25,
-      summary:{total_requests:2,total_tokens:4450,input_tokens:800,output_tokens:350,cache_creation_tokens:300,cache_read_tokens:3000,total_cost_usd:0.0582,total_cache_savings_usd:0.0113,avg_cost_usd:0.0291,avg_tokens:2225,timed_requests:2,avg_duration_ms:3250,p95_duration_ms:4000,avg_tps:53.8,peak_tps:80.0,overall_cache_hit_rate:0.7317},
-      items:logItems,
-      available_accounts:accounts.map(a=>({id:a.id,name:a.name,email:a.email,plan:'Pro',current:a.current,requests:1})),
+      total_count:filtered.length,
+      page,
+      page_size:pageSize,
+      summary:{total_requests:filtered.length,total_tokens:filtered.length*2700,input_tokens:filtered.length*500,output_tokens:filtered.length*200,cache_creation_tokens:filtered.length*200,cache_read_tokens:filtered.length*1800,total_cost_usd:filtered.length*0.0543,total_cache_savings_usd:filtered.length*0.0081,avg_cost_usd:0.0543,avg_tokens:2700,timed_requests:filtered.filter(x=>x.duration_ms!=null).length,avg_duration_ms:2500,p95_duration_ms:2500,avg_tps:80.0,peak_tps:80.0,overall_cache_hit_rate:0.72},
+      items:filtered.slice(start,start+pageSize),
+      available_accounts:accounts.map(a=>({id:a.id,name:a.name,email:a.email,plan:'Pro',current:a.current,requests:17})),
       available_models:['claude-opus-4-6-20260205','claude-sonnet-4-6'],
       available_efforts:['high','medium'],
-      has_unattributed:false,
+      has_unattributed:true,
+      unattributed_count:1,
       warnings:[],
     };
   }
@@ -700,6 +749,191 @@ try {
   await page.getByRole('button',{name:'Expand sidebar',exact:true}).click();
   const longNameClassicGeometry=await usageGeometry('English dark long model names with classic sidebar');
   await page.getByRole('button',{name:'Collapse sidebar',exact:true}).click();
+  await page.setViewportSize({width:1040,height:820});
+  await page.getByRole('button',{name:'Request Logs',exact:true}).click();
+  await page.locator('.logs-table tbody tr').first().waitFor();
+  const logsGeo=await page.locator('.logs-page').evaluate(node=>{
+    const style=getComputedStyle(node);
+    return {
+      hasSystemPage:node.classList.contains('system-page'),
+      overflowY:style.overflowY,
+      clientHeight:node.clientHeight,
+      scrollHeight:node.scrollHeight,
+      clientWidth:node.clientWidth,
+      scrollWidth:node.scrollWidth,
+      docWidth:document.documentElement.clientWidth,
+      docScrollWidth:document.documentElement.scrollWidth,
+      rowCount:node.querySelectorAll('.logs-table tbody tr').length,
+      thClipped:[...node.querySelectorAll('.logs-table thead th')].some(th=>th.scrollWidth>th.clientWidth+1),
+    };
+  });
+  assert.equal(logsGeo.hasSystemPage,true,'Request Logs must use .system-page container for scrolling and padding');
+  assert.equal(logsGeo.overflowY,'auto','Request Logs container must be vertically scrollable');
+  assert.ok(logsGeo.scrollHeight>logsGeo.clientHeight,'Request Logs with 25 rows must overflow vertically and scroll');
+  assert.ok(logsGeo.scrollWidth<=logsGeo.clientWidth+1,'Request Logs must not overflow horizontally at 1040x820');
+  assert.ok(logsGeo.docScrollWidth<=logsGeo.docWidth+1,'Document must not overflow horizontally on Request Logs');
+  assert.equal(logsGeo.rowCount,25,'Page 1 must display 25 rows');
+  assert.equal(logsGeo.thClipped,false,'EN Request Logs table headers must not clip at 1040x820');
+  assert.equal(await page.locator('[data-logs-top-pager]').isVisible(),true,'Top quick pager must be visible above the fold');
+  assert.equal(await page.locator('[data-logs-unattr-chip]').isVisible(),true,'Unattributed chip must surface unattributed count');
+  // Per-row DST accuracy: Oct 25 row in America/New_York must report EDT (UTC-4), not EST (UTC-5)
+  const octRowTooltip=await page.locator('.logs-table tbody tr').nth(1).locator('.logs-time-main').getAttribute('title');
+  assert.match(octRowTooltip||'',/EDT \(UTC-4\)/,'Pre-DST October row tooltip must display per-row EDT (UTC-4) offset');
+  await page.locator('.logs-table tbody tr').nth(1).click();
+  await page.locator('[role="dialog"]').waitFor();
+  const modalText=await page.locator('[role="dialog"]').innerText();
+  assert.match(modalText,/EDT \(UTC-4\)/,'Request Inspector must display per-row EDT (UTC-4) badge');
+  assert.match(modalText,/Est\. Start Time/,'Request Inspector must display Est. Start Time');
+  const modalSwatches=await page.locator('[role="dialog"]').evaluate(dlg=>{
+    const seg=dlg.querySelector('.usage-composition-track > span');
+    const dot=dlg.querySelector('.logs-detail-bucket[data-token-kind="input"] i');
+    const emailStrong=dlg.querySelectorAll('.logs-detail-field')[5]?.querySelector(':scope > strong');
+    const rowClipped=[...dlg.querySelectorAll('.logs-detail-field-row')].some(r=>{
+      const rr=r.getBoundingClientRect();
+      return [...r.children].some(c=>c.getBoundingClientRect().right>rr.right+1);
+    });
+    const logsPage=document.querySelector('.logs-page');
+    return {
+      segBg:seg?getComputedStyle(seg).backgroundColor:'',
+      dotBg:dot?getComputedStyle(dot).backgroundColor:'',
+      emailDisplay:emailStrong?getComputedStyle(emailStrong).display:'',
+      rowClipped,
+      usageSecondary:logsPage?getComputedStyle(logsPage).getPropertyValue('--usage-secondary').trim():'',
+    };
+  });
+  assert.notEqual(modalSwatches.segBg,'rgba(0, 0, 0, 0)','Request Inspector token composition bar segments must be visibly colored inside portal');
+  assert.notEqual(modalSwatches.dotBg,'rgba(0, 0, 0, 0)','Request Inspector token bucket swatches must be visibly colored inside portal');
+  assert.equal(modalSwatches.emailDisplay,'block','Request Inspector detail values must use block display for working text ellipsis');
+  assert.equal(modalSwatches.rowClipped,false,'Request Inspector field rows must not clip inline badges or action buttons');
+  assert.notEqual(modalSwatches.usageSecondary,'','Request Logs page must define --usage-secondary for shared .usage-* elements');
+  await page.setViewportSize({width:480,height:720});
+  await page.waitForTimeout(60);
+  const narrowModalCols=await page.locator('[role="dialog"]').evaluate(dlg=>{
+    const cols=sel=>getComputedStyle(dlg.querySelector(sel)).gridTemplateColumns.split(' ').length;
+    return {perf:cols('.logs-detail-perf'),meta:cols('.logs-detail-meta'),tokens:cols('.logs-detail-tokens-grid')};
+  });
+  assert.deepEqual(narrowModalCols,{perf:2,meta:1,tokens:1},'Portaled Request Inspector modal must collapse grids via its own container query at narrow widths');
+  await page.setViewportSize({width:1040,height:820});
+  await page.keyboard.press('Escape');
+  await page.locator('[role="dialog"]').waitFor({state:'hidden'});
+  const modelTagsClipped=await page.locator('.logs-table').evaluate(tbl=>[...tbl.querySelectorAll('.logs-model-tags')].some(el=>el.scrollWidth>el.clientWidth+1));
+  assert.equal(modelTagsClipped,false,'Model tag pills must wrap cleanly without horizontal clipping');
+  // Cost sort -> order toggle must return to Newest (time desc)
+  await page.getByRole('button',{name:/^Cost/i}).click();
+  await page.locator('[data-logs-order-toggle]').click();
+  assert.match(await page.locator('[data-logs-order-toggle]').innerText(),/Newest/,'Order toggle from non-time sort must restore Newest');
+  // Verify timezone select label avoids nested parentheses and has zero truncation
+  const enTzBtn=await page.locator('.logs-tz-select button').evaluate(btn=>({
+    text:(btn.textContent||'').trim(),
+    clipped:btn.scrollWidth>btn.clientWidth+1||[...btn.querySelectorAll('span')].some(el=>el.scrollWidth>el.clientWidth+1),
+  }));
+  assert.doesNotMatch(enTzBtn.text,/\([^()]*\(/,'EN timezone select label must not contain nested parentheses');
+  assert.equal(enTzBtn.clipped,false,'EN timezone select button must not truncate');
+  // Bottom pagination scroll-back UX (page 1 -> full 25-row page 2) + direct page-jump to page 3 + triple-badge wrapping check
+  await page.locator('[data-logs-pagination]').scrollIntoViewIfNeeded();
+  assert.equal(await page.locator('[data-logs-pagination]').isVisible(),true,'Bottom pagination must be reachable by scrolling');
+  const theadBeforeNext=await page.locator('.logs-page').evaluate(container=>{
+    const cRect=container.getBoundingClientRect();
+    const hRect=container.querySelector('.logs-table thead').getBoundingClientRect();
+    return {containerTop:cRect.top,containerBottom:cRect.bottom,headTop:hRect.top,headBottom:hRect.bottom};
+  });
+  assert.ok(theadBeforeNext.headTop<theadBeforeNext.containerTop,'Table header should be scrolled out of view before clicking bottom pagination');
+  await page.locator('[data-logs-pagination]').getByRole('button',{name:'Next',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.logs-range-text')?.textContent?.includes('26'));
+  assert.equal(await page.locator('.logs-table tbody tr').count(),25,'Page 2 must display 25 rows');
+  const theadAfterNext=await page.locator('.logs-page').evaluate(container=>{
+    const cRect=container.getBoundingClientRect();
+    const hRect=container.querySelector('.logs-table thead').getBoundingClientRect();
+    return {containerTop:cRect.top,containerBottom:cRect.bottom,headTop:hRect.top,headBottom:hRect.bottom};
+  });
+  assert.ok(theadAfterNext.headTop>=theadAfterNext.containerTop-1&&theadAfterNext.headBottom<=theadAfterNext.containerBottom+1,'Clicking bottom pagination must scroll table header back into view');
+  const tripleSubClipped=await page.locator('.logs-table tbody tr').nth(5).locator('.logs-time-sub').evaluate(el=>el.scrollWidth>el.clientWidth+1);
+  assert.equal(tripleSubClipped,false,'Triple-badge row (Slot + Sub + Legacy) must wrap cleanly without clipping');
+  await page.locator('[data-logs-pagination]').scrollIntoViewIfNeeded();
+  await page.locator('#logs-jump-input').fill('3');
+  await page.locator('.logs-page-jump button[type="submit"]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.logs-table tbody tr').length===10);
+  const theadAfterJump=await page.locator('.logs-page').evaluate(container=>{
+    const cRect=container.getBoundingClientRect();
+    const hRect=container.querySelector('.logs-table thead').getBoundingClientRect();
+    return {containerTop:cRect.top,containerBottom:cRect.bottom,headTop:hRect.top,headBottom:hRect.bottom};
+  });
+  assert.ok(theadAfterJump.headTop>=theadAfterJump.containerTop-1&&theadAfterJump.headBottom<=theadAfterJump.containerBottom+1,'Direct page jump from bottom bar must scroll table header back into view');
+  // Changing Per page from bottom bar resets to page 1 and must also scroll table header back into view
+  await page.locator('[data-logs-pagination]').scrollIntoViewIfNeeded();
+  await page.locator('.logs-page-size button').click();
+  await page.getByRole('option',{name:'50',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('.logs-table tbody tr').length===50);
+  const theadAfterPerPage=await page.locator('.logs-page').evaluate(container=>{
+    const cRect=container.getBoundingClientRect();
+    const hRect=container.querySelector('.logs-table thead').getBoundingClientRect();
+    return {containerTop:cRect.top,containerBottom:cRect.bottom,headTop:hRect.top,headBottom:hRect.bottom};
+  });
+  assert.ok(theadAfterPerPage.headTop>=theadAfterPerPage.containerTop-1&&theadAfterPerPage.headBottom<=theadAfterPerPage.containerBottom+1,'Changing per-page size from bottom bar must scroll table header back into view');
+  await page.locator('[data-logs-pagination]').scrollIntoViewIfNeeded();
+  await page.locator('.logs-page-size button').click();
+  await page.getByRole('option',{name:'25',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('.logs-table tbody tr').length===25);
+  await page.locator('[data-logs-unattr-chip]').click();
+  await page.locator('[data-logs-unattr-note]').waitFor();
+  await page.waitForFunction(()=>document.querySelectorAll('.logs-table tbody tr').length===1);
+  await page.locator('[data-logs-unattr-chip]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.logs-table tbody tr').length===25);
+  // Timezone switch to Beijing (UTC+8) must shift October 14:00Z timestamp to 22:00:00
+  await page.locator('.logs-tz-select button').click();
+  await page.getByRole('option',{name:/Beijing/i}).click();
+  await page.waitForFunction(()=>document.querySelector('.logs-tz-badge')?.textContent?.trim()==='UTC+8');
+  assert.equal(await page.locator('.logs-table tbody tr').nth(1).locator('.logs-time-main').innerText(),'10-25 22:00:00','Beijing timezone switch must display 22:00:00 for 14:00Z');
+  await page.locator('.logs-tz-select button').click();
+  await page.getByRole('option',{name:/System/i}).click();
+  await page.waitForFunction(()=>document.querySelector('.logs-table tbody tr:nth-child(2) .logs-time-main')?.textContent?.trim()==='10-25 10:00:00');
+  await page.locator('.logs-page').evaluate(el=>{el.scrollTop=0;});
+  await page.screenshot({path:join(output,'request-logs-en-dark.png'),fullPage:false});
+  await page.getByRole('button',{name:'Expand sidebar',exact:true}).click();
+  await page.getByRole('radio',{name:'CN',exact:true}).click();
+  await page.evaluate(async()=>{const prefs=await import('/src/settings-model.ts');prefs.updatePreferences({theme:'light'});});
+  await page.getByRole('heading',{name:'请求日志',exact:true}).waitFor();
+  await page.waitForTimeout(180);
+  const logsZhGeo=await page.locator('.logs-page').evaluate(node=>({
+    width:node.clientWidth,
+    scrollWidth:node.scrollWidth,
+    headerOpacity:Number(getComputedStyle(document.querySelector('.cleaner-slot')).opacity),
+    kpiCount:node.querySelectorAll('.logs-kpi-card').length,
+    kpiOverflow:[...node.querySelectorAll('.logs-kpi-card')].some(c=>c.scrollWidth>c.clientWidth+1),
+    thClipped:[...node.querySelectorAll('.logs-table thead th')].some(th=>th.scrollWidth>th.clientWidth+1),
+  }));
+  assert.ok(logsZhGeo.scrollWidth<=logsZhGeo.width+1,'ZH light Request Logs must not overflow horizontally at 1040x820');
+  assert.equal(logsZhGeo.kpiCount,4,'Request Logs must render 4 KPI cards');
+  assert.equal(logsZhGeo.kpiOverflow,false,'Request Logs KPI cards must not overflow horizontally');
+  assert.equal(logsZhGeo.thClipped,false,'ZH Request Logs table headers must not clip at 1040x820');
+  const zhTzBtn=await page.locator('.logs-tz-select button').evaluate(btn=>({
+    text:(btn.textContent||'').trim(),
+    clipped:btn.scrollWidth>btn.clientWidth+1||[...btn.querySelectorAll('span')].some(el=>el.scrollWidth>el.clientWidth+1),
+  }));
+  assert.doesNotMatch(zhTzBtn.text,/\([^()]*\(/,'ZH timezone select label must not contain nested parentheses');
+  assert.equal(zhTzBtn.clipped,false,'ZH timezone select button must not truncate');
+  await page.locator('.logs-page').evaluate(el=>{el.scrollTop=0;});
+  await page.screenshot({path:join(output,'request-logs-zh-light-top.png'),fullPage:false});
+  await page.locator('[data-logs-pagination]').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(100);
+  await page.screenshot({path:join(output,'request-logs-zh-light-bottom.png'),fullPage:false});
+  await page.setViewportSize({width:720,height:720});
+  await page.waitForTimeout(100);
+  const logsNarrowGeo=await page.locator('.logs-page').evaluate(node=>({
+    width:node.clientWidth,
+    scrollWidth:node.scrollWidth,
+    docWidth:document.documentElement.clientWidth,
+    docScrollWidth:document.documentElement.scrollWidth,
+    thClipped:[...node.querySelectorAll('.logs-table thead th')].some(th=>th.scrollWidth>th.clientWidth+1),
+  }));
+  assert.ok(logsNarrowGeo.scrollWidth<=logsNarrowGeo.width+1,'ZH narrow Request Logs must not overflow outer page');
+  assert.ok(logsNarrowGeo.docScrollWidth<=logsNarrowGeo.docWidth+1,'ZH narrow Request Logs must not overflow document');
+  assert.equal(logsNarrowGeo.thClipped,false,'ZH narrow Request Logs headers must not clip');
+  await page.setViewportSize({width:1040,height:820});
+  await page.evaluate(async()=>{const prefs=await import('/src/settings-model.ts');prefs.updatePreferences({theme:'dark'});});
+  await page.getByRole('radio',{name:'EN',exact:true}).click();
+  await page.getByRole('button',{name:'Collapse sidebar',exact:true}).click();
+  await page.getByRole('heading',{name:'Request Logs',exact:true}).waitFor();
   await page.setViewportSize({width:900,height:720});
 
   await page.getByRole('button',{name:'Computer',exact:true}).click();

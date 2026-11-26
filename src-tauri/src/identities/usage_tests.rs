@@ -2579,6 +2579,605 @@ fn request_logs_stream_chunks_across_cursor_and_intermediate_progress_preserve_d
     // Tool count must combine tu-1 from prefix + tu-2 from incremental append => 2!
     assert_eq!(snap2.items[0].tool_count, 2);
     assert_eq!(snap2.items[0].stop_reason, "tool_use");
+    assert!(snap2.items[0].ts_precise);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn request_logs_interleaved_tool_results_long_turn_and_outlier_repair_stay_accurate() {
+    let dir = temp_dir("request-logs-interleaved-long");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    let projects = home.join(".claude").join("projects").join("demo");
+    super::private::directory(&vault).unwrap();
+    super::private::directory(&projects).unwrap();
+
+    // Reproduce real-world >10min Opus multi-tool sidechain turn where Claude Code interleaves
+    // `user` tool_result lines between streaming chunks of the SAME (message.id, requestId).
+    // Previously MAX_DURATION_MS=600s rejected the true 655s span and fell back to 444ms -> 174,941 TPS!
+    let jsonl = projects.join("sess-long-tools.jsonl");
+    let mut f = fs::File::create(&jsonl).unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-start",
+            "sessionId": "sess-long-tools",
+            "isSidechain": true,
+            "timestamp": "2026-10-30T10:20:30.232Z",
+            "message": { "role": "user", "content": "deep analysis" }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-chunk-1",
+            "parentUuid": "u-start",
+            "sessionId": "sess-long-tools",
+            "requestId": "req-long-1",
+            "isSidechain": true,
+            "timestamp": "2026-10-30T10:31:21.085Z",
+            "message": {
+                "id": "msg-long-1",
+                "model": "claude-opus-5-5",
+                "stop_reason": "tool_use",
+                "content": [{ "type": "tool_use", "id": "tu-a", "name": "Read" }],
+                "usage": { "input_tokens": 2, "output_tokens": 77674, "cache_creation_input_tokens": 38104, "cache_read_input_tokens": 165292 }
+            }
+        })
+    )
+    .unwrap();
+    // Interleaved tool_result whose parent is a-chunk-1
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-tool-res",
+            "parentUuid": "a-chunk-1",
+            "sessionId": "sess-long-tools",
+            "isSidechain": true,
+            "timestamp": "2026-10-30T10:31:25.385Z",
+            "message": { "role": "user", "content": "tool result" }
+        })
+    )
+    .unwrap();
+    // Final chunk of the SAME (msg-long-1, req-long-1) 444ms after u-tool-res!
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-chunk-2",
+            "parentUuid": "u-tool-res",
+            "sessionId": "sess-long-tools",
+            "requestId": "req-long-1",
+            "isSidechain": true,
+            "timestamp": "2026-10-30T10:31:25.829Z",
+            "message": {
+                "id": "msg-long-1",
+                "model": "claude-opus-5-5",
+                "stop_reason": "tool_use",
+                "content": [{ "type": "tool_use", "id": "tu-b", "name": "Grep" }],
+                "usage": { "input_tokens": 2, "output_tokens": 77674, "cache_creation_input_tokens": 38104, "cache_read_input_tokens": 165292 }
+            }
+        })
+    )
+    .unwrap();
+    drop(f);
+
+    let snapshot_now = usage::parse_iso_epoch_ms("2026-10-30T12:00:00.000Z").unwrap() / 1000;
+    let query = usage::logs::RequestLogsQuery {
+        period: "all",
+        account_id: None,
+        model: None,
+        effort: None,
+        source_filter: None,
+        session_key: None,
+        search: None,
+        sort_by: "time",
+        sort_desc: true,
+        page: 1,
+        page_size: 25,
+        offset_minutes: 0,
+        timezone: None,
+    };
+
+    let snap = usage::logs::read_request_logs_at(&vault, &home, &query, snapshot_now).unwrap();
+    assert_eq!(snap.total_count, 1);
+    assert_eq!(snap.unattributed_count, 1);
+    assert!(snap.has_unattributed);
+    let item = &snap.items[0];
+    // True duration is 10:20:30.232 -> 10:31:25.829 = 655,597 ms (~118.5 TPS, NEVER 444ms / 174,941 TPS!)
+    assert_eq!(item.duration_ms, Some(655_597));
+    assert_eq!(item.tps, Some(118.5));
+    assert_eq!(item.tool_count, 2);
+    assert!(item.ts_precise);
+    assert_eq!(snap.summary.peak_tps, Some(118.5));
+
+    // Also verify a legacy archived row (ts_ms IS NULL) + an impossible outlier (>2000 tok/s) injected directly in SQLite:
+    let conn = rusqlite::Connection::open(vault.join("usage.sqlite")).unwrap();
+    conn.execute(
+        "INSERT INTO events(event_key,message_key,session_key,ts,ts_ms,duration_ms,model,effort,stop_reason,tool_count,speed,source_kind,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,NULL,NULL,?2,NULL,NULL,'claude-opus-5-5','','',0,'','main',10,100,0,0,NULL,NULL,0,0)",
+        rusqlite::params!["legacy0000000000000000000000000000000000000000000000000000000001", (snapshot_now - 7200) as i64],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO events(event_key,message_key,session_key,ts,ts_ms,duration_ms,model,effort,stop_reason,tool_count,speed,source_kind,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,NULL,NULL,?2,?3,200,'claude-opus-5-5','','tool_use',1,'','main',10,50000,0,0,NULL,NULL,0,1)",
+        rusqlite::params!["outlier000000000000000000000000000000000000000000000000000000002", (snapshot_now - 3600) as i64, ((snapshot_now - 3600) * 1000) as i64],
+    )
+    .unwrap();
+    drop(conn);
+
+    let snap2 = usage::logs::read_request_logs_at(&vault, &home, &query, snapshot_now).unwrap();
+    assert_eq!(snap2.total_count, 3);
+    assert_eq!(snap2.unattributed_count, 3);
+    // Outlier row (50,000 output in 200ms = 250,000 TPS) must be sanitized to None so peak_tps stays 118.5!
+    let outlier = snap2.items.iter().find(|r| r.event_key.starts_with("outlier")).unwrap();
+    assert_eq!(outlier.duration_ms, None);
+    assert_eq!(outlier.tps, None);
+    assert_eq!(snap2.summary.peak_tps, Some(118.5));
+    assert_eq!(snap2.summary.timed_requests, 1);
+
+    let legacy = snap2.items.iter().find(|r| r.event_key.starts_with("legacy")).unwrap();
+    assert!(!legacy.ts_precise);
+    assert_eq!(legacy.duration_ms, None);
+    assert_eq!(legacy.tps, None);
+
+    // Verify sub-100ms impossible outlier (5000 output in 60ms = 83,333 TPS) is also sanitized.
+    let conn = rusqlite::Connection::open(vault.join("usage.sqlite")).unwrap();
+    conn.execute(
+        "INSERT INTO events(event_key,message_key,session_key,ts,ts_ms,duration_ms,model,effort,stop_reason,tool_count,speed,source_kind,input,output,creation,cache_read,reasoning,account_key,weak,sidechain) VALUES(?1,NULL,NULL,?2,?3,60,'claude-opus-5-5','','tool_use',1,'','main',10,5000,0,0,NULL,NULL,0,1)",
+        rusqlite::params!["sub100ms0000000000000000000000000000000000000000000000000000003", (snapshot_now - 1800) as i64, ((snapshot_now - 1800) * 1000) as i64],
+    )
+    .unwrap();
+    drop(conn);
+
+    let snap3 = usage::logs::read_request_logs_at(&vault, &home, &query, snapshot_now).unwrap();
+    let sub100 = snap3.items.iter().find(|r| r.event_key.starts_with("sub100ms")).unwrap();
+    assert_eq!(sub100.duration_ms, None);
+    assert_eq!(sub100.tps, None);
+    assert_eq!(snap3.summary.timed_requests, 1);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn request_logs_multi_hop_interleaved_tool_results_and_v5_sql_repair_work() {
+    let dir = temp_dir("request-logs-multihop-v5-repair");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    let projects = home.join(".claude").join("projects").join("demo");
+    super::private::directory(&vault).unwrap();
+    super::private::directory(&projects).unwrap();
+
+    // Pre-create a pre-v5 ledger containing an impossible outlier row (50,000 output in 200ms)
+    // and NO `duration_outlier_repaired_v5` meta flag so `open_ledger_full` executes the SQL repair.
+    let ledger_path = vault.join("usage.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&ledger_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE events(event_key TEXT PRIMARY KEY,message_key TEXT,session_key TEXT,ts INTEGER NOT NULL,ts_ms INTEGER,duration_ms INTEGER,model TEXT NOT NULL,effort TEXT NOT NULL DEFAULT '',stop_reason TEXT NOT NULL DEFAULT '',tool_count INTEGER NOT NULL DEFAULT 0,speed TEXT NOT NULL DEFAULT '',source_kind TEXT NOT NULL DEFAULT 'main',input INTEGER NOT NULL,output INTEGER NOT NULL,creation INTEGER NOT NULL,cache_read INTEGER NOT NULL,reasoning INTEGER,account_key TEXT,weak INTEGER NOT NULL,sidechain INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE files(file_key TEXT PRIMARY KEY,size INTEGER NOT NULL,mtime INTEGER NOT NULL,offset INTEGER NOT NULL DEFAULT 0,guard TEXT NOT NULL DEFAULT '',effort TEXT NOT NULL DEFAULT '',parser_version INTEGER NOT NULL DEFAULT 4,damaged INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE boundaries(ts INTEGER NOT NULL,account_key TEXT);
+             CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO events(event_key,ts,ts_ms,duration_ms,model,input,output,creation,cache_read,weak,sidechain) VALUES('pre_v5_outlier',1761820000,1761820000000,200,'claude-opus-5-5',10,50000,0,0,0,0)",
+            [],
+        )
+        .unwrap();
+    }
+
+    // Multi-hop interleaved chain: u-start -> a-chunk-1 -> progress -> u-tool-1 -> u-tool-2 -> a-chunk-2
+    let jsonl = projects.join("sess-multihop.jsonl");
+    let mut f = fs::File::create(&jsonl).unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-start",
+            "sessionId": "sess-multihop",
+            "timestamp": "2026-10-30T10:00:00.000Z",
+            "message": { "role": "user", "content": "parallel tools" }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-chunk-1",
+            "parentUuid": "u-start",
+            "sessionId": "sess-multihop",
+            "requestId": "req-mh-1",
+            "timestamp": "2026-10-30T10:02:00.000Z",
+            "message": {
+                "id": "msg-mh-1",
+                "model": "claude-opus-5-5",
+                "stop_reason": "tool_use",
+                "content": [{ "type": "tool_use", "id": "tu-1", "name": "Read" }],
+                "usage": { "input_tokens": 10, "output_tokens": 4000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 }
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "progress",
+            "uuid": "p-mid",
+            "parentUuid": "a-chunk-1",
+            "sessionId": "sess-multihop",
+            "timestamp": "2026-10-30T10:02:01.000Z"
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-tool-1",
+            "parentUuid": "p-mid",
+            "sessionId": "sess-multihop",
+            "timestamp": "2026-10-30T10:02:02.000Z",
+            "message": { "role": "user", "content": "tool 1 done" }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-tool-2",
+            "parentUuid": "u-tool-1",
+            "sessionId": "sess-multihop",
+            "timestamp": "2026-10-30T10:02:03.000Z",
+            "message": { "role": "user", "content": "tool 2 done" }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-chunk-2",
+            "parentUuid": "u-tool-2",
+            "sessionId": "sess-multihop",
+            "requestId": "req-mh-1",
+            "timestamp": "2026-10-30T10:02:03.300Z",
+            "message": {
+                "id": "msg-mh-1",
+                "model": "claude-opus-5-5",
+                "stop_reason": "end_turn",
+                "content": [{ "type": "text", "text": "done" }],
+                "usage": { "input_tokens": 10, "output_tokens": 12000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 }
+            }
+        })
+    )
+    .unwrap();
+    drop(f);
+
+    let snapshot_now = usage::parse_iso_epoch_ms("2026-10-30T12:00:00.000Z").unwrap() / 1000;
+    let query = usage::logs::RequestLogsQuery {
+        period: "all",
+        account_id: None,
+        model: None,
+        effort: None,
+        source_filter: None,
+        session_key: None,
+        search: None,
+        sort_by: "time",
+        sort_desc: true,
+        page: 1,
+        page_size: 25,
+        offset_minutes: 0,
+        timezone: None,
+    };
+
+    let snap = usage::logs::read_request_logs_at(&vault, &home, &query, snapshot_now).unwrap();
+    // 1) Multi-hop interleaved chain must anchor on u-start (10:00:00.000 -> 10:02:03.300 = 123,300ms), NOT 300ms!
+    let mh = snap
+        .items
+        .iter()
+        .find(|r| r.output_tokens == 12_000)
+        .expect("multi-hop item present");
+    assert_eq!(mh.duration_ms, Some(123_300));
+    assert_eq!(mh.tps, Some(97.3));
+
+    // 2) Pre-v5 SQL outlier row must actually have duration_ms cleared to NULL in SQLite itself!
+    let conn = rusqlite::Connection::open(&ledger_path).unwrap();
+    let repaired_duration: Option<i64> = conn
+        .query_row(
+            "SELECT duration_ms FROM events WHERE event_key='pre_v5_outlier'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(repaired_duration, None);
+    let repaired_flag: String = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key='duration_outlier_repaired_v5'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(repaired_flag, "1");
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn request_logs_synthetic_error_bridge_preserves_duration_across_full_and_incremental_scans() {
+    let dir = temp_dir("request-logs-synthetic-bridge");
+    let vault = dir.join("vault");
+    let home = dir.join("home");
+    let projects = home.join(".claude").join("projects").join("demo");
+    super::private::directory(&vault).unwrap();
+    super::private::directory(&projects).unwrap();
+
+    // Case 1 (full-file scan): u-1 -> a-1 (partial) -> err-synth (<synthetic> Connection lost) -> a-2 (retry chained on err-synth)
+    let jsonl_full = projects.join("sess-synth-full.jsonl");
+    let mut f1 = fs::File::create(&jsonl_full).unwrap();
+    writeln!(
+        f1,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-1",
+            "sessionId": "sess-synth-full",
+            "timestamp": "2026-10-30T11:00:00.000Z",
+            "message": { "role": "user", "content": "explain architecture" }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f1,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-1",
+            "parentUuid": "u-1",
+            "sessionId": "sess-synth-full",
+            "requestId": "req-drop-1",
+            "timestamp": "2026-10-30T11:00:05.000Z",
+            "message": {
+                "id": "msg-drop-1",
+                "model": "claude-opus-5-5",
+                "content": [{ "type": "text", "text": "Partial answer before drop" }],
+                "usage": { "input_tokens": 100, "output_tokens": 50, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 }
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f1,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "err-synth-1",
+            "parentUuid": "a-1",
+            "sessionId": "sess-synth-full",
+            "isApiErrorMessage": true,
+            "timestamp": "2026-10-30T11:00:12.000Z",
+            "message": {
+                "id": "synth-1",
+                "model": "<synthetic>",
+                "content": [{ "type": "text", "text": "API Error: Connection lost mid-response. The response above may be incomplete." }],
+                "usage": { "input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 }
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f1,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-2",
+            "parentUuid": "err-synth-1",
+            "sessionId": "sess-synth-full",
+            "requestId": "req-retry-2",
+            "timestamp": "2026-10-30T11:00:25.000Z",
+            "message": {
+                "id": "msg-retry-2",
+                "model": "claude-opus-5-5",
+                "stop_reason": "end_turn",
+                "content": [{ "type": "text", "text": "Complete answer after retry" }],
+                "usage": { "input_tokens": 100, "output_tokens": 400, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 }
+            }
+        })
+    )
+    .unwrap();
+    drop(f1);
+
+    // Case 2 (incremental cursor boundary): first write u-inc -> err-synth-inc (<synthetic>), scan, then append a-inc chained onto err-synth-inc.
+    let jsonl_inc = projects.join("sess-synth-inc.jsonl");
+    let mut f2 = fs::File::create(&jsonl_inc).unwrap();
+    writeln!(
+        f2,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-inc",
+            "sessionId": "sess-synth-inc",
+            "timestamp": "2026-10-30T11:05:00.000Z",
+            "message": { "role": "user", "content": "second prompt" }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f2,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "err-synth-inc",
+            "parentUuid": "u-inc",
+            "sessionId": "sess-synth-inc",
+            "isApiErrorMessage": true,
+            "timestamp": "2026-10-30T11:05:04.000Z",
+            "message": {
+                "id": "synth-inc",
+                "model": "<synthetic>",
+                "content": [{ "type": "text", "text": "API Error: Connection lost mid-response. The response above may be incomplete." }],
+                "usage": { "input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 }
+            }
+        })
+    )
+    .unwrap();
+    drop(f2);
+
+    let snapshot_now = usage::parse_iso_epoch_ms("2026-10-30T12:00:00.000Z").unwrap() / 1000;
+    let query = usage::logs::RequestLogsQuery {
+        period: "all",
+        account_id: None,
+        model: None,
+        effort: None,
+        source_filter: None,
+        session_key: None,
+        search: None,
+        sort_by: "time",
+        sort_desc: true,
+        page: 1,
+        page_size: 25,
+        offset_minutes: 0,
+        timezone: None,
+    };
+
+    let snap1 = usage::logs::read_request_logs_at(&vault, &home, &query, snapshot_now).unwrap();
+    // Only the two real assistant messages from sess-synth-full should be recorded (zero <synthetic> rows).
+    assert_eq!(snap1.total_count, 2);
+    let a1 = snap1.items.iter().find(|r| r.output_tokens == 50).expect("a-1 present");
+    let a2 = snap1.items.iter().find(|r| r.output_tokens == 400).expect("a-2 present");
+    assert_eq!(a1.duration_ms, Some(5_000));
+    // a-2 traces through err-synth-1 -> a-1 (11:00:05 -> 11:00:25 = 20_000ms), NOT None!
+    assert_eq!(a2.duration_ms, Some(20_000));
+    assert_eq!(a2.tps, Some(20.0));
+
+    // Append real assistant response across the cursor boundary onto err-synth-inc (recover_prefix_context path)
+    let mut f2_app = fs::OpenOptions::new().append(true).open(&jsonl_inc).unwrap();
+    writeln!(
+        f2_app,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-inc",
+            "parentUuid": "err-synth-inc",
+            "sessionId": "sess-synth-inc",
+            "requestId": "req-inc-1",
+            "timestamp": "2026-10-30T11:05:10.000Z",
+            "message": {
+                "id": "msg-inc-1",
+                "model": "claude-opus-5-5",
+                "stop_reason": "end_turn",
+                "content": [{ "type": "text", "text": "Recovered response" }],
+                "usage": { "input_tokens": 100, "output_tokens": 300, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 }
+            }
+        })
+    )
+    .unwrap();
+    drop(f2_app);
+
+    let snap2 = usage::logs::read_request_logs_at(&vault, &home, &query, snapshot_now).unwrap();
+    assert_eq!(snap2.total_count, 3);
+    let a_inc = snap2
+        .items
+        .iter()
+        .find(|r| r.output_tokens == 300)
+        .expect("a-inc present");
+    // Incremental prefix recovery skips <synthetic> event_key and bridges err-synth-inc -> u-inc (10_000ms),
+    // matching full-file parsing semantics identically.
+    assert_eq!(a_inc.duration_ms, Some(10_000));
+    assert_eq!(a_inc.tps, Some(30.0));
+
+    // Case 3 (post-offset <synthetic> bridge): cursor stops right after u-pre, then BOTH err-synth-post (<synthetic>)
+    // AND a-post (parentUuid = err-synth-post) arrive in the same incremental batch. `parse_file_core` must still
+    // load bounded prefix context even though immediate parent `err-synth-post` already exists in post-offset uuid_nodes.
+    let jsonl_post_bridge = projects.join("sess-synth-post-bridge.jsonl");
+    let mut f3 = fs::File::create(&jsonl_post_bridge).unwrap();
+    writeln!(
+        f3,
+        "{}",
+        json!({
+            "type": "user",
+            "uuid": "u-pre",
+            "sessionId": "sess-synth-post-bridge",
+            "timestamp": "2026-10-30T11:10:00.000Z",
+            "message": { "role": "user", "content": "third prompt before cursor" }
+        })
+    )
+    .unwrap();
+    drop(f3);
+
+    let snap_pre = usage::logs::read_request_logs_at(&vault, &home, &query, snapshot_now).unwrap();
+    assert_eq!(snap_pre.total_count, 3);
+
+    let mut f3_app = fs::OpenOptions::new()
+        .append(true)
+        .open(&jsonl_post_bridge)
+        .unwrap();
+    writeln!(
+        f3_app,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "err-synth-post",
+            "parentUuid": "u-pre",
+            "sessionId": "sess-synth-post-bridge",
+            "isApiErrorMessage": true,
+            "timestamp": "2026-10-30T11:10:03.000Z",
+            "message": {
+                "id": "synth-post",
+                "model": "<synthetic>",
+                "content": [{ "type": "text", "text": "API Error: Connection lost mid-response. The response above may be incomplete." }],
+                "usage": { "input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 }
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        f3_app,
+        "{}",
+        json!({
+            "type": "assistant",
+            "uuid": "a-post",
+            "parentUuid": "err-synth-post",
+            "sessionId": "sess-synth-post-bridge",
+            "requestId": "req-post-1",
+            "timestamp": "2026-10-30T11:10:08.000Z",
+            "message": {
+                "id": "msg-post-1",
+                "model": "claude-opus-5-5",
+                "stop_reason": "end_turn",
+                "content": [{ "type": "text", "text": "Recovered response after post-offset synthetic drop" }],
+                "usage": { "input_tokens": 100, "output_tokens": 200, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 }
+            }
+        })
+    )
+    .unwrap();
+    drop(f3_app);
+
+    let snap3 = usage::logs::read_request_logs_at(&vault, &home, &query, snapshot_now).unwrap();
+    assert_eq!(snap3.total_count, 4);
+    let a_post = snap3
+        .items
+        .iter()
+        .find(|r| r.output_tokens == 200)
+        .expect("a-post present");
+    assert_eq!(a_post.duration_ms, Some(8_000));
+    assert_eq!(a_post.tps, Some(25.0));
 
     let _ = fs::remove_dir_all(dir);
 }

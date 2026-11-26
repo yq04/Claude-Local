@@ -20,6 +20,10 @@ const MAX_SEARCH_CHARS: usize = 64;
 const MIN_PAGE_SIZE: u32 = 10;
 const MAX_PAGE_SIZE: u32 = 100;
 const DEFAULT_PAGE_SIZE: u32 = 25;
+/// Physical upper bound for valid per-request output TPS (tokens/sec). Any row whose
+/// duration yields a higher rate reflects an interleaved/incomplete timing anchor and
+/// is excluded from latency/TPS metrics rather than displaying corrupted spikes.
+const MAX_SANE_TPS: f64 = 2_000.0;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RequestLogEntry {
@@ -29,6 +33,7 @@ pub struct RequestLogEntry {
     pub session_key: Option<String>,
     pub ts: u64,
     pub ts_ms: u64,
+    pub ts_precise: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -106,6 +111,8 @@ pub struct RequestLogsAccountOption {
 pub struct RequestLogsSnapshot {
     pub generated_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tracking_since: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
     pub total_count: u64,
     pub page: u32,
@@ -116,6 +123,7 @@ pub struct RequestLogsSnapshot {
     pub available_models: Vec<String>,
     pub available_efforts: Vec<String>,
     pub has_unattributed: bool,
+    pub unattributed_count: u64,
     pub warnings: Vec<String>,
 }
 
@@ -246,7 +254,21 @@ fn compute_tps(output_tokens: u64, duration_ms: Option<u64>) -> Option<f64> {
         return None;
     }
     let val = output_tokens as f64 / (ms as f64 / 1000.0);
-    val.is_finite().then(|| (val * 10.0).round() / 10.0)
+    (val.is_finite() && val <= MAX_SANE_TPS).then(|| (val * 10.0).round() / 10.0)
+}
+
+fn sanitize_duration_ms(output_tokens: u64, duration_ms: Option<u64>) -> Option<u64> {
+    let ms = duration_ms?;
+    if ms == 0 {
+        return None;
+    }
+    if output_tokens > 0 {
+        let raw_tps = output_tokens as f64 / (ms as f64 / 1000.0);
+        if !raw_tps.is_finite() || raw_tps > MAX_SANE_TPS {
+            return None;
+        }
+    }
+    Some(ms)
 }
 
 fn compute_cache_hit(input: u64, creation: u64, cache_read: u64) -> Option<f64> {
@@ -453,6 +475,17 @@ pub(in crate::identities) fn read_request_logs_at(
     let conn = open_ledger(&ledger_path)?;
     ingest_projects(&conn, vault, home, snapshot_now, &mut warnings);
 
+    let tracking_since: Option<u64> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key='tracking_since'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u64>().ok());
+
     let AccountMeta {
         by_id: accounts_by_id,
         key_to_id,
@@ -507,6 +540,7 @@ pub(in crate::identities) fn read_request_logs_at(
     let mut available_efforts = BTreeSet::new();
     let mut account_counts: HashMap<String, u64> = HashMap::new();
     let mut has_unattributed = false;
+    let mut unattributed_count: u64 = 0;
     let mut has_weak = false;
 
     let search_needle = query
@@ -580,6 +614,7 @@ pub(in crate::identities) fn read_request_logs_at(
             *account_counts.entry(aid.clone()).or_insert(0) += 1;
         } else {
             has_unattributed = true;
+            unattributed_count = unattributed_count.saturating_add(1);
         }
 
         // Apply filters
@@ -653,7 +688,9 @@ pub(in crate::identities) fn read_request_logs_at(
         let (estimated_cost_usd, cache_savings_usd) =
             estimate_request_cost(&model, input, output, creation, cache_read, &speed);
         let cache_hit_rate = compute_cache_hit(input, creation, cache_read);
+        let duration_ms = sanitize_duration_ms(output, duration_ms);
         let tps = compute_tps(output, duration_ms);
+        let ts_precise = ts_ms_opt.is_some();
         let ts_ms = ts_ms_opt.unwrap_or_else(|| ts.saturating_mul(1000));
         let short_id = event_key.chars().take(12).collect::<String>();
 
@@ -669,7 +706,7 @@ pub(in crate::identities) fn read_request_logs_at(
         if let Some(ms) = duration_ms {
             summary.timed_requests = summary.timed_requests.saturating_add(1);
             durations.push(ms);
-            if output > 0 && ms >= 100 {
+            if tps.is_some() {
                 timed_output_sum = timed_output_sum.saturating_add(output);
                 timed_duration_sum_ms = timed_duration_sum_ms.saturating_add(ms);
             }
@@ -687,6 +724,7 @@ pub(in crate::identities) fn read_request_logs_at(
             session_key,
             ts,
             ts_ms,
+            ts_precise,
             account_id: resolved_id,
             account_name: acc_meta.map(|(a, _)| a.name.clone()),
             account_email: acc_meta.and_then(|(a, _)| a.email.clone()),
@@ -811,6 +849,7 @@ pub(in crate::identities) fn read_request_logs_at(
 
     Ok(RequestLogsSnapshot {
         generated_at: snapshot_now,
+        tracking_since,
         timezone: tz.map(|t| t.name().to_string()),
         total_count,
         page,
@@ -821,6 +860,7 @@ pub(in crate::identities) fn read_request_logs_at(
         available_models: available_models.into_iter().collect(),
         available_efforts: available_efforts.into_iter().collect(),
         has_unattributed,
+        unattributed_count,
         warnings,
     })
 }

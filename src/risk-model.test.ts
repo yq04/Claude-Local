@@ -385,6 +385,8 @@ test('AI remediation prompts cover desktop DNS/Persona fix, campus route exclusi
     expect(prompt).toMatch(/https:\/\/1\.1\.1\.1\/dns-query/);
     expect(prompt).toMatch(/3478\/19302\/5349/);
     expect(prompt).toMatch(/socks5:\/\/127\.0\.0\.1:7899/);
+    expect(prompt).toMatch(/fallback/i);
+    expect(prompt).toMatch(/keep-alive/i);
     expect(prompt).toMatch(/美国.*静态.*(?:住宅|家宽)|US static residential/i);
     expect(prompt).not.toMatch(/function\s+main|tcp-concurrent|mixed-port|7890|proxy-providers|listeners\s*:|rules\s*[:=]|<PASSWORD>|<USERNAME>/i);
   }
@@ -538,6 +540,9 @@ test('buildMihomoStrictRouteSnippet and strict-route detection flag tun_strict_r
 
   const desktopYaml = buildDesktopMihomoAntiLeakYaml(17899);
   expect(desktopYaml.configText).toContain('ipv6: false');
+  expect(desktopYaml.configText).toContain('disable-keep-alive: false');
+  expect(desktopYaml.configText).toContain('keep-alive-idle: 30');
+  expect(desktopYaml.configText).toContain('keep-alive-interval: 15');
   expect(desktopYaml.configText).toContain('claude.com');
   expect(desktopYaml.configText).toContain('claudemcpcontent.com');
   expect(desktopYaml.configText).toContain('persona.com');

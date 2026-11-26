@@ -4,7 +4,7 @@
  * [POS]: Local per-request observability page; sequential 30-second visible-page refresh, zero raw prompts/paths/credentials or network requests.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
-import {useEffect, useMemo, useRef, useState} from 'react';
+import {type FormEvent, useEffect, useMemo, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {DropdownMenu} from 'radix-ui';
 import {Button, Disclosure, Select, Tabs} from 'cromma-ui';
@@ -24,6 +24,7 @@ import {
   type UsageTotals,
 } from './usage-model';
 import {
+  buildPaginationRange,
   buildRequestLogsJson,
   buildRequestLogsTsv,
   classifyTpsTier,
@@ -32,13 +33,17 @@ import {
   formatLogTimeFull,
   formatLogTimeShort,
   formatPreciseUsd,
+  formatTimezoneBadge,
   formatTps,
+  readLogsTimezonePref,
   resolveSpeedCostMultiplier,
   shortHash,
+  writeLogsTimezonePref,
   type RequestLogEntry,
   type RequestLogSortField,
   type RequestLogSourceFilter,
   type RequestLogsSnapshot,
+  type RequestLogTimezonePref,
 } from './request-logs-model';
 
 const PERIODS: readonly [UsagePeriod, string][] = [
@@ -124,6 +129,8 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(25);
+  const [tzPref, setTzPref] = useState<RequestLogTimezonePref>(readLogsTimezonePref);
+  const [jumpDraft, setJumpDraft] = useState('');
   const [revision, setRevision] = useState(0);
 
   const [result, setResult] = useState<{key: string; value: RequestLogsSnapshot} | null>(null);
@@ -134,6 +141,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
 
   const exportTimerRef = useRef<number | null>(null);
   const copyIdTimerRef = useRef<number | null>(null);
+  const tableCardRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const trimmed = searchDraft.trim();
@@ -150,7 +158,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
     if (copyIdTimerRef.current) window.clearTimeout(copyIdTimerRef.current);
   }, []);
 
-  const timezone = useMemo(() => {
+  const systemTimezone = useMemo(() => {
     try {
       const value = Intl.DateTimeFormat().resolvedOptions().timeZone;
       new Intl.DateTimeFormat('en', {timeZone: value});
@@ -159,6 +167,8 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
       return '';
     }
   }, []);
+
+  const effectiveTimezone = tzPref === 'system' ? systemTimezone : tzPref;
 
   const queryKey = [
     period,
@@ -172,11 +182,16 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
     sortDir,
     page,
     pageSize,
-    timezone || `offset:${-new Date().getTimezoneOffset()}`,
+    effectiveTimezone || `offset:${-new Date().getTimezoneOffset()}`,
   ].join('|');
 
-  const snapshot = result?.key === queryKey ? result.value : logsSnapshotCache.get(queryKey) ?? null;
+  const snapshot =
+    result?.key === queryKey
+      ? result.value
+      : (logsSnapshotCache.get(queryKey) ?? result?.value ?? null);
   const busy = status.key !== queryKey || status.busy;
+  const isTransitioning =
+    snapshot !== null && busy && result?.key !== queryKey && !logsSnapshotCache.has(queryKey);
   const error = status.key === queryKey ? status.error : '';
 
   usePageRefresh(() => {
@@ -208,7 +223,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
           page,
           pageSize,
           offsetMinutes: -new Date().getTimezoneOffset(),
-          ...(timezone ? {timezone} : {}),
+          ...(effectiveTimezone ? {timezone: effectiveTimezone} : {}),
         });
         if (live) {
           rememberLogsSnapshot(queryKey, value);
@@ -244,7 +259,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
       window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', visibilityChanged);
     };
-  }, [queryKey, period, accountId, model, effort, sourceFilter, sessionKey, search, sortBy, sortDir, page, pageSize, revision, timezone]);
+  }, [queryKey, period, accountId, model, effort, sourceFilter, sessionKey, search, sortBy, sortDir, page, pageSize, revision, effectiveTimezone]);
 
   const num = (value: number | null | undefined, compact = false) =>
     formatUsageNumber(value, locale, compact);
@@ -256,14 +271,44 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
           maximumFractionDigits: 1,
         }).format(value);
 
-  const activeTz = snapshot?.timezone || timezone || null;
+  const activeTz = snapshot?.timezone || effectiveTimezone || null;
+  const activeTzBadge = useMemo(
+    () => formatTimezoneBadge(activeTz, snapshot?.generated_at ? snapshot.generated_at * 1000 : undefined),
+    [activeTz, snapshot?.generated_at],
+  );
+  const systemTzShort = useMemo(() => formatTimezoneBadge(systemTimezone), [systemTimezone]);
+  const referenceYear = useMemo(() => {
+    const sampleMs = snapshot?.generated_at ? snapshot.generated_at * 1000 : Date.now();
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        ...(activeTz ? {timeZone: activeTz} : {}),
+      }).formatToParts(new Date(sampleMs));
+      const yr = Number(parts.find(p => p.type === 'year')?.value);
+      return Number.isFinite(yr) && yr > 0 ? yr : new Date().getFullYear();
+    } catch {
+      return new Date().getFullYear();
+    }
+  }, [snapshot?.generated_at, activeTz]);
+
   const stamp = snapshot
     ? new Date(snapshot.generated_at * 1000).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US', {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
+        hourCycle: 'h23',
+        ...(activeTz ? {timeZone: activeTz} : {}),
       })
     : '';
+  const trackingSinceLabel =
+    snapshot?.tracking_since != null
+      ? new Date(snapshot.tracking_since * 1000).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          ...(activeTz ? {timeZone: activeTz} : {}),
+        })
+      : '';
 
   const hasActiveFilters =
     period !== 'week' ||
@@ -286,6 +331,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
     setSortBy('time');
     setSortDir('desc');
     setPage(1);
+    setJumpDraft('');
   };
 
   const selectSort = (field: RequestLogSortField) => {
@@ -298,13 +344,19 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
     setPage(1);
   };
 
-  const sortHeader = (field: RequestLogSortField, label: string, alignLeft = false) => {
+  const sortHeader = (field: RequestLogSortField, label: string, align: 'left' | 'center' | 'right' = 'right') => {
     const active = sortBy === field;
     const descending = sortDir === 'desc';
+    const alignClass =
+      align === 'left'
+        ? 'logs-col-align-left'
+        : align === 'right'
+          ? 'logs-col-align-right'
+          : undefined;
     return (
       <th
         scope="col"
-        className={alignLeft ? 'logs-col-align-left' : undefined}
+        className={alignClass}
         aria-sort={active ? (descending ? 'descending' : 'ascending') : 'none'}
       >
         <button
@@ -390,8 +442,10 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
     flashExportStatus(t(ok ? 'logs.jsonCopied' : 'usage.exportFailed'));
   };
 
+  const unattributedCount = snapshot?.unattributed_count ?? 0;
+
   const accountOptions = useMemo(() => {
-    const opts = [{value: 'all', label: t('usage.allAccounts')}];
+    const opts = [{value: 'all', label: t('logs.allAccounts')}];
     for (const acc of snapshot?.available_accounts ?? []) {
       const display = maskDisplayName(acc.name, acc.email ?? null, prefs.privacyMask);
       opts.push({
@@ -399,14 +453,20 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
         label: acc.current ? `${display} · ${t('usage.current')}` : display,
       });
     }
-    if (snapshot?.has_unattributed || accountId === 'unattributed') {
-      opts.push({value: 'unattributed', label: t('logs.unattributed')});
+    if (snapshot?.has_unattributed || unattributedCount > 0 || accountId === 'unattributed') {
+      opts.push({
+        value: 'unattributed',
+        label:
+          unattributedCount > 0
+            ? t('logs.unattributedOption', {count: formatUsageNumber(unattributedCount, locale)})
+            : t('logs.unattributed'),
+      });
     }
     if (accountId !== 'all' && !opts.some(o => o.value === accountId)) {
       opts.push({value: accountId, label: shortHash(accountId, 8)});
     }
     return opts;
-  }, [snapshot?.available_accounts, snapshot?.has_unattributed, accountId, prefs.privacyMask, t]);
+  }, [snapshot?.available_accounts, snapshot?.has_unattributed, unattributedCount, accountId, prefs.privacyMask, locale, t]);
 
   const modelOptions = useMemo(() => {
     const opts = [{value: 'all', label: t('logs.allModels')}];
@@ -447,11 +507,40 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
     [t],
   );
 
+  const tzOptions = useMemo(
+    () => [
+      {value: 'system', label: t('logs.tzSystem', {tz: systemTzShort})},
+      {value: 'Asia/Shanghai', label: t('logs.tzBeijing')},
+      {value: 'America/New_York', label: t('logs.tzUsEast')},
+      {value: 'UTC', label: t('logs.tzUtc')},
+    ],
+    [systemTzShort, t],
+  );
+
   const summary = snapshot?.summary;
   const items = snapshot?.items ?? [];
   const totalCount = snapshot?.total_count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const currentPage = Math.min(page, totalPages);
+  const pageTokens = useMemo(() => buildPaginationRange(currentPage, totalPages), [currentPage, totalPages]);
+  const rangeFrom = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const rangeTo = Math.min(totalCount, currentPage * pageSize);
+
+  const goToPage = (nextPage: number, scrollToTable = false) => {
+    const clamped = Math.min(Math.max(1, Math.trunc(nextPage)), totalPages);
+    setPage(clamped);
+    setJumpDraft('');
+    if (scrollToTable) {
+      tableCardRef.current?.scrollIntoView({block: 'start'});
+    }
+  };
+
+  const submitJumpPage = (e: FormEvent) => {
+    e.preventDefault();
+    const parsed = Number.parseInt(jumpDraft.trim(), 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return;
+    goToPage(parsed, true);
+  };
 
   const sourceLabel = (entry: RequestLogEntry) => {
     if (entry.source_kind === 'slot' && entry.sidechain) {
@@ -489,10 +578,17 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
     selectedEntry && selectedEntry.duration_ms && selectedEntry.duration_ms >= 100
       ? (selectedEntry.total_tokens / (selectedEntry.duration_ms / 1000))
       : null;
+  const selectedEndTzBadge = selectedEntry ? formatTimezoneBadge(activeTz, selectedEntry.ts_ms) : activeTzBadge;
+  const selectedStartMs =
+    selectedEntry && selectedEntry.duration_ms != null
+      ? Math.max(0, selectedEntry.ts_ms - selectedEntry.duration_ms)
+      : null;
+  const selectedStartTzBadge =
+    selectedStartMs != null ? formatTimezoneBadge(activeTz, selectedStartMs) : null;
 
   return (
-    <section className="logs-page">
-      <header className="logs-header">
+    <section className="system-page logs-page">
+      <header className="cleanup-title logs-header">
         <h1>{t('logs.title')}</h1>
         <div className="usage-header-actions">
           <span className="usage-update-indicator" role="status">
@@ -662,7 +758,37 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
               </span>
             )}
 
+            {unattributedCount > 0 && (
+              <button
+                type="button"
+                className={`logs-unattr-chip${accountId === 'unattributed' ? ' is-active' : ''}`}
+                data-logs-unattr-chip
+                title={t('logs.unattributedNote')}
+                onClick={() => {
+                  setAccountId(prev => (prev === 'unattributed' ? 'all' : 'unattributed'));
+                  setPage(1);
+                }}
+              >
+                <span className="logs-unattr-dot" aria-hidden="true" />
+                <span>{t('logs.unattributedChip', {count: num(unattributedCount)})}</span>
+              </button>
+            )}
+
             <div className="logs-search-meta">
+              <div className="logs-select-wrap logs-tz-select" title={t('logs.tzHint')}>
+                <Select
+                  size="small"
+                  value={tzPref}
+                  onValueChange={v => {
+                    const next = v as RequestLogTimezonePref;
+                    setTzPref(next);
+                    writeLogsTimezonePref(next);
+                    setPage(1);
+                  }}
+                  aria-label={t('logs.tzFilter')}
+                  items={tzOptions}
+                />
+              </div>
               {hasActiveFilters && (
                 <Button size="small" variant="secondary" onClick={resetFilters}>
                   {t('usage.resetFilters')}
@@ -671,6 +797,17 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
             </div>
           </div>
         </div>
+
+        {accountId === 'unattributed' && (
+          <div className="logs-info-banner" role="note" data-logs-unattr-note>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9.5" />
+              <path d="M12 10v6" />
+              <circle cx="12" cy="7.2" r="0.6" fill="currentColor" />
+            </svg>
+            <span>{t('logs.unattributedNote')}</span>
+          </div>
+        )}
 
         {error && (
           <p className="banner-error usage-error" role="alert">
@@ -695,11 +832,11 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                   {num(summary?.total_requests ?? 0)}
                 </strong>
                 <div className="logs-kpi-sub">
-                  <span>
+                  <span className="logs-kpi-sub-item">
                     {t('logs.kpiTotalTokens')} <b>{num(summary?.total_tokens ?? 0, true)}</b>
                   </span>
                   {summary?.avg_tokens != null && (
-                    <span>
+                    <span className="logs-kpi-sub-item">
                       {t('logs.kpiAvgTokens', {tokens: num(Math.round(summary.avg_tokens), true)})}
                     </span>
                   )}
@@ -716,12 +853,12 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                 </strong>
                 <div className="logs-kpi-sub">
                   {summary?.avg_cost_usd != null && (
-                    <span>
+                    <span className="logs-kpi-sub-item">
                       {t('logs.kpiAvgCost', {cost: formatPreciseUsd(summary.avg_cost_usd)})}
                     </span>
                   )}
                   {(summary?.total_cache_savings_usd ?? 0) > 0 && (
-                    <span>
+                    <span className="logs-kpi-sub-item">
                       {t('logs.kpiCacheSaved', {cost: formatUsdCost(summary?.total_cache_savings_usd ?? 0, true)})}
                     </span>
                   )}
@@ -737,11 +874,11 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                   {formatTps(summary?.avg_tps)}
                 </strong>
                 <div className="logs-kpi-sub">
-                  <span>
+                  <span className="logs-kpi-sub-item">
                     {t('logs.kpiPeakTps')} <b>{formatTps(summary?.peak_tps, false)}</b>
                   </span>
-                  <span>
-                    {t('logs.kpiTimedCount', {count: num(summary?.timed_requests ?? 0)})}
+                  <span className="logs-kpi-sub-item">
+                    {t('logs.kpiTimedCount', {count: num(summary?.timed_requests ?? 0, true)})}
                   </span>
                 </div>
               </div>
@@ -755,17 +892,102 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                   {formatDurationMs(summary?.avg_duration_ms)}
                 </strong>
                 <div className="logs-kpi-sub">
-                  <span>
+                  <span className="logs-kpi-sub-item">
                     P95 <b>{formatDurationMs(summary?.p95_duration_ms)}</b>
                   </span>
-                  <span>
+                  <span className="logs-kpi-sub-item">
                     {t('usage.cacheHit')} <b>{percent(summary?.overall_cache_hit_rate)}</b>
                   </span>
                 </div>
               </div>
             </div>
 
-            <section className="settings-card logs-table-card">
+            <section
+              className={`settings-card logs-table-card${isTransitioning ? ' is-loading' : ''}`}
+              aria-busy={busy}
+              ref={tableCardRef}
+            >
+              <div className="logs-table-bar">
+                <div className="logs-table-bar-left">
+                  <span className="logs-range-text" role="status">
+                    {totalCount > 0
+                      ? t('logs.rangeInfo', {
+                          from: num(rangeFrom),
+                          to: num(rangeTo),
+                          count: num(totalCount),
+                        })
+                      : t('logs.empty')}
+                  </span>
+                  <span className="logs-tz-badge" title={`${activeTz || 'Local'} · ${t('logs.tzHint')}`}>
+                    {activeTzBadge}
+                  </span>
+                  <button
+                    type="button"
+                    className={`logs-order-toggle${sortBy === 'time' ? ' is-active' : ''}`}
+                    data-logs-order-toggle
+                    onClick={() => {
+                      if (sortBy === 'time') {
+                        setSortDir(dir => (dir === 'desc' ? 'asc' : 'desc'));
+                      } else {
+                        setSortBy('time');
+                        setSortDir('desc');
+                      }
+                      setPage(1);
+                    }}
+                  >
+                    {sortBy === 'time' && sortDir === 'asc' ? `↑ ${t('logs.sortOldest')}` : `↓ ${t('logs.sortNewest')}`}
+                  </button>
+                </div>
+
+                {totalPages > 1 && (
+                  <div className="logs-quick-pager" data-logs-top-pager>
+                    <button
+                      type="button"
+                      className="logs-page-btn"
+                      disabled={currentPage <= 1}
+                      aria-label={t('logs.firstPage')}
+                      title={t('logs.firstPage')}
+                      onClick={() => goToPage(1)}
+                    >
+                      «
+                    </button>
+                    <button
+                      type="button"
+                      className="logs-page-btn"
+                      disabled={currentPage <= 1}
+                      aria-label={t('usage.previousPage')}
+                      title={t('usage.previousPage')}
+                      onClick={() => goToPage(currentPage - 1)}
+                    >
+                      ‹
+                    </button>
+                    <span className="logs-quick-pager-pos">
+                      {num(currentPage)} / {num(totalPages)}
+                    </span>
+                    <button
+                      type="button"
+                      className="logs-page-btn"
+                      disabled={currentPage >= totalPages}
+                      aria-label={t('usage.nextPage')}
+                      title={t('usage.nextPage')}
+                      onClick={() => goToPage(currentPage + 1)}
+                    >
+                      ›
+                    </button>
+                    <button
+                      type="button"
+                      className="logs-page-btn"
+                      disabled={currentPage >= totalPages}
+                      aria-label={t('logs.lastPage')}
+                      title={t('logs.lastPage')}
+                      onClick={() => goToPage(totalPages)}
+                    >
+                      »
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <div className="logs-table-wrap" role="region" aria-label={t('logs.tableLabel')} tabIndex={0}>
                 <table className="logs-table" aria-label={t('logs.tableLabel')}>
                   <colgroup>
@@ -780,25 +1002,28 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                   </colgroup>
                   <thead>
                     <tr>
-                      {sortHeader('time', t('usage.time'), true)}
+                      {sortHeader('time', t('usage.time'), 'left')}
                       <th scope="col" className="logs-col-align-left">{t('usage.account')}</th>
                       <th scope="col" className="logs-col-align-left">{t('logs.colModel')}</th>
-                      {sortHeader('tokens', t('logs.colTokens'))}
-                      {sortHeader('cache_hit', t('logs.colCache'))}
-                      {sortHeader('duration', t('logs.colDuration'))}
-                      {sortHeader('tps', t('logs.colTps'))}
-                      {sortHeader('cost', t('logs.colCost'))}
+                      {sortHeader('tokens', t('logs.colTokens'), 'right')}
+                      {sortHeader('cache_hit', t('logs.colCache'), 'right')}
+                      {sortHeader('duration', t('logs.colDuration'), 'right')}
+                      {sortHeader('tps', t('logs.colTps'), 'center')}
+                      {sortHeader('cost', t('logs.colCost'), 'right')}
                     </tr>
                   </thead>
                   <tbody>
                     {items.map(entry => {
                       const family = detectModelFamily(entry.model);
                       const tpsTier = classifyTpsTier(entry.tps);
+                      const isLegacyTiming = entry.ts_precise === false;
                       const displayModel =
                         entry.model === 'unknown' ? t('usage.unknownModel') : compactModelLabel(entry.model);
                       const displayAccount = entry.account_name
                         ? maskDisplayName(entry.account_name, entry.account_email ?? null, prefs.privacyMask)
                         : null;
+                      const rowTzBadge = formatTimezoneBadge(activeTz, entry.ts_ms);
+                      const fullTimeTooltip = `${formatLogTimeFull(entry.ts_ms, locale === 'en' ? 'en' : 'zh', activeTz, !isLegacyTiming)} ${rowTzBadge}${isLegacyTiming ? ` · ${t('logs.legacyTimingHint')}` : ''}`;
                       return (
                         <tr
                           key={entry.event_key}
@@ -811,13 +1036,13 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                             }
                           }}
                         >
-                          <td>
+                          <td className="logs-col-align-left">
                             <div className="logs-time-cell">
                               <span
                                 className="logs-time-main"
-                                title={formatLogTimeFull(entry.ts_ms, locale === 'en' ? 'en' : 'zh', activeTz)}
+                                title={fullTimeTooltip}
                               >
-                                {formatLogTimeShort(entry.ts_ms, locale === 'en' ? 'en' : 'zh', activeTz)}
+                                {formatLogTimeShort(entry.ts_ms, locale === 'en' ? 'en' : 'zh', activeTz, referenceYear)}
                               </span>
                               <span className="logs-time-sub">
                                 <span>{shortHash(entry.event_key, 6)}</span>
@@ -826,6 +1051,11 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                                 )}
                                 {entry.sidechain && (
                                   <span className="logs-source-badge" data-source="subagent">{t('logs.sourceSubagentShort')}</span>
+                                )}
+                                {isLegacyTiming && (
+                                  <span className="logs-source-badge" data-source="archived" title={t('logs.legacyTimingHint')}>
+                                    {t('logs.legacyTimingBadge')}
+                                  </span>
                                 )}
                               </span>
                             </div>
@@ -850,7 +1080,9 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                                   )}
                                 </span>
                               ) : (
-                                <span className="logs-account-unattr">{t('logs.unattributed')}</span>
+                                <span className="logs-account-unattr" title={t('logs.unattributedNote')}>
+                                  {t('logs.unattributed')}
+                                </span>
                               )}
                             </div>
                           </td>
@@ -888,6 +1120,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                             </div>
                           </td>
                           <td
+                            className="logs-col-align-right"
                             title={`${num(entry.total_tokens)} · ${t('usage.input')} ${num(entry.input_tokens)} · ${t('usage.output')} ${num(entry.output_tokens)} · ${t('usage.cacheWrite')} ${num(entry.cache_creation_tokens)} · ${t('usage.cacheRead')} ${num(entry.cache_read_tokens)}`}
                           >
                             <div className="logs-tokens-cell">
@@ -898,11 +1131,15 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                             </div>
                           </td>
                           <td
+                            className="logs-col-align-right"
                             title={`${t('usage.cacheWrite')}: ${num(entry.cache_creation_tokens, true)} · ${t('usage.cacheRead')}: ${num(entry.cache_read_tokens, true)}`}
                           >
                             {percent(entry.cache_hit_rate)}
                           </td>
-                          <td>
+                          <td
+                            className="logs-col-align-right"
+                            title={entry.duration_ms == null && isLegacyTiming ? t('logs.legacyTimingHint') : undefined}
+                          >
                             {entry.duration_ms != null ? (
                               <span>{formatDurationMs(entry.duration_ms)}</span>
                             ) : (
@@ -918,7 +1155,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                               <span className="logs-muted-dash">—</span>
                             )}
                           </td>
-                          <td className="logs-cost-cell" title={formatPreciseUsd(entry.estimated_cost_usd)}>
+                          <td className="logs-cost-cell logs-col-align-right" title={formatPreciseUsd(entry.estimated_cost_usd)}>
                             {formatPreciseUsd(entry.estimated_cost_usd)}
                           </td>
                         </tr>
@@ -934,12 +1171,12 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
               </div>
 
               {totalCount > 0 && (
-                <div className="logs-pagination">
-                  <span role="status">
+                <div className="logs-pagination" data-logs-pagination>
+                  <span className="logs-pagination-info" role="status">
                     {t('logs.pageInfo', {
                       count: num(totalCount),
-                      page: currentPage,
-                      pages: totalPages,
+                      page: num(currentPage),
+                      pages: num(totalPages),
                     })}
                   </span>
                   <div className="logs-pagination-controls">
@@ -951,29 +1188,94 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                         onValueChange={v => {
                           setPageSize(Number(v));
                           setPage(1);
+                          setJumpDraft('');
+                          tableCardRef.current?.scrollIntoView({block: 'start'});
                         }}
                         aria-label={t('logs.perPage')}
                         items={PAGE_SIZES.map(n => ({value: String(n), label: String(n)}))}
                       />
                     </div>
-                    <div className="usage-pagination" style={{padding: 0, border: 0}}>
-                      <div>
-                        <button
-                          type="button"
-                          disabled={currentPage <= 1}
-                          onClick={() => setPage(Math.max(1, currentPage - 1))}
-                        >
-                          {t('usage.previousPage')}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={currentPage >= totalPages}
-                          onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
-                        >
-                          {t('usage.nextPage')}
-                        </button>
-                      </div>
+
+                    <div className="logs-pager-buttons" role="navigation" aria-label={t('logs.tableLabel')}>
+                      <button
+                        type="button"
+                        className="logs-page-btn"
+                        disabled={currentPage <= 1}
+                        title={t('logs.firstPage')}
+                        aria-label={t('logs.firstPage')}
+                        onClick={() => goToPage(1, true)}
+                      >
+                        «
+                      </button>
+                      <button
+                        type="button"
+                        className="logs-page-btn"
+                        disabled={currentPage <= 1}
+                        onClick={() => goToPage(currentPage - 1, true)}
+                      >
+                        {t('usage.previousPage')}
+                      </button>
+                      {pageTokens.map((token, idx) =>
+                        token === 'ellipsis' ? (
+                          <span key={`e-${idx}`} className="logs-page-ellipsis" aria-hidden="true">
+                            …
+                          </span>
+                        ) : (
+                          <button
+                            key={token}
+                            type="button"
+                            className={`logs-page-btn${token === currentPage ? ' is-current' : ''}`}
+                            aria-current={token === currentPage ? 'page' : undefined}
+                            onClick={() => goToPage(token, true)}
+                          >
+                            {token}
+                          </button>
+                        ),
+                      )}
+                      <button
+                        type="button"
+                        className="logs-page-btn"
+                        disabled={currentPage >= totalPages}
+                        onClick={() => goToPage(currentPage + 1, true)}
+                      >
+                        {t('usage.nextPage')}
+                      </button>
+                      <button
+                        type="button"
+                        className="logs-page-btn"
+                        disabled={currentPage >= totalPages}
+                        title={t('logs.lastPage')}
+                        aria-label={t('logs.lastPage')}
+                        onClick={() => goToPage(totalPages, true)}
+                      >
+                        »
+                      </button>
                     </div>
+
+                    {totalPages > 1 && (
+                      <form className="logs-page-jump" onSubmit={submitJumpPage}>
+                        <label htmlFor="logs-jump-input">{t('logs.jumpToPage')}</label>
+                        <input
+                          id="logs-jump-input"
+                          type="number"
+                          min={1}
+                          max={totalPages}
+                          inputMode="numeric"
+                          className="logs-page-jump-input"
+                          placeholder={String(currentPage)}
+                          aria-label={t('logs.jumpPageLabel')}
+                          value={jumpDraft}
+                          onChange={e => setJumpDraft(e.target.value)}
+                        />
+                        <button
+                          type="submit"
+                          className="logs-page-btn"
+                          disabled={!jumpDraft.trim()}
+                        >
+                          {t('logs.jumpConfirm')}
+                        </button>
+                      </form>
+                    )}
                   </div>
                 </div>
               )}
@@ -990,6 +1292,8 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
             <p>{t('logs.methodTiming')}</p>
             <p>{t('logs.methodTps')}</p>
             <p>{t('logs.methodCost')}</p>
+            <p>{t('logs.methodAttribution')}</p>
+            {trackingSinceLabel && <p>{t('usage.trackingSince', {date: trackingSinceLabel})}</p>}
             <p>{t('logs.methodPrivacy')}</p>
             {snapshot?.warnings.some(code => code !== 'attribution_gap') && (
               <p>
@@ -1017,7 +1321,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
         title={t('logs.detailTitle')}
         description={
           selectedEntry
-            ? `${selectedEntry.model === 'unknown' ? t('usage.unknownModel') : selectedEntry.model} · ${formatLogTimeFull(selectedEntry.ts_ms, locale === 'en' ? 'en' : 'zh', activeTz)}`
+            ? `${selectedEntry.model === 'unknown' ? t('usage.unknownModel') : selectedEntry.model} · ${formatLogTimeFull(selectedEntry.ts_ms, locale === 'en' ? 'en' : 'zh', activeTz, selectedEntry.ts_precise !== false)} ${selectedEndTzBadge}`
             : undefined
         }
         width={620}
@@ -1049,6 +1353,43 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
             </div>
 
             <div className="logs-detail-meta">
+              <div className="logs-detail-field">
+                <span>{t('logs.detailEndTime')}</span>
+                <div className="logs-detail-field-row">
+                  <strong className="logs-detail-mono">
+                    {formatLogTimeFull(
+                      selectedEntry.ts_ms,
+                      locale === 'en' ? 'en' : 'zh',
+                      activeTz,
+                      selectedEntry.ts_precise !== false,
+                    )}
+                  </strong>
+                  <span className="logs-tz-badge">{selectedEndTzBadge}</span>
+                </div>
+              </div>
+
+              <div className="logs-detail-field">
+                <span>{t('logs.detailStartTime')}</span>
+                <div className="logs-detail-field-row">
+                  <strong
+                    className="logs-detail-mono"
+                    title={selectedEntry.ts_precise === false ? t('logs.legacyTimingHint') : undefined}
+                  >
+                    {selectedStartMs != null
+                      ? formatLogTimeFull(
+                          selectedStartMs,
+                          locale === 'en' ? 'en' : 'zh',
+                          activeTz,
+                          selectedEntry.ts_precise !== false,
+                        )
+                      : '—'}
+                  </strong>
+                  {selectedStartTzBadge && (
+                    <span className="logs-tz-badge">{selectedStartTzBadge}</span>
+                  )}
+                </div>
+              </div>
+
               <div className="logs-detail-field">
                 <span>{t('logs.detailRequestHash')}</span>
                 <div className="logs-detail-field-row">
@@ -1096,7 +1437,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
               <div className="logs-detail-field">
                 <span>{t('usage.account')}</span>
                 <div className="logs-detail-field-row">
-                  <strong>
+                  <strong title={prefs.privacyMask ? undefined : selectedEntry.account_name ?? undefined}>
                     {selectedEntry.account_name
                       ? maskDisplayName(
                           selectedEntry.account_name,
@@ -1123,7 +1464,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
 
               <div className="logs-detail-field">
                 <span>{t('logs.detailAccountEmail')}</span>
-                <strong>
+                <strong title={prefs.privacyMask ? undefined : selectedEntry.account_email ?? undefined}>
                   {selectedEntry.account_email
                     ? maskEmailAddress(selectedEntry.account_email, prefs.privacyMask)
                     : '—'}
@@ -1157,6 +1498,17 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                 </strong>
               </div>
             </div>
+
+            {!selectedEntry.account_id && (
+              <p className="logs-detail-note" role="note">
+                {t('logs.unattributedNote')}
+              </p>
+            )}
+            {selectedEntry.ts_precise === false && (
+              <p className="logs-detail-note" role="note">
+                {t('logs.legacyTimingHint')}
+              </p>
+            )}
 
             <div className="logs-detail-tokens">
               <div className="logs-detail-tokens-head">

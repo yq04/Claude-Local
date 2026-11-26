@@ -6,6 +6,7 @@
  */
 import {describe, expect, test} from 'bun:test';
 import {
+  buildPaginationRange,
   buildRequestLogsJson,
   buildRequestLogsTsv,
   classifyTpsTier,
@@ -14,6 +15,7 @@ import {
   formatLogTimeFull,
   formatLogTimeShort,
   formatPreciseUsd,
+  formatTimezoneBadge,
   formatTps,
   resolveSpeedCostMultiplier,
   shortHash,
@@ -104,8 +106,24 @@ describe('request-logs-model', () => {
     expect(shortHash(null)).toBe('—');
 
     expect(formatLogTimeShort(1_761_386_402_500, 'en', 'UTC')).toBe('10-25 10:00:02');
+    expect(formatLogTimeShort(1_761_386_402_500, 'en', 'UTC', 2026)).toBe('2025-10-25 10:00:02');
+    expect(formatLogTimeShort(1_761_386_402_500, 'en', 'UTC', 2025)).toBe('10-25 10:00:02');
+    // Midnight must always format as 00:xx:xx (h23), never 24:xx:xx
+    expect(formatLogTimeShort(Date.UTC(2026, 10, 2, 5, 22, 33), 'en', 'America/New_York')).toBe('11-02 00:22:33');
     expect(formatLogTimeFull(1_761_386_402_500, 'en', 'UTC')).toBe('2025-10-25 10:00:02.500');
+    expect(formatLogTimeFull(1_761_386_402_500, 'en', 'UTC', false)).toBe('2025-10-25 10:00:02');
     expect(formatLogTimeShort(0, 'zh', 'UTC')).toBe('—');
+
+    expect(formatTimezoneBadge('UTC')).toBe('UTC');
+    expect(formatTimezoneBadge('Asia/Shanghai')).toBe('UTC+8');
+    expect(formatTimezoneBadge('America/New_York', Date.UTC(2026, 9, 25, 14, 0, 0))).toBe('EDT (UTC-4)');
+    expect(formatTimezoneBadge('America/New_York', Date.UTC(2026, 10, 25, 8, 0, 0))).toBe('EST (UTC-5)');
+
+    expect(buildPaginationRange(1, 1)).toEqual([1]);
+    expect(buildPaginationRange(3, 5)).toEqual([1, 2, 3, 4, 5]);
+    expect(buildPaginationRange(1, 2315)).toEqual([1, 2, 3, 4, 5, 'ellipsis', 2315]);
+    expect(buildPaginationRange(50, 2315)).toEqual([1, 'ellipsis', 49, 50, 51, 'ellipsis', 2315]);
+    expect(buildPaginationRange(2315, 2315)).toEqual([1, 'ellipsis', 2311, 2312, 2313, 2314, 2315]);
   });
 
   test('TSV export neutralizes formula prefixes and honors privacyMask', () => {

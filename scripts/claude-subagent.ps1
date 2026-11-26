@@ -1,5 +1,5 @@
 ﻿# [INPUT]: Prompt, PromptFile, or piped stdin; optional AccountId/SessionTag/Resume/Model/Effort/OutputFile/MaxWaitSeconds/MaxFailovers/ReadOnly/Status; and claude-local.exe --orchestrate.
-# [OUTPUT]: Slot-isolated headless claude.exe execution with expanded credential/telemetry/proxy env scrubbing, fail-closed HTTP proxy preflight, 20s cross-process jitter support, humanized 429/auth failover breather, 429/auth cooldown reporting on slot_release, -Resume owning-slot discovery, anti-ban cross-slot failover (fresh session on the new slot with a distilled scrubbed handoff prompt: no transcript copy, no session id reuse, no --resume on a non-owning slot; --resume strictly on the owning slot), read-only tool aware mutating guard, and [CL-SLOT-TRACE] footer with account_id.
+# [OUTPUT]: Slot-isolated headless claude.exe execution with expanded credential/telemetry/proxy env scrubbing, fail-closed HTTP proxy preflight, 20s cross-process jitter support, humanized 429/auth failover breather, 429/auth cooldown reporting on slot_release, single same-slot jittered retry without cooldown for -ReadOnly transient mid-response stream drops, -Resume owning-slot discovery, anti-ban cross-slot failover (fresh session on the new slot with a distilled scrubbed handoff prompt: no transcript copy, no session id reuse, no --resume on a non-owning slot; --resume strictly on the owning slot), read-only tool aware mutating guard, and [CL-SLOT-TRACE] footer with account_id.
 # [POS]: Independent multi-account subagent runner installed to ~/.local/bin/claude-subagent.ps1; never touches ~/.claude or stops running claude.exe.
 # [PROTOCOL]: Update this header and scripts/CLAUDE.md when changing subagent parameters or orchestrator schema.
 param(
@@ -501,29 +501,43 @@ function Inspect-SubagentFailure {
         [string]$RawStdout,
         [string]$RawStderr
     )
+    $transientStreamPattern = '(?i)(?:api\s+error\s*:\s*(?:connection\s+lost\s+mid-response|connection\s+error|terminated|premature\s+close|socket\s+hang\s+up|econnreset|etimedout|other\s+side\s+closed)|connection\s+lost\s+mid-response\.\s*the\s+response\s+above\s+may\s+be\s+incomplete|stream\s+(?:closed|ended|aborted|reset)\s+(?:unexpectedly|prematurely|mid-response))'
     $failed = ($ChildExit -ne 0) -or [bool]$ParsedOut.IsError -or ([bool]$ParsedOut.ErrorText)
     if (-not $failed -and (-not [bool]$ParsedOut.ParsedJson) -and $ParsedOut.Text) {
-        if ($ParsedOut.Text -match '(?i)^\s*(API Error:\s*(429|401)|You''ve hit your limit|You have hit your limit)') {
+        $trimmedOut = $ParsedOut.Text.Trim()
+        $bulletPrefix = '^\s*(?:[\u25CF\u2022\u23FA\uFFFD?]{1,4}\s*)?'
+        if ($trimmedOut.Length -le 400 -and ($trimmedOut -match ('(?i)' + $bulletPrefix + '(?:API Error:\s*(?:429|529|401|Connection lost mid-response|Connection error|Terminated|Premature close|Socket hang up|ECONNRESET|ETIMEDOUT|Other side closed)|You''ve hit your limit|You have hit your limit)'))) {
             $failed = $true
+        } else {
+            $tailLines = @($trimmedOut -split "\r?\n" | Where-Object { $_.Trim() })
+            if ($tailLines.Count -gt 0) {
+                $lastLine = $tailLines[$tailLines.Count - 1].Trim()
+                if ($lastLine.Length -le 300 -and ($lastLine -match ('(?i)' + $bulletPrefix + '(?:API Error:\s*Connection lost mid-response\b.*The response above may be incomplete\.?|API Error:\s*(?:429|529|401)\b|You(?:''ve| have) hit your (?:5-hour |weekly )?limit\b)'))) {
+                    $failed = $true
+                }
+            }
         }
     }
     if (-not $failed) {
         return @{
-            RateLimited   = $false
-            AuthError     = $false
-            RetryAfterSec = 0
+            RateLimited          = $false
+            AuthError            = $false
+            TransientStreamError = $false
+            RetryAfterSec        = 0
         }
     }
 
     $combined = (@($ParsedOut.Text, $ParsedOut.ErrorText, $RawStdout, $RawStderr) | Where-Object { $_ }) -join "`n"
-    $isRateLimit = [bool]($combined -match '(?i)(\b429\b|rate_limit_error|rate[\s_-]?limit|billing_error|you''ve hit your limit|you have hit your limit|5-hour limit|5h limit|weekly limit|session limit reached|usage limit reached|spend limit|usage credits required|exceeded your current quota|out of extra usage|overloaded_error|\boverloaded\b)')
+    $isRateLimit = [bool]($combined -match '(?i)((?<!\d)429(?!\d)|api\s+error\s*:\s*529\b|"apiErrorStatus"\s*:\s*529\b|rate_limit_error|rate[\s_-]?limit|billing_error|you''ve hit your limit|you have hit your limit|5-hour limit|5h limit|weekly limit|session limit reached|usage limit reached|spend limit|usage credits required|exceeded your current quota|out of extra usage|overloaded_error|\boverloaded\b)')
     $isAuthError = [bool]($combined -match '(?i)(\b401\b|authentication_error|authentication_failed|invalid_grant|oauth token has expired|invalid api key|not logged in|please run /login)')
+    $isTransientStream = (-not $isRateLimit) -and (-not $isAuthError) -and [bool]($combined -match $transientStreamPattern)
     $retrySec = if ($isRateLimit -or $isAuthError) { Get-MaxResetDelaySec $combined } else { 0 }
 
     return @{
-        RateLimited   = $isRateLimit
-        AuthError     = $isAuthError
-        RetryAfterSec = $retrySec
+        RateLimited          = $isRateLimit
+        AuthError            = $isAuthError
+        TransientStreamError = $isTransientStream
+        RetryAfterSec        = $retrySec
     }
 }
 
@@ -719,12 +733,16 @@ function Sanitize-TranscriptLines {
         [void]$filtered.Add(@{ Raw = $ln; Obj = $parsed })
     }
 
-    # Drop trailing isApiErrorMessage == true entries (rate_limit / auth errors)
+    # Drop trailing synthetic/isApiErrorMessage == true entries (rate_limit / auth / stream-drop errors)
     while ($filtered.Count -gt 0) {
         $last = $filtered[$filtered.Count - 1]
-        if ($null -ne $last.Obj -and [bool](Get-SafeProp $last.Obj @('isApiErrorMessage') $false)) {
-            $filtered.RemoveAt($filtered.Count - 1)
-            continue
+        if ($null -ne $last.Obj) {
+            $lastMsg = Get-SafeProp $last.Obj @('message') $last.Obj
+            $lastModel = ([string](Get-SafeProp $lastMsg @('model') (Get-SafeProp $last.Obj @('model') ''))).Trim()
+            if ([bool](Get-SafeProp $last.Obj @('isApiErrorMessage', 'is_api_error_message') $false) -or ($lastModel -eq '<synthetic>')) {
+                $filtered.RemoveAt($filtered.Count - 1)
+                continue
+            }
         }
         break
     }
@@ -789,7 +807,9 @@ function Sanitize-TranscriptLines {
         [void]$outLines.Add([string]$rec.Raw)
         if ($null -ne $rec.Obj) {
             $rt = [string](Get-SafeProp $rec.Obj @('type') '')
-            if (($rt -eq 'user' -or $rt -eq 'assistant') -and (-not [bool](Get-SafeProp $rec.Obj @('isApiErrorMessage') $false))) {
+            $rMsg = Get-SafeProp $rec.Obj @('message') $rec.Obj
+            $rModel = ([string](Get-SafeProp $rMsg @('model') (Get-SafeProp $rec.Obj @('model') ''))).Trim()
+            if (($rt -eq 'user' -or $rt -eq 'assistant') -and (-not [bool](Get-SafeProp $rec.Obj @('isApiErrorMessage', 'is_api_error_message') $false)) -and ($rModel -ne '<synthetic>')) {
                 $hasConversation = $true
             }
         }
@@ -882,10 +902,11 @@ function Get-DistilledTranscriptDigest {
             $obj = $null
             try { $obj = $ln | ConvertFrom-Json } catch { $obj = $null }
             if ($null -eq $obj) { continue }
-            if ([bool](Get-SafeProp $obj @('isApiErrorMessage') $false)) { continue }
+            if ([bool](Get-SafeProp $obj @('isApiErrorMessage', 'is_api_error_message') $false)) { continue }
             $recType = [string](Get-SafeProp $obj @('type') '')
             if ($recType -ne 'user' -and $recType -ne 'assistant') { continue }
             $msg = Get-SafeProp $obj @('message') $obj
+            if (([string](Get-SafeProp $msg @('model') (Get-SafeProp $obj @('model') ''))).Trim() -eq '<synthetic>') { continue }
             $content = Get-SafeProp $msg @('content') $null
             $texts = New-Object System.Collections.Generic.List[string]
             if ($content -is [string]) {
@@ -1124,6 +1145,7 @@ for ($failoverIdx = 0; $failoverIdx -le $effectiveMaxFailovers; $failoverIdx++) 
 
     $attemptRateLimited = $false
     $attemptAuthError = $false
+    $attemptTransientStreamError = $false
     $attemptRetryAfterSec = 0
     $shouldFailoverNext = $false
     $nextMigFromSlotDir = ''
@@ -1230,50 +1252,116 @@ for ($failoverIdx = 0; $failoverIdx -le $effectiveMaxFailovers; $failoverIdx++) 
         $psi.Environment['DISABLE_ERROR_REPORTING'] = '1'
         $psi.Environment['DO_NOT_TRACK'] = '1'
 
-        $attemptStartUtc = [DateTime]::UtcNow
         $softWaitSec = if ($MaxWaitSeconds -gt 30) { $MaxWaitSeconds - 30 } else { [Math]::Max(1, $MaxWaitSeconds) }
-        $proc = [System.Diagnostics.Process]::Start($psi)
-        if ($null -eq $proc) {
-            throw ("Failed to start claude.exe: " + $claudeExe)
+        $slotDeadlineUtc = [DateTime]::UtcNow.AddSeconds($softWaitSec)
+        $maxStreamRetries = if ($ReadOnly.IsPresent) { 1 } else { 0 }
+        $resumeTranscriptPathBefore = ''
+        $resumeTranscriptExistedBefore = $false
+        $resumeTranscriptLenBefore = [int64]-1
+        $resumeTranscriptTicksBefore = [int64]0
+        if ($resumeThisAttempt) {
+            $beforeResumeInfo = Find-SlotSessionTranscriptFile -SlotDir $slotDir -SessionId $resumeThisAttempt
+            if ($null -ne $beforeResumeInfo -and $beforeResumeInfo.JsonlPath) {
+                $resumeTranscriptPathBefore = [string]$beforeResumeInfo.JsonlPath
+                try {
+                    $bfi = Get-Item -LiteralPath $resumeTranscriptPathBefore -Force -ErrorAction Stop
+                    $resumeTranscriptExistedBefore = $true
+                    $resumeTranscriptLenBefore = [int64]$bfi.Length
+                    $resumeTranscriptTicksBefore = [int64]$bfi.LastWriteTimeUtc.Ticks
+                } catch {}
+            }
         }
-        try {
-            if ($sendPromptOnStdin) {
-                $sw = New-Object System.IO.StreamWriter($proc.StandardInput.BaseStream, $utf8NoBom)
-                $sw.Write($effectivePromptText)
-                $sw.Flush()
-                $sw.Close()
-            } else {
-                $proc.StandardInput.Close()
-            }
+        $attemptStartUtc = [DateTime]::UtcNow
+        $childExit = 0
+        $rawOut = ''
+        $rawErr = ''
+        $parsedOut = $null
+        $failureInfo = $null
 
-            $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-            $stderrTask = $proc.StandardError.ReadToEndAsync()
-            $completed = $proc.WaitForExit($softWaitSec * 1000)
-            if (-not $completed) {
-                try { & taskkill.exe /PID $proc.Id /T /F 2>$null | Out-Null } catch {}
-                try { if (-not $proc.HasExited) { $proc.Kill() } } catch {}
-                try { $null = $proc.WaitForExit(3000) } catch {}
-                throw ("Subagent execution exceeded soft watchdog (" + $softWaitSec + "s).")
+        for ($streamTry = 0; $streamTry -le $maxStreamRetries; $streamTry++) {
+            $remWaitSec = [int][Math]::Ceiling(($slotDeadlineUtc - [DateTime]::UtcNow).TotalSeconds)
+            if ($streamTry -gt 0 -and $remWaitSec -lt 1) {
+                break
             }
-            $childExit = [int]$proc.ExitCode
-            $rawOut = $stdoutTask.GetAwaiter().GetResult()
-            $rawErr = $stderrTask.GetAwaiter().GetResult()
-        } finally {
+            $waitBudgetSec = [Math]::Max(1, $remWaitSec)
+            $attemptStartUtc = [DateTime]::UtcNow
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            if ($null -eq $proc) {
+                throw ("Failed to start claude.exe: " + $claudeExe)
+            }
             try {
-                if (-not $proc.HasExited) {
+                if ($sendPromptOnStdin) {
+                    $sw = New-Object System.IO.StreamWriter($proc.StandardInput.BaseStream, $utf8NoBom)
+                    $sw.Write($effectivePromptText)
+                    $sw.Flush()
+                    $sw.Close()
+                } else {
+                    $proc.StandardInput.Close()
+                }
+
+                $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+                $stderrTask = $proc.StandardError.ReadToEndAsync()
+                $completed = $proc.WaitForExit($waitBudgetSec * 1000)
+                if (-not $completed) {
                     try { & taskkill.exe /PID $proc.Id /T /F 2>$null | Out-Null } catch {}
                     try { if (-not $proc.HasExited) { $proc.Kill() } } catch {}
                     try { $null = $proc.WaitForExit(3000) } catch {}
+                    throw ("Subagent execution exceeded soft watchdog (" + $softWaitSec + "s).")
                 }
-            } catch {}
-            $proc.Dispose()
-        }
+                $childExit = [int]$proc.ExitCode
+                $rawOut = $stdoutTask.GetAwaiter().GetResult()
+                $rawErr = $stderrTask.GetAwaiter().GetResult()
+            } finally {
+                try {
+                    if (-not $proc.HasExited) {
+                        try { & taskkill.exe /PID $proc.Id /T /F 2>$null | Out-Null } catch {}
+                        try { if (-not $proc.HasExited) { $proc.Kill() } } catch {}
+                        try { $null = $proc.WaitForExit(3000) } catch {}
+                    }
+                } catch {}
+                $proc.Dispose()
+            }
 
-        $parsedOut = Parse-ClaudeJsonOutput $rawOut $resumeThisAttempt
-        $failureInfo = Inspect-SubagentFailure -ChildExit $childExit -ParsedOut $parsedOut -RawStdout $rawOut -RawStderr $rawErr
-        $attemptRateLimited = [bool]$failureInfo.RateLimited
-        $attemptAuthError = [bool]$failureInfo.AuthError
-        $attemptRetryAfterSec = [int]$failureInfo.RetryAfterSec
+            $parsedOut = Parse-ClaudeJsonOutput $rawOut $resumeThisAttempt
+            $failureInfo = Inspect-SubagentFailure -ChildExit $childExit -ParsedOut $parsedOut -RawStdout $rawOut -RawStderr $rawErr
+            $attemptRateLimited = [bool]$failureInfo.RateLimited
+            $attemptAuthError = [bool]$failureInfo.AuthError
+            $attemptTransientStreamError = [bool]$failureInfo.TransientStreamError
+            $attemptRetryAfterSec = [int]$failureInfo.RetryAfterSec
+
+            if ($ReadOnly.IsPresent -and $attemptTransientStreamError -and (-not $attemptRateLimited) -and (-not $attemptAuthError) -and ($streamTry -lt $maxStreamRetries)) {
+                $resumeMutated = $false
+                if ($resumeThisAttempt) {
+                    $afterResumeInfo = Find-SlotSessionTranscriptFile -SlotDir $slotDir -SessionId $resumeThisAttempt
+                    if ($resumeTranscriptExistedBefore) {
+                        $checkResumePath = if ($null -ne $afterResumeInfo -and $afterResumeInfo.JsonlPath) { [string]$afterResumeInfo.JsonlPath } else { $resumeTranscriptPathBefore }
+                        try {
+                            $afi = Get-Item -LiteralPath $checkResumePath -Force -ErrorAction Stop
+                            if ([int64]$afi.Length -ne $resumeTranscriptLenBefore -or [int64]$afi.LastWriteTimeUtc.Ticks -ne $resumeTranscriptTicksBefore) {
+                                $resumeMutated = $true
+                            }
+                        } catch {
+                            $resumeMutated = $true
+                        }
+                    } elseif ($null -ne $afterResumeInfo) {
+                        $resumeMutated = $true
+                    }
+                }
+                if ($resumeMutated) {
+                    [Console]::Error.WriteLine(("[Claude-Local Subagent] Skipped same-slot -Resume retry on {0} because resumed transcript was mutated during the interrupted turn." -f $acquiredName))
+                    break
+                }
+                $backoffMs = if ($env:CLAUDE_LOCAL_SKIP_PROXY_PREFLIGHT -eq '1') { 50 } else { Get-Random -Minimum 2500 -Maximum 5001 }
+                $minRemainingMs = if ($env:CLAUDE_LOCAL_SKIP_PROXY_PREFLIGHT -eq '1') { $backoffMs } else { $backoffMs + 5000 }
+                if (($slotDeadlineUtc - [DateTime]::UtcNow).TotalMilliseconds -gt $minRemainingMs) {
+                    [Console]::Error.WriteLine(("[Claude-Local Subagent] Transient mid-response stream loss on read-only slot {0}; retrying once on the same slot in {1:N1}s without cooldown..." -f $acquiredName, ($backoffMs / 1000.0)))
+                    Start-Sleep -Milliseconds $backoffMs
+                    Assert-LocalProxyReachable -SlotProxy $effectiveSlotProxy -SlotDir $slotDir
+                    continue
+                }
+            }
+            break
+        }
 
         $turnsInt = [int]$parsedOut.NumTurns
         $hasMutating = Test-SlotSessionHasMutatingToolUse -SlotDir $slotDir -SessionId $parsedOut.SessionId -AttemptStartUtc $attemptStartUtc
@@ -1312,7 +1400,7 @@ for ($failoverIdx = 0; $failoverIdx -le $effectiveMaxFailovers; $failoverIdx++) 
         $finalDoc = if ($normalizedBody) { $normalizedBody + $lf + $lf + $footer } else { $footer }
         $finalRawErr = $rawErr
         $finalChildExit = $childExit
-        $finalParsedIsError = [bool]$parsedOut.IsError
+        $finalParsedIsError = [bool]$parsedOut.IsError -or $attemptRateLimited -or $attemptAuthError -or $attemptTransientStreamError
         $hasRunResult = $true
     } finally {
         if ($acquiredId) {

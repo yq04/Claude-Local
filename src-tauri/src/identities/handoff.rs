@@ -1,5 +1,5 @@
 // [INPUT]: 只读 ~/.claude/{projects,todos,tasks,teams,plans,jobs}、Store 切换上下文与 <app_data_dir>/handoff/ 持久化目录。
-// [OUTPUT]: 零配置扰动防封交接检查点（捕获只读 HandoffDraft 与至多 1200 字符会话进度摘要、硬防封脱敏防火墙剥离账号/组织/邮箱/UUID/路径/凭据/思考签名、结构化/有界横幅 429 识别免正文误报、可选 handoffReason 触发归因、原子提交 latest-handoff.{json,md} 与 subagent-outputs/sub-XX.md）、identities_latest_handoff 与 identities_dismiss_handoff 命令。
+// [OUTPUT]: 零配置扰动防封交接检查点（捕获只读 HandoffDraft 与至多 1200 字符会话进度摘要、硬防封脱敏防火墙剥离账号/组织/邮箱/UUID/路径/凭据/思考签名、结构化/有界横幅 429 识别免正文与非 429 断流错误误报、区分未恢复非 429 API 异常与限流中断、可选 handoffReason 触发归因、原子提交 latest-handoff.{json,md} 与 subagent-outputs/sub-XX.md）、identities_latest_handoff 与 identities_dismiss_handoff 命令。
 // [POS]: 身份切换后的跨账号断点续接与防封隔离防火墙；绝不写入 ~/.claude/settings.json 或 ~/.claude/projects/*.jsonl。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{private, profile};
@@ -762,7 +762,10 @@ fn extract_visible_text_from_message(val: &Value) -> Option<String> {
 }
 
 fn is_rate_limit_banner(raw: &str) -> bool {
-    let trimmed = raw.trim();
+    let trimmed = raw
+        .trim()
+        .trim_start_matches(['●', '•', '⏺'])
+        .trim_start();
     if trimmed.is_empty() || trimmed.chars().count() > 400 {
         return false;
     }
@@ -774,7 +777,10 @@ fn is_rate_limit_banner(raw: &str) -> bool {
     let prefixes = [
         "api error: 429",
         "api error : 429",
+        "api error: 529",
+        "api error : 529",
         "apierrorstatus: 429",
+        "apierrorstatus: 529",
         "you've hit your limit",
         "you have hit your limit",
         "you've hit your 5-hour limit",
@@ -799,25 +805,167 @@ fn is_rate_limit_banner(raw: &str) -> bool {
     prefixes.iter().any(|p| normalized.starts_with(p))
 }
 
-fn line_has_rate_limit(v: &Value) -> bool {
-    if v.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true)
-        || v.get("apiErrorStatus").and_then(Value::as_u64) == Some(429)
-        || v.get("error").and_then(Value::as_str).is_some_and(|e| {
-            matches!(
-                e,
-                "rate_limit" | "rate_limit_error" | "billing_error" | "overloaded_error"
-            )
-        })
-        || v.pointer("/error/type").and_then(Value::as_str).is_some_and(|e| {
-            matches!(
-                e,
-                "rate_limit" | "rate_limit_error" | "billing_error" | "overloaded_error"
-            )
-        })
-    {
+fn contains_ascii_code_429(normalized: &str) -> bool {
+    let bytes = normalized.as_bytes();
+    let mut start = 0usize;
+    while let Some(rel) = normalized[start..].find("429") {
+        let idx = start + rel;
+        let before_ok = idx == 0 || !bytes[idx - 1].is_ascii_digit();
+        let after_idx = idx + 3;
+        let after_ok = after_idx >= bytes.len() || !bytes[after_idx].is_ascii_digit();
+        if before_ok && after_ok {
+            return true;
+        }
+        start = idx + 3;
+    }
+    false
+}
+
+fn contains_rate_limit_error_signal(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let normalized = trimmed
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    if contains_ascii_code_429(&normalized) {
         return true;
     }
+    const TOKENS: &[&str] = &[
+        "rate_limit",
+        "rate-limit",
+        "rate limit",
+        "billing_error",
+        "overloaded_error",
+        "overloaded",
+        "you've hit your limit",
+        "you have hit your limit",
+        "you've hit your 5-hour limit",
+        "you have hit your 5-hour limit",
+        "you've hit your weekly limit",
+        "you have hit your weekly limit",
+        "5-hour limit",
+        "5h limit",
+        "weekly limit",
+        "usage limit reached",
+        "session limit reached",
+        "spend limit",
+        "out of extra usage",
+        "exceeded your current quota",
+        "usage credits required",
+        "continuing automatically",
+    ];
+    TOKENS.iter().any(|tok| normalized.contains(tok))
+}
+
+fn is_error_status_value(val: &Value) -> bool {
+    match val {
+        Value::Number(n) => n.as_u64().is_some_and(|code| code >= 400),
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                false
+            } else if let Ok(code) = trimmed.parse::<u64>() {
+                code >= 400
+            } else {
+                true
+            }
+        }
+        _ => false,
+    }
+}
+
+fn is_rate_limit_status_value(val: &Value) -> bool {
+    match val {
+        Value::Number(n) => matches!(n.as_u64(), Some(429 | 529)),
+        Value::String(s) => matches!(s.trim(), "429" | "529"),
+        _ => false,
+    }
+}
+
+fn error_value_has_rate_limit(val: &Value, depth: usize) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    match val {
+        Value::Null | Value::Bool(_) => false,
+        Value::Number(_) => is_rate_limit_status_value(val),
+        Value::String(s) => {
+            matches!(
+                s.trim().to_ascii_lowercase().as_str(),
+                "rate_limit"
+                    | "rate_limit_error"
+                    | "billing_error"
+                    | "overloaded_error"
+                    | "overloaded"
+                    | "529"
+            ) || contains_rate_limit_error_signal(s)
+        }
+        Value::Array(items) => items
+            .iter()
+            .any(|item| error_value_has_rate_limit(item, depth - 1)),
+        Value::Object(map) => map
+            .values()
+            .any(|child| error_value_has_rate_limit(child, depth - 1)),
+    }
+}
+
+fn line_is_api_error(v: &Value) -> bool {
+    v.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true)
+        || v.get("is_api_error_message").and_then(Value::as_bool) == Some(true)
+        || v.get("is_error").and_then(Value::as_bool) == Some(true)
+        || v.get("isError").and_then(Value::as_bool) == Some(true)
+        || v.get("type").and_then(Value::as_str) == Some("error")
+        || v.pointer("/message/model")
+            .or_else(|| v.get("model"))
+            .and_then(Value::as_str)
+            .is_some_and(|m| m.trim().eq_ignore_ascii_case("<synthetic>"))
+        || v.get("apiErrorStatus")
+            .or_else(|| v.get("api_error_status"))
+            .is_some_and(is_error_status_value)
+        || v.get("error").is_some_and(|e| match e {
+            Value::Null => false,
+            Value::Bool(b) => *b,
+            Value::Number(n) => n.as_u64() != Some(0),
+            Value::String(s) => !s.trim().is_empty(),
+            Value::Array(a) => !a.is_empty(),
+            Value::Object(m) => !m.is_empty(),
+        })
+}
+
+fn line_has_rate_limit(v: &Value) -> bool {
+    let status_is_rl = v
+        .get("apiErrorStatus")
+        .or_else(|| v.get("api_error_status"))
+        .is_some_and(is_rate_limit_status_value);
+    if status_is_rl || v.get("error").is_some_and(|e| error_value_has_rate_limit(e, 4)) {
+        return true;
+    }
+
+    let is_api_err = line_is_api_error(v);
     let kind = v.get("type").and_then(Value::as_str).unwrap_or("");
+    if is_api_err {
+        if let Some(txt) = extract_visible_text_from_message(v) {
+            if contains_rate_limit_error_signal(&txt) {
+                return true;
+            }
+        }
+        if let Some(msg) = v.get("message").and_then(Value::as_str) {
+            if contains_rate_limit_error_signal(msg) {
+                return true;
+            }
+        }
+        if let Some(txt) = v.get("result").and_then(Value::as_str) {
+            if contains_rate_limit_error_signal(txt) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     if matches!(kind, "assistant" | "system") {
         if let Some(txt) = extract_visible_text_from_message(v) {
             if is_rate_limit_banner(&txt) {
@@ -876,17 +1024,27 @@ fn collect_live_secrets_from_claude_json(home: &Path, ctx: &mut ScrubContext) {
     }
 }
 
+struct JsonlInspection {
+    first_user: String,
+    last_progress: String,
+    touched_files: Vec<String>,
+    effective_rl: bool,
+    effective_api_error: bool,
+}
+
 fn inspect_jsonl_lines(
     lines: &[String],
     home: &Path,
     ctx: &mut ScrubContext,
-) -> (String, String, Vec<String>, bool, bool) {
+) -> JsonlInspection {
     let mut first_user = String::new();
     let mut last_assistant = String::new();
     let mut last_progress = String::new();
     let mut touched_files = Vec::new();
     let mut saw_rate_limit = false;
     let mut saw_real_assistant_after_rl = false;
+    let mut saw_api_error = false;
+    let mut saw_real_assistant_after_err = false;
 
     for line in lines {
         let parsed = serde_json::from_str::<Value>(line).ok();
@@ -927,9 +1085,13 @@ fn inspect_jsonl_lines(
             continue;
         }
         let is_rl = line_has_rate_limit(&val);
+        let is_api_err = line_is_api_error(&val);
         if is_rl {
             saw_rate_limit = true;
             saw_real_assistant_after_rl = false;
+        } else if is_api_err {
+            saw_api_error = true;
+            saw_real_assistant_after_err = false;
         }
         if kind == "assistant" {
             if let Some(arr) = val.pointer("/message/content").and_then(Value::as_array) {
@@ -945,16 +1107,19 @@ fn inspect_jsonl_lines(
                     }
                 }
             }
-            if !is_rl {
+            if !is_rl && !is_api_err {
                 if let Some(txt) = extract_visible_text_from_message(&val) {
                     last_assistant = txt.clone();
                     last_progress = txt;
                     if saw_rate_limit {
                         saw_real_assistant_after_rl = true;
                     }
+                    if saw_api_error {
+                        saw_real_assistant_after_err = true;
+                    }
                 }
             }
-        } else if kind == "result" && !is_rl {
+        } else if kind == "result" && !is_rl && !is_api_err {
             if let Some(txt) = val.get("result").and_then(Value::as_str) {
                 if !txt.trim().is_empty() {
                     last_assistant = txt.trim().to_string();
@@ -962,22 +1127,26 @@ fn inspect_jsonl_lines(
                     if saw_rate_limit {
                         saw_real_assistant_after_rl = true;
                     }
+                    if saw_api_error {
+                        saw_real_assistant_after_err = true;
+                    }
                 }
             }
         }
     }
     let effective_rl = saw_rate_limit && !saw_real_assistant_after_rl;
-    (
+    let effective_api_error = saw_api_error && !saw_real_assistant_after_err;
+    JsonlInspection {
         first_user,
-        if !last_assistant.is_empty() {
+        last_progress: if !last_assistant.is_empty() {
             last_assistant
         } else {
             last_progress
         },
         touched_files,
         effective_rl,
-        saw_real_assistant_after_rl,
-    )
+        effective_api_error,
+    }
 }
 
 fn scan_recent_sessions(home: &Path, now_sec: u64) -> Vec<(u64, PathBuf, PathBuf)> {
@@ -1184,8 +1353,11 @@ pub(crate) fn capture_handoff_draft(
         ctx.add_exact(&stem);
 
         let lines = read_bounded_head_tail(jsonl_path).unwrap_or_default();
-        let (first_user, last_progress, touched_files, rate_limited, _) =
-            inspect_jsonl_lines(&lines, home, &mut ctx);
+        let inspected = inspect_jsonl_lines(&lines, home, &mut ctx);
+        let first_user = inspected.first_user;
+        let last_progress = inspected.last_progress;
+        let touched_files = inspected.touched_files;
+        let rate_limited = inspected.effective_rl;
 
         let goal = scrub_single_line(&first_user, &ctx, 220);
         let progress = scrub_single_line(&last_progress, &ctx, 1200);
@@ -1258,8 +1430,12 @@ pub(crate) fn capture_handoff_draft(
                 }
             }
             let sub_lines = read_bounded_head_tail(&sub_jsonl_path).unwrap_or_default();
-            let (sub_goal, sub_last, sub_touched, sub_rl, _) =
-                inspect_jsonl_lines(&sub_lines, home, &mut ctx);
+            let sub_inspected = inspect_jsonl_lines(&sub_lines, home, &mut ctx);
+            let sub_goal = sub_inspected.first_user;
+            let sub_last = sub_inspected.last_progress;
+            let sub_touched = sub_inspected.touched_files;
+            let sub_rl = sub_inspected.effective_rl;
+            let sub_api_err = sub_inspected.effective_api_error;
 
             let agent_type = meta_val
                 .as_ref()
@@ -1298,6 +1474,7 @@ pub(crate) fn capture_handoff_draft(
                 || (finished_opt.is_none() && external))
                 && has_output
                 && !sub_rl
+                && !sub_api_err
             {
                 let body = truncate_chars(&clean_output, MAX_OUTPUT_CHARS);
                 (
@@ -1311,7 +1488,7 @@ pub(crate) fn capture_handoff_draft(
                     "Spawn a fresh independent subagent (or pro-pool-worker); NEVER call Agent(resume:).".to_string(),
                     None,
                 )
-            } else if finished_opt == Some(false) || !finished {
+            } else if finished_opt == Some(false) || !finished || sub_api_err {
                 (
                     "incomplete".to_string(),
                     "Spawn a fresh independent subagent (or pro-pool-worker); NEVER call Agent(resume:).".to_string(),
@@ -1944,9 +2121,9 @@ mod tests {
 
         let lines = read_bounded_head_tail(&p).unwrap();
         let ctx = ScrubContext::default();
-        let (goal, progress, _, _, _) = inspect_jsonl_lines(&lines, &fx.home, &mut ctx.clone());
-        assert_eq!(goal, "HEAD_GOAL_MARKER");
-        assert_eq!(progress, "TAIL_PROGRESS_MARKER");
+        let inspected = inspect_jsonl_lines(&lines, &fx.home, &mut ctx.clone());
+        assert_eq!(inspected.first_user, "HEAD_GOAL_MARKER");
+        assert_eq!(inspected.last_progress, "TAIL_PROGRESS_MARKER");
     }
 
     #[test]
@@ -2014,17 +2191,18 @@ mod tests {
             json!({ "type": "user", "message": { "role": "user", "content": "API Error: 429 rate_limit_error hit your limit" } }).to_string(),
             json!({ "type": "assistant", "message": { "role": "assistant", "content": [{ "type": "text", "text": long_prose }] } }).to_string(),
         ];
-        let (_goal, _prog, _files, saw_rl_false, _after) =
-            inspect_jsonl_lines(&benign_lines, &fx.home, ctx);
-        assert!(!saw_rl_false, "api-request-blob, user prompt, and >400-char prose must not trigger saw_rate_limit");
+        let benign_inspected = inspect_jsonl_lines(&benign_lines, &fx.home, ctx);
+        assert!(
+            !benign_inspected.effective_rl,
+            "api-request-blob, user prompt, and >400-char prose must not trigger saw_rate_limit"
+        );
 
         let short_banner_lines = vec![
             json!({ "type": "user", "message": { "role": "user", "content": "Run task" } }).to_string(),
             json!({ "type": "assistant", "message": { "role": "assistant", "content": [{ "type": "text", "text": "API Error: 429 rate_limit_error" }] } }).to_string(),
         ];
-        let (_g2, _p2, _f2, saw_rl_true, _a2) =
-            inspect_jsonl_lines(&short_banner_lines, &fx.home, ctx);
-        assert!(saw_rl_true);
+        let banner_inspected = inspect_jsonl_lines(&short_banner_lines, &fx.home, ctx);
+        assert!(banner_inspected.effective_rl);
 
         // Optional handoffReason is omitted when None and serialized when set via set_handoff_reason_in.
         fx.write(
@@ -2054,6 +2232,255 @@ mod tests {
             .unwrap()
             .expect("loaded");
         assert_eq!(loaded.handoff_reason.as_deref(), Some("forced_stop"));
+    }
+
+    #[test]
+    fn non_429_connection_lost_api_error_is_not_misclassified_as_rate_limit() {
+        let fx = TempHandoffFixture::new("conn-lost");
+        let sess_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+        // Main session completed real work, then hit synthetic "Connection lost mid-response"
+        // (including numeric 14290 in text to verify word-bounded 429 detection).
+        let main_lines = [
+            json!({
+                "type": "user",
+                "sessionId": sess_id,
+                "message": { "role": "user", "content": "Audit proxy stream handling" }
+            })
+            .to_string(),
+            json!({
+                "type": "assistant",
+                "sessionId": sess_id,
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-opus-5-5",
+                    "content": [{ "type": "text", "text": "Finished auditing parser and proxy routes." }]
+                }
+            })
+            .to_string(),
+            json!({
+                "type": "assistant",
+                "sessionId": sess_id,
+                "isApiErrorMessage": true,
+                "error": "unknown",
+                "message": {
+                    "role": "assistant",
+                    "model": "<synthetic>",
+                    "content": [{ "type": "text", "text": "API Error: Connection lost mid-response (trace 14290). The response above may be incomplete." }]
+                }
+            })
+            .to_string(),
+        ]
+        .join("\n")
+            + "\n";
+        fx.write(
+            &format!(".claude/projects/demo-slug/{sess_id}.jsonl"),
+            main_lines.as_bytes(),
+        );
+
+        // Subagent 1: completed cleanly -> must stay output_ready even though main session had stream drop
+        fx.write(
+            &format!(".claude/projects/demo-slug/{sess_id}/subagents/agent-done1.meta.json"),
+            serde_json::to_vec(&json!({
+                "agentType": "gemini",
+                "finished": true,
+                "description": "Completed external review"
+            }))
+            .unwrap()
+            .as_slice(),
+        );
+        fx.write(
+            &format!(".claude/projects/demo-slug/{sess_id}/subagents/agent-done1.jsonl"),
+            format!(
+                "{}\n",
+                json!({
+                    "type": "assistant",
+                    "message": { "role": "assistant", "model": "claude-sonnet-4-6", "content": [{ "type": "text", "text": "External audit passed cleanly." }] }
+                })
+            )
+            .as_bytes(),
+        );
+
+        // Subagent 2: unfinished & hit Connection lost mid-response -> incomplete (NOT interrupted_429 and NOT output_ready)
+        fx.write(
+            &format!(".claude/projects/demo-slug/{sess_id}/subagents/agent-drop2.meta.json"),
+            serde_json::to_vec(&json!({
+                "agentType": "Explore",
+                "finished": true,
+                "description": "Mid-stream dropped worker"
+            }))
+            .unwrap()
+            .as_slice(),
+        );
+        fx.write(
+            &format!(".claude/projects/demo-slug/{sess_id}/subagents/agent-drop2.jsonl"),
+            format!(
+                "{}\n{}\n",
+                json!({
+                    "type": "assistant",
+                    "message": { "role": "assistant", "model": "claude-sonnet-4-6", "content": [{ "type": "text", "text": "Halfway through analysis..." }] }
+                }),
+                json!({
+                    "type": "assistant",
+                    "isApiErrorMessage": true,
+                    "message": { "role": "assistant", "model": "<synthetic>", "content": [{ "type": "text", "text": "API Error: Connection lost mid-response. The response above may be incomplete." }] }
+                })
+            )
+            .as_bytes(),
+        );
+
+        // Subagent 3: hit Connection lost mid-response mid-run, then recovered with real assistant output -> output_ready
+        fx.write(
+            &format!(".claude/projects/demo-slug/{sess_id}/subagents/agent-rec3.meta.json"),
+            serde_json::to_vec(&json!({
+                "agentType": "Explore",
+                "finished": true,
+                "description": "Recovered worker"
+            }))
+            .unwrap()
+            .as_slice(),
+        );
+        fx.write(
+            &format!(".claude/projects/demo-slug/{sess_id}/subagents/agent-rec3.jsonl"),
+            format!(
+                "{}\n{}\n",
+                json!({
+                    "type": "assistant",
+                    "isApiErrorMessage": true,
+                    "message": { "role": "assistant", "model": "<synthetic>", "content": [{ "type": "text", "text": "API Error: Connection lost mid-response. The response above may be incomplete." }] }
+                }),
+                json!({
+                    "type": "assistant",
+                    "message": { "role": "assistant", "model": "claude-sonnet-4-6", "content": [{ "type": "text", "text": "Retry succeeded with complete result." }] }
+                })
+            )
+            .as_bytes(),
+        );
+
+        let draft = capture_handoff_draft(&fx.home, &[], &[]).expect("draft");
+        assert_eq!(draft.sessions.len(), 1);
+        assert!(
+            !draft.sessions[0].rate_limited,
+            "Connection lost mid-response must not mark session as rate_limited"
+        );
+        assert_eq!(
+            draft.sessions[0].last_progress,
+            "Finished auditing parser and proxy routes.",
+            "synthetic API error must not overwrite prior real assistant progress"
+        );
+
+        let (md_path, _) = commit_handoff_draft(&fx.app_data, &draft).unwrap();
+        let md_text = fs::read_to_string(&md_path).unwrap();
+        assert!(!md_text.contains("RateLimited: `true`"));
+
+        let by_title = |needle: &str| {
+            draft
+                .items
+                .iter()
+                .find(|it| it.title.contains(needle))
+                .expect(needle)
+        };
+        assert_eq!(by_title("Completed external review").status, "output_ready");
+        assert_eq!(by_title("Mid-stream dropped worker").status, "incomplete");
+        assert!(by_title("Mid-stream dropped worker").output_body.is_none());
+        assert_eq!(by_title("Recovered worker").status, "output_ready");
+        assert_eq!(
+            by_title("Recovered worker").output_body.as_deref(),
+            Some("Retry succeeded with complete result.")
+        );
+
+        // Edge case: a trailing non-429 synthetic API error must NOT clear a prior real 429 rate limit,
+        // and an explicit isApiErrorMessage with 429/rate limit text or string apiErrorStatus="429" stays rate-limited.
+        let ctx = &mut ScrubContext::default();
+        let rl_then_drop = vec![
+            json!({
+                "type": "assistant",
+                "isApiErrorMessage": true,
+                "apiErrorStatus": "429",
+                "message": { "role": "assistant", "model": "<synthetic>", "content": [{ "type": "text", "text": "Request failed with status 429" }] }
+            })
+            .to_string(),
+            json!({
+                "type": "assistant",
+                "isApiErrorMessage": true,
+                "message": { "role": "assistant", "model": "<synthetic>", "content": [{ "type": "text", "text": "API Error: Connection lost mid-response. The response above may be incomplete." }] }
+            })
+            .to_string(),
+        ];
+        let inspected_rl = inspect_jsonl_lines(&rl_then_drop, &fx.home, ctx);
+        assert!(
+            inspected_rl.effective_rl,
+            "synthetic non-429 API error must not clear an earlier genuine 429 rate limit"
+        );
+
+        let text_only_api_err_rl = vec![json!({
+            "type": "assistant",
+            "isApiErrorMessage": true,
+            "message": { "role": "assistant", "model": "<synthetic>", "content": [{ "type": "text", "text": "This request would exceed your account's rate limit. Please try again later." }] }
+        })
+        .to_string()];
+        assert!(inspect_jsonl_lines(&text_only_api_err_rl, &fx.home, ctx).effective_rl);
+
+        // Benign falsy/empty error metadata must NOT be misclassified as an API error or wipe assistant progress.
+        let benign_falsy_err = vec![json!({
+            "type": "assistant",
+            "error": false,
+            "apiErrorStatus": 0,
+            "message": { "role": "assistant", "model": "claude-opus-5-5", "content": [{ "type": "text", "text": "Clean summary with falsy error metadata." }] }
+        })
+        .to_string()];
+        let inspected_benign = inspect_jsonl_lines(&benign_falsy_err, &fx.home, ctx);
+        assert!(!inspected_benign.effective_rl);
+        assert!(!inspected_benign.effective_api_error);
+        assert_eq!(
+            inspected_benign.last_progress,
+            "Clean summary with falsy error metadata."
+        );
+
+        let benign_empty_obj_err = vec![json!({
+            "type": "assistant",
+            "error": {},
+            "apiErrorStatus": "",
+            "message": { "role": "assistant", "model": "claude-opus-5-5", "content": [{ "type": "text", "text": "Clean summary with empty error object." }] }
+        })
+        .to_string()];
+        let inspected_empty = inspect_jsonl_lines(&benign_empty_obj_err, &fx.home, ctx);
+        assert!(!inspected_empty.effective_api_error);
+        assert_eq!(
+            inspected_empty.last_progress,
+            "Clean summary with empty error object."
+        );
+
+        // Anthropic HTTP 529 Overloaded and nested error.code rate-limit payloads are treated as rate-limited;
+        // HTTP 502/503 non-429 errors remain effective_api_error without rate_limited.
+        let status_529 = vec![json!({
+            "type": "assistant",
+            "isApiErrorMessage": true,
+            "apiErrorStatus": 529,
+            "message": { "role": "assistant", "model": "<synthetic>", "content": [] }
+        })
+        .to_string()];
+        assert!(inspect_jsonl_lines(&status_529, &fx.home, ctx).effective_rl);
+
+        let nested_err_code = vec![json!({
+            "type": "assistant",
+            "isApiErrorMessage": true,
+            "error": { "code": "rate_limit_exceeded", "nested": { "status": 429 } },
+            "message": { "role": "assistant", "model": "<synthetic>", "content": [] }
+        })
+        .to_string()];
+        assert!(inspect_jsonl_lines(&nested_err_code, &fx.home, ctx).effective_rl);
+
+        let status_502 = vec![json!({
+            "type": "assistant",
+            "isApiErrorMessage": true,
+            "apiErrorStatus": 502,
+            "message": { "role": "assistant", "model": "<synthetic>", "content": [{ "type": "text", "text": "API Error: 502 Bad Gateway" }] }
+        })
+        .to_string()];
+        let inspected_502 = inspect_jsonl_lines(&status_502, &fx.home, ctx);
+        assert!(!inspected_502.effective_rl);
+        assert!(inspected_502.effective_api_error);
     }
 }
 

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生只读环境快照（浏览器远程 DNS 锁、Mihomo 结构特征含 Sift/Hexagon 规则标志 has_sift_rules 与遥测规则标志 has_telemetry_rules、Claude CLI 遥测护盾/MCP 供应链审计、网卡 RFC1918 候选）与三路边缘 trace 一致性实测结果。
- * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属（含 kyc_routing_rules 的 missingSift / missingTelemetry 细项告警）、多信号机房优先拦截与美区/主流地区家宽 ASN/ISP 分类（classifyRiskExitIsp / formatExitIspLabel）、因果对齐的顶栏态势文案路由（resolveRiskBanner）、严格 RFC1918 校验、Mihomo strict-route 覆写片段与只读多端口 Clash YAML 生成器（buildMultiPortClashYaml）、桌面/移动端全量 Claude+Datadog+GrowthBook+Persona/Yoti+Sift/Hexagon 防漏分流规则、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段与安全边界纯函数审计（含统一护盾、NO_PROXY loopback 必填与 MCP 边界判定）、安全随机源缺失即失败的内存桥接凭据与双语提示词。
+ * [OUTPUT]: 六项有界配置/HTTP 出口评估与同上下文遮罩浏览器归属（含 kyc_routing_rules 的 missingSift / missingTelemetry 细项告警）、多信号机房优先拦截与美区/主流地区家宽 ASN/ISP 分类（classifyRiskExitIsp / formatExitIspLabel）、因果对齐的顶栏态势文案路由（resolveRiskBanner）、严格 RFC1918 校验、Mihomo strict-route 覆写片段与只读多端口 Clash YAML 生成器（buildMultiPortClashYaml）、桌面/移动端全量 Claude+Datadog+GrowthBook+Persona/Yoti+Sift/Hexagon 防漏分流规则与桌面长 SSE 流 TCP keep-alive 保活（disable-keep-alive: false / keep-alive-idle / keep-alive-interval）、CLI/浏览器同端口双协议对等判定、CLI 防漏环境变量片段与安全边界纯函数审计（含统一护盾、NO_PROXY loopback 必填与 MCP 边界判定）、安全随机源缺失即失败的内存桥接凭据与双语提示词。
  * [POS]: 风控验证纯模型层；不持有上游家宽密码、不落盘临时口令、不向公网暴露任何监听配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -1165,6 +1165,10 @@ export function buildDesktopMihomoAntiLeakYaml(port = DEFAULT_DEDICATED_LISTENER
       '# 用法：将下方「<你的静态家宽节点名称>」替换为你实际的家宽节点或策略组名，',
       '# 粘贴至 Clash Verge Rev「订阅 -> 全局扩展覆写配置 -> 编辑」并启用（刷新订阅不会丢失）。',
       'ipv6: false',
+      '# 长 SSE 流保活：防止两跳链路在长思考静默期间被中间 NAT/前置节点回收导致 Connection lost mid-response',
+      'disable-keep-alive: false',
+      'keep-alive-idle: 30',
+      'keep-alive-interval: 15',
       '',
       'tun:',
       '  enable: true',

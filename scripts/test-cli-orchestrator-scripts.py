@@ -4022,6 +4022,594 @@ class CliOrchestratorScriptsTests(unittest.TestCase):
         finally:
             shutil.rmtree(stub_root, ignore_errors=True)
 
+    def test_subagent_readonly_retries_transient_stream_loss_same_slot_without_cooldown_and_relay_stop_ignores_stream_error(self):
+        shells = [s for s in (shutil.which("pwsh"), shutil.which("powershell.exe")) if s]
+        assert shells
+        ps_exe = shells[0]
+        slot_id = "44444444" * 4
+
+        with tempfile.TemporaryDirectory(prefix="cl-stream-loss-") as tmp:
+            root = Path(tmp)
+            home, work = root / "home", root / "work"
+            slot_dir = root / "slots" / slot_id
+            for d in (home, work, slot_dir):
+                d.mkdir(parents=True)
+
+            # 1. -ReadOnly hits Connection lost mid-response once, then succeeds on same-slot retry (zero cooldown, zero failover)
+            for sh in shells:
+                with self.subTest(case="readonly_retry_recovers", shell=Path(sh).name):
+                    d_ro = root / f"ro_{Path(sh).stem}"
+                    d_ro.mkdir()
+                    l_ro, c_ro, tr_ro_p, _ = _write_mock_shims(d_ro, {
+                        "orchestrate": {
+                            "slot_acquire": {
+                                "ok": True,
+                                "status": "acquired",
+                                "record_id": slot_id,
+                                "name": "ReadOnly-Slot",
+                                "slot_dir": str(slot_dir),
+                                "proxy": "http://127.0.0.1:7899",
+                                "jitter_ms": 0,
+                            },
+                            "slot_release": {"ok": True, "status": "released"},
+                        },
+                        "claude_runs": [
+                            {
+                                "exit_code": 1,
+                                "stdout": json.dumps({
+                                    "type": "result",
+                                    "is_error": True,
+                                    "num_turns": 1,
+                                    "result": "API Error: Connection lost mid-response. The response above may be incomplete.",
+                                    "session_id": "sess-drop-1",
+                                }),
+                            },
+                            {
+                                "exit_code": 0,
+                                "stdout": json.dumps({
+                                    "type": "result",
+                                    "is_error": False,
+                                    "num_turns": 1,
+                                    "result": "Clean read-only analysis after same-slot retry",
+                                    "session_id": "sess-ok-2",
+                                }),
+                            },
+                        ],
+                    })
+                    res_ro = _run_ps(sh, SUBAGENT_PS1, ["-Prompt", "Inspect parser", "-ReadOnly"], _mock_env(home, l_ro, c_ro), work)
+                    self.assertEqual(res_ro.returncode, 0, res_ro.stderr + "\n" + res_ro.stdout)
+                    self.assertIn("Clean read-only analysis after same-slot retry", res_ro.stdout)
+                    self.assertIn("failovers=0", res_ro.stdout)
+                    tr_ro = json.loads(tr_ro_p.read_text(encoding="utf-8"))
+                    self.assertEqual(len(tr_ro["claude_calls"]), 2)
+                    self.assertEqual([c.get("op") for c in tr_ro["orchestrate_calls"]], ["slot_acquire", "slot_release"])
+                    rel = tr_ro["orchestrate_calls"][1]
+                    self.assertNotIn("rate_limited", rel)
+                    self.assertNotIn("auth_error", rel)
+
+            # 2. Write-capable (non -ReadOnly) does NOT auto-retry Connection lost mid-response and sets zero cooldown
+            d_wr = root / "write_no_retry"
+            d_wr.mkdir()
+            l_wr, c_wr, tr_wr_p, _ = _write_mock_shims(d_wr, {
+                "orchestrate": {
+                    "slot_acquire": {
+                        "ok": True,
+                        "status": "acquired",
+                        "record_id": slot_id,
+                        "name": "Write-Slot",
+                        "slot_dir": str(slot_dir),
+                        "proxy": "http://127.0.0.1:7899",
+                        "jitter_ms": 0,
+                    },
+                    "slot_release": {"ok": True, "status": "released"},
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 1,
+                        "stdout": json.dumps({
+                            "type": "result",
+                            "is_error": True,
+                            "num_turns": 1,
+                            "result": "API Error: Connection lost mid-response. The response above may be incomplete.",
+                            "session_id": "sess-write-drop",
+                        }),
+                    },
+                ],
+            })
+            res_wr = _run_ps(ps_exe, SUBAGENT_PS1, ["-Prompt", "Edit files"], _mock_env(home, l_wr, c_wr), work)
+            self.assertNotEqual(res_wr.returncode, 0)
+            tr_wr = json.loads(tr_wr_p.read_text(encoding="utf-8"))
+            self.assertEqual(len(tr_wr["claude_calls"]), 1)
+            self.assertEqual([c.get("op") for c in tr_wr["orchestrate_calls"]], ["slot_acquire", "slot_release"])
+            self.assertNotIn("rate_limited", tr_wr["orchestrate_calls"][1])
+            self.assertNotIn("auth_error", tr_wr["orchestrate_calls"][1])
+
+            # 3. -ReadOnly hitting plain-text exit-0 Connection lost mid-response twice caps at 1 retry, no cooldown, exits non-zero
+            d_ex = root / "ro_exhausted"
+            d_ex.mkdir()
+            l_ex, c_ex, tr_ex_p, _ = _write_mock_shims(d_ex, {
+                "orchestrate": {
+                    "slot_acquire": {
+                        "ok": True,
+                        "status": "acquired",
+                        "record_id": slot_id,
+                        "name": "Exhausted-Slot",
+                        "slot_dir": str(slot_dir),
+                        "proxy": "http://127.0.0.1:7899",
+                        "jitter_ms": 0,
+                    },
+                    "slot_release": {"ok": True, "status": "released"},
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 0,
+                        "stdout": "\u25cf API Error: Connection lost mid-response. The response above may be incomplete.\n",
+                    },
+                    {
+                        "exit_code": 0,
+                        "stdout": "\u25cf API Error: Connection lost mid-response. The response above may be incomplete.\n",
+                    },
+                ],
+            })
+            res_ex = _run_ps(ps_exe, SUBAGENT_PS1, ["-Prompt", "Inspect parser", "-ReadOnly"], _mock_env(home, l_ex, c_ex), work)
+            self.assertNotEqual(res_ex.returncode, 0)
+            tr_ex = json.loads(tr_ex_p.read_text(encoding="utf-8"))
+            self.assertEqual(len(tr_ex["claude_calls"]), 2)
+            self.assertEqual([c.get("op") for c in tr_ex["orchestrate_calls"]], ["slot_acquire", "slot_release"])
+            self.assertNotIn("rate_limited", tr_ex["orchestrate_calls"][1])
+            self.assertNotIn("auth_error", tr_ex["orchestrate_calls"][1])
+
+            # 3b. Healthy non-JSON Markdown report starting with "## API Error: Connection lost mid-response..." must NOT false-trigger retry/failure
+            d_md = root / "ro_markdown_prose"
+            d_md.mkdir()
+            l_md, c_md, tr_md_p, _ = _write_mock_shims(d_md, {
+                "orchestrate": {
+                    "slot_acquire": {
+                        "ok": True,
+                        "status": "acquired",
+                        "record_id": slot_id,
+                        "name": "Markdown-Slot",
+                        "slot_dir": str(slot_dir),
+                        "proxy": "http://127.0.0.1:7899",
+                        "jitter_ms": 0,
+                    },
+                    "slot_release": {"ok": True, "status": "released"},
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 0,
+                        "stdout": "## API Error: Connection lost mid-response Analysis\nRoot causes documented cleanly.\n",
+                    },
+                ],
+            })
+            res_md = _run_ps(ps_exe, SUBAGENT_PS1, ["-Prompt", "Summarize error", "-ReadOnly"], _mock_env(home, l_md, c_md), work)
+            self.assertEqual(res_md.returncode, 0, res_md.stderr + "\n" + res_md.stdout)
+            tr_md = json.loads(tr_md_p.read_text(encoding="utf-8"))
+            self.assertEqual(len(tr_md["claude_calls"]), 1)
+
+            # 3c. Multi-line plain-text exit-0 with partial answer ABOVE trailing mid-response drop banner IS retried once on -ReadOnly
+            d_ml = root / "ro_multiline_drop"
+            d_ml.mkdir()
+            l_ml, c_ml, tr_ml_p, _ = _write_mock_shims(d_ml, {
+                "orchestrate": {
+                    "slot_acquire": {
+                        "ok": True,
+                        "status": "acquired",
+                        "record_id": slot_id,
+                        "name": "Multiline-Slot",
+                        "slot_dir": str(slot_dir),
+                        "proxy": "http://127.0.0.1:7899",
+                        "jitter_ms": 0,
+                    },
+                    "slot_release": {"ok": True, "status": "released"},
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 0,
+                        "stdout": "Step 1: Audited handoff.rs.\n" + ("context " * 60) + "\n\n\u25cf API Error: Connection lost mid-response. The response above may be incomplete.\n",
+                    },
+                    {
+                        "exit_code": 0,
+                        "stdout": json.dumps({
+                            "type": "result",
+                            "is_error": False,
+                            "num_turns": 1,
+                            "result": "Complete multi-line recovery after drop",
+                            "session_id": "sess-ml-ok",
+                        }),
+                    },
+                ],
+            })
+            res_ml = _run_ps(ps_exe, SUBAGENT_PS1, ["-Prompt", "Inspect parser", "-ReadOnly"], _mock_env(home, l_ml, c_ml), work)
+            self.assertEqual(res_ml.returncode, 0, res_ml.stderr + "\n" + res_ml.stdout)
+            self.assertIn("Complete multi-line recovery after drop", res_ml.stdout)
+            self.assertEqual(len(json.loads(tr_ml_p.read_text(encoding="utf-8"))["claude_calls"]), 2)
+
+            # 3d. -ReadOnly -Resume guard: skips blind replay when resumed transcript mutated; retries when unchanged
+            resume_proj = slot_dir / "projects" / "demo-slug"
+            resume_proj.mkdir(parents=True, exist_ok=True)
+            mutated_sid = "sess-resume-mutated-1"
+            mutated_jsonl = resume_proj / f"{mutated_sid}.jsonl"
+            mutated_jsonl.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "prior turn"}}) + "\n", encoding="utf-8")
+            d_rm = root / "ro_resume_mutated"
+            d_rm.mkdir()
+            l_rm, c_rm, tr_rm_p, _ = _write_mock_shims(d_rm, {
+                "orchestrate": {
+                    "slot_acquire": {
+                        "ok": True,
+                        "status": "acquired",
+                        "record_id": slot_id,
+                        "name": "Resume-Mut-Slot",
+                        "slot_dir": str(slot_dir),
+                        "proxy": "http://127.0.0.1:7899",
+                        "jitter_ms": 0,
+                    },
+                    "slot_release": {"ok": True, "status": "released"},
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 1,
+                        "write_files": {
+                            str(mutated_jsonl): (
+                                json.dumps({"type": "user", "message": {"role": "user", "content": "prior turn"}}) + "\n"
+                                + json.dumps({"type": "assistant", "isApiErrorMessage": True, "message": {"role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": "API Error: Connection lost mid-response."}]}}) + "\n"
+                            ),
+                        },
+                        "stdout": json.dumps({
+                            "type": "result",
+                            "is_error": True,
+                            "num_turns": 1,
+                            "result": "API Error: Connection lost mid-response. The response above may be incomplete.",
+                            "session_id": mutated_sid,
+                        }),
+                    },
+                ],
+            })
+            res_rm = _run_ps(ps_exe, SUBAGENT_PS1, ["-Prompt", "Continue check", "-ReadOnly", "-Resume", mutated_sid], _mock_env(home, l_rm, c_rm), work)
+            self.assertNotEqual(res_rm.returncode, 0)
+            self.assertIn("Skipped same-slot -Resume retry", res_rm.stderr)
+            tr_rm = json.loads(tr_rm_p.read_text(encoding="utf-8"))
+            self.assertEqual(len(tr_rm["claude_calls"]), 1)
+            self.assertNotIn("rate_limited", tr_rm["orchestrate_calls"][1])
+
+            clean_sid = "sess-resume-clean-1"
+            clean_jsonl = resume_proj / f"{clean_sid}.jsonl"
+            clean_jsonl.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "prior turn"}}) + "\n", encoding="utf-8")
+            d_rc = root / "ro_resume_clean"
+            d_rc.mkdir()
+            l_rc, c_rc, tr_rc_p, _ = _write_mock_shims(d_rc, {
+                "orchestrate": {
+                    "slot_acquire": {
+                        "ok": True,
+                        "status": "acquired",
+                        "record_id": slot_id,
+                        "name": "Resume-Clean-Slot",
+                        "slot_dir": str(slot_dir),
+                        "proxy": "http://127.0.0.1:7899",
+                        "jitter_ms": 0,
+                    },
+                    "slot_release": {"ok": True, "status": "released"},
+                },
+                "claude_runs": [
+                    {
+                        "exit_code": 1,
+                        "stdout": json.dumps({
+                            "type": "result",
+                            "is_error": True,
+                            "num_turns": 0,
+                            "result": "API Error: Connection lost mid-response. The response above may be incomplete.",
+                            "session_id": clean_sid,
+                        }),
+                    },
+                    {
+                        "exit_code": 0,
+                        "stdout": json.dumps({
+                            "type": "result",
+                            "is_error": False,
+                            "num_turns": 1,
+                            "result": "Resumed clean retry succeeded",
+                            "session_id": clean_sid,
+                        }),
+                    },
+                ],
+            })
+            res_rc = _run_ps(ps_exe, SUBAGENT_PS1, ["-Prompt", "Continue check", "-ReadOnly", "-Resume", clean_sid], _mock_env(home, l_rc, c_rc), work)
+            self.assertEqual(res_rc.returncode, 0, res_rc.stderr + "\n" + res_rc.stdout)
+            self.assertIn("Resumed clean retry succeeded", res_rc.stdout)
+            self.assertEqual(len(json.loads(tr_rc_p.read_text(encoding="utf-8"))["claude_calls"]), 2)
+
+            # 4. claude-relay.ps1: Stop hook (both Python and PS1 fallback) suppresses turn_end.json on Connection lost mid-response
+            # and does NOT emit trigger.json; Test-SingleJsonlRateLimited preserves prior 429 across trailing <synthetic> drop.
+            id_a, id_b = "a" * 32, "b" * 32
+            for hook_mode in ("python", "ps1"):
+                with self.subTest(case="relay_stop_stream_drop", hook_mode=hook_mode):
+                    d_rl = root / f"relay_drop_{hook_mode}"
+                    d_rl.mkdir()
+                    home_rl = d_rl / "home"
+                    (home_rl / ".claude" / "agents").mkdir(parents=True)
+                    (home_rl / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+                    extra_env = {}
+                    if hook_mode == "ps1":
+                        stub_dir = d_rl / "Microsoft" / "WindowsApps"
+                        stub_dir.mkdir(parents=True)
+                        (stub_dir / "python.exe").write_bytes(b"")
+                        (stub_dir / "py.cmd").write_text("@echo off\r\nexit /b 9009\r\n", encoding="utf-8")
+                        sys32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+                        extra_env["PATH"] = os.pathsep.join([str(stub_dir), str(Path(ps_exe).parent), sys32])
+
+                    l_rl, c_rl, tr_rl_p, _ = _write_mock_shims(d_rl, {
+                        "orchestrate": {
+                            "status": [
+                                {
+                                    "ok": True,
+                                    "cli_running": False,
+                                    "should_relay_now": False,
+                                    "active": id_a,
+                                    "config": {"autoContinueOnRelay": True, "spentThresholdPct": 95},
+                                },
+                                {
+                                    "ok": True,
+                                    "cli_running": False,
+                                    "should_relay_now": False,
+                                    "active": id_a,
+                                    "config": {"autoContinueOnRelay": True, "spentThresholdPct": 95},
+                                },
+                            ],
+                            "relay_switch": {
+                                "ok": True,
+                                "switched": True,
+                                "from_record_id": id_a,
+                                "target_id": id_b,
+                                "from_name": "A",
+                                "target_name": "B",
+                                "reason": "threshold_reached",
+                            },
+                        },
+                        "claude_runs": [{
+                            "exit_code": 0,
+                            "fire_stop": {
+                                "hook_event_name": "Stop",
+                                "last_assistant_message": "\u25cf API Error: Connection lost mid-response. The response above may be incomplete.",
+                                "session_id": f"sess-drop-{hook_mode}",
+                            },
+                        }],
+                    })
+                    res_rl = _run_ps(ps_exe, RELAY_PS1, ["-AutoContinue"], _mock_env(home_rl, l_rl, c_rl, **extra_env), work)
+                    self.assertEqual(res_rl.returncode, 0, res_rl.stderr + "\n" + res_rl.stdout)
+                    tr_rl = json.loads(tr_rl_p.read_text(encoding="utf-8"))
+                    self.assertEqual(len(tr_rl["claude_calls"]), 1)
+                    self.assertIsNone(tr_rl["claude_calls"][0].get("trigger_snapshot"))
+                    self.assertIsNone(tr_rl["claude_calls"][0].get("turn_end_snapshot"))
+                    self.assertFalse(any(c.get("op") == "relay_switch" for c in tr_rl["orchestrate_calls"]))
+                    if hook_mode == "ps1":
+                        self.assertIn("sentinel_hook.ps1", tr_rl["claude_calls"][0]["ephemeral_settings"]["hooks"]["Stop"][0]["hooks"][0]["command"])
+
+                    # StopFailure on Connection lost mid-response must also NOT trigger rate_limit relay
+                    d_sf = root / f"relay_sf_drop_{hook_mode}"
+                    d_sf.mkdir()
+                    home_sf = d_sf / "home"
+                    (home_sf / ".claude" / "agents").mkdir(parents=True)
+                    (home_sf / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+                    l_sf, c_sf, tr_sf_p, _ = _write_mock_shims(d_sf, {
+                        "orchestrate": {
+                            "status": {
+                                "ok": True,
+                                "cli_running": False,
+                                "should_relay_now": False,
+                                "active": id_a,
+                                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 95},
+                            },
+                            "relay_switch": {
+                                "ok": True,
+                                "switched": True,
+                                "from_record_id": id_a,
+                                "target_id": id_b,
+                                "from_name": "A",
+                                "target_name": "B",
+                                "reason": "rate_limited",
+                            },
+                        },
+                        "claude_runs": [{
+                            "exit_code": 1,
+                            "fire_stop_failure": {
+                                "hook_event_name": "StopFailure",
+                                "error": "stream_error",
+                                "error_details": "API Error: Connection lost mid-response (trace 14290). The response above may be incomplete.",
+                                "last_assistant_message": "API Error: Connection lost mid-response (trace 14290). The response above may be incomplete.",
+                                "session_id": f"sess-sf-drop-{hook_mode}",
+                            },
+                        }],
+                    })
+                    res_sf = _run_ps(ps_exe, RELAY_PS1, ["-AutoContinue"], _mock_env(home_sf, l_sf, c_sf, **extra_env), work)
+                    self.assertEqual(res_sf.returncode, 1, res_sf.stderr + "\n" + res_sf.stdout)
+                    tr_sf = json.loads(tr_sf_p.read_text(encoding="utf-8"))
+                    self.assertEqual(len(tr_sf["claude_calls"]), 1)
+                    self.assertIsNone(tr_sf["claude_calls"][0].get("trigger_snapshot"))
+                    self.assertIsNone(tr_sf["claude_calls"][0].get("turn_end_snapshot"))
+                    self.assertFalse(any(c.get("op") == "relay_switch" for c in tr_sf["orchestrate_calls"]))
+
+                    # Positive control: healthy Stop prose mentioning "API Error: Connection lost mid-response" STILL writes turn_end.json
+                    d_ok = root / f"relay_ok_prose_{hook_mode}"
+                    d_ok.mkdir()
+                    home_ok = d_ok / "home"
+                    (home_ok / ".claude" / "agents").mkdir(parents=True)
+                    (home_ok / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+                    l_ok, c_ok, tr_ok_p, _ = _write_mock_shims(d_ok, {
+                        "orchestrate": {
+                            "status": {
+                                "ok": True,
+                                "cli_running": False,
+                                "should_relay_now": False,
+                                "active": id_a,
+                                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 95},
+                            },
+                        },
+                        "claude_runs": [{
+                            "exit_code": 0,
+                            "fire_stop": {
+                                "hook_event_name": "Stop",
+                                "last_assistant_message": "Documented handling for API Error: Connection lost mid-response in relay scripts.",
+                                "session_id": f"sess-ok-prose-{hook_mode}",
+                            },
+                        }],
+                    })
+                    res_ok = _run_ps(ps_exe, RELAY_PS1, ["-AutoContinue"], _mock_env(home_ok, l_ok, c_ok, **extra_env), work)
+                    self.assertEqual(res_ok.returncode, 0, res_ok.stderr + "\n" + res_ok.stdout)
+                    tr_ok = json.loads(tr_ok_p.read_text(encoding="utf-8"))
+                    self.assertIsNone(tr_ok["claude_calls"][0].get("trigger_snapshot"))
+                    self.assertIsNotNone(tr_ok["claude_calls"][0].get("turn_end_snapshot"))
+
+                    # Positive control 2: short Markdown summary starting with backtick around "API Error:" STILL writes turn_end.json
+                    d_md_stop = root / f"relay_ok_md_{hook_mode}"
+                    d_md_stop.mkdir()
+                    home_md_stop = d_md_stop / "home"
+                    (home_md_stop / ".claude" / "agents").mkdir(parents=True)
+                    (home_md_stop / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+                    l_ms, c_ms, tr_ms_p, _ = _write_mock_shims(d_md_stop, {
+                        "orchestrate": {
+                            "status": {
+                                "ok": True,
+                                "cli_running": False,
+                                "should_relay_now": False,
+                                "active": id_a,
+                                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 95},
+                            },
+                        },
+                        "claude_runs": [{
+                            "exit_code": 0,
+                            "fire_stop": {
+                                "hook_event_name": "Stop",
+                                "last_assistant_message": "`API Error: Connection lost mid-response` has been fixed cleanly.",
+                                "session_id": f"sess-ok-md-{hook_mode}",
+                            },
+                        }],
+                    })
+                    res_ms = _run_ps(ps_exe, RELAY_PS1, ["-AutoContinue"], _mock_env(home_md_stop, l_ms, c_ms, **extra_env), work)
+                    self.assertEqual(res_ms.returncode, 0, res_ms.stderr + "\n" + res_ms.stdout)
+                    tr_ms = json.loads(tr_ms_p.read_text(encoding="utf-8"))
+                    self.assertIsNone(tr_ms["claude_calls"][0].get("trigger_snapshot"))
+                    self.assertIsNotNone(tr_ms["claude_calls"][0].get("turn_end_snapshot"))
+
+                    # Positive control 3: bullet-prefixed Stop 429 banner writes trigger.json (NOT swallowed as non-429 API error)
+                    d_b429 = root / f"relay_bullet_429_{hook_mode}"
+                    d_b429.mkdir()
+                    home_b429 = d_b429 / "home"
+                    (home_b429 / ".claude" / "agents").mkdir(parents=True)
+                    (home_b429 / ".claude" / "agents" / "pro-pool-worker.md").write_text("installed\n", encoding="utf-8")
+                    l_b4, c_b4, tr_b4_p, _ = _write_mock_shims(d_b429, {
+                        "orchestrate": {
+                            "status": {
+                                "ok": True,
+                                "cli_running": False,
+                                "should_relay_now": False,
+                                "active": id_a,
+                                "config": {"autoContinueOnRelay": True, "spentThresholdPct": 95},
+                            },
+                            "relay_switch": {
+                                "ok": True,
+                                "switched": True,
+                                "from_record_id": id_a,
+                                "target_id": id_b,
+                                "from_name": "A",
+                                "target_name": "B",
+                                "reason": "rate_limited",
+                            },
+                        },
+                        "claude_runs": [
+                            {
+                                "exit_code": 1,
+                                "fire_stop": {
+                                    "hook_event_name": "Stop",
+                                    "last_assistant_message": "\u25cf API Error: 429 rate_limit_error",
+                                    "session_id": f"sess-b429-{hook_mode}",
+                                },
+                            },
+                            {"exit_code": 0, "stdout": "recovered\n"},
+                        ],
+                    })
+                    res_b4 = _run_ps(ps_exe, RELAY_PS1, ["-AutoContinue"], _mock_env(home_b429, l_b4, c_b4, **extra_env), work)
+                    self.assertEqual(res_b4.returncode, 0, res_b4.stderr + "\n" + res_b4.stdout)
+                    tr_b4 = json.loads(tr_b4_p.read_text(encoding="utf-8"))
+                    self.assertIsNotNone(tr_b4["claude_calls"][0].get("trigger_snapshot"))
+                    self.assertEqual(tr_b4["claude_calls"][0]["trigger_snapshot"].get("reason"), "rate_limit")
+
+            # 5. Unit check: trailing <synthetic> Connection lost must NOT clear an earlier real 429 in Test-SingleJsonlRateLimited
+            relay_text = RELAY_PS1.read_text(encoding="utf-8-sig")
+            safe_start = relay_text.index("function Get-SafeProp")
+            safe_end = relay_text.index("function Get-UserHomeDir")
+            entry_start = relay_text.index("function Get-EntryText")
+            entry_end = relay_text.index("function Test-SessionJsonlHasTurns")
+            helper_src = relay_text[safe_start:safe_end] + "\n" + relay_text[entry_start:entry_end]
+            j_only_drop = root / "only_drop.jsonl"
+            j_only_drop.write_text(
+                json.dumps({
+                    "type": "assistant",
+                    "isApiErrorMessage": True,
+                    "message": {"role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": "API Error: Connection lost mid-response. The response above may be incomplete."}]},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            j_429_then_synth = root / "rl_then_synth.jsonl"
+            j_429_then_synth.write_text(
+                "\n".join([
+                    json.dumps({
+                        "type": "assistant",
+                        "isApiErrorMessage": True,
+                        "apiErrorStatus": 429,
+                        "message": {"role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": "You've hit your 5-hour limit"}]},
+                    }),
+                    json.dumps({
+                        "type": "assistant",
+                        "message": {"role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": "API Error: Connection lost mid-response. The response above may be incomplete."}]},
+                    }),
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            j_benign_err_false = root / "benign_err_false.jsonl"
+            j_benign_err_false.write_text(
+                json.dumps({
+                    "type": "assistant",
+                    "error": False,
+                    "message": {"role": "assistant", "model": "claude-opus-5-5", "content": [{"type": "text", "text": "Discussing 429 rate_limit in healthy prose."}]},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            j_trace_14290 = root / "trace_14290.jsonl"
+            j_trace_14290.write_text(
+                json.dumps({
+                    "type": "assistant",
+                    "isApiErrorMessage": True,
+                    "error": "stream_trace_14290",
+                    "message": {"role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": "API Error: Connection lost mid-response (trace 14290)."}]},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            j_status_529 = root / "status_529.jsonl"
+            j_status_529.write_text(
+                json.dumps({
+                    "type": "assistant",
+                    "isApiErrorMessage": True,
+                    "apiErrorStatus": 529,
+                    "message": {"role": "assistant", "model": "<synthetic>", "content": []},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            ps_check = "\n".join([
+                helper_src,
+                f'Write-Output ("drop_rl=" + (Test-SingleJsonlRateLimited -JsonlPath \'{j_only_drop.as_posix()}\'))',
+                f'Write-Output ("rl_kept=" + (Test-SingleJsonlRateLimited -JsonlPath \'{j_429_then_synth.as_posix()}\'))',
+                f'Write-Output ("err_false_rl=" + (Test-SingleJsonlRateLimited -JsonlPath \'{j_benign_err_false.as_posix()}\'))',
+                f'Write-Output ("trace_14290_rl=" + (Test-SingleJsonlRateLimited -JsonlPath \'{j_trace_14290.as_posix()}\'))',
+                f'Write-Output ("status_529_rl=" + (Test-SingleJsonlRateLimited -JsonlPath \'{j_status_529.as_posix()}\'))',
+            ])
+            res_u = subprocess.run([ps_exe, "-NoProfile", "-Command", ps_check], capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(res_u.returncode, 0, res_u.stderr + "\n" + res_u.stdout)
+            self.assertIn("drop_rl=False", res_u.stdout, res_u.stdout)
+            self.assertIn("rl_kept=True", res_u.stdout, res_u.stdout)
+            self.assertIn("err_false_rl=False", res_u.stdout, res_u.stdout)
+            self.assertIn("trace_14290_rl=False", res_u.stdout, res_u.stdout)
+            self.assertIn("status_529_rl=True", res_u.stdout, res_u.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

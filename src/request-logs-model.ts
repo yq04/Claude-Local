@@ -9,6 +9,7 @@ import {maskDisplayName, maskEmailAddress} from './settings-model';
 
 export type RequestLogSortField = 'time' | 'tokens' | 'output' | 'cost' | 'tps' | 'duration' | 'cache_hit';
 export type RequestLogSourceFilter = 'all' | 'main' | 'subagent' | 'slot';
+export type RequestLogTimezonePref = 'system' | 'Asia/Shanghai' | 'America/New_York' | 'UTC';
 
 export type RequestLogEntry = {
   id: string;
@@ -16,6 +17,7 @@ export type RequestLogEntry = {
   session_key?: string | null;
   ts: number;
   ts_ms: number;
+  ts_precise?: boolean;
   account_id?: string | null;
   account_name?: string | null;
   account_email?: string | null;
@@ -72,6 +74,7 @@ export type RequestLogsAccountOption = {
 
 export type RequestLogsSnapshot = {
   generated_at: number;
+  tracking_since?: number | null;
   timezone?: string | null;
   total_count: number;
   page: number;
@@ -82,6 +85,7 @@ export type RequestLogsSnapshot = {
   available_models: string[];
   available_efforts: string[];
   has_unattributed: boolean;
+  unattributed_count?: number;
   warnings: string[];
 };
 
@@ -181,26 +185,96 @@ export function compactModelLabel(model: string): string {
     .replace(/-\d{8}$/, '');
 }
 
+const LOGS_TZ_STORAGE_KEY = 'claude-local:logs-timezone';
+const ALLOWED_TZ_PREFS: readonly RequestLogTimezonePref[] = ['system', 'Asia/Shanghai', 'America/New_York', 'UTC'];
+
+export function readLogsTimezonePref(): RequestLogTimezonePref {
+  try {
+    const raw = window.localStorage.getItem(LOGS_TZ_STORAGE_KEY);
+    if (raw && (ALLOWED_TZ_PREFS as readonly string[]).includes(raw)) {
+      return raw as RequestLogTimezonePref;
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return 'system';
+}
+
+export function writeLogsTimezonePref(pref: RequestLogTimezonePref): void {
+  try {
+    window.localStorage.setItem(LOGS_TZ_STORAGE_KEY, pref);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function formatTimezoneBadge(timezone: string | null | undefined, tsMs?: number): string {
+  const tz = (timezone || '').trim();
+  const sample = new Date(tsMs && Number.isFinite(tsMs) && tsMs > 0 ? tsMs : Date.now());
+  try {
+    const shortNameParts = new Intl.DateTimeFormat('en-US', {
+      timeZoneName: 'short',
+      ...(tz ? {timeZone: tz} : {}),
+    }).formatToParts(sample);
+    const shortOffsetParts = new Intl.DateTimeFormat('en-US', {
+      timeZoneName: 'shortOffset',
+      ...(tz ? {timeZone: tz} : {}),
+    }).formatToParts(sample);
+    const shortName = shortNameParts.find(p => p.type === 'timeZoneName')?.value ?? '';
+    const rawOffset = (shortOffsetParts.find(p => p.type === 'timeZoneName')?.value ?? '').replace(/^GMT/, 'UTC');
+    if (tz === 'UTC' || shortName === 'UTC') return 'UTC';
+    if (tz === 'Asia/Shanghai') return 'UTC+8';
+    if (shortName && rawOffset && shortName !== rawOffset && !shortName.startsWith('GMT') && !shortName.startsWith('UTC')) {
+      return `${shortName} (${rawOffset})`;
+    }
+    return rawOffset || shortName || tz || 'Local';
+  } catch {
+    return tz || 'Local';
+  }
+}
+
+export type PaginationToken = number | 'ellipsis';
+
+export function buildPaginationRange(currentPage: number, totalPages: number): PaginationToken[] {
+  const total = Math.max(1, Math.trunc(totalPages));
+  const current = Math.min(Math.max(1, Math.trunc(currentPage)), total);
+  if (total <= 7) {
+    return Array.from({length: total}, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, 'ellipsis', total];
+  }
+  if (current >= total - 3) {
+    return [1, 'ellipsis', total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total];
+}
+
 export function formatLogTimeShort(
   tsMs: number,
   locale: 'zh' | 'en',
   timezone?: string | null,
+  referenceYear?: number | null,
 ): string {
   if (!Number.isFinite(tsMs) || tsMs <= 0) return '—';
   try {
     const dt = new Date(tsMs);
     const opts: Intl.DateTimeFormatOptions = {
+      year: 'numeric',
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
-      hour12: false,
+      hourCycle: 'h23',
       ...(timezone ? {timeZone: timezone} : {}),
     };
     const parts = new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en-US', opts).formatToParts(dt);
     const get = (type: string) => parts.find(p => p.type === type)?.value ?? '';
-    return `${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+    const yearStr = get('year');
+    const showYear = referenceYear != null && yearStr !== '' && Number(yearStr) !== referenceYear;
+    const prefix = showYear ? `${yearStr}-` : '';
+    return `${prefix}${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
   } catch {
     return new Date(tsMs).toISOString().slice(5, 19).replace('T', ' ');
   }
@@ -210,6 +284,7 @@ export function formatLogTimeFull(
   tsMs: number,
   locale: 'zh' | 'en',
   timezone?: string | null,
+  includeMs = true,
 ): string {
   if (!Number.isFinite(tsMs) || tsMs <= 0) return '—';
   const msPart = String(Math.abs(Math.trunc(tsMs)) % 1000).padStart(3, '0');
@@ -222,12 +297,13 @@ export function formatLogTimeFull(
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
-      hour12: false,
+      hourCycle: 'h23',
       ...(timezone ? {timeZone: timezone} : {}),
     };
     const parts = new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en-US', opts).formatToParts(dt);
     const get = (type: string) => parts.find(p => p.type === type)?.value ?? '';
-    return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}.${msPart}`;
+    const base = `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+    return includeMs ? `${base}.${msPart}` : base;
   } catch {
     return new Date(tsMs).toISOString();
   }
@@ -288,7 +364,7 @@ export function buildRequestLogsTsv(
           : 'main';
     lines.push(
       [
-        formatLogTimeFull(row.ts_ms, options.locale, options.timezone),
+        formatLogTimeFull(row.ts_ms, options.locale, options.timezone, row.ts_precise !== false),
         row.event_key.slice(0, 12),
         row.session_key ? row.session_key.slice(0, 12) : '',
         accountLabel,
