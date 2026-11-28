@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Native per-request telemetry from `usage_request_logs_read`, shared locale, privacy preferences and optional account focus callback.
- * [OUTPUT]: Searchable, filterable, sortable and paginated Request Logs workspace (`RequestLogsPanel`) with filtered KPI strip (requests, API-equivalent USD cost, weighted output TPS, avg/P95 duration & cache hit), centered tabular log list, click-to-inspect Request Inspector modal (with one-click session isolation & account card jump) and TSV/JSON export.
+ * [OUTPUT]: Searchable, filterable, sortable and paginated Request Logs workspace (`RequestLogsPanel`) with filtered KPI strip (requests, API-equivalent USD cost, weighted output TPS, avg/P95 duration & cache hit), right-aligned numeric tabular log list (including TPS column alignment), click-to-inspect Request Inspector modal (with one-click session isolation & account card jump) and TSV/JSON export.
  * [POS]: Local per-request observability page; sequential 30-second visible-page refresh, zero raw prompts/paths/credentials or network requests.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -1008,7 +1008,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                       {sortHeader('tokens', t('logs.colTokens'), 'right')}
                       {sortHeader('cache_hit', t('logs.colCache'), 'right')}
                       {sortHeader('duration', t('logs.colDuration'), 'right')}
-                      {sortHeader('tps', t('logs.colTps'), 'center')}
+                      {sortHeader('tps', t('logs.colTps'), 'right')}
                       {sortHeader('cost', t('logs.colCost'), 'right')}
                     </tr>
                   </thead>
@@ -1146,7 +1146,7 @@ export function RequestLogsPanel({onFocusAccount}: {onFocusAccount?: (accountId:
                               <span className="logs-muted-dash">—</span>
                             )}
                           </td>
-                          <td>
+                          <td className="logs-col-align-right">
                             {entry.tps != null ? (
                               <span className="logs-tps-pill" data-tier={tpsTier}>
                                 {formatTps(entry.tps, false)}

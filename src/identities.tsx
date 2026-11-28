@@ -1647,49 +1647,6 @@ export function IdentityPanel({
       setBusy(false);
     }
   }
-  async function openUsagePage(openMode?: 'usage' | 'claude_ai') {
-    if (busy) return;
-    const expectedIdentity = quotaDetails?.expectedIdentity;
-    if (!expectedIdentity) { setQuotaFeedback('browser.cliIdentityUnavailable'); return; }
-    const detailsAreCurrent = quotaDetails?.id === 'current' || (!!quotaDetails && quotaDetails.id === state?.active);
-    if (!detailsAreCurrent && quotaDetails) {
-      await openAccountBrowser({account_id: quotaDetails.id, expected_identity: expectedIdentity}, openMode);
-      return;
-    }
-    setBusy(true);
-    setQuotaFeedback('');
-    try {
-      setShowCleanroomBar(false);
-      if (openMode === 'claude_ai') {
-        const next = await invoke<BrowserState>('browser_return_to_cli', {expectedIdentity, openMode: 'claude_ai', onProgress: activity.start('browser')});
-        if (mountedRef.current) {
-          ++readSeqRef.current;
-          setState(previous => {
-            if (!previous) return previous;
-            const updated: IdentityState = {
-              ...previous,
-              active_browser_slot: next.active_browser_slot,
-              warming_cards: previous.warming_cards?.map(card => ({...card, browser_active: card.slot === next.active_browser_slot})),
-            };
-            stateRef.current = updated;
-            return updated;
-          });
-        }
-        activity.finish(true, 'browser.returnToCliDone');
-        setQuotaFeedback('browser.returnToCliDone');
-      } else {
-        await invoke('browser_open_usage', {expectedIdentity, onProgress: activity.start('browser')});
-        activity.finish(true, 'quota.opened');
-        setQuotaFeedback('quota.opened');
-      }
-    } catch (reason) {
-      const message = String(reason);
-      setQuotaFeedback(message);
-      activity.finish(false, message);
-    } finally {
-      setBusy(false);
-    }
-  }
   async function openCurrentRelayUsage(expectedIdentity: string): Promise<void> {
     if (actionLockedRef.current || batchBusyRef.current || busyRef.current) return;
     busyRef.current = true;
@@ -2907,9 +2864,6 @@ export function IdentityPanel({
         suppressQuotaRestoreFocus={suppressQuotaRestoreFocus}
         busy={busy}
         loading={loading}
-        manualSyncing={manualSyncing}
-        batchBusy={batchBusy}
-        wakingAccountId={wakingAccountId}
         syncingAccountIds={syncingAccountIds}
         quotaFeedbackText={quotaFeedbackText}
         smartRelaySpentThresholdPct={smartRelay.spentThresholdPct}
@@ -2925,16 +2879,7 @@ export function IdentityPanel({
           setQuotaDetails(null);
           setQuotaFeedback('');
         }}
-        onRefreshLocal={() => void manualSyncLocalQuota()}
-        onWakeSingle={(accountId, expectedIdentity) => void wakeupSingleAccount(accountId, expectedIdentity, false)}
-        onCalibrateOnline={() => {
-          setSuppressQuotaRestoreFocus(true);
-          setQuotaDetails(null);
-          setQuotaFeedback('');
-          setOnlinePanelOpen(true);
-        }}
         onOpenAccountBrowser={(target, openMode) => void openAccountBrowser(target, openMode)}
-        onOpenUsagePage={() => void openUsagePage()}
         onSyncSubscription={(accountId, expectedIdentity, verifyReset) =>
           void syncSubscription(accountId, expectedIdentity, verifyReset)
         }

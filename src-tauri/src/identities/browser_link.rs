@@ -1,5 +1,5 @@
 // [INPUT]: 身份 SQLite 事务、本软件随机身份 ID、浏览器资料槽位及只读有界本地账号显示字段。
-// [OUTPUT]: CLI/养号独占绑定与稳定种子、按需补齐已保存身份独立槽位、CLI事务保留真实养号选择、受控转正草稿与失败精确回滚撤销及无凭据身份摘要。
+// [OUTPUT]: CLI/养号独占 32-hex 绑定（严禁 `bind`/`pending`/`complete`/`merge`/`configure_browser`/`switch_browser_slot_only`/`browser_slot` 写入或降级回写 `'legacy'`）与稳定种子、按需补齐已保存身份独立槽位、CLI事务保留真实养号选择、受控转正草稿与失败精确回滚撤销及无凭据身份摘要。
 // [POS]: 浏览器联动的持久元数据；不读取 Cookie，不保存网站凭据，不把账号 UUID 暴露给引擎。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -84,7 +84,7 @@ fn bind(tx: &Transaction<'_>, id: &str, preferred: Option<&str>) -> Result<Strin
         return Ok(slot);
     }
     let mut slot = preferred
-        .filter(|s| valid_slot(s))
+        .filter(|s| valid_id(s))
         .map(str::to_owned)
         .unwrap_or(super::new_id()?);
     if tx
@@ -134,13 +134,15 @@ pub(super) fn pending(tx: &Transaction<'_>, record: &Record, target: &str) -> Re
     let keep_warming = get(tx, "browser.promotion")?.is_none() && warming_slot(tx, &previous)?;
     if !record.empty {
         // Promotion has already selected the warming slot; never assign it to outgoing CLI.
+        // Also never bind any named identity to `"legacy"`.
         let outgoing = if get(tx, "browser.promotion")?.is_some() {
             get(tx, "browser.promotion.previous")?
         } else if !keep_warming {
             Some(previous.clone())
         } else {
             None
-        };
+        }
+        .filter(|s| valid_id(s));
         bind(tx, &record.id, outgoing.as_deref())?;
     }
     let next = if target == "empty" {
@@ -207,7 +209,7 @@ pub(super) fn complete(tx: &Transaction<'_>, active: &str) -> Result<(), String>
         && get(tx, "browser.enabled")?.as_deref() == Some("1")
     {
         // 当前 Claude 已是目标账号时仍对齐其浏览器绑定，不回灌旧登录归档。
-        let previous = get(tx, "browser.active")?;
+        let previous = get(tx, "browser.active")?.filter(|s| valid_id(s));
         let slot = bind(tx, active, previous.as_deref())?;
         set(tx, "browser.active", &slot)?;
     }
@@ -353,7 +355,7 @@ impl Database {
         if self.get("recovery")?.is_some() {
             return Err("请先恢复未完成的身份切换。".into());
         }
-        if !valid_slot(slot) {
+        if !super::valid_id(slot) {
             return Err("浏览器资料选择无效。".into());
         }
         let tx = self.connection.transaction().map_err(error)?;
@@ -576,9 +578,6 @@ impl Database {
         })
     }
     pub fn browser_slot(&self) -> Result<String, String> {
-        if self.get("browser.enabled")?.as_deref() != Some("1") {
-            return Ok("legacy".into());
-        }
         let slot = self.get("browser.active")?.ok_or("浏览器资料选择无效。")?;
         if !valid_slot(&slot) {
             return Err("浏览器资料选择无效。".into());
@@ -615,11 +614,31 @@ impl Database {
             return Err("请先恢复未完成的身份切换。".into());
         }
         let tx = self.connection.transaction().map_err(error)?;
+        let existing_active =
+            get(&tx, "browser.active")?.filter(|value| super::valid_id(value));
         let slot = if !enabled {
-            "legacy".into()
+            let bound = match current {
+                Some(id) => tx
+                    .query_row(
+                        "SELECT slot FROM browser_bindings WHERE identity=?1",
+                        [id],
+                        |r| r.get::<_, String>(0),
+                    )
+                    .optional()
+                    .map_err(error)?
+                    .filter(|value| super::valid_id(value)),
+                None => None,
+            };
+            match bound.or(existing_active) {
+                Some(slot) => slot,
+                None => super::new_id()?,
+            }
         } else {
             let preferred = if adopt {
-                "legacy".into()
+                match existing_active {
+                    Some(slot) => slot,
+                    None => super::new_id()?,
+                }
             } else {
                 super::new_id()?
             };

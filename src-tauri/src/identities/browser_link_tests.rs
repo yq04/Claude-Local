@@ -85,7 +85,9 @@ fn browser_binding_switches_atomically_reuses_slots_and_restores_previous_select
     db.complete(&a.id).unwrap();
     assert_eq!(db.browser_slot().unwrap(), slot_a);
     db.configure_browser(false, false, None).unwrap();
-    assert_eq!(db.browser_slot().unwrap(), "legacy");
+    assert!(!db.browser_link().unwrap().enabled);
+    assert_eq!(db.browser_slot().unwrap(), slot_a);
+    assert_ne!(db.browser_slot().unwrap(), "legacy");
     db.configure_browser(true, false, Some(&a.id)).unwrap();
     assert_eq!(db.browser_slot().unwrap(), slot_a);
     db.complete("empty").unwrap();
@@ -139,7 +141,9 @@ fn version_two_catalog_gains_browser_table_without_changing_existing_identity() 
     let db = f.db();
     assert_eq!(db.records().unwrap()[0].id, a.id);
     assert!(!db.browser_link().unwrap().enabled);
-    assert_eq!(db.browser_slot().unwrap(), "legacy");
+    let slot_after = db.browser_slot().unwrap();
+    assert!(valid_id(&slot_after));
+    assert_ne!(slot_after, "legacy");
 }
 #[test]
 fn merging_old_duplicate_cards_keeps_the_selected_browser_data() {
@@ -168,7 +172,9 @@ fn new_catalog_defaults_to_linking_with_a_stable_reserved_first_identity_id() {
     let f = Fixture::new();
     let db = f.db();
     assert!(db.browser_link().unwrap().enabled);
-    assert_eq!(db.browser_slot().unwrap(), "legacy");
+    let initial_slot = db.browser_slot().unwrap();
+    assert!(valid_id(&initial_slot));
+    assert_ne!(initial_slot, "legacy");
     let draft = db.browser_draft().unwrap().unwrap();
     assert!(valid_id(&draft));
     drop(db);
@@ -176,11 +182,13 @@ fn new_catalog_defaults_to_linking_with_a_stable_reserved_first_identity_id() {
     assert_eq!(db.browser_draft().unwrap().as_deref(), Some(draft.as_str()));
     db.pending(&record(&draft), "empty").unwrap();
     assert_eq!(
-        db.browser_seed("legacy").unwrap(),
+        db.browser_seed(&initial_slot).unwrap(),
         Some(browser_link::seed(&draft, 0))
     );
     db.complete("empty").unwrap();
-    assert_ne!(db.browser_slot().unwrap(), "legacy");
+    let final_slot = db.browser_slot().unwrap();
+    assert_ne!(final_slot, initial_slot);
+    assert_ne!(final_slot, "legacy");
 }
 #[test]
 fn browser_card_uses_only_bound_display_fields_and_never_renames_old_browser_for_new_account() {
@@ -404,4 +412,39 @@ fn cli_database_transactions_keep_warming_selection_across_commit_reopen_rollbac
     assert!(db.get("recovery").unwrap().is_none());
     assert!(db.get("browser.previous").unwrap().is_none());
     assert!(db.get("browser.next").unwrap().is_none());
+}
+
+#[test]
+fn configure_and_slot_switch_never_bind_or_fallback_to_legacy() {
+    let f = Fixture::new();
+    let mut db = f.db();
+    let a = record(&new_id().unwrap());
+    db.remember(&a).unwrap();
+
+    // Disabling browser linking or enabling with adopt=true never binds/writes "legacy".
+    db.configure_browser(false, false, None).unwrap();
+    let disabled_slot = db.browser_slot().unwrap();
+    assert!(valid_id(&disabled_slot));
+    assert_ne!(disabled_slot, "legacy");
+
+    db.configure_browser(true, true, Some(&a.id)).unwrap();
+    let adopted_slot = db.browser_slot().unwrap();
+    assert!(valid_id(&adopted_slot));
+    assert_ne!(adopted_slot, "legacy");
+    assert_eq!(db.browser_for(&a.id).unwrap().as_deref(), Some(adopted_slot.as_str()));
+
+    db.configure_browser(false, true, Some(&a.id)).unwrap();
+    assert_eq!(db.browser_slot().unwrap(), adopted_slot);
+    assert_ne!(db.browser_slot().unwrap(), "legacy");
+
+    // Switching directly to "legacy" is rejected.
+    assert!(db.switch_browser_slot_only("legacy").is_err());
+
+    // Transient recovery resolves to a valid 32-hex slot (never "legacy").
+    db.pending(&a, "empty").unwrap();
+    db.set_state("recovery_transient", "1").unwrap();
+    db.finish_transient_recovery(&a.id, false).unwrap();
+    let recovered_slot = db.browser_slot().unwrap();
+    assert!(valid_id(&recovered_slot));
+    assert_ne!(recovered_slot, "legacy");
 }

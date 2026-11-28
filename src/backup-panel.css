@@ -1,6 +1,6 @@
 /**
- * [INPUT]: style.css 设计令牌（--landing-line、--muted、--input）与 BackupPanel 导出/恢复表单结构。
- * [OUTPUT]: 单行资料目录操作条、单行预览统计与右侧刷新按钮栏、统一 12px 救援开关文案、非全宽左对齐操作按钮、>= 820px 双列并排导出与检查恢复网格、窄屏单列回退及受控反馈卡布局。
+ * [INPUT]: style.css 设计令牌（--landing-line、--muted、--input）与 BackupPanel Cromma Input/Switch 导出/恢复表单结构。
+ * [OUTPUT]: 单行资料目录操作条、单行预览统计与右侧刷新按钮栏、.backup-field 表单域、统一 12px 救援开关文案、非全宽左对齐操作按钮、>= 820px 双列并排导出与检查恢复网格、窄屏单列回退及受控反馈卡布局。
  * [POS]: src/backup-panel.tsx 专属样式表。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -20,13 +20,14 @@
 .backup-forms-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; padding-top: 12px; border-top: 1px solid var(--landing-line, #ddd); }
 .backup-form { display: grid; align-content: start; gap: 10px; min-width: 0; }
 .backup-form h3 { margin: 0; font-size: 13px; font-weight: 600; }
-.backup-form label, .backup-inspection label { display: grid; gap: 6px; font-size: 12px; }
-.backup-form input, .backup-inspection input { width: 100%; min-width: 0; min-height: 32px; padding: 5px 9px; border: 1px solid var(--landing-line, #bbb); border-radius: 7px; color: inherit; background: var(--input, #fff); font: inherit; }
+.backup-field { display: grid; gap: 6px; min-width: 0; }
+.backup-field label { font-size: 12px; color: var(--foreground); }
 .backup-form > p { margin: -4px 0 0; }
 .backup-card button,
 .backup-form > button,
 .backup-inspection > button { justify-self: start; width: auto; }
-.backup-rescue-toggle { display: flex !important; align-items: center; gap: 9px !important; font-size: 12px; line-height: 1.45; color: var(--foreground); }
+.backup-rescue-toggle { display: flex; align-items: center; gap: 9px; font-size: 12px; line-height: 1.45; color: var(--foreground); }
+.backup-rescue-toggle label { cursor: pointer; }
 .backup-inspection, .backup-receipt { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--landing-line, #ddd); border-radius: 10px; }
 .backup-receipt code { display: block; }
 @media (max-width: 819px) {

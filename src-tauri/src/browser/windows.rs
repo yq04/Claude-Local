@@ -1,5 +1,5 @@
 // [INPUT]: Windows Chromium 引擎、资源目录、共用资料/随机令牌会话与独立 Claude-Local-Browser 注册名称空间。
-// [OUTPUT]: 本地引擎发现/启动、严格授权链接的独立CLI资料分流与可见失败提示、用户主动默认浏览器注册。
+// [OUTPUT]: 本地引擎发现/启动（经 `Cleaner < SlotGate < Browser::gate`、`load_config_ensured_seed`、`LaunchPurpose::Verification`、`SingletonLock` 校验与 `notify_browser_activity` 协调）、严格授权链接的独立CLI资料分流与可见失败提示、用户主动默认浏览器注册。
 // [POS]: browser 编排的 Windows 平台实现；只接收 URL/文件入口，不执行用户提供的 shell。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use std::os::windows::process::CommandExt;
@@ -123,62 +123,107 @@ pub fn open_urls(app: tauri::AppHandle, args: Vec<String>) {
 
 fn start_windows_companion(app: &tauri::AppHandle, urls: &[String]) -> Result<(), String> {
     crate::startup_trace("companion entry");
-    // Authorization routing shares identity mutators' Cleaner -> Browser order.
+    // Authorization routing shares identity mutators' Cleaner -> SlotGate(lex) -> Browser::gate order.
     let _identity_guard = if oauth_route::needs_identity_guard(urls) {
         Some(oauth_route::IdentityGuard::acquire(app)?)
     } else {
         None
     };
     let state = app.state::<Browser>();
-    let _guard = state.gate.lock().unwrap();
-    let ordinary_urls = oauth_route::route_external_urls_locked(app, urls)?;
+    let ordinary_urls = if oauth_route::needs_identity_guard(urls) {
+        let should_isolate = {
+            let _guard = state.gate.lock().unwrap();
+            oauth_route::should_isolate_for_app(app)?
+        };
+        if should_isolate {
+            state.with_slot_then_gate(
+                || oauth_route::current_target_slot(app),
+                |_| oauth_route::route_external_urls_locked(app, urls),
+            )?
+        } else {
+            urls.to_vec()
+        }
+    } else {
+        urls.to_vec()
+    };
     if !urls.is_empty() && ordinary_urls.is_empty() {
         return Ok(());
     }
     let urls = ordinary_urls.as_slice();
-    let engine = prepare_engine(app)?;
-    crate::startup_trace("engine ready");
-    let root = root(app)?;
-    let settings = workspaces::ensure(&root)?;
-    let profile = settings.join("profile");
-    profile::check_path(&root, &profile)?;
-    let config = config::load(&settings)?;
-    crate::startup_trace("config ready");
-    let machine = config::machine()?;
-    crate::startup_trace("machine ready");
-    config.validate(&machine)?;
-    let running = profile::running(&profile)?;
-    config::preflight_browser_launch_policy(&config, &machine, !running)?;
-    if !running {
-        profile::preferences(&profile, &config, &machine)?;
-    }
-    write_launch_args(&root, &config, &machine, &profile, &version(&engine))?;
-    workspaces::unblock(&root)?;
-    crate::startup_trace("preferences ready");
-    let reuse_running = !urls.is_empty() && running && state.session.lock().unwrap().is_some();
-    let mut cmd_args = if reuse_running {
-        let mut a = config::arguments(&config, &machine, &profile, "", &version(&engine));
-        a.pop();
-        a
-    } else {
-        let page = open_session(app, &config, &machine, version(&engine))?;
-        crate::startup_trace("session ready");
-        config::arguments(&config, &machine, &profile, &page, &version(&engine))
-    };
-    cmd_args.extend_from_slice(urls);
-    let mut child = Command::new(binary(&engine))
-        .args(cmd_args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| "无法启动 Windows Chromium 浏览器。请检查引擎文件与依赖。".to_string())?;
-    kill_switch::clear_alert(app);
-    crate::startup_trace("companion spawned");
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    state.with_slot_then_gate(
+        || workspaces::database(&root(app)?)?.browser_slot(),
+        |slot| {
+            let engine = prepare_engine(app)?;
+            crate::startup_trace("engine ready");
+            let root = root(app)?;
+            let settings = workspaces::ensure(&root)?;
+            let profile = settings.join("profile");
+            profile::check_path(&root, &profile)?;
+            let config = load_config_ensured_seed(&root, &settings, Some(slot))?;
+            crate::startup_trace("config ready");
+            let machine = config::machine()?;
+            crate::startup_trace("machine ready");
+            config.validate(&machine)?;
+            let options = config::LaunchOptions::for_purpose(config::LaunchPurpose::Verification);
+            let desired = LaunchRuntimeSnapshot::from_config_with_options(&config, &machine, options);
+            let running = profile::running(&profile)?;
+            kill_switch::ensure_launch_route_healthy_when_triggered(app, Some(slot), &config, &machine)?;
+            config::preflight_browser_launch_policy(&config, &machine, !running)?;
+            if !running {
+                launch::prepare_slot_singleton_for_launch(&root, &profile)?;
+                profile::preferences(&profile, &config, &machine)?;
+            }
+            write_launch_args(&root, &config, &machine, &profile, &version(&engine))?;
+            workspaces::unblock(&root)?;
+            crate::startup_trace("preferences ready");
+            let reuse_running =
+                !urls.is_empty() && running && state.session.lock().unwrap().is_some();
+            let mut cmd_args = if reuse_running {
+                let mut a = config::arguments_with_options(
+                    &config,
+                    &machine,
+                    &profile,
+                    "",
+                    &version(&engine),
+                    options,
+                );
+                a.pop();
+                a
+            } else {
+                let page = open_session(app, &config, &machine, version(&engine))?;
+                crate::startup_trace("session ready");
+                config::arguments_with_options(
+                    &config,
+                    &machine,
+                    &profile,
+                    &page,
+                    &version(&engine),
+                    options,
+                )
+            };
+            cmd_args.extend_from_slice(urls);
+            profile::invalidate_running_memo(&profile);
+            let mut child = Command::new(binary(&engine))
+                .args(cmd_args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|_| {
+                    "无法启动 Windows Chromium 浏览器。请检查引擎文件与依赖。".to_string()
+                })?;
+            if !running {
+                launch::wait_scope_launch_ready(&profile, &mut child)?;
+                state.record_launched_config(&settings, slot, &desired);
+            }
+            kill_switch::on_managed_browser_spawned(app, true);
+            crate::startup_trace("companion spawned");
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            Ok(())
+        },
+    )
 }
 
 fn show_oauth_route_failure(app: &tauri::AppHandle) {

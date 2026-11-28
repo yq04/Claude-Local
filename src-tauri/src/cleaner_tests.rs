@@ -822,3 +822,82 @@ fn windows_redirected_appdata_remains_whitelisted() {
         .iter()
         .all(|source| super::identity::allowed(&root, source)));
 }
+
+#[test]
+fn cleaner_lock_splits_quota_readers_and_per_account_browser_opens() {
+    use std::sync::{Arc, Barrier};
+    use std::time::{Duration, Instant};
+
+    let cleaner = Arc::new(Cleaner::default());
+
+    // 1. Writer enter() blocks both enter_quota() and enter_browser_account(), and leaves cleanly.
+    cleaner.enter().unwrap();
+    assert!(cleaner.is_busy());
+    assert_eq!(cleaner.enter_quota().unwrap_err(), "quotaOnline.busy");
+    assert!(cleaner.enter_browser_account("acct_a").is_err());
+    cleaner.leave();
+    assert!(!cleaner.is_busy());
+
+    // 2. Long-held enter_quota() allows concurrent enter_quota() and multi-account enter_browser_account(),
+    //    while blocking exclusive writer enter().
+    cleaner.enter_quota().unwrap();
+    assert!(cleaner.is_busy());
+    cleaner.enter_quota().unwrap();
+    assert!(cleaner.enter().is_err());
+
+    let barrier = Arc::new(Barrier::new(2));
+    let c1 = cleaner.clone();
+    let b1 = barrier.clone();
+    let h1 = std::thread::spawn(move || {
+        let _g = c1.enter_browser_account("AAAA").unwrap();
+        b1.wait();
+        std::thread::sleep(Duration::from_millis(60));
+    });
+    let c2 = cleaner.clone();
+    let b2 = barrier.clone();
+    let h2 = std::thread::spawn(move || {
+        let _g = c2.enter_browser_account("bbbb").unwrap();
+        b2.wait();
+        std::thread::sleep(Duration::from_millis(60));
+    });
+    h1.join().unwrap();
+    h2.join().unwrap();
+
+    // 3. Same normalized account key ("aaaa" vs "AAAA") serializes cleanly.
+    let g_same = cleaner.enter_browser_account("aaaa").unwrap();
+    let c3 = cleaner.clone();
+    let started = Instant::now();
+    let h3 = std::thread::spawn(move || {
+        let _g2 = c3.enter_browser_account("AAAA").unwrap();
+        started.elapsed()
+    });
+    std::thread::sleep(Duration::from_millis(80));
+    drop(g_same);
+    let waited = h3.join().unwrap();
+    assert!(waited >= Duration::from_millis(60));
+
+    // Release both quota readers -> enter() succeeds again.
+    cleaner.leave();
+    assert!(cleaner.is_busy());
+    assert!(cleaner.enter().is_err());
+    cleaner.leave();
+    assert!(!cleaner.is_busy());
+    cleaner.enter().unwrap();
+    cleaner.leave();
+    assert!(!cleaner.is_busy());
+}
+
+#[test]
+fn sanitize_desktop_residue_handles_multibyte_utf8_account_uuid_without_panicking() {
+    let fx = Fixture::new();
+    let payload = serde_json::to_string(&serde_json::json!({
+        "oauthAccount": {
+            "accountUuid": "a中中文cdef-0000-4000-8000-000000000001",
+            "organizationUuid": "b汉字组织uuid-0000-4000-8000-000000000002"
+        }
+    }))
+    .unwrap();
+    fx.file(".claude.json", &payload);
+    let res = crate::cleaner::identity::sanitize_desktop_residue_for_switch(&fx.0);
+    assert!(res.is_ok(), "unexpected error on multibyte UTF-8 UUID: {res:?}");
+}

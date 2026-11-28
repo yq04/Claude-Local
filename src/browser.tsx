@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 原生浏览器/CLI归属快照、身份列表只读绑定数（identities_read.browser.bound_ids）、网络防漏断路器状态与事件、轻量窗口采样、真实观测事件、共享活动日志、env-pages.css、Pika 图标与双语文案。
- * [OUTPUT]: 顶部浏览器操作卡（四列去重发丝遥测条 + 状态胶囊 + 多绑定账号真实指纹温和提示 `[data-native-graphics-multi-hint]`）、分组标头、两列边线核验矩阵、双列水平数据清理区、高级设置（含真实设备指纹 native_graphics 单号/多号 Sift 防关联说明 `[data-native-graphics-hint]`）与安全确认弹窗。
+ * [OUTPUT]: 顶部浏览器操作卡（四列去重发丝遥测条 + 状态胶囊 + 多绑定账号真实指纹温和提示 `[data-native-graphics-multi-hint]`）、分组标头、奇偶边线完整自适应核验矩阵、双列水平数据清理区（含深度重置作用域胶囊与图标首行对齐）、高级设置（含真实设备指纹 native_graphics 单号/多号 Sift 防关联说明 `[data-native-graphics-hint]`）与安全确认弹窗。
  * [POS]: 浏览器交互边界；只展示配置、操作与真实观测，页面加载只读，系统对齐和登录删除必须由用户选择；全清理使用默认取消且需勾选确认的 AlertDialog，不新增备份，不影响其他身份资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -181,7 +181,7 @@ export function BrowserPanel({ onBusy }: {
     function edit<K extends keyof BrowserConfig>(key: K, value: BrowserConfig[K]) { setDraft(old => old ? { ...old, [key]: value } : old); }
     return <section className="system-page browser-page">
         <header className="cleanup-title browser-header">
-            <div><h1>{t("浏览环境")}</h1></div>
+            <h1>{t("浏览环境")}</h1>
             <Button size="small" variant="secondary" disabled={!!busy} leftIcon={<Refresh size={15} aria-hidden="true" />} onClick={() => void act('browser_read')}>{t("刷新状态")}</Button>
         </header>
         {error && <p role="alert" className="system-feedback error">{t(error)}</p>}
@@ -375,6 +375,7 @@ export function BrowserPanel({ onBusy }: {
                         <div className="browser-scenario-copy">
                             <div className="browser-scenario-head">
                                 <strong>{t("深度重置当前浏览器")}</strong>
+                                <span className="identity-policy-mode attention">{t("browser.resetScopePill")}</span>
                             </div>
                             <p className="browser-scenario-desc">{t("仅在当前身份网页出现异常风控时使用；将清空当前身份的 Cookie、登录状态与扩展，不影响其他身份。")}</p>
                         </div>

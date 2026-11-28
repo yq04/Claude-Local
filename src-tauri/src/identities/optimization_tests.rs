@@ -2107,3 +2107,55 @@ fn store_switch_restores_global_proxy_baseline_without_bleeding_slot_proxy_overr
     assert_ne!(settings_after_switch["env"].get("HTTP_PROXY"), Some(&serde_json::json!("http://127.0.0.1:19090")));
 }
 
+#[test]
+fn switch_sanitizes_desktop_residue_with_none_uuid_and_sidecars_while_keeping_ui_and_ant_did() {
+    let f = Fixture::new();
+    let r = Reporter::channel(None);
+    let p = Policy::default();
+
+    f.login("acct-a", "org-a", "tok-a");
+    let mut store = store::Store::open(&f.vault, &f.home).unwrap();
+    store.save_current("Acct A", &p, &r).unwrap();
+
+    // Seed Desktop residue WITHOUT lastKnownAccountUuid, WITH Cookies + sidecars + DIPS + SharedStorage
+    // while keeping ant-did, claude_desktop_config.json, and UI prefs in config.json.
+    let desktop = f.home.join("AppData/Roaming/Claude");
+    f.write(
+        "AppData/Roaming/Claude/config.json",
+        br#"{"theme":"dark","windowSize":{"width":1200,"height":800},"oauth:tokenCache":"stale-tok","dxt:allowlist:foreign-acct":true}"#,
+    );
+    f.write("AppData/Roaming/Claude/claude_desktop_config.json", br#"{"mcpServers":{}}"#);
+    f.write("AppData/Roaming/Claude/ant-did", b"device-id-keep");
+    f.write("AppData/Roaming/Claude/Cookies", b"cookie-db");
+    f.write("AppData/Roaming/Claude/Cookies-wal", b"cookie-wal");
+    f.write("AppData/Roaming/Claude/Cookies-shm", b"cookie-shm");
+    f.write("AppData/Roaming/Claude/DIPS", b"dips-db");
+    f.write("AppData/Roaming/Claude/SharedStorage", b"ss-db");
+    f.write("AppData/Roaming/Claude/SharedStorage-shm", b"ss-shm");
+    f.write("AppData/Roaming/Claude/SharedStorage-journal", b"ss-journal");
+
+    store.switch("empty", "Acct A", &p, &r).unwrap();
+
+    // Cookies + sidecars + DIPS + SharedStorage* must ALL be purged even though lastKnownAccountUuid was None & Cookies existed.
+    for gone in [
+        "Cookies",
+        "Cookies-wal",
+        "Cookies-shm",
+        "DIPS",
+        "SharedStorage",
+        "SharedStorage-shm",
+        "SharedStorage-journal",
+    ] {
+        assert!(!desktop.join(gone).exists(), "{gone} should have been purged on switch");
+    }
+    // ant-did, claude_desktop_config.json, and UI preferences in config.json survive.
+    assert_eq!(fs::read(desktop.join("ant-did")).unwrap(), b"device-id-keep");
+    assert!(desktop.join("claude_desktop_config.json").is_file());
+    let cfg: serde_json::Value =
+        serde_json::from_slice(&fs::read(desktop.join("config.json")).unwrap()).unwrap();
+    assert_eq!(cfg["theme"], "dark");
+    assert_eq!(cfg["windowSize"]["width"], 1200);
+    assert!(cfg.get("oauth:tokenCache").is_none());
+    assert!(cfg.get("dxt:allowlist:foreign-acct").is_none());
+}
+

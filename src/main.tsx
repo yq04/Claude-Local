@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Claude-Local 品牌与座舱页面、共享页面图标和 YAML 文案、Cromma UI、任务锁与本地刷新/身份确认事件。
- * [OUTPUT]: 可折叠侧栏、Ctrl+K 命令面板、跨页定位身份卡片与打开智能接力桥、手动刷新、九个页面（含风控验证）、窗口隐藏态动画暂停同步（data-window-hidden）及常驻原生唤醒迁移/快照桥（不调度请求）。
+ * [OUTPUT]: 可折叠侧栏、Ctrl+K 命令面板、跨页定位身份卡片与打开智能接力桥、手动刷新、九个页面（含风控验证）、窗口隐藏态动画暂停同步（data-window-hidden）及常驻原生唤醒迁移/快照桥（不调度请求）；统一先加载 index.css 与 style.css 基座样式再加载页面与视图专用样式。
  * [POS]: 独立产品编排层；命令快捷键尊重输入、模态与任务锁，只读身份列表仅在面板打开时读取。根 MotionRoot 读取减少动画偏好。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -9,6 +9,8 @@ import {Fragment, useState, useEffect, useRef} from 'react';
 import {useI18n} from './i18n';
 import {createRoot} from 'react-dom/client';
 import {getCurrentWindow} from '@tauri-apps/api/window';
+import './index.css';
+import './style.css';
 import {IdentityPanel} from './identities';
 import {initializeNativeWakeupBridge} from './identity-online-quota';
 import {BrowserPanel} from './browser';
@@ -31,8 +33,6 @@ import {initializeAppearancePreferences, initializePrivacyPreference, stepUiScal
 import {initializeCustomWallpaper, syncCustomWallpaperToDom} from './wallpaper-store';
 import {FloatingMonitorApp} from './floating-monitor';
 import appLogo from '../assets/claude-local-mark.svg';
-import './index.css';
-import './style.css';
 import './usage-statistics.css';
 import './request-logs.css';
 import './productivity-shell.css';

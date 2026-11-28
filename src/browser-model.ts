@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 原生浏览器配置、网络防漏断路器状态、机器快照和起始页实际观测。
- * [OUTPUT]: 不含令牌的浏览器/CLI 归属摘要、冻结回切账号与当前槽位、有效时区/语言、出口分类来源、断路器契约与有界观测契约。
+ * [INPUT]: 原生浏览器配置、网络防漏断路器状态、机器快照和起始页实际观测（含跨执行上下文探针快照）。
+ * [OUTPUT]: 不含令牌的浏览器/CLI 归属摘要、冻结回切账号与当前槽位、有效时区/语言、出口分类来源、断路器契约、跨上下文一致性类型契约与有界观测契约（保持 Report 23 线缆字段不变）。
  * [POS]: 浏览器页面与宿主的边界，不持有凭据或执行清理。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -21,6 +21,118 @@ export type Report={schema_version?:number;language:string;languages:string[];ti
 export type BrowserIdentity={linked:boolean;status:'linked'|'draft'|'empty'|'unlinked'|'mismatch'|'unknown'|'warming';name:string|null;email:string|null;organization:string|null;cli_proxy?:string|null};
 export type BrowserContext={identity?:BrowserIdentity;ui_language:'zh'|'en';exit_services:string[];exit_classification_service?:string;region:{id:string;label:string;country:string;language:string;locale:string;timezone:string}|null;config:BrowserConfig;machine:Machine;engine_version:string};
 export type BrowserState=BrowserContext&{engine_ready:boolean;running:boolean;profile:string;active_browser_slot?:string;cli_identity?:BrowserIdentity|null;cli_expected_identity?:string|null;identity_linked?:boolean;cache:{path:string;bytes:number;login:boolean}[];cache_error:string;report:Report|null;report_received_at:number|null;machine_exit:Exit|null;checks:{id:string;title:string;status:'ok'|'mismatch'|'pending';detail:string}[]};
+
+export type CrossContextKind =
+  | 'window'
+  | 'worker'
+  | 'shared-worker'
+  | 'service-worker'
+  | 'same-origin-iframe'
+  | 'sandbox-iframe';
+
+export type CrossContextProbeStatus = 'matched' | 'mismatch' | 'unsupported' | 'pending';
+export type CrossContextCellStatus = 'matched' | 'mismatch' | 'unsupported' | 'not_applicable' | 'pending';
+
+export interface NativeIntegrityResult {
+  ok: boolean;
+  toStringOk: boolean;
+  ownPropTampered: boolean;
+  stackTampered: boolean;
+  details: string[];
+}
+
+export interface CrossContextUserAgentData {
+  mobile: boolean;
+  platform: string;
+  brands: { brand: string; version: string }[];
+  highEntropy: {
+    platformVersion: string;
+    uaFullVersion: string;
+    architecture: string;
+    bitness: string;
+    model: string;
+  } | null;
+}
+
+export interface CrossContextScreen {
+  available: boolean;
+  width: number | null;
+  height: number | null;
+  orientationType: string | null;
+  orientationAngle: number | null;
+}
+
+export interface CrossContextOffscreenWebgl {
+  supported: boolean;
+  vendor: string;
+  renderer: string;
+  debugExtension: boolean;
+}
+
+export interface CrossContextSnapshot {
+  kind: CrossContextKind;
+  isSecureContext: boolean;
+  platform: string;
+  language: string;
+  languages: string[];
+  hardwareConcurrency: number | null;
+  deviceMemory: number | null;
+  userAgentData: CrossContextUserAgentData | null;
+  intl: {
+    timeZone: string;
+    locale: string;
+    timezoneOffsetMin: number;
+  };
+  screen: CrossContextScreen;
+  offscreenWebgl: CrossContextOffscreenWebgl;
+  nativeIntegrity: NativeIntegrityResult;
+}
+
+export interface CrossContextProbeRecord {
+  kind: Exclude<CrossContextKind, 'window'>;
+  status: 'ok' | 'unsupported';
+  reason?: string;
+  snapshot: CrossContextSnapshot | null;
+}
+
+export type CrossContextMetricId =
+  | 'ctx.platform'
+  | 'ctx.languages'
+  | 'ctx.cores'
+  | 'ctx.device-memory'
+  | 'ctx.ua-data'
+  | 'ctx.intl'
+  | 'ctx.screen-orientation'
+  | 'ctx.offscreen-webgl'
+  | 'ctx.anti-tamper';
+
+export interface CrossContextMismatch {
+  metricId: CrossContextMetricId;
+  context: CrossContextKind;
+  messageKey: string;
+  values: Record<string, string | number>;
+}
+
+export interface CrossContextMetricResult {
+  id: CrossContextMetricId;
+  labelKey: string;
+  scope: 'all' | 'secure' | 'window_iframe_only';
+  scopeKey: string;
+  baseline: string;
+  status: 'matched' | 'mismatch' | 'unsupported';
+  cells: Record<CrossContextKind, { status: CrossContextCellStatus; value: string }>;
+  mismatches: CrossContextMismatch[];
+}
+
+export interface CrossContextEvaluation {
+  status: 'checking' | 'passed' | 'failed';
+  blocking: boolean;
+  matchedContexts: number;
+  unsupportedContexts: number;
+  contextStates: Record<CrossContextKind, { status: CrossContextProbeStatus; reason?: string }>;
+  metrics: CrossContextMetricResult[];
+  mismatches: CrossContextMismatch[];
+}
 
 const DATACENTER_ASNS = new Set([
     'AS174', 'AS906', 'AS3214', 'AS4785', 'AS6939', 'AS8068', 'AS8075', 'AS8100',

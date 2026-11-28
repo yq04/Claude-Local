@@ -41,7 +41,9 @@ fn linked_profiles_keep_separate_data_and_configs_without_compressing_or_copying
     assert_eq!(workspaces::ensure(&root).unwrap(), scope_a);
     assert_eq!(config::load(&scope_a).unwrap().seed, 12345);
     db.configure_browser(false, false, None).unwrap();
-    assert_eq!(workspaces::scope(&root).unwrap(), root);
+    let disabled_scope = workspaces::scope(&root).unwrap();
+    assert_ne!(disabled_scope, root);
+    assert!(disabled_scope.starts_with(root.join("contexts")));
     assert_eq!(fs::read(legacy.join("Bookmarks")).unwrap(), b"old");
     for bad in ["../escape", "/tmp", "", "Default", "AABB"] {
         assert!(workspaces::slot_path(&root, bad).is_err());
@@ -387,4 +389,52 @@ fn restricted_host_disables_follow_machine_without_donor_and_preserves_non_restr
 
     drop(db);
     fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn isolated_slot_path_rejects_legacy_and_slot_gate_orders_multislot_locks() {
+    let fixture = tests::sample();
+    let root = fixture.join("browser");
+    crate::identities::private::directory(&root).unwrap();
+
+    // isolated_slot_path rejects "legacy" and malformed IDs, accepts 32-hex slot IDs under contexts/.
+    assert!(workspaces::isolated_slot_path(&root, "legacy").is_err());
+    assert!(workspaces::isolated_slot_path(&root, "../escape").is_err());
+    let slot_a = crate::identities::new_id().unwrap();
+    let slot_b = crate::identities::new_id().unwrap();
+    let path_a = workspaces::isolated_slot_path(&root, &slot_a).unwrap();
+    assert_eq!(path_a, root.join("contexts").join(&slot_a));
+
+    // Concurrent multi-slot lock acquisition in reversed input orders never deadlocks.
+    let browser = std::sync::Arc::new(Browser::default());
+    let mut handles = Vec::new();
+    for i in 0..8 {
+        let b = std::sync::Arc::clone(&browser);
+        let sa = slot_a.clone();
+        let sb = slot_b.clone();
+        handles.push(std::thread::spawn(move || {
+            for _ in 0..25 {
+                let order = if i % 2 == 0 {
+                    vec![sa.clone(), sb.clone()]
+                } else {
+                    vec![sb.clone(), sa.clone()]
+                };
+                b.with_slots_then_gate(|| Ok(order.clone()), || Ok(())).unwrap();
+            }
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn to_browser_proxy_from_raw_handles_multibyte_utf8_and_trailing_slash_without_panic() {
+    assert_eq!(workspaces::to_browser_proxy_from_raw("socks5h:\u{4e2d}x"), None);
+    assert_eq!(
+        workspaces::to_browser_proxy_from_raw("SOCKS5H://127.0.0.1:7899/").as_deref(),
+        Some("socks5://127.0.0.1:7899")
+    );
 }

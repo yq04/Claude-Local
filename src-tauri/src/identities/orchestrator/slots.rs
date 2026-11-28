@@ -1,5 +1,5 @@
 // [INPUT]: cli-slots/<record_id>、身份保险库 Store/Record（含 32 字节主密钥）、宿主机 ~/.claude 与 ~/.claude.json、运行中 ClaudeProcess 快照与跨进程 slot_pacing_v1.json。
-// [OUTPUT]: Windows (PID, CreationTime) 防 PID 复用槽位会话识别、8+ hex 唯一前缀槽位解析、同出口并发守卫、孤儿租约/死会话清理、隔离槽位干净物化（skills 始终有界复制排除 synced 禁用联接、按 record_id HMAC 派生稳定独立 userID/anonymousId/machineID 与确定性 firstStartTime、same_owner 缺失 UUID 拒认、清理 1p_failed_events 遥测死信、强锁 NO_PROXY 含 ::1）、跨进程单调同出口错峰节流（1800–3400ms）、崩溃凭据抢救回灌及 429/鉴权失败即时冷却入狱。
+// [OUTPUT]: Windows (PID, CreationTime) 防 PID 复用槽位会话识别、8+ hex 唯一前缀槽位解析、同出口并发守卫、孤儿租约/死会话清理、隔离槽位干净物化（skills/hooks 等共享子目录禁用联接改为有界复制、settings 合并后递归大小写无关剥离 5 类高危 helper/statusLine 与全部 CLAUDE_CONFIG_DIR/ANTHROPIC_*/CLAUDE_CODE_*/AWS_*/OTEL_* 及敏感凭据环境变量、mcpServers/.mcp.json 凭证与代理 env/headers 净化并输出脱敏告警码、按 record_id HMAC 派生稳定独立 userID/anonymousId/machineID 与确定性 firstStartTime、same_owner 缺失 UUID 拒认、清理 1p_failed_events 遥测死信、过滤非回环/通配 NO_PROXY 并强锁安全回环 localhost/127.0.0.1/::1）、跨进程单调同出口错峰节流（1800–3400ms）、崩溃凭据抢救回灌及 429/鉴权失败即时冷却入狱。
 // [POS]: orchestrator 子代理槽位生命周期层；严格遵守句柄排空、防串号漂移与私有 ACL 写盘边界，保持主目录 ~/.claude.json s13 userID 不变。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -24,9 +24,21 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    process::Command,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+const STRIP_SLOT_SETTINGS_KEYS_LOWER: &[&str] = &[
+    "apikeyhelper",
+    "api_key_helper",
+    "otelheadershelper",
+    "otel_headers_helper",
+    "awsauthrefresh",
+    "aws_auth_refresh",
+    "customheaders",
+    "custom_headers",
+    "statusline",
+    "status_line",
+];
 
 #[cfg(windows)]
 const WIN_EPOCH_DIFF_TICKS: u64 = 116_444_736_000_000_000;
@@ -51,6 +63,8 @@ struct SlotManifest {
     record_id: String,
     created_at_sec: u64,
     links: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    isolation_warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -74,6 +88,8 @@ pub struct SlotAcquireResult {
     pub max_same_exit_concurrency: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -567,50 +583,6 @@ fn copy_dir_bounded_excluding(
     walk_copy(src, dst, 0, exclude_top_dir, &mut budget)
 }
 
-#[cfg(target_os = "windows")]
-fn try_windows_junction(src: &Path, dst: &Path) -> bool {
-    let Ok(canon_src) = dunce::canonicalize(src) else {
-        return false;
-    };
-    let Some(dst_parent) = dst.parent() else {
-        return false;
-    };
-    let Ok(canon_parent) = dunce::canonicalize(dst_parent) else {
-        return false;
-    };
-    let Some(dst_name) = dst.file_name() else {
-        return false;
-    };
-    let clean_dst = canon_parent.join(dst_name);
-    let src_str = canon_src.to_string_lossy();
-    let dst_str = clean_dst.to_string_lossy();
-    let bad = |s: &str| {
-        s.chars()
-            .any(|c| matches!(c, '&' | '|' | '<' | '>' | '"' | '^' | '%' | '\r' | '\n' | '\0'))
-    };
-    if bad(&src_str) || bad(&dst_str) {
-        return false;
-    }
-    if private::safe(&canon_src).is_err() || private::safe(&canon_parent).is_err() {
-        return false;
-    }
-    let Ok(output) = Command::new("cmd")
-        .args(["/d", "/c", "mklink", "/J"])
-        .arg(&clean_dst)
-        .arg(&canon_src)
-        .output()
-    else {
-        return false;
-    };
-    output.status.success()
-        && fs::symlink_metadata(&clean_dst).is_ok_and(|m| cleaner::linked(&m))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn try_windows_junction(_src: &Path, _dst: &Path) -> bool {
-    false
-}
-
 fn link_or_copy_shared_subdir(
     src_root: &Path,
     slot_dir: &Path,
@@ -625,16 +597,186 @@ fn link_or_copy_shared_subdir(
     if cleaner::linked(&meta) || !meta.is_dir() || private::safe(&src).is_err() {
         return Ok(None);
     }
-    // Never expose account-bound remote `skills/synced` across accounts via a directory junction.
+    // Never expose account-bound remote `skills/synced` or executable `hooks`/shared dirs via NTFS junction.
     if name == "skills" {
         copy_dir_bounded_excluding(&src, &dst, Some("synced"))?;
         return Ok(Some("copy".into()));
     }
-    if try_windows_junction(&src, &dst) {
-        return Ok(Some("junction".into()));
-    }
     copy_dir_bounded_excluding(&src, &dst, None)?;
     Ok(Some("copy".into()))
+}
+
+fn strip_dangerous_slot_value(val: &mut Value) {
+    match val {
+        Value::Object(map) => strip_dangerous_slot_keys(map),
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                strip_dangerous_slot_value(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn strip_dangerous_slot_keys(map: &mut Map<String, Value>) {
+    map.retain(|k, _| {
+        let lower = k.to_ascii_lowercase();
+        !STRIP_SLOT_SETTINGS_KEYS_LOWER.contains(&lower.as_str())
+    });
+    for v in map.values_mut() {
+        strip_dangerous_slot_value(v);
+    }
+}
+
+fn is_sensitive_slot_env_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    let upper = key.to_ascii_uppercase();
+    STRIP_SLOT_ENV_KEYS
+        .iter()
+        .any(|k| k.eq_ignore_ascii_case(key))
+        || PROXY_ENV_KEYS_URL
+            .iter()
+            .any(|k| k.eq_ignore_ascii_case(key))
+        || lower == "no_proxy"
+        || STRIP_SLOT_SETTINGS_KEYS_LOWER.contains(&lower.as_str())
+        || upper == "CLAUDE_CONFIG_DIR"
+        || upper == "CLAUDECODE"
+        || upper.starts_with("ANTHROPIC_")
+        || upper.starts_with("CLAUDE_CODE_")
+        || upper.starts_with("AWS_")
+        || upper.starts_with("OTEL_")
+        || upper.contains("TOKEN")
+        || upper.contains("SECRET")
+        || upper.contains("PASSWORD")
+        || upper.contains("CREDENTIAL")
+        || upper.contains("API_KEY")
+        || upper.contains("APIKEY")
+        || upper.contains("AUTH")
+        || upper.contains("COOKIE")
+        || upper.contains("PROXY")
+}
+
+fn is_sensitive_mcp_env_key(key: &str) -> bool {
+    is_sensitive_slot_env_key(key)
+}
+
+fn canonical_loopback_no_proxy_token(entry: &str) -> Option<String> {
+    let trimmed = entry.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().any(char::is_control)
+        || trimmed.contains('*')
+        || trimmed.starts_with('.')
+    {
+        return None;
+    }
+    let host = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    if host.eq_ignore_ascii_case("localhost") {
+        return Some("localhost".to_string());
+    }
+    let ip = host.parse::<std::net::IpAddr>().ok()?;
+    if !ip.is_loopback() {
+        return None;
+    }
+    Some(ip.to_string())
+}
+
+fn sanitize_slot_no_proxy(raw_values: &[&str]) -> String {
+    let mut entries: Vec<String> = Vec::new();
+    for raw in raw_values {
+        if raw.chars().any(char::is_control) {
+            continue;
+        }
+        for part in raw.split(',') {
+            if let Some(tok) = canonical_loopback_no_proxy_token(part) {
+                if !entries.iter().any(|existing| existing.eq_ignore_ascii_case(&tok)) {
+                    entries.push(tok);
+                }
+            }
+        }
+    }
+    for required in ["localhost", "127.0.0.1", "::1"] {
+        if !entries
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(required))
+        {
+            entries.push(required.to_string());
+        }
+    }
+    entries.join(",")
+}
+
+fn is_sensitive_mcp_header_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower == "authorization"
+        || lower == "proxy-authorization"
+        || lower == "cookie"
+        || lower == "x-api-key"
+        || lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("key")
+        || lower.contains("auth")
+        || lower.contains("password")
+        || lower.contains("credential")
+}
+
+fn sanitize_mcp_value_recursive(val: &mut Value) -> bool {
+    let mut removed = false;
+    match val {
+        Value::Object(map) => {
+            let before = map.len();
+            map.retain(|k, _| {
+                let lower = k.to_ascii_lowercase();
+                !STRIP_SLOT_SETTINGS_KEYS_LOWER.contains(&lower.as_str())
+            });
+            if map.len() != before {
+                removed = true;
+            }
+            for (k, v) in map.iter_mut() {
+                if k.eq_ignore_ascii_case("env") {
+                    if let Value::Object(env_map) = v {
+                        let env_before = env_map.len();
+                        env_map.retain(|ek, _| !is_sensitive_mcp_env_key(ek));
+                        if env_map.len() != env_before {
+                            removed = true;
+                        }
+                    }
+                } else if k.eq_ignore_ascii_case("headers") {
+                    if let Value::Object(hdr_map) = v {
+                        let hdr_before = hdr_map.len();
+                        hdr_map.retain(|hk, _| !is_sensitive_mcp_header_key(hk));
+                        if hdr_map.len() != hdr_before {
+                            removed = true;
+                        }
+                    }
+                }
+                if sanitize_mcp_value_recursive(v) {
+                    removed = true;
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                if sanitize_mcp_value_recursive(item) {
+                    removed = true;
+                }
+            }
+        }
+        _ => {}
+    }
+    removed
+}
+
+fn sanitize_mcp_servers_value(
+    val: &mut Value,
+    warning_code: &str,
+    warnings: &mut Vec<String>,
+) {
+    if sanitize_mcp_value_recursive(val) && !warnings.iter().any(|w| w == warning_code) {
+        warnings.push(warning_code.to_string());
+    }
 }
 
 fn build_slot_settings(home: &Path, resolved_proxy: Option<&str>) -> Value {
@@ -660,34 +802,26 @@ fn build_slot_settings(home: &Path, resolved_proxy: Option<&str>) -> Value {
         }
     }
 
+    let raw_no_proxy: Vec<String> = env
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("no_proxy"))
+        .filter_map(|(_, v)| v.as_str().map(str::to_owned))
+        .collect();
+    let raw_no_proxy_refs: Vec<&str> = raw_no_proxy.iter().map(String::as_str).collect();
+    let no_proxy = sanitize_slot_no_proxy(&raw_no_proxy_refs);
+
+    strip_dangerous_slot_keys(&mut root);
+    strip_dangerous_slot_keys(&mut env);
+    env.retain(|k, _| !is_sensitive_slot_env_key(k));
+
     env.insert("DISABLE_TELEMETRY".into(), Value::String("1".into()));
     env.insert("DISABLE_ERROR_REPORTING".into(), Value::String("1".into()));
     env.insert("DO_NOT_TRACK".into(), Value::String("1".into()));
-    for k in STRIP_SLOT_ENV_KEYS {
-        env.remove(*k);
-    }
-    for k in PROXY_ENV_KEYS_URL {
-        env.remove(*k);
-    }
     if let Some(proxy_url) = resolved_proxy {
         for k in PROXY_ENV_KEYS_URL {
             env.insert((*k).into(), Value::String(proxy_url.to_string()));
         }
     }
-    let no_proxy = env
-        .get("NO_PROXY")
-        .or_else(|| env.get("no_proxy"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && !s.chars().any(char::is_control))
-        .map(|s| {
-            if s.contains("localhost") && s.contains("127.0.0.1") && s.contains("::1") {
-                s.to_string()
-            } else {
-                format!("{s},localhost,127.0.0.1,::1")
-            }
-        })
-        .unwrap_or_else(|| "localhost,127.0.0.1,::1".to_string());
     env.insert("NO_PROXY".into(), Value::String(no_proxy.clone()));
     env.insert("no_proxy".into(), Value::String(no_proxy));
     root.insert("env".into(), Value::Object(env));
@@ -726,11 +860,7 @@ pub(crate) fn derive_slot_machine_id(master_key: &[u8], record_id: &str) -> Stri
     tag.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-pub(crate) fn derive_slot_first_start_time(
-    master_key: &[u8],
-    record_id: &str,
-    _saved_at: u64,
-) -> Option<String> {
+pub(crate) fn derive_slot_first_start_time(master_key: &[u8], record_id: &str) -> Option<String> {
     // Use a fixed constant anchor epoch so `firstStartTime` is 100% deterministic for
     // `(master_key, record_id)` across archive rotations and matches `~/.claude.json` 1:1.
     const FIRST_START_ANCHOR_SEC: u64 = 1_740_000_000;
@@ -761,7 +891,7 @@ pub(super) fn materialize_slot_dir(
     session_tag: Option<String>,
     jitter_ms: u64,
     now_sec: u64,
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, Vec<String>), String> {
     let slots_root = app_data_dir.join(CLI_SLOTS_DIR);
     private::directory(&slots_root)?;
     let slot_dir = slots_root.join(&record.id);
@@ -841,14 +971,7 @@ pub(super) fn materialize_slot_dir(
             }
         }
     }
-    let fallback_sec = if record.saved_at > 1_000_000_000_000 {
-        record.saved_at / 1000
-    } else if record.saved_at > 0 {
-        record.saved_at
-    } else {
-        now_sec
-    };
-    if let Some(fst) = derive_slot_first_start_time(&store.key, &record.id, fallback_sec) {
+    if let Some(fst) = derive_slot_first_start_time(&store.key, &record.id) {
         slot_claude.insert("firstStartTime".into(), Value::String(fst));
     }
     if !slot_claude.contains_key("numStartups") {
@@ -866,9 +989,16 @@ pub(super) fn materialize_slot_dir(
         "machineID".into(),
         Value::String(derive_slot_machine_id(&store.key, &record.id)),
     );
+    let mut isolation_warnings = Vec::new();
     if let Some(Value::Object(live_obj)) = read_safe_value(&claude_src_path, MAX_SLOT_JSON_BYTES) {
         if let Some(mcp_servers) = live_obj.get("mcpServers") {
-            slot_claude.insert("mcpServers".into(), mcp_servers.clone());
+            let mut sanitized_mcp = mcp_servers.clone();
+            sanitize_mcp_servers_value(
+                &mut sanitized_mcp,
+                "relay.warning.mcpServersEnvSanitized",
+                &mut isolation_warnings,
+            );
+            slot_claude.insert("mcpServers".into(), sanitized_mcp);
         }
     }
     slot_claude.insert("profileFetchedAt".into(), Value::from(now_epoch_ms()));
@@ -893,7 +1023,28 @@ pub(super) fn materialize_slot_dir(
                 && private::safe(&src).is_ok()
             {
                 if let Ok(bytes) = fs::read(&src) {
-                    private::write(&dst, &bytes)?;
+                    if file_name == ".mcp.json" {
+                        if let Ok(mut parsed) = serde_json::from_slice::<Value>(&bytes) {
+                            sanitize_mcp_servers_value(
+                                &mut parsed,
+                                "relay.warning.mcpJsonEnvSanitized",
+                                &mut isolation_warnings,
+                            );
+                            if let Ok(out_bytes) = serde_json::to_vec_pretty(&parsed) {
+                                private::write(&dst, &out_bytes)?;
+                            }
+                        } else {
+                            let _ = safe_remove_slot_entry(&dst);
+                            if !isolation_warnings
+                                .iter()
+                                .any(|w| w == "relay.warning.mcpJsonInvalidSkipped")
+                            {
+                                isolation_warnings.push("relay.warning.mcpJsonInvalidSkipped".into());
+                            }
+                        }
+                    } else {
+                        private::write(&dst, &bytes)?;
+                    }
                 }
             }
         } else {
@@ -917,6 +1068,7 @@ pub(super) fn materialize_slot_dir(
         record_id: record.id.clone(),
         created_at_sec: now_sec,
         links,
+        isolation_warnings: isolation_warnings.clone(),
     };
     let manifest_bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|_| "relay.error.serializeFailed".to_string())?;
@@ -934,7 +1086,7 @@ pub(super) fn materialize_slot_dir(
         .map_err(|_| "relay.error.serializeFailed".to_string())?;
     private::write(&slot_dir.join(SLOT_LEASE_FILE), &lease_bytes)?;
 
-    Ok(slot_dir)
+    Ok((slot_dir, isolation_warnings))
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1031,6 +1183,7 @@ fn slot_acquire_error(status: &str, reason: &str) -> SlotAcquireResult {
         active_on_exit: None,
         max_same_exit_concurrency: None,
         retry_after_ms: None,
+        warnings: None,
         reason: Some(reason.into()),
         error: Some(reason.into()),
     }
@@ -1159,6 +1312,7 @@ pub(crate) fn slot_acquire_in(
                 active_on_exit: Some(active_on_exit),
                 max_same_exit_concurrency: Some(max_conc),
                 retry_after_ms: Some(5000),
+                warnings: None,
                 reason: Some("relay.error.slotConcurrencyCapped".into()),
                 error: Some("relay.error.slotConcurrencyCapped".into()),
             };
@@ -1210,6 +1364,7 @@ pub(crate) fn slot_acquire_in(
                     active_on_exit: Some(active_on_exit),
                     max_same_exit_concurrency: Some(max_conc),
                     retry_after_ms: Some(5000),
+                    warnings: None,
                     reason: Some("relay.error.slotConcurrencyCapped".into()),
                     error: Some("relay.error.slotConcurrencyCapped".into()),
                 };
@@ -1256,7 +1411,7 @@ pub(crate) fn slot_acquire_in(
         jitter_ms,
         now_sec,
     ) {
-        Ok(slot_dir) => SlotAcquireResult {
+        Ok((slot_dir, warnings)) => SlotAcquireResult {
             schema: 1,
             ok: true,
             status: "acquired".into(),
@@ -1268,6 +1423,11 @@ pub(crate) fn slot_acquire_in(
             active_on_exit: Some(active_on_exit),
             max_same_exit_concurrency: Some(max_conc),
             retry_after_ms: None,
+            warnings: if warnings.is_empty() {
+                None
+            } else {
+                Some(warnings)
+            },
             reason: None,
             error: None,
         },

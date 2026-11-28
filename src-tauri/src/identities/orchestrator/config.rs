@@ -88,6 +88,7 @@ pub(super) const PROXY_ENV_KEYS_URL: &[&str] = &[
 ];
 
 pub(super) const STRIP_SLOT_ENV_KEYS: &[&str] = &[
+    "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -331,8 +332,7 @@ fn parse_host_port(authority: &str) -> Option<(String, u16)> {
         return Some(("[::1]".to_string(), port));
     }
     if let Some(rest) = authority.strip_prefix('[') {
-        let close = rest.find(']')?;
-        let inner = &rest[..close];
+        let (inner, after_bracket) = rest.split_once(']')?;
         if inner.is_empty()
             || !inner
                 .chars()
@@ -340,7 +340,7 @@ fn parse_host_port(authority: &str) -> Option<(String, u16)> {
         {
             return None;
         }
-        let port_part = rest[close + 1..].strip_prefix(':')?;
+        let port_part = after_bracket.strip_prefix(':')?;
         if port_part.is_empty() || !port_part.chars().all(|c| c.is_ascii_digit()) {
             return None;
         }
@@ -376,14 +376,13 @@ pub(crate) fn validate_http_proxy(raw: &str) -> Result<String, String> {
         return Err("relay.error.invalidSlotProxy".into());
     }
     let trimmed = raw.trim();
-    if trimmed.len() < 8 {
+    let Some((scheme, rest_raw)) = trimmed.split_once("://") else {
+        return Err("relay.error.invalidSlotProxy".into());
+    };
+    if !scheme.eq_ignore_ascii_case("http") {
         return Err("relay.error.invalidSlotProxy".into());
     }
-    let lower_prefix = trimmed[..7].to_ascii_lowercase();
-    if lower_prefix != "http://" {
-        return Err("relay.error.invalidSlotProxy".into());
-    }
-    let rest = trimmed[7..].trim_end_matches('/');
+    let rest = rest_raw.trim_end_matches('/');
     let Some((host, port)) = parse_host_port(rest) else {
         return Err("relay.error.invalidSlotProxy".into());
     };
@@ -398,15 +397,15 @@ pub(crate) fn normalize_proxy_to_http(raw: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    let authority = if let Some(idx) = trimmed.find("://") {
-        let scheme = trimmed[..idx].to_ascii_lowercase();
+    let authority = if let Some((scheme_raw, after_scheme)) = trimmed.split_once("://") {
+        let scheme = scheme_raw.to_ascii_lowercase();
         if !matches!(
             scheme.as_str(),
             "http" | "https" | "socks5" | "socks5h" | "socks4" | "socks4a"
         ) {
             return None;
         }
-        &trimmed[idx + 3..]
+        after_scheme
     } else {
         trimmed
     };

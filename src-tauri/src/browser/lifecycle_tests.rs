@@ -213,3 +213,121 @@ fn live_cli_proof_follows_hmac_account_instead_of_stale_active_pointer() {
     drop(db);
     fs::remove_dir_all(fixture).unwrap();
 }
+
+#[test]
+fn cli_proof_cache_reuses_unchanged_files_and_invalidates_on_epoch_or_file_change() {
+    let fixture = super::super::tests::sample();
+    let root = fixture.join("browser");
+    let vault = fixture.join("identity-vault");
+    let home = fixture.join("synthetic-cli");
+    private::directory(&home).unwrap();
+    let db = workspaces::database(&root).unwrap();
+    let key = [19u8; 32];
+    private::write(&vault.join("key.bin"), &key).unwrap();
+    let value = serde_json::json!({"oauthAccount": {
+        "accountUuid": "synthetic-account", "emailAddress": "synthetic@example.invalid",
+        "organizationUuid": "synthetic-org", "displayName": "Synthetic CLI"
+    }});
+    private::write(
+        &home.join(".claude.json"),
+        &serde_json::to_vec(&value).unwrap(),
+    )
+    .unwrap();
+    let mut live = record("Synthetic current");
+    let payload = serde_json::to_vec(&("uuid", "synthetic-account", "synthetic-org")).unwrap();
+    live.account_key = Some(
+        ring::hmac::sign(
+            &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key),
+            &payload,
+        )
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect(),
+    );
+    db.remember(&live).unwrap();
+
+    let mut cache = CliProofCache::default();
+    let p1 = prove_cli_cached_at(&vault, &home, &db, 1, &mut cache).unwrap();
+    assert_eq!(cache.misses, 1);
+    assert_eq!(cache.hits, 0);
+
+    // Same epoch and unchanged files -> cache hit (0 file reads).
+    let p2 = prove_cli_cached_at(&vault, &home, &db, 1, &mut cache).unwrap();
+    assert_eq!(p1.id, p2.id);
+    assert_eq!(p1.fingerprint, p2.fingerprint);
+    assert_eq!(cache.misses, 1);
+    assert_eq!(cache.hits, 1);
+
+    // Epoch bump invalidates cache.
+    let _p3 = prove_cli_cached_at(&vault, &home, &db, 2, &mut cache).unwrap();
+    assert_eq!(cache.misses, 2);
+
+    // File modification (size/mtime change) invalidates cache and rejects unknown account.
+    private::write(
+        &home.join(".claude.json"),
+        b"{\"oauthAccount\":{\"accountUuid\":\"unknown-after-change\",\"emailAddress\":\"x@y.z\"}}",
+    )
+    .unwrap();
+    assert!(prove_cli_cached_at(&vault, &home, &db, 2, &mut cache).is_err());
+    assert_eq!(cache.misses, 3);
+
+    drop(db);
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn uncached_revalidate_detects_equal_length_claude_json_overwrite_within_same_tick() {
+    let fixture = super::super::tests::sample();
+    let root = fixture.join("browser");
+    let vault = fixture.join("identity-vault");
+    let home = fixture.join("synthetic-cli");
+    private::directory(&home).unwrap();
+    let db = workspaces::database(&root).unwrap();
+    let key = [29u8; 32];
+    private::write(&vault.join("key.bin"), &key).unwrap();
+
+    let sign_acct = |acct: &str| -> String {
+        let payload = serde_json::to_vec(&("uuid", acct, "org-01")).unwrap();
+        ring::hmac::sign(
+            &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key),
+            &payload,
+        )
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+    };
+
+    let mut rec_a = record("Account A");
+    rec_a.account_key = Some(sign_acct("acct-aaaa-0001"));
+    db.remember(&rec_a).unwrap();
+
+    let mut rec_b = record("Account B");
+    rec_b.account_key = Some(sign_acct("acct-bbbb-0002"));
+    db.remember(&rec_b).unwrap();
+
+    // Equal-length JSON overwrite within the same NTFS ~15.6ms timestamp tick.
+    let json_a = br#"{"oauthAccount":{"accountUuid":"acct-aaaa-0001","organizationUuid":"org-01","emailAddress":"u1@example.invalid"}}"#;
+    let json_b = br#"{"oauthAccount":{"accountUuid":"acct-bbbb-0002","organizationUuid":"org-01","emailAddress":"u2@example.invalid"}}"#;
+    assert_eq!(json_a.len(), json_b.len());
+
+    private::write(&home.join(".claude.json"), json_a).unwrap();
+    let mut cache = CliProofCache::default();
+    let p_init = prove_cli_cached_at(&vault, &home, &db, 1, &mut cache).unwrap();
+    assert_eq!(p_init.id, rec_a.id);
+
+    // Initial resolve hits cache (0 reads).
+    let p_resolve = prove_cli_cached_at(&vault, &home, &db, 1, &mut cache).unwrap();
+    assert_eq!(p_resolve.id, rec_a.id);
+    assert_eq!(cache.hits, 1);
+
+    // Equal-length overwrite immediately before final revalidate.
+    private::write(&home.join(".claude.json"), json_b).unwrap();
+    let p_revalidate = prove_cli_at(&vault, &home, &db).unwrap();
+    assert_eq!(p_revalidate.id, rec_b.id);
+    assert_ne!(p_revalidate.id, p_init.id);
+
+    drop(db);
+    fs::remove_dir_all(fixture).unwrap();
+}

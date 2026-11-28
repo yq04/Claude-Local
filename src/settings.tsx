@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 共享界面语言状态、宿主语言写入命令、Tauri 本机应用版本、settings-model 响应式视图偏好与主题预设、smart-relay-model 多账号智能接力与轮换策略、floating-monitor-model 悬浮窗开启/鼠标穿透状态、wallpaper-store 本地自定义壁纸与主色调提取引擎、身份备份组件与 Cromma UI 控件。
- * [OUTPUT]: 统一 44px 工具栏页头与紧凑分段切换器的「软件设置」四分页：通用（含原生 smart_relay_v1.json 安全同步、80%~100% 换号阈值、OpusPlan 混合别名说明、自动续跑与默认重置）、外观与布局、数据管理与关于；紧致行距与 28px 中性图标角标，功能边界与选项契约保持完整。
+ * [OUTPUT]: 统一 44px 工具栏页头与紧凑分段切换器的「软件设置」四分页：通用（含原生 smart_relay_v1.json 安全同步、80%~100% 换号阈值、OpusPlan 混合别名说明、自动续跑与默认重置）、外观与布局（含自适应换行强调色分段控制与唯一偏好重置行）、数据管理与关于（精简版本与架构卡片）；紧致行距与 28px 中性图标角标，功能边界与选项契约保持完整。
  * [POS]: 独立设置面板；视图偏好与身份备份均由用户手动触发，不联网、不检查或安装更新、不替换当前身份库。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -554,6 +554,7 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
       <SettingsRow title={t('主题强调色')} detail={t('自定义导航高亮、按钮焦点与状态徽章的主色调')}>
         <SegmentedControl
           aria-label={t('主题强调色')}
+          className="settings-accent-segmented"
           size="small"
           value={prefs.accent}
           onValueChange={accent => startSmoothTransition(() => updatePreferences({accent}))}
@@ -909,11 +910,6 @@ export function SettingsPanel({onNavigate}: {onNavigate?: (page: Page) => void})
                   </div>
                 </div>
               </div>
-              <SettingsRow title={t('恢复默认界面设置')} detail={t('将主题、强调色、侧边栏布局与动效偏好恢复为初始状态，不影响任何账号与保险库数据')}>
-                <Button variant="secondary" size="small" onClick={() => resetPreferences()}>
-                  {t('恢复默认')}
-                </Button>
-              </SettingsRow>
             </div>
 
             <div className="settings-spec-grid">

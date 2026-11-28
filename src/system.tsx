@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Cromma UI 表单、Pika 图标、原生电脑环境快照、经核验的设置命令、本地刷新事件、env-pages.css 与共享 YAML 文案。
- * [OUTPUT]: 顶部刷新工具栏、四栏美区基线对齐发丝遥测条、带基线参考摘要的分组标头与三行统一设置卡（时区/语言/定位，确认定位已关闭时省略冗余的关闭按钮）；保留执行记录与任务锁。
+ * [OUTPUT]: 顶部刷新工具栏、四栏美区基线对齐发丝遥测条、带基线参考摘要的分组标头与三行统一设置卡（时区/语言/定位均带状态标题行且下拉触发器自适应防截断，确认定位已关闭时省略冗余的关闭按钮）；保留执行记录与任务锁。
  * [POS]: 系统设置的交互边界；草稿与当前状态分离，不在页面加载时修改电脑；兼容未含 platform 的旧 macOS 快照。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -144,9 +144,7 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
   return (
     <section className="system-page system-environment-page">
       <header className="cleanup-title system-header">
-        <div>
-          <h1>{t('电脑环境')}</h1>
-        </div>
+        <h1>{t('电脑环境')}</h1>
         <div className="cleanup-title-actions">
           {isMacOS && (
             <Button
@@ -269,7 +267,12 @@ export function SystemPanel({onBusy}: {onBusy?: (busy: boolean) => void}) {
             <div className="system-setting-header">
               <span className="settings-icon-badge" aria-hidden="true"><TranslateIcon size={16} /></span>
               <div className="system-setting-copy">
-                <h2 id="system-language-title">{t('系统语言')}</h2>
+                <div className="system-heading-line">
+                  <h2 id="system-language-title">{t('系统语言')}</h2>
+                  <span className={'system-state-label' + (languageAligned ? ' verified' : '')}>
+                    {!state ? t('读取中…') : languageAligned ? t('已对齐') : t('未对齐')}
+                  </span>
+                </div>
                 <p className="system-current-value"><span>{t('computer.current')}</span><strong>{primaryLanguageLabel}</strong>{state?.languages.length ? <span className="system-language-code" title={state.languages.join(' → ')}>{state.languages.join(' → ')}</span> : null}</p>
                 <p className="system-setting-note">{t('应用重启后生效；系统完整切换可能需要注销。')}</p>
               </div>

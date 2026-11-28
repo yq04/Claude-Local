@@ -6,7 +6,7 @@ window_state.rs: 仅 main 窗口的私有 app_data/window-state.json 尺寸/最�
 window_state_model.rs: 无 Tauri/系统依赖的窗口尺寸状态校验、最大化/最小化捕获规则、DPI 换算、工作区限制与居中纯模型及合成单元测试。
 SECURITY.md: 原生数据流与安全契约，列出本地读取、外部连接、确认后修改、代理不序列化及 Linux A/B 安装运行保护；验证范围按实际环境陈述。
 宿主保持用户触发的网络诊断与系统权限在 Rust 中；剪贴板复制只在主线程执行。文件残留手动扫描/选择清理与电脑设置使用后台任务；残留入口不读写钥匙串，身份暂存经用户确认在原生层保存默认 Claude 凭据，正文不送 UI。
-src/ - 身份管理、清理白名单、浏览器、地区、固定资源导航与不启动 GUI 的纯 JSON 额度核心边界；见其 CLAUDE.md。
+src/ - 身份管理、清理白名单（Cleaner 读写计数与按账号分片并发门）、Windows 平台桥（ntdll!RtlGetVersion 免 PowerShell 冷启动 OS 版本读取）、浏览器、地区、固定资源导航与不启动 GUI 的纯 JSON 额度核心边界；见其 CLAUDE.md。
 src/identities/online.rs - 用户触发的固定额度读取、Python单写者子进程桥接和账号绑定的订阅/重置资料只读合并；脚本随公共资源打包。
 native/ - macOS 剪贴板、授权、直接钥匙串删除与电脑环境设置；见其 CLAUDE.md。
 capabilities/ - 主窗口能力边界；见其 CLAUDE.md。

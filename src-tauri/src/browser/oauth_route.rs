@@ -1,5 +1,5 @@
 // [INPUT]: Windows external links, exact Claude OAuth+PKCE URL shape and proven local CLI identity/profile binding.
-// [OUTPUT]: An authorization page in the existing CLI-bound profile while the selected warming profile/session stays untouched.
+// [OUTPUT]: An authorization page in the existing CLI-bound profile (`LaunchPurpose::OAuth` with `enable_quota_bridge: false`, ensured non-zero seed, Kill-Switch launch-route guard, `SingletonLock` safety check, readiness wait, and `notify_browser_activity`) while the selected warming profile/session stays untouched.
 // [POS]: Private external-link guard; no general URL IPC, authorization request, credential refresh, URL logging or fallback to warming.
 // [PROTOCOL]: Update header on change and check CLAUDE.md.
 use super::*;
@@ -115,6 +115,13 @@ struct CliProfileTarget {
 fn should_isolate_authorization(db: &Database) -> Result<bool, String> {
     Ok(db.get("browser.promotion")?.is_none() && db.current_browser_is_warming()?)
 }
+pub(super) fn should_isolate_for_app(app: &tauri::AppHandle) -> Result<bool, String> {
+    let db = workspaces::database(&root(app)?)?;
+    should_isolate_authorization(&db)
+}
+pub(super) fn current_target_slot(app: &tauri::AppHandle) -> Result<String, String> {
+    current_target(app).map(|t| t.slot)
+}
 fn resolve_target(
     root: &Path,
     db: &Database,
@@ -165,14 +172,23 @@ fn launch_authorization_locked(
     app: &tauri::AppHandle,
     url: &ValidatedClaudeOAuthUrl,
 ) -> Result<(), String> {
+    let root_dir = root(app)?;
     let target = current_target(app)?;
-    let config = config::load(&target.scope)?;
+    let config = load_config_ensured_seed(&root_dir, &target.scope, Some(&target.slot))?;
     let machine = config::machine()?;
     config.validate(&machine)?;
     let running = profile::running(&target.profile)?;
+    super::kill_switch::ensure_launch_route_healthy_when_triggered(app, Some(&target.slot), &config, &machine)?;
     config::preflight_browser_launch_policy(&config, &machine, !running)?;
     let engine = prepare_engine(app)?;
-    let mut args = config::arguments(&config, &machine, &target.profile, "", &version(&engine));
+    let mut args = config::arguments_with_options(
+        &config,
+        &machine,
+        &target.profile,
+        "",
+        &version(&engine),
+        config::LaunchOptions::for_purpose(config::LaunchPurpose::OAuth),
+    );
     args.pop();
     args.push(url.0.clone());
     // Revalidate immediately before spawn; do not write global launch.args
@@ -184,6 +200,7 @@ fn launch_authorization_locked(
         return Err(FAILED.into());
     }
     if !running {
+        super::launch::prepare_slot_singleton_for_launch(&root_dir, &target.profile)?;
         profile::preferences(&target.profile, &config, &machine)?;
     }
     let mut child = Command::new(binary(&engine))
@@ -193,7 +210,10 @@ fn launch_authorization_locked(
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| FAILED)?;
-    super::kill_switch::clear_alert(app);
+    if !running {
+        super::launch::wait_scope_launch_ready(&target.profile, &mut child)?;
+    }
+    super::kill_switch::on_managed_browser_spawned(app, true);
     std::thread::spawn(move || {
         let _ = child.wait();
     });

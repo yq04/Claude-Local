@@ -1,5 +1,5 @@
 // [INPUT]: Win32 Toolhelp/进程句柄、当前用户 SID、精确 CLI 入口与独立浏览器资料路径。
-// [OUTPUT]: Claude 进程零侵入识别与角色分类（InteractiveCli/BackgroundDaemon/BackgroundPtyHost/BackgroundWorker/Desktop；栈缓冲优先路径查询、仅在存在 Claude 候选时构建父子进程树、PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE + NtQueryInformationProcess(ProcessCommandLineInformation = 60) 零 VM_READ + (pid, created) 缓存 + 交互式 CLI 存活子 Shell 树采样）、node/bun 与带 (pid, created_100ns) 进程级缓存及单快照批量托管资料探活（running_chrome_profiles）的浏览器参数识别、创建时间/所有权复核后的同步等待结束（1500ms 句柄排空），及以文件句柄标识匹配关闭与只读可见窗口采样。
+// [OUTPUT]: Claude 进程零侵入识别与角色分类（InteractiveCli/BackgroundDaemon/BackgroundPtyHost/BackgroundWorker/Desktop；栈缓冲优先路径查询、仅在存在 Claude 候选时构建父子进程树、PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE + NtQueryInformationProcess(ProcessCommandLineInformation = 60) 零 VM_READ + (pid, created) 缓存 + 交互式 CLI 存活子 Shell 树采样）、node/bun 与带 (pid, created_100ns) 进程级缓存及单快照批量托管资料探活（running_chrome_profiles）的浏览器参数识别、创建时间/所有权复核后的同步等待结束（1500ms 句柄排空）、5 重校验受限浏览器进程树强杀兜底（terminate_browser_profile_tree），及以文件句柄标识匹配关闭与只读可见窗口采样。
 // [POS]: Windows 进程边界；原生二进制与受管浏览器免 PROCESS_VM_READ/ReadProcessMemory；参数仅用于角色分类与 node/bun/chrome 判定，原始命令行不返回 UI。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{current_sid, input, process_sid, response};
@@ -1123,6 +1123,294 @@ pub unsafe fn rf_browser_quit(profile: *const c_char) -> *mut c_char {
     response(browser(input(profile), true).map(|_| json!({"ok":true})))
 }
 
+const EXCLUDED_NON_BROWSER_EXES: &[&str] = &[
+    "claude.exe",
+    "claude-code-helper.exe",
+    "cowork-svc.exe",
+    "claude-ssh-askpass.exe",
+    "claude-ssh-proxy.exe",
+    "claude-local.exe",
+    "node.exe",
+    "bun.exe",
+];
+
+fn is_excluded_non_browser_process(image: &str, args: &[String]) -> bool {
+    let norm = normalized(image);
+    let name = norm.rsplit('\\').next().unwrap_or("");
+    if EXCLUDED_NON_BROWSER_EXES.contains(&name) || CHILD_SHELL_EXES.contains(&name) {
+        return true;
+    }
+    claude_kind(image, args).is_some()
+}
+
+fn check_no_reparse_ancestors(path: &Path) -> Result<(), String> {
+    let mut cur = PathBuf::new();
+    for component in path.components() {
+        cur.push(component);
+        if matches!(component, std::path::Component::Prefix(_)) {
+            continue;
+        }
+        match std::fs::symlink_metadata(&cur) {
+            Ok(meta) if crate::cleaner::linked(&meta) => {
+                return Err("检测到符号链接或联接点，已拒绝强制终止浏览器进程。".into());
+            }
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err("无法核验浏览器资料路径。".into());
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct TreeCandidate {
+    pid: u32,
+    created: u64,
+    image: String,
+    args: Vec<String>,
+    same_image_dir: bool,
+}
+
+fn select_descendant_pids_pure(
+    root_pid: u32,
+    root_created: u64,
+    profile_str: &str,
+    children_by_ppid: &HashMap<u32, Vec<u32>>,
+    inspect: &dyn Fn(u32) -> Option<TreeCandidate>,
+) -> Vec<(u32, u64, String)> {
+    const MAX_TREE_DEPTH: usize = 8;
+    let mut visited = HashSet::new();
+    visited.insert(root_pid);
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back((root_pid, 0usize));
+    let mut selected = Vec::new();
+    while let Some((pid, depth)) = queue.pop_front() {
+        if depth >= MAX_TREE_DEPTH {
+            continue;
+        }
+        let Some(children) = children_by_ppid.get(&pid) else {
+            continue;
+        };
+        for &child_pid in children {
+            if !visited.insert(child_pid) {
+                continue;
+            }
+            let Some(cand) = inspect(child_pid) else {
+                continue;
+            };
+            if cand.created < root_created || !cand.same_image_dir {
+                continue;
+            }
+            if is_excluded_non_browser_process(&cand.image, &cand.args) {
+                continue;
+            }
+            if normalized(&cand.image).ends_with("\\chrome.exe")
+                && profile_argument(&cand.args).is_some()
+                && !profile_matches(&cand.args, profile_str)
+            {
+                continue;
+            }
+            selected.push((cand.pid, cand.created, cand.image));
+            queue.push_back((child_pid, depth + 1));
+        }
+    }
+    selected
+}
+
+/// 5 重安全校验的受管浏览器进程树强杀兜底（仅在 `WM_CLOSE` 超时或被 `beforeunload` 拦截时调用）：
+/// 1) 校验 `profile` 与 `expected_chrome_exe` 为绝对路径且无符号链接/联接点；
+/// 2) 校验主进程为当前用户 SID、非子类型进程、`--user-data-dir` 文件标识精确匹配且镜像匹配 `expected_chrome_exe`；
+/// 3) 有界 BFS（深度 <= 8 + 防环）收集同镜像目录后代，要求 `child_created >= root_created` 并排除 `claude.exe`/`node.exe`/`bun.exe`/shell；
+/// 4) 逆序打开 `PROCESS_TERMINATE` 句柄并在调用 `TerminateProcess` 前再次核验 `created` 与 `image`；
+/// 5) 终止后复核 `running_chrome_profiles(&[profile]) == [false]`，否则返回错误。
+pub(crate) fn terminate_browser_profile_tree(
+    profile: &Path,
+    expected_chrome_exe: Option<&Path>,
+) -> Result<bool, String> {
+    if !profile.is_absolute() {
+        return Err("资料路径无效。".into());
+    }
+    check_no_reparse_ancestors(profile)?;
+    if let Some(exp) = expected_chrome_exe {
+        if !exp.is_absolute() {
+            return Err("浏览器引擎路径无效。".into());
+        }
+        check_no_reparse_ancestors(exp)?;
+    }
+    let profile_str = profile.to_str().ok_or("资料路径无效。")?;
+    let self_pid = std::process::id();
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err("无法创建进程快照以终止浏览器。".into());
+    }
+    let snapshot = Handle(snapshot);
+    let mut entry = unsafe { std::mem::zeroed::<PROCESSENTRY32W>() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut has = unsafe { Process32FirstW(snapshot.0, &mut entry) };
+    if has == 0 {
+        return Err("无法读取进程快照以终止浏览器。".into());
+    }
+
+    let mut children_by_ppid: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut roots: Vec<(u32, u64, String)> = Vec::new();
+    let mut live = HashSet::new();
+    let mut mismatched_binary = false;
+
+    while has != 0 {
+        let pid = entry.th32ProcessID;
+        if pid > 1 && pid != self_pid {
+            children_by_ppid
+                .entry(entry.th32ParentProcessID)
+                .or_default()
+                .push(pid);
+            if is_chrome_entry(&entry.szExeFile) {
+                if let Some(limited) = Handle::open_limited(pid) {
+                    if limited.is_alive() {
+                        if let Some(created) = limited.created() {
+                            live.insert((pid, created));
+                            if let Ok(ChromeProbe::Chrome { image, args }) =
+                                probe_chrome(pid, &limited, created)
+                            {
+                                if !has_child_process_type(&args)
+                                    && profile_matches(&args, profile_str)
+                                {
+                                    let exe_matches = match expected_chrome_exe {
+                                        Some(expected) => match (
+                                            file_identity(Path::new(&image), false),
+                                            file_identity(expected, false),
+                                        ) {
+                                            (Some(a), Some(b)) => a == b,
+                                            _ => {
+                                                lexical_normalized_path(&image)
+                                                    == lexical_normalized_path(
+                                                        &expected.to_string_lossy(),
+                                                    )
+                                            }
+                                        },
+                                        None => true,
+                                    };
+                                    if exe_matches && !is_excluded_non_browser_process(&image, &args)
+                                    {
+                                        roots.push((pid, created, image));
+                                    } else {
+                                        mismatched_binary = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        has = unsafe { Process32NextW(snapshot.0, &mut entry) };
+    }
+    prune_chrome_cache(&live);
+
+    if mismatched_binary && roots.is_empty() {
+        return Err("检测到非受管引擎占用该资料，已拒绝强杀。".into());
+    }
+    if roots.is_empty() {
+        let still = running_chrome_profiles(&[profile.to_path_buf()])?;
+        if still.first().copied() == Some(true) {
+            return Err("发现残留浏览器进程但未能通过身份校验。".into());
+        }
+        return Ok(false);
+    }
+
+    let mut targets: Vec<(u32, u64, String)> = Vec::new();
+    let mut seen_target_pids = HashSet::new();
+    for (root_pid, root_created, root_image) in roots {
+        let root_dir = Path::new(&root_image).parent().map(Path::to_path_buf);
+        let root_dir_id = root_dir.as_deref().and_then(|d| file_identity(d, true));
+        let root_dir_lex = root_dir
+            .as_deref()
+            .map(|d| lexical_normalized_path(&d.to_string_lossy()));
+
+        let descendants = select_descendant_pids_pure(
+            root_pid,
+            root_created,
+            profile_str,
+            &children_by_ppid,
+            &|child_pid| {
+                if child_pid == self_pid {
+                    return None;
+                }
+                let child_handle = Handle::open_limited(child_pid)?;
+                if !child_handle.is_alive() {
+                    return None;
+                }
+                let child_created = child_handle.created()?;
+                let child_image = child_handle.image()?;
+                let child_dir = Path::new(&child_image).parent();
+                let same_image_dir = match (child_dir.and_then(|d| file_identity(d, true)), root_dir_id) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => child_dir
+                        .map(|d| lexical_normalized_path(&d.to_string_lossy()))
+                        .is_some_and(|l| Some(l) == root_dir_lex),
+                };
+                if !same_image_dir {
+                    return None;
+                }
+                let child_norm = normalized(&child_image);
+                let child_name = child_norm.rsplit('\\').next().unwrap_or("");
+                let child_args = if child_name == "chrome.exe" || needs_vm_arguments(child_name) {
+                    browser_arguments(child_pid, &child_handle, child_created).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                Some(TreeCandidate {
+                    pid: child_pid,
+                    created: child_created,
+                    image: child_image,
+                    args: child_args,
+                    same_image_dir,
+                })
+            },
+        );
+        if seen_target_pids.insert(root_pid) {
+            targets.push((root_pid, root_created, root_image));
+        }
+        for desc in descendants {
+            if seen_target_pids.insert(desc.0) {
+                targets.push(desc);
+            }
+        }
+    }
+
+    // Reverse order: terminate descendants before root process.
+    for (pid, expected_created, expected_image) in targets.into_iter().rev() {
+        let Some(handle) = Handle::open_terminate_limited(pid) else {
+            if Handle::open_limited(pid).is_some_and(|h| h.is_alive()) {
+                return Err("无法获取受管浏览器进程终止权限。".into());
+            }
+            continue;
+        };
+        if !handle.is_alive() {
+            continue;
+        }
+        if handle.created() != Some(expected_created)
+            || handle.image().as_deref() != Some(expected_image.as_str())
+        {
+            continue;
+        }
+        if unsafe { TerminateProcess(handle.0, 1) } == 0 && handle.is_alive() {
+            return Err("无法强行终止受管浏览器进程。".into());
+        }
+        let _ = handle.wait_exited(1500);
+        if let Ok(mut cache) = chrome_proc_cache().lock() {
+            cache.remove(&(pid, expected_created));
+        }
+    }
+
+    let still = running_chrome_profiles(&[profile.to_path_buf()])?;
+    if still.first().copied() == Some(true) {
+        return Err("受管浏览器进程树未完全退出。".into());
+    }
+    Ok(true)
+}
+
 struct BrowserWindowProbe {
     // Keep process handles alive throughout the window enumeration. Only this
     // already-proven profile's Chrome processes may own an observed window.
@@ -1615,5 +1903,204 @@ mod tests {
         let shells =
             collect_child_shells_from_tree(400, &claude_pids, &children, |pid| pid != 40700);
         assert_eq!(shells, vec!["pwsh.exe", "python.exe", "cmd.exe", "node.exe"]);
+    }
+
+    #[test]
+    fn terminate_browser_profile_tree_enforces_five_layer_safety_and_kills_matching_tree() {
+        use std::os::windows::process::CommandExt;
+        // 1. Pure descendant selection checks (cycle, depth > 8, PID reuse, non-browser exclusion, profile mismatch).
+        let profile = r"C:\synthetic\profile_a";
+        let other_profile = r"C:\synthetic\profile_b";
+        let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+        children.insert(100, vec![101, 102, 103, 104, 105, 106, 107]);
+        children.insert(101, vec![108]);
+        // Cycle: 108 -> 100
+        children.insert(108, vec![100]);
+        // Depth chain from 108 (depth 2) -> 201..209
+        let mut prev = 108u32;
+        for d in 201..=209u32 {
+            children.insert(prev, vec![d]);
+            prev = d;
+        }
+        let cands: HashMap<u32, TreeCandidate> = [
+            (
+                101,
+                TreeCandidate {
+                    pid: 101,
+                    created: 500,
+                    image: r"C:\Engine\chrome.exe".into(),
+                    args: vec!["--type=renderer".into()],
+                    same_image_dir: true,
+                },
+            ),
+            (
+                102,
+                TreeCandidate {
+                    pid: 102,
+                    created: 400, // older than root (PID reuse!) -> MUST exclude
+                    image: r"C:\Engine\chrome.exe".into(),
+                    args: vec!["--type=utility".into()],
+                    same_image_dir: true,
+                },
+            ),
+            (
+                103,
+                TreeCandidate {
+                    pid: 103,
+                    created: 501,
+                    image: r"C:\Engine\claude.exe".into(),
+                    args: vec![],
+                    same_image_dir: true,
+                },
+            ),
+            (
+                104,
+                TreeCandidate {
+                    pid: 104,
+                    created: 502,
+                    image: r"C:\Engine\node.exe".into(),
+                    args: vec![],
+                    same_image_dir: true,
+                },
+            ),
+            (
+                105,
+                TreeCandidate {
+                    pid: 105,
+                    created: 503,
+                    image: r"C:\Engine\pwsh.exe".into(),
+                    args: vec![],
+                    same_image_dir: true,
+                },
+            ),
+            (
+                106,
+                TreeCandidate {
+                    pid: 106,
+                    created: 504,
+                    image: r"C:\Other\chrome.exe".into(),
+                    args: vec![],
+                    same_image_dir: false,
+                },
+            ),
+            (
+                107,
+                TreeCandidate {
+                    pid: 107,
+                    created: 505,
+                    image: r"C:\Engine\chrome.exe".into(),
+                    args: vec![format!("--user-data-dir={other_profile}")],
+                    same_image_dir: true,
+                },
+            ),
+            (
+                108,
+                TreeCandidate {
+                    pid: 108,
+                    created: 506,
+                    image: r"C:\Engine\chrome.exe".into(),
+                    args: vec![format!("--user-data-dir={profile}"), "--type=gpu-process".into()],
+                    same_image_dir: true,
+                },
+            ),
+        ]
+        .into_iter()
+        .chain((201..=209u32).map(|pid| {
+            (
+                pid,
+                TreeCandidate {
+                    pid,
+                    created: 600,
+                    image: r"C:\Engine\chrome.exe".into(),
+                    args: vec!["--type=renderer".into()],
+                    same_image_dir: true,
+                },
+            )
+        }))
+        .collect();
+        let selected = select_descendant_pids_pure(100, 500, profile, &children, &|pid| {
+            cands.get(&pid).cloned()
+        });
+        let pids: Vec<u32> = selected.iter().map(|x| x.0).collect();
+        assert!(pids.contains(&101));
+        assert!(pids.contains(&108));
+        assert!(!pids.contains(&102), "older PID-reused process must be excluded");
+        assert!(!pids.contains(&103), "claude.exe must be excluded");
+        assert!(!pids.contains(&104), "node.exe must be excluded");
+        assert!(!pids.contains(&105), "pwsh.exe must be excluded");
+        assert!(!pids.contains(&106), "foreign image dir must be excluded");
+        assert!(!pids.contains(&107), "mismatched profile must be excluded");
+        assert!(pids.contains(&206), "depth 8 must be reached");
+        assert!(!pids.contains(&207), "depth > 8 must be bounded");
+
+        // 2. Live disposable process-tree termination test (zero real claude.exe / chrome.exe touched).
+        let base = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("claude-local-tree-kill-{}", crate::identities::new_id().unwrap()));
+        let engine_a = base.join("engine_a");
+        let engine_b = base.join("engine_b");
+        let prof_a = base.join("profile_a");
+        let prof_b = base.join("profile_b");
+        std::fs::create_dir_all(&engine_a).unwrap();
+        std::fs::create_dir_all(&engine_b).unwrap();
+        std::fs::create_dir_all(&prof_a).unwrap();
+        std::fs::create_dir_all(&prof_b).unwrap();
+        let sys_cmd = PathBuf::from(std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into()))
+            .join("System32")
+            .join("cmd.exe");
+        let fake_chrome_a = engine_a.join("chrome.exe");
+        let fake_chrome_b = engine_b.join("chrome.exe");
+        std::fs::copy(&sys_cmd, &fake_chrome_a).unwrap();
+        std::fs::copy(&sys_cmd, &fake_chrome_b).unwrap();
+
+        let mut child_a = std::process::Command::new(&fake_chrome_a)
+            .creation_flags(0x0800_0000)
+            .args(["/d", "/c", "set /p x="])
+            .arg(format!("--user-data-dir={}", prof_a.display()))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut child_b = std::process::Command::new(&fake_chrome_b)
+            .creation_flags(0x0800_0000)
+            .args(["/d", "/c", "set /p x="])
+            .arg(format!("--user-data-dir={}", prof_b.display()))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let before = running_chrome_profiles(&[prof_a.clone(), prof_b.clone()]).unwrap();
+        assert_eq!(before, vec![true, true]);
+
+        // Mismatched expected binary must refuse termination and keep child_a alive.
+        assert!(terminate_browser_profile_tree(&prof_a, Some(&fake_chrome_b)).is_err());
+        assert_eq!(
+            running_chrome_profiles(&[prof_a.clone(), prof_b.clone()]).unwrap(),
+            vec![true, true]
+        );
+
+        // Matching binary terminates only prof_a while leaving prof_b completely untouched.
+        assert_eq!(
+            terminate_browser_profile_tree(&prof_a, Some(&fake_chrome_a)).unwrap(),
+            true
+        );
+        assert_eq!(
+            running_chrome_profiles(&[prof_a.clone(), prof_b.clone()]).unwrap(),
+            vec![false, true]
+        );
+        assert!(child_a.try_wait().unwrap().is_some());
+        assert!(child_b.try_wait().unwrap().is_none());
+
+        // Cleanup child_b cleanly.
+        drop(child_b.stdin.take());
+        let _ = child_b.kill();
+        let _ = child_b.wait();
+        let _ = child_a.wait();
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

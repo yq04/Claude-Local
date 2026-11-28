@@ -1119,7 +1119,10 @@ fn slot_acquire_clean_materialization_and_boundaries() {
 
     let settings: Value =
         serde_json::from_slice(&fs::read(slot_dir.join("settings.json")).unwrap()).unwrap();
-    assert_eq!(settings["statusLine"]["type"], "command");
+    assert!(
+        settings.get("statusLine").is_none(),
+        "slot settings must strip statusLine"
+    );
     assert!(settings["hooks"].get("Stop").is_some());
     let env = settings["env"].as_object().unwrap();
     assert_eq!(env.get("DISABLE_TELEMETRY").unwrap(), "1");
@@ -2184,8 +2187,8 @@ fn anti_ban_device_id_parity_proxy_preservation_baga_gc_unsaved_429_and_reset_ha
     assert_eq!(live_cj_b["anonymousId"], slot_cj_b["anonymousId"]);
     assert_eq!(live_cj_b["firstStartTime"], slot_cj_b["firstStartTime"]);
     assert_eq!(
-        derive_slot_first_start_time(&store.key, &rec_b.id, 1_700_000_000),
-        derive_slot_first_start_time(&store.key, &rec_b.id, 1_900_000_000)
+        derive_slot_first_start_time(&store.key, &rec_b.id),
+        derive_slot_first_start_time(&store.key, &rec_b.id)
     );
 
     let acq_c = slot_acquire_in(
@@ -3483,5 +3486,279 @@ fn relay_switch_with_reason_records_explicit_handoff_reason_and_pro_pool_md_uses
         .unwrap()
         .expect("latest handoff");
     assert_eq!(latest.handoff_reason.as_deref(), Some("external_worker_timeout"));
+}
+
+#[test]
+fn slot_materialization_strips_helpers_copies_hooks_and_sanitizes_mcp_with_warnings() {
+    let fx = TempFixture::new("iso");
+    let now_sec = 1_775_000_000;
+    let rec_a = fx.seed_saved_account("IsoActive", "u-iso", "iso@example.invalid", "tok-iso", "rt-iso");
+    let rec = fx.seed_saved_account("IsoTarget", "u-iso-b", "isob@example.invalid", "tok-b", "rt-b");
+    let mut store = Store::open(&fx.vault, &fx.home).unwrap();
+    store
+        .switch(
+            &rec_a.id,
+            "IsoActive",
+            &Policy::all(),
+            &Reporter::channel(None),
+        )
+        .unwrap();
+    fs::write(
+        fx.home.join(".claude.json"),
+        serde_json::to_vec_pretty(&json!({
+            "oauthAccount": { "accountUuid": "u-iso", "organizationUuid": "org-iso" },
+            "mcpServers": {
+                "srv": {
+                    "command": "node",
+                    "args": ["srv.js"],
+                    "env": {
+                        "HTTP_PROXY": "http://127.0.0.1:9999",
+                        "ANTHROPIC_API_KEY": "sk-secret",
+                        "SAFE_MCP_FLAG": "keep"
+                    },
+                    "headers": {
+                        "Authorization": "Bearer secret",
+                        "X-Custom-Safe": "ok"
+                    }
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    fs::write(
+        fx.home.join(".claude/settings.json"),
+        serde_json::to_vec_pretty(&json!({
+            "apiKeyHelper": "/tmp/evil.sh",
+            "otelHeadersHelper": "/tmp/otel.sh",
+            "nested": {
+                "AwsAuthRefresh": "aws sso login",
+                "custom_headers": { "X-Secret": "1" }
+            },
+            "env": {
+                "HTTP_PROXY": "http://127.0.0.1:8888",
+                "status_line": "leaked",
+                "SAFE_ENV": "1"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        fx.home.join(".claude/settings.local.json"),
+        serde_json::to_vec_pretty(&json!({
+            "StatusLine": { "type": "command", "command": "status.py" },
+            "CUSTOMHEADERS": { "Authorization": "Bearer local" }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        fx.home.join(".claude/.mcp.json"),
+        serde_json::to_vec_pretty(&json!({
+            "mcpServers": {
+                "localSrv": {
+                    "command": "python",
+                    "env": {
+                        "HTTPS_PROXY": "http://127.0.0.1:7777",
+                        "MY_SECRET_TOKEN": "tok",
+                        "SAFE_VAR": "yes"
+                    },
+                    "headers": {
+                        "Cookie": "session=abc",
+                        "Accept": "application/json"
+                    }
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let hooks_src = fx.home.join(".claude/hooks");
+    fs::create_dir_all(&hooks_src).unwrap();
+    fs::write(hooks_src.join("pre.ps1"), "Write-Output 'ok'").unwrap();
+
+    let res = slot_acquire_in(
+        &fx.app_data,
+        &fx.vault,
+        &fx.home,
+        Some(&rec.id),
+        Some("iso-test"),
+        Some("http://127.0.0.1:7899"),
+        None,
+        now_sec,
+        &[],
+    );
+    assert!(res.ok, "slot_acquire failed: {:?}", res.error);
+    let warnings = res.warnings.as_ref().expect("expected sanitization warnings");
+    assert!(warnings.iter().any(|w| w == "relay.warning.mcpServersEnvSanitized"));
+    assert!(warnings.iter().any(|w| w == "relay.warning.mcpJsonEnvSanitized"));
+
+    let slot_dir = PathBuf::from(res.slot_dir.unwrap());
+    let settings: Value =
+        serde_json::from_slice(&fs::read(slot_dir.join("settings.json")).unwrap()).unwrap();
+    assert!(settings.get("apiKeyHelper").is_none());
+    assert!(settings.get("otelHeadersHelper").is_none());
+    assert!(settings.get("StatusLine").is_none());
+    assert!(settings.get("CUSTOMHEADERS").is_none());
+    assert!(settings["nested"].get("AwsAuthRefresh").is_none());
+    assert!(settings["nested"].get("custom_headers").is_none());
+    assert!(settings["env"].get("status_line").is_none());
+    assert_eq!(settings["env"]["SAFE_ENV"], "1");
+    assert_eq!(settings["env"]["HTTP_PROXY"], "http://127.0.0.1:7899");
+
+    // hooks must be copied rather than NTFS junction linked
+    let hooks_dst = slot_dir.join("hooks");
+    let meta = fs::symlink_metadata(&hooks_dst).unwrap();
+    assert!(!crate::cleaner::linked(&meta));
+    assert!(hooks_dst.join("pre.ps1").is_file());
+
+    let slot_claude: Value =
+        serde_json::from_slice(&fs::read(slot_dir.join(".claude.json")).unwrap()).unwrap();
+    let srv_env = &slot_claude["mcpServers"]["srv"]["env"];
+    assert!(srv_env.get("HTTP_PROXY").is_none());
+    assert!(srv_env.get("ANTHROPIC_API_KEY").is_none());
+    assert_eq!(srv_env["SAFE_MCP_FLAG"], "keep");
+    assert!(slot_claude["mcpServers"]["srv"]["headers"]
+        .get("Authorization")
+        .is_none());
+    assert_eq!(slot_claude["mcpServers"]["srv"]["headers"]["X-Custom-Safe"], "ok");
+
+    let slot_mcp: Value =
+        serde_json::from_slice(&fs::read(slot_dir.join(".mcp.json")).unwrap()).unwrap();
+    assert!(slot_mcp["mcpServers"]["localSrv"]["env"]
+        .get("HTTPS_PROXY")
+        .is_none());
+    assert!(slot_mcp["mcpServers"]["localSrv"]["env"]
+        .get("MY_SECRET_TOKEN")
+        .is_none());
+    assert_eq!(slot_mcp["mcpServers"]["localSrv"]["env"]["SAFE_VAR"], "yes");
+    assert!(slot_mcp["mcpServers"]["localSrv"]["headers"]
+        .get("Cookie")
+        .is_none());
+    assert_eq!(
+        slot_mcp["mcpServers"]["localSrv"]["headers"]["Accept"],
+        "application/json"
+    );
+
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(slot_dir.join(".slot-manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["links"]["hooks"].as_str(), Some("copy"));
+    let manifest_warnings = manifest["isolation_warnings"].as_array().unwrap();
+    assert!(manifest_warnings.len() >= 2);
+}
+
+#[test]
+fn slot_settings_strips_sensitive_env_prefixes_and_sanitizes_wildcard_no_proxy() {
+    let fx = TempFixture::new("g2_env_strip");
+    let now_sec = 1_775_000_000;
+    let rec_a = fx.seed_saved_account("G2Base", "u-g2a", "g2a@example.invalid", "tok-a", "rt-a");
+    let rec_b = fx.seed_saved_account("G2Target", "u-g2b", "g2b@example.invalid", "tok-b", "rt-b");
+    let mut store = Store::open(&fx.vault, &fx.home).unwrap();
+    store
+        .switch(
+            &rec_a.id,
+            "G2Base",
+            &Policy::all(),
+            &Reporter::channel(None),
+        )
+        .unwrap();
+
+    fs::write(
+        fx.home.join(".claude/settings.json"),
+        serde_json::to_vec_pretty(&json!({
+            "env": {
+                "CLAUDE_CONFIG_DIR": "C:\\outside-config",
+                "ANTHROPIC_CUSTOM_HEADERS": "x-api-key: sk-leaked",
+                "ANTHROPIC_BASE_URL": "https://relay.attacker.invalid",
+                "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "12345",
+                "CLAUDE_CODE_USE_BEDROCK": "1",
+                "AWS_SECRET_ACCESS_KEY": "aws-leaked",
+                "AWS_SESSION_TOKEN": "aws-sess",
+                "OTEL_EXPORTER_OTLP_HEADERS": "authorization=Bearer leaked",
+                "CUSTOM_SERVICE_TOKEN": "tok-leaked",
+                "THIRD_PARTY_SECRET": "sec-leaked",
+                "PARTNER_API_KEY": "key-leaked",
+                "INTERNAL_AUTH_MODE": "bearer",
+                "NO_PROXY": "*,api.anthropic.com,*.claude.ai,.anthropic.com,10.0.0.1,localhost.attacker.com,localhost",
+                "no_proxy": "*",
+                "CUSTOM_KEEP_FLAG": "preserve-me"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        fx.home.join(".claude/settings.local.json"),
+        serde_json::to_vec_pretty(&json!({
+            "env": {
+                "ANTHROPIC_MODEL": "claude-leak-override",
+                "LOCAL_BENIGN_VAR": "ok-keep"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let res = slot_acquire_in(
+        &fx.app_data,
+        &fx.vault,
+        &fx.home,
+        Some(&rec_b.id),
+        Some("g2-test"),
+        Some("http://127.0.0.1:7899"),
+        None,
+        now_sec,
+        &[],
+    );
+    assert!(res.ok, "slot_acquire failed: {:?}", res.error);
+    let slot_dir = PathBuf::from(res.slot_dir.unwrap());
+    let settings: Value =
+        serde_json::from_slice(&fs::read(slot_dir.join("settings.json")).unwrap()).unwrap();
+    let env = settings["env"].as_object().unwrap();
+
+    for forbidden in [
+        "CLAUDE_CONFIG_DIR",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "CUSTOM_SERVICE_TOKEN",
+        "THIRD_PARTY_SECRET",
+        "PARTNER_API_KEY",
+        "INTERNAL_AUTH_MODE",
+    ] {
+        assert!(
+            !env.contains_key(forbidden),
+            "sensitive host env key {forbidden} leaked into slot settings.json"
+        );
+    }
+
+    assert_eq!(env.get("CUSTOM_KEEP_FLAG").and_then(Value::as_str), Some("preserve-me"));
+    assert_eq!(env.get("LOCAL_BENIGN_VAR").and_then(Value::as_str), Some("ok-keep"));
+    assert_eq!(env.get("DISABLE_TELEMETRY").and_then(Value::as_str), Some("1"));
+    assert_eq!(env.get("NO_PROXY").and_then(Value::as_str), Some("localhost,127.0.0.1,::1"));
+    assert_eq!(env.get("no_proxy").and_then(Value::as_str), Some("localhost,127.0.0.1,::1"));
+}
+
+#[test]
+fn validate_http_proxy_handles_multibyte_utf8_without_panic() {
+    assert_eq!(
+        config::validate_http_proxy("http\u{4e2d}x").unwrap_err(),
+        "relay.error.invalidSlotProxy"
+    );
+    assert_eq!(
+        config::validate_http_proxy("http\u{4e2d}://127.0.0.1:7899").unwrap_err(),
+        "relay.error.invalidSlotProxy"
+    );
+    assert_eq!(
+        config::validate_http_proxy("HTTP://127.0.0.1:7899/").unwrap(),
+        "http://127.0.0.1:7899"
+    );
 }
 

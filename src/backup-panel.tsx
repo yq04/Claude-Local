@@ -1,11 +1,11 @@
 /**
- * [INPUT]: 固定 app_data_dir 预览、用户显式输入的备份文件路径/口令与原生加密备份命令。
- * [OUTPUT]: 精简单行范围说明、带按钮内联复制确认的产品目录栏、并排双列（导出/检查恢复）身份保险库加密备份卡片与受控回执；每次操作结束清除口令输入。
+ * [INPUT]: 固定 app_data_dir 预览、用户显式输入的备份文件路径/口令与原生加密备份命令、Cromma Input/Button/Switch 控件。
+ * [OUTPUT]: 精简单行范围说明、带按钮内联复制确认的产品目录栏、并排双列（导出/检查恢复）使用 Cromma Input 与 htmlFor 无障碍关联的身份保险库加密备份卡片与受控回执；每次操作结束清除口令输入。
  * [POS]: 软件设置的数据管理区；只处理身份索引、主密钥、引用归档与养号/订阅元数据，不自动导出或接管当前身份。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {useEffect, useRef, useState} from 'react';
-import {Button, Switch} from 'cromma-ui';
+import {useEffect, useId, useRef, useState} from 'react';
+import {Button, Input, Switch} from 'cromma-ui';
 import {CheckTickCircle} from 'cromma-ui/pika';
 import {invoke} from '@tauri-apps/api/core';
 import {translate, type Locale} from './i18n';
@@ -88,6 +88,14 @@ function flagLabel(flag: string, locale: Locale) {
 
 export function BackupPanel({locale}: {locale: Locale}) {
   const text = (key: keyof typeof copy) => copy[key][locale];
+  const exportPathId = useId();
+  const exportPassId = useId();
+  const confirmPassId = useId();
+  const rescueSwitchId = useId();
+  const inputPathId = useId();
+  const inspectPassId = useId();
+  const restoreConfirmId = useId();
+  const restorePassId = useId();
   const [location, setLocation] = useState<Location | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [exportPath, setExportPath] = useState('');
@@ -220,25 +228,43 @@ export function BackupPanel({locale}: {locale: Locale}) {
         <div className="backup-forms-grid">
           <div className="backup-form">
             <h3>{text('export')}</h3>
-            <label>{text('exportPath')}<input value={exportPath} onChange={event => setExportPath(event.target.value)} autoComplete="off" spellCheck={false} /></label>
+            <div className="backup-field">
+              <label htmlFor={exportPathId}>{text('exportPath')}</label>
+              <Input id={exportPathId} size="small" value={exportPath} onChange={event => setExportPath(event.target.value)} autoComplete="off" spellCheck={false} />
+            </div>
             <p>{text('pathHelp')}</p>
-            <label>{text('passphrase')}<input type="password" value={exportPass} onChange={event => setExportPass(event.target.value)} autoComplete="new-password" /></label>
-            <label>{text('confirm')}<input type="password" value={confirmPass} onChange={event => setConfirmPass(event.target.value)} autoComplete="new-password" /></label>
-            {preview && <div className="backup-rescue-toggle"><Switch aria-label={text('rescue')} checked={rescueMode} onCheckedChange={setRescueMode} /><span>{text('rescue')}</span></div>}
+            <div className="backup-field">
+              <label htmlFor={exportPassId}>{text('passphrase')}</label>
+              <Input id={exportPassId} size="small" type="password" value={exportPass} onChange={event => setExportPass(event.target.value)} autoComplete="new-password" />
+            </div>
+            <div className="backup-field">
+              <label htmlFor={confirmPassId}>{text('confirm')}</label>
+              <Input id={confirmPassId} size="small" type="password" value={confirmPass} onChange={event => setConfirmPass(event.target.value)} autoComplete="new-password" />
+            </div>
+            {preview && <div className="backup-rescue-toggle"><Switch id={rescueSwitchId} aria-label={text('rescue')} checked={rescueMode} onCheckedChange={setRescueMode} /><label htmlFor={rescueSwitchId}>{text('rescue')}</label></div>}
             <Button variant="secondary" disabled={busy || !preview || !preview.rescue_available || !exportPath.trim() || exportPass.length < 12 || exportPass !== confirmPass || (!preview.valid && !rescueMode)} onClick={() => void exportBackup()}>{busy ? text('busy') : text('create')}</Button>
           </div>
           <div className="backup-form">
             <h3>{text('restore')}</h3>
-            <label>{text('inputPath')}<input value={inputPath} onChange={event => {inspectionRevision.current++;setInputPath(event.target.value);setInspectPass('');setRestorePass('');setInspection(null);setInspectionPath('');setRestoreConfirmed(false);setReceipt(null);setNotice('');setError('');setBusy(false);}} autoComplete="off" spellCheck={false} /></label>
-            <label>{text('inspectPass')}<input type="password" value={inspectPass} onChange={event => setInspectPass(event.target.value)} autoComplete="current-password" /></label>
+            <div className="backup-field">
+              <label htmlFor={inputPathId}>{text('inputPath')}</label>
+              <Input id={inputPathId} size="small" value={inputPath} onChange={event => {inspectionRevision.current++;setInputPath(event.target.value);setInspectPass('');setRestorePass('');setInspection(null);setInspectionPath('');setRestoreConfirmed(false);setReceipt(null);setNotice('');setError('');setBusy(false);}} autoComplete="off" spellCheck={false} />
+            </div>
+            <div className="backup-field">
+              <label htmlFor={inspectPassId}>{text('inspectPass')}</label>
+              <Input id={inspectPassId} size="small" type="password" value={inspectPass} onChange={event => setInspectPass(event.target.value)} autoComplete="current-password" />
+            </div>
             <Button variant="secondary" disabled={busy || !inputPath.trim() || !inspectPass} onClick={() => void inspectBackup()}>{text('inspect')}</Button>
             {inspection && (inspection.verified || inspection.rescue_copy) && inspectionPath === inputPath.trim() && <div className="backup-inspection" role="status">
               <strong>{inspection.rescue_copy ? text('rescueVerified') : text('verified')}</strong>
               <span>{inspection.saved_identities} {text('identities')} · {inspection.archives} {text('archives')} · {formatBytes(inspection.bytes, locale)}</span>
               {inspection.recovery_pending && <span>{text('recoveryFlag')}</span>}
               {inspection.diagnostics.length > 0 && <span>{inspection.diagnostics.map(flag => flagLabel(flag, locale)).join(' · ')}</span>}
-              <label className="backup-rescue-toggle"><Switch aria-label={text(presentation.confirmationKey)} checked={restoreConfirmed} onCheckedChange={setRestoreConfirmed} /><span>{text(presentation.confirmationKey)}</span></label>
-              <label>{text('restorePass')}<input type="password" value={restorePass} onChange={event => setRestorePass(event.target.value)} autoComplete="new-password" /></label>
+              <div className="backup-rescue-toggle"><Switch id={restoreConfirmId} aria-label={text(presentation.confirmationKey)} checked={restoreConfirmed} onCheckedChange={setRestoreConfirmed} /><label htmlFor={restoreConfirmId}>{text(presentation.confirmationKey)}</label></div>
+              <div className="backup-field">
+                <label htmlFor={restorePassId}>{text('restorePass')}</label>
+                <Input id={restorePassId} size="small" type="password" value={restorePass} onChange={event => setRestorePass(event.target.value)} autoComplete="new-password" />
+              </div>
               <Button variant="secondary" disabled={busy || !canRestoreInspection(inspection, inspectionPath, inputPath, restoreConfirmed, restorePass)} onClick={() => void restoreCopy()}>{text(presentation.actionKey)}</Button>
             </div>}
           </div>

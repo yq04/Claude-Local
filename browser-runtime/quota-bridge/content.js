@@ -1,10 +1,11 @@
-// [INPUT]: Explicit loopback fragment and same-origin Claude account/organization API responses (subscription, usage, optional kyc_status).
-// [OUTPUT]: Fingerprint candidates, allowlisted metadata (including stripped kyc_status) and bounded failure reasons for the local callback.
+// [INPUT]: Explicit top-frame loopback fragment or single-use `claude-local-quota-claim` session claim and same-origin Claude account/organization API responses (subscription, usage, optional kyc_status).
+// [OUTPUT]: Fingerprint candidates, clean navigation to `https://claude.ai/settings/usage` without URL fragments, allowlisted metadata (including stripped kyc_status) and bounded failure reasons for the local callback.
 // [POS]: Fixed MV3 page bridge; account identity is selected by the local quota_identity fingerprint.
 "use strict";
 let quotaRequestDeadlineMs = 0;
 
 (async () => {
+  if (window !== window.top) return;
   const url = new URL(location.href);
   if (url.protocol === "http:" && url.hostname === "127.0.0.1" &&
       Number(url.port) >= 1 && Number(url.port) <= 65535 && /\/[a-f0-9]{48}\/browser\.html$/.test(url.pathname)) {
@@ -14,17 +15,15 @@ let quotaRequestDeadlineMs = 0;
     if (!/^[a-f0-9]{48}$/.test(nonce) || !/^[a-f0-9]{64}$/.test(quotaIdentity)) return;
     const response = await chrome.runtime.sendMessage({ kind: "claude-local-quota-pair", nonce, quotaIdentity });
     if (response?.paired) {
-      location.assign(`https://claude.ai/settings/usage#claude-local-sync=${nonce}`);
+      location.assign("https://claude.ai/settings/usage");
     }
     return;
   }
 
   if (url.origin !== "https://claude.ai" || url.pathname !== "/settings/usage") return;
-  const nonce = url.hash.startsWith("#claude-local-sync=") ? url.hash.slice(19) : "";
+  const claim = await chrome.runtime.sendMessage({ kind: "claude-local-quota-claim" });
+  const nonce = typeof claim?.nonce === "string" ? claim.nonce : "";
   if (!/^[a-f0-9]{48}$/.test(nonce)) return;
-  if (sessionStorage.getItem(`claude-local-quota:${nonce}`)) return;
-  sessionStorage.setItem(`claude-local-quota:${nonce}`, "started");
-  history.replaceState(null, "", url.pathname + url.search);
   quotaRequestDeadlineMs = Date.now() + 20_000;
   let failure = "identity_unavailable";
   try {

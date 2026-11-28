@@ -1,7 +1,7 @@
-/* [INPUT]: Theme surface, border, typography and accent tokens from style.css.
- * [OUTPUT]: Shared 4-column hairline telemetry strip and unified Quick-Setup layouts for Browser, Computer and Network pages (including multi-port Clash snippet card & AppDialog modal styles).
- * [POS]: Imported by browser.tsx, system.tsx and vps.tsx; scoped selectors (>= 0,2,0 / 0,3,0) cleanly supersede legacy card rules despite earlier import order in main.tsx.
- * [PROTOCOL]: Update src/CLAUDE.md with changes. */
+/* [INPUT]: Theme surface, border, typography, accent tokens and shared .env-telemetry-* base from style.css.
+ * [OUTPUT]: Unified Quick-Setup layouts for Browser, Computer and Network pages (container queries, odd-item hairline check grids, multi-port Clash snippet card, stabilized header status & AppDialog modal styles).
+ * [POS]: Imported by browser.tsx, system.tsx and vps.tsx after style.css.
+ * [PROTOCOL]: Update this header and src/CLAUDE.md with changes. */
 
 /* ==========================================================================
    1. Shared Page Containers & 4-Column Hairline Telemetry Strip
@@ -22,159 +22,6 @@
   display: grid;
   gap: 14px;
   container: network-env / inline-size;
-}
-
-.system-page .env-telemetry-strip {
-  padding: 0;
-  margin: 0;
-  overflow: hidden;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-}
-
-.system-page .env-telemetry-cell {
-  display: grid;
-  align-content: start;
-  gap: 4px;
-  min-width: 0;
-  padding: 12px 14px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-}
-
-.system-page .env-telemetry-cell + .env-telemetry-cell {
-  border-left: 1px solid var(--landing-line);
-}
-
-.system-page .env-telemetry-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.system-page .env-status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background: #94a3b8;
-}
-
-.system-page .env-status-dot.is-ready {
-  background: #16a34a;
-}
-
-.system-page .env-status-dot.is-pending {
-  background: #d97706;
-}
-
-.system-page .env-status-dot.is-failed {
-  background: #dc2626;
-}
-
-.system-page .env-status-dot.is-warming {
-  background: #06b6d4;
-}
-
-:root.dark .system-page .env-status-dot.is-ready {
-  background: #4ade80;
-}
-
-:root.dark .system-page .env-status-dot.is-pending {
-  background: #fbbf24;
-}
-
-:root.dark .system-page .env-status-dot.is-failed {
-  background: #f87171;
-}
-
-:root.dark .system-page .env-status-dot.is-warming {
-  background: #22d3ee;
-}
-
-.system-page .env-telemetry-label {
-  font-size: 11.5px;
-  line-height: 1.3;
-  color: var(--muted-foreground);
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.system-page .env-telemetry-cell strong {
-  font-size: 13.5px;
-  line-height: 1.35;
-  font-weight: 600;
-  color: var(--foreground);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.system-page .env-telemetry-cell small {
-  font-size: 11.5px;
-  line-height: 1.35;
-  color: var(--muted-foreground);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.system-page .env-telemetry-cell .env-telemetry-scope {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  font-size: 11.5px;
-  line-height: 1.38;
-  color: var(--muted-foreground);
-  min-width: 0;
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
-
-@container (max-width: 680px) {
-  .system-page .env-telemetry-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .system-page .env-telemetry-cell + .env-telemetry-cell {
-    border-left: 0;
-  }
-
-  .system-page .env-telemetry-cell:nth-child(even) {
-    border-left: 1px solid var(--landing-line);
-  }
-
-  .system-page .env-telemetry-cell:nth-child(n + 3) {
-    border-top: 1px solid var(--landing-line);
-  }
-}
-
-@container (max-width: 390px) {
-  .system-page .env-telemetry-strip {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .system-page .env-telemetry-cell:nth-child(even) {
-    border-left: 0;
-  }
-
-  .system-page .env-telemetry-cell + .env-telemetry-cell {
-    border-top: 1px solid var(--landing-line);
-  }
 }
 
 /* ==========================================================================
@@ -369,8 +216,13 @@
   box-shadow: none;
 }
 
-.browser-page .browser-check-grid .browser-check:nth-child(even) {
-  border-left: 1px solid var(--landing-line);
+.browser-page .browser-check-grid .browser-check:nth-child(odd) {
+  border-right: 1px solid var(--landing-line);
+}
+
+.browser-page .browser-check-grid .browser-check:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+  border-right: 0;
 }
 
 .browser-page .browser-check-grid .browser-check:nth-child(n + 3) {
@@ -424,12 +276,11 @@
 
 .browser-page .browser-check-copy strong {
   font-size: 12.5px;
-  line-height: 1.3;
+  line-height: 1.35;
   font-weight: 600;
   color: var(--foreground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .browser-page .browser-check-copy p {
@@ -492,7 +343,7 @@
 .browser-page .browser-data-scenarios .browser-scenario-card {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: start;
   gap: 10px 12px;
   padding: 13px 16px;
   min-width: 0;
@@ -500,6 +351,10 @@
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.browser-page .browser-scenario-card > .settings-icon-badge {
+  margin-top: 1px;
 }
 
 .browser-page .browser-data-scenarios .browser-scenario-card + .browser-scenario-card {
@@ -518,6 +373,7 @@
   flex-wrap: wrap;
   gap: 6px 8px;
   min-width: 0;
+  min-height: 20px;
 }
 
 .browser-page .browser-scenario-card .browser-scenario-head strong {
@@ -536,6 +392,7 @@
 }
 
 .browser-page .browser-scenario-card > button {
+  align-self: center;
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -578,8 +435,12 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .browser-page .browser-check-grid .browser-check:nth-child(even) {
-    border-left: 0;
+  .browser-page .browser-check-grid .browser-check:nth-child(odd) {
+    border-right: 0;
+  }
+
+  .browser-page .browser-check-grid .browser-check:last-child:nth-child(odd) {
+    grid-column: auto;
   }
 
   .browser-page .browser-check-grid .browser-check + .browser-check {
@@ -775,10 +636,10 @@
 }
 
 .system-environment-page .system-setting-card .system-inline-field > button {
-  flex: 0 1 168px;
-  width: 168px;
-  min-width: 132px;
-  max-width: 100%;
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 168px;
+  max-width: 228px;
 }
 
 .system-environment-page .system-setting-card .system-field-label {
@@ -897,16 +758,24 @@
 /* ==========================================================================
    4. Network Environment (vps.tsx)
    ========================================================================== */
+.network-page .network-header .network-header-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  margin-left: auto;
+}
+
 .network-page .network-header .network-copy-status {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
+  min-height: 24px;
   padding: 2px 9px;
   margin: 0;
   border-radius: 999px;
   font-size: 11.5px;
   font-weight: 500;
   line-height: 1.3;
+  white-space: nowrap;
   background: color-mix(in srgb, #16a34a 12%, transparent);
   border: 1px solid color-mix(in srgb, #16a34a 28%, transparent);
   color: #16703c;

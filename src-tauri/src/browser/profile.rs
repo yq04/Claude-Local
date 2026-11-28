@@ -1,5 +1,5 @@
 // [INPUT]: 宿主独立资料目录、原生进程核验、本人目录继承权限补齐、Unix 所有权/权限元数据与已验证配置。
-// [OUTPUT]: 浏览资料占用保护、窄范围 Preferences/Local State 更新（禁用网络预测与内置 DoH）、缓存/登录数据清理及全资料重置。
+// [OUTPUT]: 单次事务复用的浏览资料占用保护（RunningMemoGuard 与渐进退避 quit）、脏写跳过的窄范围 Preferences/Local State 安全加固（禁网络预测/DoH/ECH/吊销检查与 TUN 直连模式）、Chromium 148 站点/Privacy Sandbox 清理及全资料重置。
 // [POS]: 文件边界；常规清理遍历固定位置，全清理枚举并清空独立资料目录，拒绝链接，不生成备份。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #[cfg(target_os = "linux")]
@@ -23,19 +23,93 @@ extern "C" {
     fn rf_browser_running(profile: *const c_char) -> *mut c_char;
     fn rf_browser_quit(profile: *const c_char) -> *mut c_char;
 }
-pub fn running(profile: &Path) -> Result<bool, String> {
+thread_local! {
+    static RUNNING_MEMO: std::cell::RefCell<Option<std::collections::HashMap<PathBuf, bool>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) struct RunningMemoGuard {
+    prev: Option<std::collections::HashMap<PathBuf, bool>>,
+}
+
+pub(crate) fn begin_running_memo() -> RunningMemoGuard {
+    let prev = RUNNING_MEMO.with(|cell| {
+        cell.borrow_mut()
+            .replace(std::collections::HashMap::new())
+    });
+    RunningMemoGuard { prev }
+}
+
+pub(crate) fn invalidate_running_memo(profile: &Path) {
+    RUNNING_MEMO.with(|cell| {
+        if let Some(map) = cell.borrow_mut().as_mut() {
+            map.remove(profile);
+        }
+    });
+}
+
+impl Drop for RunningMemoGuard {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        RUNNING_MEMO.with(|cell| {
+            *cell.borrow_mut() = prev;
+        });
+    }
+}
+
+pub(crate) fn running_uncached(profile: &Path) -> Result<bool, String> {
     let path = CString::new(profile.to_string_lossy().as_bytes()).map_err(|_| "资料路径无效。")?;
     let state: Value = decode(unsafe { rf_browser_running(path.as_ptr()) })?;
     Ok(state["running"].as_bool().unwrap_or(false))
 }
+
+pub fn running(profile: &Path) -> Result<bool, String> {
+    if let Some(cached) = RUNNING_MEMO.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|map| map.get(profile).copied())
+    }) {
+        return Ok(cached);
+    }
+    #[cfg(unix)]
+    if fs::symlink_metadata(profile.join("SingletonLock")).is_err() {
+        RUNNING_MEMO.with(|cell| {
+            if let Some(map) = cell.borrow_mut().as_mut() {
+                map.insert(profile.to_path_buf(), false);
+            }
+        });
+        return Ok(false);
+    }
+    let result = running_uncached(profile)?;
+    RUNNING_MEMO.with(|cell| {
+        if let Some(map) = cell.borrow_mut().as_mut() {
+            map.insert(profile.to_path_buf(), result);
+        }
+    });
+    Ok(result)
+}
+
 pub fn quit(profile: &Path) -> Result<(), String> {
+    invalidate_running_memo(profile);
     let path = CString::new(profile.to_string_lossy().as_bytes()).map_err(|_| "资料路径无效。")?;
     let _: Value = decode(unsafe { rf_browser_quit(path.as_ptr()) })?;
-    for _ in 0..100 {
-        if !running(profile)? {
+    // Progressive backoff totaling 5000ms: 4x25ms + 10x50ms + 44x100ms
+    const BACKOFF_MS: &[u64] = &[
+        25, 25, 25, 25, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 100, 100, 100, 100, 100, 100, 100,
+        100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+        100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+        100,
+    ];
+    for &delay_ms in BACKOFF_MS {
+        if !running_uncached(profile)? {
+            invalidate_running_memo(profile);
             return Ok(());
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+    }
+    if !running_uncached(profile)? {
+        invalidate_running_memo(profile);
+        return Ok(());
     }
     Err("浏览器仍在运行，请保存任务并关闭浏览器窗口。".into())
 }
@@ -118,11 +192,12 @@ pub fn preferences(
 ) -> Result<(), String> {
     let path = profile.join("Default/Preferences");
     check_path(profile, &path)?;
-    let mut data: Value = match fs::read(&path) {
-        Ok(bytes) => {
-            serde_json::from_slice(&bytes).map_err(|_| "Preferences 损坏，未覆盖原文件。")?
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+    let (mut data, existed): (Value, bool) = match fs::read(&path) {
+        Ok(bytes) => (
+            serde_json::from_slice(&bytes).map_err(|_| "Preferences 损坏，未覆盖原文件。")?,
+            true,
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (json!({}), false),
         Err(_) => return Err("无法读取 Preferences。".into()),
     };
     if !data.is_object() {
@@ -133,6 +208,9 @@ pub fn preferences(
         "/webrtc",
         "/dns_prefetching",
         "/net",
+        "/proxy",
+        "/alternate_error_pages",
+        "/safebrowsing",
         "/profile",
         "/profile/default_content_setting_values",
         "/profile/content_settings",
@@ -146,11 +224,20 @@ pub fn preferences(
             return Err("Preferences 字段格式错误，未修改原文件。".into());
         }
     }
+    let before = data.clone();
     let lang = config.language(machine);
     data["intl"]["accept_languages"] = json!(super::config::accept_languages(&lang));
     data["intl"]["selected_languages"] = data["intl"]["accept_languages"].clone();
     data["dns_prefetching"]["enabled"] = json!(false);
     data["net"]["network_prediction_options"] = json!(2);
+    data["alternate_error_pages"]["enabled"] = json!(false);
+    data["safebrowsing"]["enabled"] = json!(false);
+    data["safebrowsing"]["enhanced"] = json!(false);
+    if config.proxy.trim().is_empty() {
+        data["proxy"]["mode"] = json!("direct");
+    } else if let Some(obj) = data.as_object_mut() {
+        obj.remove("proxy");
+    }
     data["webrtc"]["ip_handling_policy"] = json!("disable_non_proxied_udp");
     data["webrtc"]["multiple_routes_enabled"] = json!(false);
     data["webrtc"]["nonproxied_udp_enabled"] = json!(false);
@@ -160,32 +247,50 @@ pub fn preferences(
         json!({"approximate":2,"precise":2});
     data["profile"]["content_settings"]["exceptions"]["geolocation"] = json!({});
     data["profile"]["content_settings"]["exceptions"]["geolocation_with_options"] = json!({});
-    write_json(&path, &data)?;
+    if !existed || data != before {
+        write_json(&path, &data)?;
+    }
     disable_local_state_doh(profile)
 }
 
 fn disable_local_state_doh(profile: &Path) -> Result<(), String> {
     let path = profile.join("Local State");
     check_path(profile, &path)?;
-    let mut data: Value = match fs::read(&path) {
-        Ok(bytes) => {
-            serde_json::from_slice(&bytes).map_err(|_| "Local State 损坏，未覆盖原文件。".to_string())?
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+    let (mut data, existed): (Value, bool) = match fs::read(&path) {
+        Ok(bytes) => (
+            serde_json::from_slice(&bytes)
+                .map_err(|_| "Local State 损坏，未覆盖原文件。".to_string())?,
+            true,
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (json!({}), false),
         Err(_) => return Err("无法读取 Local State。".into()),
     };
     if !data.is_object() {
         return Err("Local State 格式错误。".into());
     }
-    if data
-        .pointer("/dns_over_https")
-        .map(|v| !v.is_object() && !v.is_null())
-        .unwrap_or(false)
-    {
-        return Err("Local State 字段格式错误，未修改原文件。".into());
+    for pointer in ["/dns_over_https", "/ssl", "/ssl/rev_checking", "/proxy"] {
+        if data
+            .pointer(pointer)
+            .map(|v| !v.is_object() && !v.is_null())
+            .unwrap_or(false)
+        {
+            return Err("Local State 字段格式错误，未修改原文件。".into());
+        }
     }
+    let before = data.clone();
     data["dns_over_https"]["mode"] = json!("off");
-    write_json(&path, &data)
+    data["ssl"]["rev_checking"]["enabled"] = json!(false);
+    data["ssl"]["ech_enabled"] = json!(false);
+    data["proxy"]["quick_check_enabled"] = json!(false);
+    if let Some(obj) = data.as_object_mut() {
+        obj.remove("variations_seed");
+        obj.remove("variations_compressed_seed");
+        obj.remove("user_experience_metrics");
+    }
+    if !existed || data != before {
+        write_json(&path, &data)?;
+    }
+    Ok(())
 }
 pub const CACHE: &[&str] = &[
     "Default/Cache",
@@ -204,17 +309,27 @@ pub const CACHE: &[&str] = &[
 pub const SITE_DATA: &[&str] = &[
     "Default/Network/Cookies",
     "Default/Network/Cookies-journal",
+    "Default/Network/Cookies-wal",
+    "Default/Network/Cookies-shm",
     "Default/Network/Trust Tokens",
     "Default/Network/Trust Tokens-journal",
+    "Default/Network/Trust Tokens-wal",
+    "Default/Network/Trust Tokens-shm",
     "Default/Network/TransportSecurity",
     "Default/Network/Network Persistent State",
     "Default/Network/Reporting and Nel",
     "Default/Network/Reporting and Nel-journal",
+    "Default/Network/Reporting and Nel-wal",
+    "Default/Network/Reporting and Nel-shm",
+    "Default/Network/SCT Auditing",
     "Default/Cookies",
     "Default/Cookies-journal",
+    "Default/Cookies-wal",
+    "Default/Cookies-shm",
     "Default/Local Storage",
     "Default/Session Storage",
     "Default/IndexedDB",
+    "Default/File System",
     "Default/Service Worker",
     "Default/WebStorage",
     "Default/Storage",
@@ -222,11 +337,25 @@ pub const SITE_DATA: &[&str] = &[
     "Default/Shared Dictionary",
     "Default/SharedStorage",
     "Default/SharedStorage-wal",
+    "Default/SharedStorage-shm",
+    "Default/SharedStorage-journal",
+    "Default/InterestGroups",
+    "Default/InterestGroups-journal",
+    "Default/PrivateAggregation",
+    "Default/PrivateAggregation-journal",
+    "Default/AttributionReporting",
+    "Default/AttributionReporting-journal",
+    "Default/Site Characteristics Database",
+    "Default/QuotaManager",
+    "Default/QuotaManager-journal",
+    "Default/WebRTC Logs",
     "Default/DIPS",
     "Default/DIPS-journal",
     "Default/DIPS-wal",
     "Default/DIPS-shm",
     "Default/BrowsingTopicsState",
+    "Default/BrowsingTopicsState-wal",
+    "Default/BrowsingTopicsState-shm",
     "Default/blob_storage",
 ];
 fn read_cache_dir(path: &Path) -> Result<fs::ReadDir, String> {

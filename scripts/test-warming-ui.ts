@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 现有隔离 Playwright 引擎、Vite 本机地址与 tests/identities.html 的虚构 Tauri IPC。
- * [OUTPUT]: 养号创建/编辑/浏览器运行状态隔离、冻结CLI返回和用量页、BrowserPanel配置草稿同步、统一数量标签/可读邮箱/精简引导及双语隐私180×286卡片。
+ * [OUTPUT]: 养号创建/编辑/浏览器运行状态隔离、冻结CLI返回和详情页入口、BrowserPanel配置草稿同步、统一数量标签/可读邮箱/精简引导及双语隐私166×286卡片。
  * [POS]: 养号卡专用合成 UI 行为回归；不触碰真实数据/CLI/网络，卡片与空状态预览仅存 ignored .local/tasks/。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -25,7 +25,7 @@ export async function testWarmingUi(browser: Browser, base: string): Promise<num
       const cardId=await card.getAttribute('data-warming-id');
       await page.waitForFunction(({cardId,status})=>document.querySelector(`[data-warming-id="${cardId}"]`)?.getAttribute('data-browser-runtime')===status,{cardId,status});
     };
-    const browserActions=()=>page.evaluate(()=>(window as any).identityFixture.commands.filter((row:any)=>['browser_return_to_cli','browser_open_usage','browser_launch','identities_stop','identities_save','identities_switch'].includes(row.command)));
+    const browserActions=()=>page.evaluate(()=>(window as any).identityFixture.commands.filter((row:any)=>['browser_return_to_cli','browser_open_usage','browser_open_identity_profile','browser_launch','identities_stop','identities_save','identities_switch'].includes(row.command)));
 
     const todayYmd = '2026-10-29';
     const fakeNow = new Date('2026-10-29T12:00:00Z');
@@ -152,40 +152,47 @@ export async function testWarmingUi(browser: Browser, base: string): Promise<num
     assert.equal(await cardAlpha.getAttribute('data-browser-active'),'false');
     checks++;
 
-    // Usage freezes current CLI fingerprint; a changed account is rejected before rebinding.
+    // Entering Claude.ai from QuotaDetailsModal freezes current CLI fingerprint; a changed account is rejected before IPC launch.
     await cardAlpha.locator('[data-warming-open]').click();
     await waitRuntime(cardAlpha,'running');
     await currentCard.locator('.identity-quota-open').click();
     let usageDialog=page.getByRole('dialog');
-    const usageLabel=await page.evaluate(async()=>(await import('/src/i18n.ts')).translate('quota.openOfficial'));
-    await page.evaluate(()=>(window as any).identityFixture.defer('browser_open_usage'));
-    await usageDialog.getByRole('button',{name:usageLabel,exact:true}).click();
-    await page.waitForFunction(()=>(window as any).identityFixture.pending.includes('browser_open_usage'));
-    await page.evaluate(()=>{
-      const f=(window as any).identityFixture;f.state.current.quota_identity='2'.padStart(64,'0');f.release('browser_open_usage');
-    });
+    const enterLabel=await page.evaluate(async()=>(await import('/src/i18n.ts')).translate('browser.enterClaudeAi'));
     const mismatchLabel=await page.evaluate(async()=>(await import('/src/i18n.ts')).translate('quotaOnline.accountMismatch'));
+    const readsBeforeMismatch=await page.evaluate(()=>{
+      const f=(window as any).identityFixture;
+      f.state.current.quota_identity='2'.padStart(64,'0');
+      f.quotaRevision++;
+      return f.identityReads;
+    });
+    await page.clock.runFor(2100);
+    await page.waitForFunction((prev:number)=>(window as any).identityFixture.identityReads>prev,readsBeforeMismatch);
+    await usageDialog.getByRole('button',{name:enterLabel,exact:true}).click();
     await usageDialog.getByText(mismatchLabel,{exact:true}).waitFor();
     assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.active_browser_slot),selectedProfile.slot);
-    const rejectedUsage=(await browserActions()).at(-1);
-    assert.equal(rejectedUsage.command,'browser_open_usage');
-    assert.equal(rejectedUsage.args.expectedIdentity,cliBefore.current.quota_identity);
-    await page.evaluate(expected=>(window as any).identityFixture.state.current.quota_identity=expected,cliBefore.current.quota_identity);
-    await usageDialog.getByRole('button',{name:await page.evaluate(async()=>(await import('/src/i18n.ts')).translate('关闭弹窗')),exact:true}).click();
-    await currentCard.locator('.identity-quota-open').click();
-    usageDialog=page.getByRole('dialog');
-    await usageDialog.getByRole('button',{name:usageLabel,exact:true}).click();
-    await usageDialog.getByText(await page.evaluate(async()=>(await import('/src/i18n.ts')).translate('quota.opened')),{exact:true}).waitFor();
-    assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.active_browser_slot),selectedProfile.slot,'Usage opens the frozen CLI profile without replacing the selected warming slot');
+    assert.equal((await browserActions()).filter((row:any)=>row.command==='browser_open_identity_profile').length,0,'Mismatched frozen fingerprint must be blocked before IPC launch');
+    const readsAfterRestore=await page.evaluate(expected=>{
+      const f=(window as any).identityFixture;
+      f.state.current.quota_identity=expected;
+      f.quotaRevision++;
+      return f.identityReads;
+    },cliBefore.current.quota_identity);
+    await page.clock.runFor(2100);
+    await page.waitForFunction((prev:number)=>(window as any).identityFixture.identityReads>prev,readsAfterRestore);
+    await usageDialog.getByRole('button',{name:enterLabel,exact:true}).click();
+    await usageDialog.getByText(await page.evaluate(async()=>(await import('/src/i18n.ts')).translate('quotaOnline.accountBrowserOpened')),{exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>(window as any).identityFixture.state.active_browser_slot),selectedProfile.slot,'Entering Claude.ai opens the frozen CLI profile without replacing the selected warming slot');
     const usageActions=(await browserActions()).slice(actionsBeforeReturn.length);
-    assert.deepEqual(usageActions.map((row:any)=>row.command),['browser_return_to_cli','browser_open_usage','browser_open_usage']);
+    assert.deepEqual(usageActions.map((row:any)=>row.command),['browser_return_to_cli','browser_open_identity_profile']);
+    assert.equal(usageActions[1].args.accountId,'current');
+    assert.equal(usageActions[1].args.openMode,'claude_ai');
     assert(usageActions.every((row:any)=>row.args.expectedIdentity===cliBefore.current.quota_identity));
     await usageDialog.getByRole('button',{name:await page.evaluate(async()=>(await import('/src/i18n.ts')).translate('关闭弹窗')),exact:true}).click();
     await cardAlpha.locator('[data-warming-open]').click();
     await waitRuntime(cardAlpha,'running');
     assert.deepEqual(await page.evaluate(()=>{
       const {active,current,records}=(window as any).identityFixture.state;return {active,current,records};
-    }),cliBefore,'Returning and opening usage must preserve all CLI identity state');
+    }),cliBefore,'Returning and opening account browser must preserve all CLI identity state');
     checks++;
 
     // 4. 编辑养号卡（名称、阶段、备注）

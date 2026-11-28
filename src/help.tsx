@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 共享 YAML 中英文目录与各页面的操作边界（含后台 Shell 无损切号与智能接力流程）。
- * [OUTPUT]: 统一 44px 页头、独立本地产品说明、双列紧凑参考网格（含「运行到一半没额度、且有后台 Shell 任务时如何无损切号？」FAQ 指引）及 Cromma Disclosure 注意事项，保留全部帮助词条与账号边界。
+ * [OUTPUT]: 统一 44px 页头、独立本地产品说明、统一 .settings-card 皮肤的双列紧凑参考网格（含「运行到一半没额度、且有后台 Shell 任务时如何无损切号？」FAQ 指引）及 Cromma Disclosure 注意事项，保留全部帮助词条与账号边界。
  * [POS]: 帮助与安全边界说明；采用双列参考卡片网格与 Cromma Disclosure，不自动读取用户资料。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -64,12 +64,12 @@ export function HelpPanel() {
     ];
     return <section className="system-page help-page">
         <header className="cleanup-title help-header"><h1>{t('使用说明')}</h1></header>
-        <p className="help-scope">{t('Claude-Local 是独立维护的本地工具，用于管理本人的 Claude 身份、浏览器资料与离线额度。')}</p>
-        <ol className="help-topics">{topics.map((topic, index) => <li className="help-row" key={index}>
-            <div className="help-label"><span className="settings-group-bar" aria-hidden="true"/><h2>{topic.title}</h2></div>
+        <p className="settings-card help-scope">{t('Claude-Local 是独立维护的本地工具，用于管理本人的 Claude 身份、浏览器资料与离线额度。')}</p>
+        <ol className="help-topics">{topics.map((topic, index) => <li className="settings-card help-row" key={index}>
+            <div className="help-label"><h2>{topic.title}</h2></div>
             <div className="help-copy">{topic.lines.map(line => <p key={line}>{line}</p>)}</div>
         </li>)}</ol>
-        <div className="help-notes">
+        <div className="settings-card help-notes">
             <Disclosure className="help-details" triggerClassName="help-details-trigger" summary={t('应用使用')}>
                 <div className="help-copy">
                     <p>{t('关闭窗口后应用留在托盘；从托盘菜单退出应用。')}</p>

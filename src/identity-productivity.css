@@ -1,7 +1,7 @@
 /* [INPUT]: Identity/warming shared count headers, readable saved-profile email, selected-slot/runtime/cli-slot states, short onboarding, expiry, quota, wakeup, smart-relay, Claude CLI and residue sub-panel states.
- * [OUTPUT]: Accessible ⋯ dropdown menu, compact .identity-slot-live-pill badge with live pulse dot, semantic data-plan-tier (Free/Pro/Max/Ultra/Team) pills + right-hand MM/DD subscription expiry urgency tag, manual plan calibration & recharge/expiry editor dialog, uniform 28px header action groups without wrap-orphan dividers, single-scroll auto-wakeup & 2-zone smart-relay dialogs (eliminating nested double scrollbars, coaxial full-width routing/CLI .identity-relay-section cards, aligned 24px account-row controls & 26px chips, .identity-relay-cluster-hint >=3 same-exit pool warning, semantic 5h/7d bars, Reset-Card verify-sync button, collapsible slot proxy pill & 1-click CLI relay launcher), QuotaDetails KYC status pill/note, card filter chips + optional multi-row grid toggle, burn-rate ETA in QuotaDetails, non-disruptive live-CLI switch callout, and Dark/Glass contrast parity without changing 166×286 card geometry.
- * [POS]: Identity productivity presentation; the 166×286 badge remains owned by style.css.
- * [PROTOCOL]: Keep additions local to identity workbench controls.
+ * [OUTPUT]: Accessible ⋯ dropdown menu, compact .identity-slot-live-pill badge with live pulse dot, semantic data-plan-tier (Free/Pro/Max/Ultra/Team) pills + right-hand MM/DD subscription expiry urgency tag, manual plan calibration & recharge/expiry editor dialog, uniform 28px header action groups (`gap: 8px 12px`) with @container identity-page divider hiding & mobile wrapping, aligned sub-panel `.identity-section-head` (`padding: 12px 18px`) & 18px horizontal child alignment, single-scroll auto-wakeup & 2-zone smart-relay dialogs, unified 5-layer `.identity-quota-details` / `.quota-details*` redesign (with burn-rate ETA, KYC pills, 2-button right-aligned footer, and Dark/Glass high-contrast parity), card filter chips + optional multi-row grid toggle, and non-disruptive live-CLI switch callout without changing 166×286 card geometry.
+ * [POS]: Identity productivity presentation including consolidated QuotaDetails styles; the 166×286 badge remains owned by style.css.
+ * [PROTOCOL]: Keep additions local to identity workbench controls; never touch 166×286 `.identity-card` geometry or no-transform transition rules.
  */
 .identity-confirm-target.warming-promote-target {
   flex-wrap: wrap;
@@ -426,14 +426,14 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: 0 20px 10px;
+  margin: 0 20px 14px;
   padding: 8px 14px;
   border-radius: 10px;
   border: 1px solid var(--landing-line);
   background: color-mix(in srgb, var(--muted) 55%, var(--panel));
 }
 .identity-page > .identity-batch-task {
-  margin: 0 20px 10px;
+  margin: 0 20px 14px;
 }
 .identity-online-query-body { display: grid; gap: 12px; min-width: 0; max-width: 100%; }
 .identity-online-query-dialog > div:nth-child(2),
@@ -449,7 +449,7 @@
 .identity-header-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px 12px;
   flex-wrap: wrap;
   justify-content: flex-end;
   min-width: 0;
@@ -480,12 +480,18 @@
   width: 1px;
   background: color-mix(in srgb, var(--border) 85%, transparent);
 }
-@media (max-width: 1120px) {
+@container identity-page (max-width: 820px) {
   .identity-header-secondary {
     padding-left: 0;
   }
   .identity-header-secondary::before {
     display: none;
+  }
+}
+@media (max-width: 760px) {
+  .identity-header-primary,
+  .identity-header-secondary {
+    flex-wrap: wrap;
   }
 }
 .identity-header-actions button.isolate {
@@ -1352,7 +1358,7 @@ html[data-window-hidden="true"] *::after {
 /* ----- Scoped CLI & Residue sub-panel utility density (never touches 166x286 .identity-card geometry) ----- */
 .identity-cli .identity-section-head,
 .claude-residue .identity-section-head {
-  padding: 10px 16px;
+  padding: 12px 18px;
   gap: 10px 14px;
 }
 
@@ -1431,7 +1437,7 @@ html[data-window-hidden="true"] *::after {
 .identity-cli > .cleanup-activity,
 .identity-cli > .cleanup-feedback,
 .identity-cli > .cli-install-guide {
-  margin: 0 16px 10px;
+  margin: 0 18px 10px;
 }
 
 .identity-cli .cli-install-guide {
@@ -1452,18 +1458,18 @@ html[data-window-hidden="true"] *::after {
 
 .claude-residue > .cleanup-feedback,
 .claude-residue > .cleanup-activity {
-  margin: 0 16px 10px;
+  margin: 0 18px 10px;
 }
 
 .claude-residue .claude-residue-env-alert {
-  margin: 0 16px 8px;
+  margin: 0 18px 8px;
   padding: 8px 12px;
   border-radius: 8px;
   gap: 9px;
 }
 
 .claude-residue .claude-residue-smart-bar {
-  margin: 0 16px 8px;
+  margin: 0 18px 8px;
   padding: 7px 11px;
   border-radius: 8px;
   gap: 6px 12px;
@@ -1521,7 +1527,7 @@ html[data-window-hidden="true"] *::after {
 }
 
 .claude-residue .claude-residue-warnings {
-  margin: 0 16px 8px;
+  margin: 0 18px 8px;
   padding: 8px 11px;
   border-radius: 8px;
 }
@@ -1534,12 +1540,12 @@ html[data-window-hidden="true"] *::after {
 
 .claude-residue .claude-residue-toolbar,
 .claude-residue .claude-residue-footer {
-  margin: 0 16px;
+  margin: 0 18px;
   padding: 8px 0;
 }
 
 .claude-residue .claude-residue-list {
-  margin: 0 16px;
+  margin: 0 18px;
 }
 
 .claude-residue .claude-residue-row {
@@ -1572,7 +1578,7 @@ html[data-window-hidden="true"] *::after {
 }
 
 .claude-residue .claude-residue-empty {
-  padding: 0 16px 14px;
+  padding: 0 18px 14px;
 }
 
 /* ----- v0.3.7 Slot Live Pill, Reset-Card Badges, Inline Slot Proxy & CLI Relay Section ----- */
@@ -2078,21 +2084,6 @@ html[data-window-hidden="true"] *::after {
   box-shadow: 0 0 0 2px var(--local-accent), var(--card-shadow);
 }
 
-.quota-details-burn-eta {
-  margin: 4px 0 0;
-  font-size: 10.5px;
-  line-height: 1.35;
-  color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums;
-}
-.quota-details-burn-eta.is-warn {
-  color: #b45309;
-  font-weight: 550;
-}
-:root.dark .quota-details-burn-eta.is-warn {
-  color: #fbbf24;
-}
-
 .identity-plan-calibration-chips {
   display: flex;
   align-items: center;
@@ -2181,8 +2172,344 @@ html[data-window-hidden="true"] *::after {
   flex-shrink: 0;
 }
 
+/* ----- Unified QuotaDetailsModal 5-layer redesign (consolidated from style.css) ----- */
+.identity-quota-details {
+  display: grid;
+  gap: 12px;
+  --identity-text: var(--foreground);
+  --identity-muted: var(--muted-foreground);
+  --identity-border: var(--landing-line);
+  --identity-pill-bg: #ebe6dc;
+  --identity-pill-text: #453f37;
+  --identity-track: rgba(20, 20, 19, 0.12);
+  --identity-ok: #15803d;
+  --identity-ok-bg: #e7f6ec;
+  --identity-warn: #b45309;
+  --identity-warn-bg: #fef3d9;
+  --identity-danger: #b91c1c;
+  --identity-danger-bg: #fde8e7;
+}
+:root.dark .identity-quota-details {
+  --identity-border: rgba(255, 255, 255, 0.14);
+  --identity-pill-bg: rgba(255, 255, 255, 0.08);
+  --identity-pill-text: #d7d3cb;
+  --identity-track: rgba(255, 255, 255, 0.16);
+  --identity-ok: #4ade80;
+  --identity-ok-bg: rgba(34, 197, 94, 0.16);
+  --identity-warn: #fbbf24;
+  --identity-warn-bg: rgba(245, 158, 11, 0.18);
+  --identity-danger: #f87171;
+  --identity-danger-bg: rgba(239, 68, 68, 0.2);
+}
+.identity-quota-details > h3,
+.identity-quota-details > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.identity-quota-details .identity-quota-stack {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.identity-quota-details .identity-quota-window {
+  padding: 8px;
+}
+
+.quota-details {
+  gap: 12px;
+  --identity-line: var(--identity-track);
+}
+
+/* Layer 1: Profile summary card */
+.quota-details-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--identity-border);
+  border-radius: 12px;
+  background: var(--card-elevated, var(--muted));
+}
+:root.dark .quota-details-profile {
+  background: rgba(255, 255, 255, 0.03);
+}
+.quota-details-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--local-accent-soft);
+  color: var(--local-accent-ink);
+  font-weight: 700;
+  font-size: 16px;
+  border: 1px solid color-mix(in srgb, var(--local-accent) 22%, transparent);
+}
+:root.dark .quota-details-avatar {
+  background: color-mix(in srgb, var(--local-accent) 22%, transparent);
+  color: var(--local-accent-bright);
+}
+.quota-details-who {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.quota-details-who h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quota-details-who p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quota-details-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.quota-details-current {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--identity-ok);
+  background: var(--identity-ok-bg);
+}
+
+/* Layer 2: Core 5h/7d windows + burn ETA + Fable pool */
+.quota-details-windows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.quota-details-window {
+  display: grid;
+  gap: 8px;
+  padding: 12px 13px 10px;
+  border: 1px solid var(--identity-border);
+  border-radius: 12px;
+  background: var(--card-elevated, var(--panel));
+  min-width: 0;
+}
+:root.dark .quota-details-window {
+  background: rgba(255, 255, 255, 0.03);
+}
+.quota-details-window .identity-quota-window {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.quota-details-window .identity-quota-copy > strong {
+  font-size: 13px;
+}
+.quota-details-window .identity-quota-value strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.quota-details-window .identity-quota-track {
+  height: 6px;
+  border-radius: 999px;
+}
+.quota-details-window .identity-quota-reset {
+  font-variant-numeric: tabular-nums;
+}
+.quota-details-burn-eta {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.quota-details-burn-eta.is-warn {
+  color: var(--identity-warn);
+  font-weight: 600;
+}
+.quota-details-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--identity-border);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  min-width: 0;
+}
+.quota-details-source > i {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--identity-warn);
+}
+.quota-details-source[data-source-verified] > i {
+  background: var(--identity-ok);
+}
+.quota-details-source > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quota-details-source > small {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.quota-details-pool {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 13px;
+  border: 1px solid var(--identity-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+  font-size: 12px;
+}
+.quota-details-pool > span {
+  color: var(--muted-foreground);
+}
+.quota-details-pool > strong {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.quota-details-pool > small {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Layer 3: Weekly pace & callouts */
+.quota-details-pace {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 13px;
+  border: 1px solid var(--identity-border);
+  border-radius: 12px;
+  background: var(--muted);
+  font-size: 12px;
+}
+:root.dark .quota-details-pace {
+  background: rgba(255, 255, 255, 0.04);
+}
+.quota-details-pace-label {
+  color: var(--muted-foreground);
+}
+.quota-details-chip {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 650;
+  background: var(--identity-pill-bg);
+  color: var(--identity-pill-text);
+}
+.quota-details-chip[data-tone="ok"] {
+  background: var(--identity-ok-bg);
+  color: var(--identity-ok);
+}
+.quota-details-chip[data-tone="warn"] {
+  background: var(--identity-warn-bg);
+  color: var(--identity-warn);
+}
 .quota-details-chip[data-tone="danger"] {
   background: var(--identity-danger-bg);
+  color: var(--identity-danger);
+}
+.quota-details-pace > small {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.quota-details-callout {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--identity-warn);
+  background: var(--identity-warn-bg);
+}
+.quota-details-callout[data-tone="info"] {
+  border-color: var(--identity-border);
+  color: var(--muted-foreground);
+  background: var(--muted);
+}
+:root.dark .quota-details-callout[data-tone="info"] {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Layer 4: Key facts <dl> */
+.quota-details-facts {
+  display: grid;
+  margin: 0;
+  border: 1px solid var(--identity-border);
+  border-radius: 12px;
+  background: var(--card-elevated, var(--panel));
+  overflow: hidden;
+}
+:root.dark .quota-details-facts {
+  background: rgba(255, 255, 255, 0.025);
+}
+.quota-details-facts > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  min-height: 40px;
+  box-sizing: border-box;
+}
+.quota-details-facts > div + div {
+  border-top: 1px solid var(--identity-border);
+}
+.quota-details-facts dt {
+  flex: none;
+  color: var(--muted-foreground);
+}
+.quota-details-facts dd {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0;
+  min-width: 0;
+  text-align: right;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.quota-details-facts dd small {
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+.quota-details-strong {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.quota-details-facts > div[data-reset-urgency="soon"] .quota-details-strong {
+  color: var(--identity-warn);
+}
+.quota-details-facts > div[data-reset-urgency="critical"] .quota-details-strong {
   color: var(--identity-danger);
 }
 .quota-details-kyc-note {
@@ -2192,4 +2519,83 @@ html[data-window-hidden="true"] *::after {
 }
 .quota-details-kyc-kind {
   font-family: var(--font-mono);
+}
+.quota-details-status::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--identity-muted);
+}
+.quota-details-status[data-state="active"]::before {
+  background: var(--identity-ok);
+}
+.quota-details-status[data-state="pending"]::before {
+  background: var(--identity-warn);
+}
+.quota-details-facts .identity-expiry-inline-edit {
+  margin-left: 2px;
+}
+
+/* Layer 5: Collapsible diagnostics, feedback, footnote & 2-button footer */
+.quota-details-disclosure {
+  border: 1px solid var(--identity-border);
+  border-radius: 12px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+}
+:root.dark .quota-details-disclosure {
+  background: rgba(255, 255, 255, 0.02);
+}
+.quota-details-disclosure-trigger {
+  padding: 2px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.quota-details-disclosure-trigger:hover {
+  color: var(--foreground);
+}
+.quota-details-disclosure .cromma-disclosure-content {
+  margin-top: 8px;
+}
+.quota-details-guide {
+  gap: 10px;
+}
+.quota-details-guide .identity-quota-note,
+.identity-quota-note {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.quota-details-feedback {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--identity-border);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--muted);
+}
+.quota-details-footnote {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.quota-details-dialog .confirm-actions {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+@media (max-width: 560px) {
+  .quota-details-windows {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

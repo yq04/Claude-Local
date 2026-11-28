@@ -1,5 +1,5 @@
-// [INPUT]: Windows 当前用户/默认所有者 SID、时区、注册表状态、系统工具、受限进程接口与 Win32 文件路径。
-// [OUTPUT]: Windows 平台 JSON 桥；私有资料Chrome只读窗口状态、用户/默认所有者文件检查、长路径、会话语言和仅原生使用的系统代理。
+// [INPUT]: Windows 当前用户/默认所有者 SID、时区、注册表状态、系统工具、受限进程接口、ntdll!RtlGetVersion 与 Win32 文件路径。
+// [OUTPUT]: Windows 平台 JSON 桥；私有资料Chrome只读窗口状态、受限 5 重防误杀校验的浏览器资料进程树强杀接口（terminate_browser_profile_tree）、Win32 原生 OS 版本号（免 PowerShell 冷启动）、用户/默认所有者文件检查、长路径、会话语言和仅原生使用的系统代理。
 // [POS]: 仅原生识别与用户触发的系统操作；不含网络客户端，不向 UI 输出进程参数或代理秘密。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use serde_json::{json, Value};
@@ -19,7 +19,9 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 #[path = "windows_process.rs"]
 mod processes;
-pub(crate) use processes::{browser_runtime, running_chrome_profiles, ChildJob};
+pub(crate) use processes::{
+    browser_runtime, running_chrome_profiles, terminate_browser_profile_tree, ChildJob,
+};
 pub use processes::{claude_processes, kill_process, rf_browser_quit, rf_browser_running};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -38,6 +40,53 @@ extern "system" {
     fn CloseClipboard() -> i32;
     fn EmptyClipboard() -> i32;
     fn SetClipboardData(uFormat: u32, hMem: HANDLE) -> HANDLE;
+}
+
+#[repr(C)]
+struct OsVersionInfoExW {
+    dw_os_version_info_size: u32,
+    dw_major_version: u32,
+    dw_minor_version: u32,
+    dw_build_number: u32,
+    dw_platform_id: u32,
+    sz_csd_version: [u16; 128],
+    w_service_pack_major: u16,
+    w_service_pack_minor: u16,
+    w_suite_mask: u16,
+    w_product_type: u8,
+    w_reserved: u8,
+}
+
+#[link(name = "ntdll")]
+extern "system" {
+    fn RtlGetVersion(lp_version_information: *mut OsVersionInfoExW) -> i32;
+}
+
+pub(crate) fn os_version_string() -> String {
+    let mut info = OsVersionInfoExW {
+        dw_os_version_info_size: std::mem::size_of::<OsVersionInfoExW>() as u32,
+        dw_major_version: 0,
+        dw_minor_version: 0,
+        dw_build_number: 0,
+        dw_platform_id: 0,
+        sz_csd_version: [0; 128],
+        w_service_pack_major: 0,
+        w_service_pack_minor: 0,
+        w_suite_mask: 0,
+        w_product_type: 0,
+        w_reserved: 0,
+    };
+    let status = unsafe { RtlGetVersion(&mut info) };
+    if status == 0 && info.dw_major_version > 0 {
+        let revision =
+            ((info.w_service_pack_major as u32) << 16) | (info.w_service_pack_minor as u32);
+        format!(
+            "{}.{}.{}.{}",
+            info.dw_major_version, info.dw_minor_version, info.dw_build_number, revision
+        )
+    } else {
+        String::new()
+    }
 }
 
 const CF_UNICODETEXT: u32 = 13;
@@ -729,16 +778,7 @@ pub unsafe fn rf_browser_machine() -> *mut c_char {
     let mut state = snapshot();
     state["platform"] = json!("windows");
     static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    state["version"] = json!(VERSION.get_or_init(|| output(
-        "powershell",
-        &[
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "[System.Environment]::OSVersion.Version.ToString()"
-        ]
-    )
-    .unwrap_or_default()));
+    state["version"] = json!(VERSION.get_or_init(os_version_string));
     state["cores"] = json!(std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1));

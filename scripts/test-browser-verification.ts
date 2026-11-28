@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 现有隔离 Playwright 引擎、Vite 本机地址与虚构出口/宿主响应。
- * [OUTPUT]: 顶部身份卡/双语与真实 browser.html 的通过/失败/未完成；同IP分类补充、来源/限流/错配、分阶段RTC与旧目标未知的DOM回归。
+ * [OUTPUT]: 顶部身份卡/双语与真实 browser.html 的通过/失败/未完成；同IP分类补充、来源/限流/错配、分阶段RTC、跨上下文6环境9维一致性矩阵与无误报及旧目标未知的DOM回归。
  * [POS]: 身份 UI 回归共用引擎的伴生页验证，不截图、不调用真实宿主或外网。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -131,6 +131,7 @@ export async function testBrowserVerification(browser:Browser,base:string) {
   await page.getByRole('button',{name:'Run check',exact:true}).click();
   await page.locator('.verification-identity').getByText('Not linked',{exact:true}).waitFor();
   assert.equal(await page.locator('.verification-identity.linked').count(),0);
+  await page.getByRole('heading',{name:'Checks passed',exact:true}).waitFor();
 
   // Production CSP multi-provider checks: direct ipquery.io and 429 fallback to ipinfo.io.
   const prevClassifications=classifications;
@@ -147,6 +148,15 @@ export async function testBrowserVerification(browser:Browser,base:string) {
   assert.equal(fallbackHits,1,'Rate-limited api.ipquery.io must fall back to ipinfo.io under production CSP.');
   assert.equal(classifications,prevClassifications,'Rate-limited api.ipquery.io must not be re-queried for supplementary classification.');
 
-  return 12;
+  // Cross-context consistency panel & anti-tamper matrix assertions (6 contexts, 9 metrics, zero false positives).
+  const crossPanel=page.locator('[data-cross-context-panel]');
+  await crossPanel.waitFor();
+  assert.equal(await crossPanel.locator('[data-context-kind]').count(),6);
+  assert.equal(await crossPanel.locator('[data-cross-context-metric]').count(),9);
+  assert.equal(await page.locator('[data-cross-context-blocking="true"]').count(),0);
+  assert.equal(await crossPanel.locator('[data-context-kind="window"]').getAttribute('data-context-status'),'matched');
+  assert.equal(await crossPanel.locator('[data-cross-context-metric="ctx.screen-orientation"] [data-cell-context="worker"]').getAttribute('data-cell-status'),'not_applicable');
+
+  return 13;
  } finally {release();await context.close();}
 }

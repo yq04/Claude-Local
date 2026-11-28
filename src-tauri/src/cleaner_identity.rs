@@ -1,5 +1,5 @@
 // [INPUT]: Cleaner 白名单、共享 Code 登录键常量、完整目录快照、用户保留策略与 JSON 配置。
-// [OUTPUT]: 账号凭据/归属与必要缓存的受限身份目标（保持 settings.json 本地代理环境变量与 `.claude/daemon*` 后台守护态跨切号常驻，不随旧快照擦除或覆盖）；默认工作区进程停止校验（过滤已验证归属 `cli-slots/<id>/sessions/<pid>.json` 的子代理槽位 PID，使其不阻塞 `~/.claude` 净室切号）；写回前主动清理残留互斥锁并在删除过期锁前复核 mtime（`BackgroundDaemon` 存活时严禁按 60s 误删 `daemon.lock` / `daemon.status.json`）、投影保护设备和 UI/实验状态；显式切换或置空后的窄账号缓存维护不改诊断或历史正文。
+// [OUTPUT]: 账号凭据/归属与必要缓存的受限身份目标（保持 settings.json 本地代理环境变量与 `.claude/daemon*` 后台守护态跨切号常驻）；默认工作区进程停止校验（过滤已验证归属 `cli-slots/<id>/sessions/<pid>.json` 的子代理槽位 PID）；写回前清理残留互斥锁并在切号/退登/恢复期经 `sanitize_desktop_residue_for_switch` 净化未绑定或异主 Desktop 存储（覆盖 `Cookies-wal`/`Cookies-shm`/`SharedStorage-shm`/`SharedStorage-journal` 与 `lastKnownAccountUuid == None` 仍存 `Cookies` 的 `DIPS`/`SharedStorage`，采用字符边界安全前缀提取防止非 ASCII UUID panic，保留 UI 偏好与 `ant-did`/`claude_desktop_config.json`，且不破坏 `maintain_account_caches` 窄维护边界）。
 // [POS]: 身份保险库复用原有路径边界；不扫描项目源码、Shell 或系统代理配置。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -1632,8 +1632,6 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
         .map(str::to_string);
     let foreign_session_ids =
         sanitize_project_sessions(root, Some(&acct), org.as_deref(), email.as_deref());
-    let acct_prefix = &acct[..acct.len().min(8)];
-    let org_prefix = org.as_deref().map(|o| &o[..o.len().min(8)]);
 
     let mut claude_modified = false;
     if let Some(obj) = value.as_object_mut() {
@@ -1794,6 +1792,79 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
         }
     }
 
+    sanitize_desktop_roots_residue(root, Some(acct.as_str()), org.as_deref(), true)
+}
+
+/// 切号/退登/恢复事务在清场阶段调用的桌面端残留净化入口：
+/// 清除未绑定或异主桌面账号 Web 存储（含 `Cookies-wal`/`Cookies-shm`/`SharedStorage-shm`/`SharedStorage-journal`
+/// 与 `lastKnownAccountUuid == None` 时仍存在 `Cookies` 的 `DIPS`/`SharedStorage`），同时剥离认证键并保留 UI 偏好及 `ant-did`/`claude_desktop_config.json`。
+pub(crate) fn sanitize_desktop_residue_for_switch(root: &Path) -> Result<(), String> {
+    clear_stale_locks(root);
+    let claude_json = root.join(".claude.json");
+    let mut acct: Option<String> = None;
+    let mut org: Option<String> = None;
+    if let Ok(meta) = fs::symlink_metadata(&claude_json) {
+        if !linked(&meta)
+            && meta.is_file()
+            && meta.len() <= 8 * 1024 * 1024
+            && canonicalize(&claude_json).ok().as_deref() == Some(claude_json.as_path())
+            && crate::identities::private::safe(&claude_json).is_ok()
+        {
+            if let Ok(bytes) = fs::read(&claude_json) {
+                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    acct = value["oauthAccount"]["accountUuid"]
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|s| {
+                            !s.is_empty() && s.len() <= 254 && !s.chars().any(char::is_control)
+                        })
+                        .map(str::to_string);
+                    org = value["oauthAccount"]["organizationUuid"]
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|s| {
+                            !s.is_empty() && s.len() <= 254 && !s.chars().any(char::is_control)
+                        })
+                        .map(str::to_string);
+                }
+            }
+        }
+    }
+    sanitize_desktop_roots_residue(root, acct.as_deref(), org.as_deref(), true)
+}
+
+fn sanitize_desktop_roots_residue(
+    root: &Path,
+    acct: Option<&str>,
+    org: Option<&str>,
+    clean_unassociated_storage: bool,
+) -> Result<(), String> {
+    const DESKTOP_SIDECAR_FILES: &[&str] = &[
+        "Cookies",
+        "Cookies-journal",
+        "Cookies-wal",
+        "Cookies-shm",
+        "Network/Cookies",
+        "Network/Cookies-journal",
+        "Network/Cookies-wal",
+        "Network/Cookies-shm",
+        "DIPS",
+        "DIPS-journal",
+        "DIPS-wal",
+        "DIPS-shm",
+        "Shared Dictionary",
+        "SharedStorage",
+        "SharedStorage-wal",
+        "SharedStorage-shm",
+        "SharedStorage-journal",
+        "BrowsingTopicsState",
+        "blob_storage",
+        "DawnGraphiteCache",
+        "DawnWebGPUCache",
+    ];
+    let acct_prefix: Option<String> = acct.map(|a| a.chars().take(8).collect());
+    let org_prefix: Option<String> = org.map(|o| o.chars().take(8).collect());
+
     for desktop in targets::desktop_roots(root) {
         let Ok(d_meta) = fs::symlink_metadata(&desktop) else {
             continue;
@@ -1822,43 +1893,52 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
                 {
                     if let Some(obj) = cfg.as_object_mut() {
                         let mut cfg_modified = false;
+                        let strip_auth_keys = |map: &mut serde_json::Map<String, serde_json::Value>,
+                                               modified: &mut bool| {
+                            for k in [
+                                "lastKnownAccountUuid",
+                                "oauth:tokenCache",
+                                "oauth:tokenCacheV2",
+                                "first_launch_at",
+                                "version_first_launch",
+                                "hasTrackedInitialActivation",
+                                "windowSizeWasSignedIn",
+                                "planUsageLastTrayOpenAt",
+                            ] {
+                                if map.remove(k).is_some() {
+                                    *modified = true;
+                                }
+                            }
+                        };
                         match obj
                             .get("lastKnownAccountUuid")
                             .and_then(|v| v.as_str())
                             .map(str::trim)
                             .filter(|s| !s.is_empty())
                         {
-                            Some(last) if last == acct => {
+                            Some(last) if acct == Some(last) => {
                                 has_matching_desktop_account = true;
                             }
                             Some(_) => {
                                 foreign_desktop_root = true;
-                                for k in [
-                                    "lastKnownAccountUuid",
-                                    "oauth:tokenCache",
-                                    "oauth:tokenCacheV2",
-                                    "first_launch_at",
-                                    "version_first_launch",
-                                    "hasTrackedInitialActivation",
-                                    "windowSizeWasSignedIn",
-                                    "planUsageLastTrayOpenAt",
-                                ] {
-                                    if obj.remove(k).is_some() {
-                                        cfg_modified = true;
-                                    }
+                                strip_auth_keys(obj, &mut cfg_modified);
+                            }
+                            None => {
+                                if clean_unassociated_storage {
+                                    strip_auth_keys(obj, &mut cfg_modified);
                                 }
                             }
-                            None => {}
                         }
                         let remove_keys: Vec<String> = obj
                             .keys()
                             .filter(|k| {
-                                (k.starts_with("dxt:allowlist")
-                                    && !k.ends_with(&format!(":{acct}"))
-                                    && !org
-                                        .as_deref()
-                                        .is_some_and(|o| k.ends_with(&format!(":{o}"))))
-                                    || (foreign_desktop_root
+                                let matches_dxt_owner = acct
+                                    .is_some_and(|a| k.ends_with(&format!(":{a}")))
+                                    || org.is_some_and(|o| k.ends_with(&format!(":{o}")));
+                                (k.starts_with("dxt:allowlist") && !matches_dxt_owner)
+                                    || ((foreign_desktop_root
+                                        || (clean_unassociated_storage
+                                            && !has_matching_desktop_account))
                                         && k.starts_with("remote_uploads_migration_done_v1_"))
                             })
                             .cloned()
@@ -1870,7 +1950,7 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
                             cfg_modified = true;
                         }
                         if cfg_modified {
-                            if foreign_desktop_root {
+                            if obj.is_empty() {
                                 remove_safe_entry(&cfg_path);
                             } else if let Ok(text) = serde_json::to_string_pretty(&cfg) {
                                 let formatted = format!("{text}\n");
@@ -1894,7 +1974,7 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
                             .map(str::to_string)
                     })
                 {
-                    if !owner.is_empty() && owner != acct {
+                    if !owner.is_empty() && acct != Some(owner.as_str()) {
                         remove_safe_entry(&cowork_path);
                         if !has_matching_desktop_account {
                             foreign_desktop_root = true;
@@ -1920,12 +2000,12 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
                                         e.ok().is_some_and(|c| {
                                             let cn = c.file_name().to_string_lossy().into_owned();
                                             cn.contains('-')
-                                                && cn != acct
-                                                && org.as_deref() != Some(cn.as_str())
+                                                && acct != Some(cn.as_str())
+                                                && org != Some(cn.as_str())
                                         })
                                     })
                                 });
-                            let is_foreign_org = org.as_deref().is_some_and(|o| {
+                            let is_foreign_org = org.is_some_and(|o| {
                                 org_name != o && org_name != "00000000-0000-4000-8000-000000000001"
                             });
                             if has_foreign_acct || is_foreign_org {
@@ -1939,10 +2019,10 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
                     {
                         remove_safe_entry(&entry.path());
                     }
-                } else if name != acct
-                    && name != acct_prefix
-                    && org.as_deref() != Some(name.as_str())
-                    && org_prefix != Some(name.as_str())
+                } else if acct != Some(name.as_str())
+                    && acct_prefix.as_deref() != Some(name.as_str())
+                    && org != Some(name.as_str())
+                    && org_prefix.as_deref() != Some(name.as_str())
                 {
                     remove_safe_entry(&entry.path());
                 }
@@ -1958,10 +2038,10 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
         if let Ok(entries) = fs::read_dir(&spaces) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                if name != acct
-                    && name != acct_prefix
-                    && org.as_deref() != Some(name.as_str())
-                    && org_prefix != Some(name.as_str())
+                if acct != Some(name.as_str())
+                    && acct_prefix.as_deref() != Some(name.as_str())
+                    && org != Some(name.as_str())
+                    && org_prefix.as_deref() != Some(name.as_str())
                 {
                     remove_safe_entry(&entry.path());
                 }
@@ -1973,10 +2053,12 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
                 remove_safe_entry(&spaces);
             }
         }
-        if foreign_desktop_root {
-            remove_safe_entry(&cfg_path);
+        if foreign_desktop_root || (!has_matching_desktop_account && clean_unassociated_storage) {
             for target in targets::desktop_storage(root, &desktop) {
                 remove_safe_entry(&target.path);
+            }
+            for sidecar in DESKTOP_SIDECAR_FILES {
+                remove_safe_entry(&desktop.join(sidecar));
             }
             for dev in [
                 "Cache",
@@ -1999,18 +2081,7 @@ pub(crate) fn sanitize_cross_account_residue(root: &Path) -> Result<(), String> 
             && !desktop.join("Cookies").exists()
             && !desktop.join("Network/Cookies").exists()
         {
-            for stale in [
-                "DIPS",
-                "DIPS-journal",
-                "DIPS-wal",
-                "DIPS-shm",
-                "Shared Dictionary",
-                "SharedStorage",
-                "SharedStorage-wal",
-                "blob_storage",
-                "DawnGraphiteCache",
-                "DawnWebGPUCache",
-            ] {
+            for stale in DESKTOP_SIDECAR_FILES {
                 remove_safe_entry(&desktop.join(stale));
             }
         }

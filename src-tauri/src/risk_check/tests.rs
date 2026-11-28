@@ -223,8 +223,31 @@ Windows IP 配置
             "en-US".into(),
         );
         assert!(external.proxy_configured);
-        assert!(!external.remote_dns_locked);
+        assert!(external.remote_dns_locked);
         assert_eq!(external.proxy_local_port, None);
+
+        let https_proxy = parse_browser_dns_guard(
+            "https://proxy.example.com:443",
+            Some("US".into()),
+            "America/New_York".into(),
+            "en-US".into(),
+        );
+        assert!(https_proxy.proxy_configured);
+        assert!(https_proxy.remote_dns_locked);
+
+        for invalid in [
+            "http://198.51.100.22",
+            "ftp://127.0.0.1:21",
+            "http://user:pass@127.0.0.1:8080",
+        ] {
+            let parsed = parse_browser_dns_guard(
+                invalid,
+                Some("US".into()),
+                "America/New_York".into(),
+                "en-US".into(),
+            );
+            assert!(!parsed.remote_dns_locked, "expected {invalid} not locked");
+        }
     }
 
     fn spawn_mock_trace_server(trace_body: &'static str) -> String {

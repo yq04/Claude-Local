@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 现有隔离 Playwright 引擎、Vite 本机地址与 tests/identities.html 的虚构 Tauri IPC。
- * [OUTPUT]: 闲置到期推定恢复、周额度与缺失/本地估计独立性、弹窗推定来源说明、仅显式新5h reset回传才报告唤醒成功、双语 180×286 卡片几何覆盖。
+ * [OUTPUT]: 闲置到期推定恢复、周额度与缺失/本地估计独立性、弹窗推定来源说明、WakeupModal显式新5h reset唤醒成功、双语 166×286 卡片几何覆盖。
  * [POS]: 身份 UI 额度重置与推定恢复的无头行为回归；按钮标签按当前目录文案解析，独立 context + clock，不截图、不调用真实宿主或外网，try/finally 保证 context 关闭。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -72,16 +72,20 @@ export async function testQuotaReset(browser:Browser,base:string) {
   assert.equal(await current5h.locator('time').count(),1);
   checks++;
 
-  // Verify 1-click 5h wakeup button on an expired/reset-inferred saved account (Identity 3)
+  // Verify 1-click 5h wakeup button on an expired/reset-inferred saved account (Identity 3) via WakeupModal
   await page.evaluate(()=>(window as any).identityFixture.language('zh'));
   const savedResetCard=cards.nth(2);
-  await savedResetCard.locator('.identity-quota-open').click();
-  const savedDialog=page.getByRole('dialog');
-  const wakeBtn=savedDialog.getByRole('button',{name:'唤醒 5h 计时',exact:true});
+  await page.locator('.wakeup-config-trigger').click();
+  const wakeupDialog=page.getByRole('dialog');
+  await wakeupDialog.waitFor();
+  const identity3Row=wakeupDialog.locator('.identity-wakeup-account-row').filter({
+   has:page.locator('.identity-wakeup-account-name',{hasText:'Identity 3'}),
+  });
+  const wakeBtn=identity3Row.getByRole('button',{name:'唤醒 5h 计时',exact:true});
   await wakeBtn.waitFor();
   await wakeBtn.click();
-  await savedDialog.getByText(/已唤醒 5h 窗口并刷新下次重置时间。/).waitFor();
-  await savedDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();
+  await wakeupDialog.locator('.identity-online-feedback').getByText(/已唤醒 5h 窗口并刷新下次重置时间。/).waitFor();
+  await wakeupDialog.getByRole('button',{name:'关闭弹窗',exact:true}).click();
   await savedResetCard.locator('[data-quota-window="5h"]').getByText('99.0%',{exact:true}).waitFor();
   assert.equal(await savedResetCard.locator('[data-quota-window="5h"]').getAttribute('data-quota-inferred'),null);
   checks++;

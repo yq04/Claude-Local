@@ -165,7 +165,7 @@ fn proxy_and_real_hardware() {
             .filter(|path| path.join("manifest.json").is_file());
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../browser-runtime/quota-bridge");
         let expected = installed.or_else(|| {
-            (cfg!(debug_assertions) && source.join("manifest.json").is_file()).then_some(source)
+            (cfg!(any(debug_assertions, test)) && source.join("manifest.json").is_file()).then_some(source)
         });
         assert_eq!(extension_args.len(), if expected.is_some() { 1 } else { 0 });
         if let Some(expected) = expected {
@@ -1488,4 +1488,855 @@ fn probe_country_uses_trace_for_explicit_proxy_and_falls_back() {
     assert_eq!(bad_ip.country, "US");
     assert_eq!(bad_ip.ip, None);
     assert!(network::parse_trace_exit("ip=198.51.100.42\n").is_none());
+}
+
+#[test]
+fn default_config_enables_spoofing_and_requires_persisted_non_zero_seed() {
+    let cfg = Config::default();
+    assert!(!cfg.native_graphics, "native_graphics must default to false");
+    assert_eq!(cfg.seed, 0, "Config::default must not hardcode a static seed");
+    assert!(
+        cfg.validate(&machine()).is_err(),
+        "Config::validate must still reject seed == 0"
+    );
+
+    let fixture = sample();
+    let mut loaded = config::load(&fixture).unwrap();
+    assert_eq!(loaded.seed, 0);
+    config::ensure_persisted_seed(&fixture, None, &mut loaded).unwrap();
+    assert!(loaded.seed > 0);
+    assert_eq!(config::load(&fixture).unwrap().seed, loaded.seed);
+    assert!(loaded.validate(&machine()).is_ok());
+
+    let mut from_db = Config::default();
+    config::ensure_persisted_seed(&fixture, Some(987654321), &mut from_db).unwrap();
+    assert_eq!(from_db.seed, 987654321);
+    assert_eq!(config::load(&fixture).unwrap().seed, 987654321);
+
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn chromium_148_anti_hang_and_spoofing_flags_are_emitted_by_mode() {
+    let m = machine();
+    let mut cfg = Config {
+        seed: 123456789,
+        proxy: String::new(),
+        follow_machine: false,
+        language: "en-US".into(),
+        timezone: "America/New_York".into(),
+        native_graphics: false,
+    };
+
+    // TUN mode + spoofing enabled + extension disabled (BrowseClaudeAi target policy)
+    let tun_args = config::arguments_with_options(
+        &cfg,
+        &m,
+        Path::new("/profile"),
+        "https://claude.ai/new",
+        "148.0.7778.215",
+        config::LaunchOptions::for_purpose(config::LaunchPurpose::BrowseClaudeAi),
+    );
+    assert!(!tun_args.iter().any(|a| a.starts_with("--disable-spoofing=")));
+    assert!(tun_args.contains(&"--no-proxy-server".into()));
+    assert!(tun_args.contains(&"--set-ipv6-probe-false".into()));
+    assert!(tun_args.contains(&"--disable-quic".into()));
+    assert!(tun_args.contains(
+        &"--disable-features=UseDnsHttpsSvcb,AsyncDns,HappyEyeballsV3,DomainReliability".into()
+    ));
+    assert!(tun_args.contains(&"--disable-background-networking".into()));
+    assert!(tun_args.contains(&"--disable-component-update".into()));
+    assert!(tun_args.contains(&"--no-pings".into()));
+    assert!(tun_args.contains(&"--disable-sync".into()));
+    assert!(tun_args.contains(&"--disable-default-apps".into()));
+    assert!(tun_args.contains(&"--fingerprint-hardware-concurrency=10".into()));
+    assert!(tun_args.iter().any(|a| a.starts_with("--fingerprint-screen-width=")));
+    assert!(tun_args.iter().any(|a| a.starts_with("--fingerprint-screen-height=")));
+    assert!(tun_args.iter().any(|a| a.starts_with("--fingerprint-device-scale-factor=")));
+    assert!(!tun_args.iter().any(|a| a.starts_with("--load-extension=")));
+
+    // QuotaSync mode injects --load-extension on Windows when manifest exists
+    let sync_args = config::arguments_with_options(
+        &cfg,
+        &m,
+        Path::new("/profile"),
+        "https://claude.ai/settings/usage",
+        "148.0.7778.215",
+        config::LaunchOptions::for_purpose(config::LaunchPurpose::QuotaSync),
+    );
+    #[cfg(target_os = "windows")]
+    {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../browser-runtime/quota-bridge");
+        if source.join("manifest.json").is_file() {
+            assert!(sync_args.iter().any(|a| a.starts_with("--load-extension=")));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = sync_args;
+
+    // native_graphics = true disables spoofing & omits virtual screen preset
+    cfg.native_graphics = true;
+    cfg.proxy = "socks5://127.0.0.1:7899".into();
+    let native_args = config::arguments_with_options(
+        &cfg,
+        &m,
+        Path::new("/profile"),
+        "about:blank",
+        "148.0.7778.215",
+        config::LaunchOptions::legacy_default(),
+    );
+    assert!(native_args.contains(&"--disable-spoofing=font,audio,gpu,canvas,clientrects".into()));
+    assert!(!native_args.iter().any(|a| a.starts_with("--fingerprint-screen-width=")));
+    assert!(!native_args.contains(&"--no-proxy-server".into()));
+}
+
+#[test]
+fn preferences_and_local_state_hardening_skips_redundant_writes() {
+    let root = sample();
+    fs::create_dir(root.join("Default")).unwrap();
+    fs::write(
+        root.join("Default/Preferences"),
+        br#"{"bookmarks":{"keep":true},"proxy":{"mode":"system"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("Local State"),
+        br#"{"os_crypt":{"encrypted_key":"keep-synthetic"},"variations_seed":"strip-me","variations_compressed_seed":"strip-me","user_experience_metrics":{"client_id":"strip-me"}}"#,
+    )
+    .unwrap();
+
+    let m = machine();
+    let tun_cfg = Config {
+        seed: 424242,
+        proxy: String::new(),
+        follow_machine: false,
+        language: "en-US".into(),
+        timezone: "America/New_York".into(),
+        native_graphics: false,
+    };
+    profile::preferences(&root, &tun_cfg, &m).unwrap();
+
+    let prefs_path = root.join("Default/Preferences");
+    let ls_path = root.join("Local State");
+    let prefs: serde_json::Value = serde_json::from_slice(&fs::read(&prefs_path).unwrap()).unwrap();
+    assert_eq!(prefs["bookmarks"]["keep"], true);
+    assert_eq!(prefs["alternate_error_pages"]["enabled"], false);
+    assert_eq!(prefs["safebrowsing"]["enabled"], false);
+    assert_eq!(prefs["safebrowsing"]["enhanced"], false);
+    assert_eq!(prefs["proxy"]["mode"], "direct");
+
+    let ls: serde_json::Value = serde_json::from_slice(&fs::read(&ls_path).unwrap()).unwrap();
+    assert_eq!(ls["os_crypt"]["encrypted_key"], "keep-synthetic");
+    assert_eq!(ls["dns_over_https"]["mode"], "off");
+    assert_eq!(ls["ssl"]["rev_checking"]["enabled"], false);
+    assert_eq!(ls["ssl"]["ech_enabled"], false);
+    assert_eq!(ls["proxy"]["quick_check_enabled"], false);
+    assert!(ls.get("variations_seed").is_none());
+    assert!(ls.get("variations_compressed_seed").is_none());
+    assert!(ls.get("user_experience_metrics").is_none());
+
+    // Second unchanged call must skip write_json (mtime preserved).
+    let prefs_mtime_1 = fs::metadata(&prefs_path).unwrap().modified().unwrap();
+    let ls_mtime_1 = fs::metadata(&ls_path).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    profile::preferences(&root, &tun_cfg, &m).unwrap();
+    assert_eq!(
+        fs::metadata(&prefs_path).unwrap().modified().unwrap(),
+        prefs_mtime_1,
+        "Preferences rewrite should be skipped when unchanged"
+    );
+    assert_eq!(
+        fs::metadata(&ls_path).unwrap().modified().unwrap(),
+        ls_mtime_1,
+        "Local State rewrite should be skipped when unchanged"
+    );
+
+    // Switching to explicit proxy removes stale proxy.mode="direct".
+    let mut proxy_cfg = tun_cfg.clone();
+    proxy_cfg.proxy = "socks5://127.0.0.1:7899".into();
+    profile::preferences(&root, &proxy_cfg, &m).unwrap();
+    let prefs2: serde_json::Value = serde_json::from_slice(&fs::read(&prefs_path).unwrap()).unwrap();
+    assert!(prefs2.get("proxy").is_none());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn site_data_clears_chromium_148_privacy_sandbox_and_wal_while_preserving_core_files() {
+    let root = sample();
+    for name in [
+        "Default/InterestGroups/data",
+        "Default/PrivateAggregation/data",
+        "Default/AttributionReporting/data",
+        "Default/Site Characteristics Database/data",
+        "Default/QuotaManager/data",
+        "Default/WebRTC Logs/log.txt",
+        "Default/Network/Cookies-wal",
+        "Default/Network/SCT Auditing/data",
+        "Default/BrowsingTopicsState-wal",
+        "Local State",
+        "Default/Preferences",
+        "Default/Web Data",
+        "Default/History",
+    ] {
+        let p = root.join(name);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, b"fixture").unwrap();
+    }
+    profile::clear(&root, true, |_, _| {}).unwrap();
+    for deleted in [
+        "Default/InterestGroups",
+        "Default/PrivateAggregation",
+        "Default/AttributionReporting",
+        "Default/Site Characteristics Database",
+        "Default/QuotaManager",
+        "Default/WebRTC Logs",
+        "Default/Network/Cookies-wal",
+        "Default/Network/SCT Auditing",
+        "Default/BrowsingTopicsState-wal",
+    ] {
+        assert!(!root.join(deleted).exists(), "expected {deleted} cleared");
+    }
+    for kept in [
+        "Local State",
+        "Default/Preferences",
+        "Default/Web Data",
+        "Default/History",
+    ] {
+        assert_eq!(fs::read(root.join(kept)).unwrap(), b"fixture");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn restricted_host_proxy_probe_fails_closed_on_failure_and_recovers_on_fallback_url() {
+    use std::io::{BufRead, BufReader, Write};
+    let mut cn_machine = machine();
+    cn_machine.timezone = "Asia/Shanghai".into();
+    cn_machine.locale = "zh_CN".into();
+    cn_machine.locale_country = "CN".into();
+    cn_machine.languages = vec!["zh-CN".into()];
+
+    // 1. Proxy returns 503 on restricted host with !allow_direct -> fail-closed Err
+    let err_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let err_addr = err_listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = err_listener.accept() {
+            let mut reader = BufReader::new(&stream);
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                if line == "\r\n" {
+                    break;
+                }
+                line.clear();
+            }
+            let _ = write!(
+                stream,
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 3\r\nConnection: close\r\n\r\nerr"
+            );
+        }
+    });
+    let mut cfg = Config {
+        seed: 777,
+        proxy: format!("http://{err_addr}"),
+        ..Config::default()
+    };
+    let res = config::evaluate_browser_launch_policy_with_urls(
+        &cfg,
+        &cn_machine,
+        true,
+        false,
+        &["http://trace-fail.example.invalid/cdn-cgi/trace"],
+    );
+    assert!(
+        res.is_err(),
+        "restricted host must fail-closed when exit probe fails"
+    );
+
+    // 2. First URL hangs beyond 1800ms per-URL cap, second URL succeeds within 3200ms total budget
+    let fb_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let fb_addr = fb_listener.local_addr().unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop_srv = stop.clone();
+    std::thread::spawn(move || {
+        let mut req_idx = 0usize;
+        while !stop_srv.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Ok((mut stream, _)) = fb_listener.accept() {
+                req_idx += 1;
+                if req_idx == 1 {
+                    std::thread::spawn(move || {
+                        let _ = stream;
+                        std::thread::sleep(std::time::Duration::from_millis(2400));
+                    });
+                } else {
+                    let mut reader = BufReader::new(&stream);
+                    let mut line = String::new();
+                    while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                        if line == "\r\n" {
+                            break;
+                        }
+                        line.clear();
+                    }
+                    let body = "ip=198.51.100.99\nloc=US\n";
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                }
+            }
+        }
+    });
+    cfg.proxy = format!("http://{fb_addr}");
+    let t0 = std::time::Instant::now();
+    let fb_res = config::evaluate_browser_launch_policy_with_urls(
+        &cfg,
+        &cn_machine,
+        true,
+        false,
+        &[
+            "http://hung-first.example.invalid/cdn-cgi/trace",
+            "http://fast-second.example.invalid/cdn-cgi/trace",
+        ],
+    );
+    let elapsed = t0.elapsed();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = std::net::TcpStream::connect(fb_addr);
+    assert!(
+        fb_res.is_ok(),
+        "per-URL 1800ms cap should allow fallback URL to succeed: {fb_res:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(3200),
+        "fallback should complete within 3200ms budget, took {elapsed:?}"
+    );
+}
+
+#[test]
+fn slot_gate_serializes_active_slot_mutations_with_concurrent_profile_open() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Barrier,
+    };
+    use std::time::Duration;
+
+    let browser = Arc::new(Browser::default());
+    let in_critical = Arc::new(AtomicUsize::new(0));
+    let max_concurrent = Arc::new(AtomicUsize::new(0));
+    let start = Arc::new(Barrier::new(3));
+
+    let h1 = std::thread::spawn({
+        let b = browser.clone();
+        let cur = in_critical.clone();
+        let max_c = max_concurrent.clone();
+        let bar = start.clone();
+        move || {
+            bar.wait();
+            b.with_slot_then_gate(
+                || Ok("slot_a".to_string()),
+                |slot| {
+                    assert_eq!(slot, "slot_a");
+                    let now = cur.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_c.fetch_max(now, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(30));
+                    cur.fetch_sub(1, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        }
+    });
+
+    let h2 = std::thread::spawn({
+        let b = browser.clone();
+        let cur = in_critical.clone();
+        let max_c = max_concurrent.clone();
+        let bar = start.clone();
+        move || {
+            bar.wait();
+            let sg = b.slot_gate("slot_a");
+            let _guard = sg.lock();
+            let now = cur.fetch_add(1, Ordering::SeqCst) + 1;
+            max_c.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(30));
+            cur.fetch_sub(1, Ordering::SeqCst);
+        }
+    });
+
+    start.wait();
+    h1.join().unwrap();
+    h2.join().unwrap();
+    assert_eq!(max_concurrent.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn slot_gate_allows_concurrent_non_active_slot_and_non_blocking_gate_reads() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Barrier, Condvar, Mutex,
+    };
+    use std::time::{Duration, Instant};
+
+    // Subcase A: active slot_a mutation does not block concurrent non-active slot_b open
+    let browser = Arc::new(Browser::default());
+    let in_critical = Arc::new(AtomicUsize::new(0));
+    let max_concurrent = Arc::new(AtomicUsize::new(0));
+    let pair_sync = Arc::new((Mutex::new(0usize), Condvar::new()));
+
+    let wait_both = |sync: &(Mutex<usize>, Condvar)| {
+        let (lock, cv) = sync;
+        let mut count = lock.lock().unwrap();
+        *count += 1;
+        cv.notify_all();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while *count < 2 {
+            let rem = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !rem.is_zero(),
+                "slot_a and slot_b failed to enter concurrently"
+            );
+            let (guard, res) = cv.wait_timeout(count, rem).unwrap();
+            count = guard;
+            assert!(!res.timed_out() || *count >= 2);
+        }
+    };
+
+    let h_a = std::thread::spawn({
+        let b = browser.clone();
+        let cur = in_critical.clone();
+        let max_c = max_concurrent.clone();
+        let sync = pair_sync.clone();
+        move || {
+            b.with_slot_then_gate(
+                || Ok("slot_a".to_string()),
+                |_| {
+                    let now = cur.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_c.fetch_max(now, Ordering::SeqCst);
+                    wait_both(&sync);
+                    cur.fetch_sub(1, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        }
+    });
+
+    let h_b = std::thread::spawn({
+        let b = browser.clone();
+        let cur = in_critical.clone();
+        let max_c = max_concurrent.clone();
+        let sync = pair_sync.clone();
+        move || {
+            let sg = b.slot_gate("slot_b");
+            let _guard = sg.lock();
+            let now = cur.fetch_add(1, Ordering::SeqCst) + 1;
+            max_c.fetch_max(now, Ordering::SeqCst);
+            wait_both(&sync);
+            cur.fetch_sub(1, Ordering::SeqCst);
+        }
+    });
+
+    h_a.join().unwrap();
+    h_b.join().unwrap();
+    assert_eq!(max_concurrent.load(Ordering::SeqCst), 2);
+
+    // Subcase B: Phase 2 holding SlotGate(slot_a) without Browser::gate never blocks gate reads
+    let phase2_entered = Arc::new(Barrier::new(2));
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let h_launch = std::thread::spawn({
+        let b = browser.clone();
+        let entered = phase2_entered.clone();
+        move || {
+            b.with_active_slot_gate(
+                || Ok("slot_a".to_string()),
+                |_, gate| {
+                    {
+                        let _g = gate.lock().unwrap();
+                    }
+                    entered.wait();
+                    let _ = rx.recv_timeout(Duration::from_secs(2));
+                    let _g = gate.lock().unwrap();
+                    Ok((true, ()))
+                },
+            )
+            .unwrap();
+        }
+    });
+
+    phase2_entered.wait();
+    let t0 = Instant::now();
+    {
+        let _gate_guard = browser.gate.lock().unwrap();
+    }
+    let gate_wait = t0.elapsed();
+    let _ = tx.send(());
+    h_launch.join().unwrap();
+    assert!(
+        gate_wait < Duration::from_millis(100),
+        "Browser::gate read blocked during Phase 2 SlotGate hold: {gate_wait:?}"
+    );
+}
+
+#[test]
+fn global_lock_order_stress_prevents_ab_ba_deadlock_across_slot_switches() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    };
+    use std::time::Duration;
+
+    const RETRY_EXHAUSTED_ERR: &str = "浏览器身份仍在切换，请重试。";
+
+    let browser = Arc::new(Browser::default());
+    let active_slot = Arc::new(Mutex::new("slot_a".to_string()));
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<usize>();
+    let rounds = 200usize;
+
+    let t1_stats = Arc::new((AtomicUsize::new(0), AtomicUsize::new(0)));
+    let t4_stats = Arc::new((AtomicUsize::new(0), AtomicUsize::new(0)));
+    let t7_stats = Arc::new((AtomicUsize::new(0), AtomicUsize::new(0)));
+
+    let mut handles = Vec::new();
+
+    // 1. with_slot_then_gate (browser_save / browser_clear style)
+    handles.push(std::thread::spawn({
+        let b = browser.clone();
+        let active = active_slot.clone();
+        let tx = done_tx.clone();
+        let stats = t1_stats.clone();
+        move || {
+            for _ in 0..rounds {
+                match b.with_slot_then_gate(
+                    || Ok(active.lock().unwrap().clone()),
+                    |slot| {
+                        assert_eq!(slot, active.lock().unwrap().as_str());
+                        Ok(())
+                    },
+                ) {
+                    Ok(()) => {
+                        stats.0.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(err) if err == RETRY_EXHAUSTED_ERR => {
+                        stats.1.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(err) => panic!("with_slot_then_gate unexpected error: {err}"),
+                }
+            }
+            tx.send(1).unwrap();
+        }
+    }));
+
+    // 2. slot_gate("slot_a") only (browser_open_identity_profile A)
+    handles.push(std::thread::spawn({
+        let b = browser.clone();
+        let tx = done_tx.clone();
+        move || {
+            for _ in 0..rounds {
+                let sg = b.slot_gate("slot_a");
+                let _g = sg.lock();
+            }
+            tx.send(2).unwrap();
+        }
+    }));
+
+    // 3. slot_gate("slot_b") -> drop -> gate (browser_open_usage B)
+    handles.push(std::thread::spawn({
+        let b = browser.clone();
+        let tx = done_tx.clone();
+        move || {
+            for _ in 0..rounds {
+                {
+                    let sg = b.slot_gate("slot_b");
+                    let _g = sg.lock();
+                }
+                let _gate = b.gate.lock().unwrap();
+            }
+            tx.send(3).unwrap();
+        }
+    }));
+
+    // 4. with_slots_then_gate flipping active slot_a <-> slot_b (browser_return_to_cli)
+    handles.push(std::thread::spawn({
+        let b = browser.clone();
+        let active = active_slot.clone();
+        let tx = done_tx.clone();
+        let stats = t4_stats.clone();
+        move || {
+            for _ in 0..rounds {
+                match b.with_slots_then_gate(
+                    || {
+                        let cur = active.lock().unwrap().clone();
+                        let other = if cur == "slot_a" {
+                            "slot_b".to_string()
+                        } else {
+                            "slot_a".to_string()
+                        };
+                        Ok(vec![cur, other])
+                    },
+                    || {
+                        let mut cur = active.lock().unwrap();
+                        *cur = if *cur == "slot_a" {
+                            "slot_b".to_string()
+                        } else {
+                            "slot_a".to_string()
+                        };
+                        Ok(())
+                    },
+                ) {
+                    Ok(()) => {
+                        stats.0.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(err) if err == RETRY_EXHAUSTED_ERR => {
+                        stats.1.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(err) => panic!("with_slots_then_gate unexpected error: {err}"),
+                }
+            }
+            tx.send(4).unwrap();
+        }
+    }));
+
+    // 5. gate only (M2 workspaces / quota_bridge / kill_switch)
+    handles.push(std::thread::spawn({
+        let b = browser.clone();
+        let tx = done_tx.clone();
+        move || {
+            for _ in 0..rounds {
+                let _gate = b.gate.lock().unwrap();
+            }
+            tx.send(5).unwrap();
+        }
+    }));
+
+    // 6. gate(read) -> drop -> slot_gate -> drop -> gate (browser_quit)
+    handles.push(std::thread::spawn({
+        let b = browser.clone();
+        let active = active_slot.clone();
+        let tx = done_tx.clone();
+        move || {
+            for _ in 0..rounds {
+                let slot = {
+                    let _gate = b.gate.lock().unwrap();
+                    active.lock().unwrap().clone()
+                };
+                {
+                    let sg = b.slot_gate(&slot);
+                    let _g = sg.lock();
+                }
+                let _gate = b.gate.lock().unwrap();
+            }
+            tx.send(6).unwrap();
+        }
+    }));
+
+    // 7. with_active_slot_gate two-phase lock (browser_launch style:
+    //    Phase 1 gate -> drop gate keeping SlotGate -> Phase 2 yield -> re-acquire gate)
+    handles.push(std::thread::spawn({
+        let b = browser.clone();
+        let active = active_slot.clone();
+        let tx = done_tx.clone();
+        let stats = t7_stats.clone();
+        move || {
+            for _ in 0..rounds {
+                match b.with_active_slot_gate(
+                    || Ok(active.lock().unwrap().clone()),
+                    |slot, gate| {
+                        {
+                            let _gate = gate.lock().unwrap();
+                            if active.lock().unwrap().as_str() != slot {
+                                return Ok((false, ()));
+                            }
+                        }
+                        std::thread::yield_now();
+                        {
+                            let _gate = gate.lock().unwrap();
+                            assert_eq!(slot, active.lock().unwrap().as_str());
+                        }
+                        Ok((true, ()))
+                    },
+                ) {
+                    Ok(()) => {
+                        stats.0.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(err) if err == RETRY_EXHAUSTED_ERR => {
+                        stats.1.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(err) => panic!("with_active_slot_gate unexpected error: {err}"),
+                }
+            }
+            tx.send(7).unwrap();
+        }
+    }));
+
+    drop(done_tx);
+    for _ in 0..handles.len() {
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("global lock order stress test deadlocked");
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let (t1_ok, t1_retry) = (
+        t1_stats.0.load(Ordering::Relaxed),
+        t1_stats.1.load(Ordering::Relaxed),
+    );
+    let (t4_ok, t4_retry) = (
+        t4_stats.0.load(Ordering::Relaxed),
+        t4_stats.1.load(Ordering::Relaxed),
+    );
+    let (t7_ok, t7_retry) = (
+        t7_stats.0.load(Ordering::Relaxed),
+        t7_stats.1.load(Ordering::Relaxed),
+    );
+    assert_eq!(t1_ok + t1_retry, rounds);
+    assert_eq!(t4_ok + t4_retry, rounds);
+    assert_eq!(t7_ok + t7_retry, rounds);
+    assert!(
+        t1_ok > 0,
+        "with_slot_then_gate made no forward progress (retry_exhausted={t1_retry})"
+    );
+    assert!(
+        t4_ok > 0,
+        "with_slots_then_gate made no forward progress (retry_exhausted={t4_retry})"
+    );
+    assert!(
+        t7_ok > 0,
+        "with_active_slot_gate made no forward progress (retry_exhausted={t7_retry})"
+    );
+
+    let final_active = active_slot.lock().unwrap().clone();
+    assert!(final_active == "slot_a" || final_active == "slot_b");
+}
+
+#[test]
+fn launch_snapshot_bridge_drift_and_singleton_lock_junction_rejected() {
+    let fixture = sample();
+    let root = fixture.join("browser");
+    let scope = root.join("contexts").join("0123456789abcdef0123456789abcdef");
+    let profile = scope.join("profile");
+    crate::identities::private::directory(&profile).unwrap();
+
+    let mut cfg = config::Config::default();
+    cfg.seed = 9999;
+    let machine = config::Machine {
+        platform: "Win32".into(),
+        version: "10.0.22631".into(),
+        cores: 8,
+        timezone: "America/New_York".into(),
+        languages: vec!["en-US".into()],
+        locale: "en-US".into(),
+        locale_country: "US".into(),
+        location_enabled: Some(false),
+        timezones: vec!["America/New_York".into()],
+        system_proxy: String::new(),
+    };
+    let snap_plain = LaunchRuntimeSnapshot::from_config_with_options(
+        &cfg,
+        &machine,
+        config::LaunchOptions::for_purpose(config::LaunchPurpose::BrowseClaudeAi),
+    );
+    let snap_bridge = LaunchRuntimeSnapshot::from_config_with_options(
+        &cfg,
+        &machine,
+        config::LaunchOptions::for_purpose(config::LaunchPurpose::QuotaSync),
+    );
+    assert!(!snap_plain.enable_quota_bridge);
+    assert!(snap_bridge.enable_quota_bridge);
+    assert_ne!(snap_plain, snap_bridge);
+
+    // Safe stale lockfile is accepted by prepare_slot_singleton_for_launch.
+    let lockfile = profile.join("lockfile");
+    crate::identities::private::write(&lockfile, b"stale").unwrap();
+    super::launch::prepare_slot_singleton_for_launch(&root, &profile).unwrap();
+
+    // Junction/symlink SingletonLock must be rejected before launch.
+    let target_dir = fixture.join("outside-target");
+    std::fs::create_dir_all(&target_dir).unwrap();
+    let singleton = profile.join("SingletonLock");
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(&singleton)
+            .arg(&target_dir)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target_dir, &singleton).unwrap();
+
+    let err = super::launch::prepare_slot_singleton_for_launch(&root, &profile).unwrap_err();
+    assert!(err.contains("单例锁"));
+
+    #[cfg(windows)]
+    let _ = std::fs::remove_dir(&singleton);
+    #[cfg(unix)]
+    let _ = std::fs::remove_file(&singleton);
+    std::fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn chromium_proxy_arg_normalizes_mixed_case_schemes_and_rewrites_socks5h() {
+    let m = machine();
+    for (raw, expected) in [
+        ("SOCKS5H://127.0.0.1:7899", "--proxy-server=socks5://127.0.0.1:7899"),
+        ("SOCKS5H://127.0.0.1:7899/", "--proxy-server=socks5://127.0.0.1:7899"),
+        ("Socks5h://[::1]:7899", "--proxy-server=socks5://[::1]:7899"),
+        ("SOCKS5://127.0.0.1:7899", "--proxy-server=socks5://127.0.0.1:7899"),
+        ("socks5://127.0.0.1:7899/", "--proxy-server=socks5://127.0.0.1:7899"),
+        ("HTTP://127.0.0.1:7897", "--proxy-server=http://127.0.0.1:7897"),
+        ("http://127.0.0.1:7899/", "--proxy-server=http://127.0.0.1:7899"),
+        ("  HTTP://127.0.0.1:7899/  ", "--proxy-server=http://127.0.0.1:7899"),
+        ("HTTPS://proxy.example.com:443", "--proxy-server=https://proxy.example.com:443"),
+        ("https://127.0.0.1:7899/", "--proxy-server=https://127.0.0.1:7899"),
+    ] {
+        assert!(config::proxy(raw).unwrap().is_some(), "proxy validation rejected {raw}");
+        let mut cfg = config::Config::default();
+        cfg.proxy = raw.into();
+        let args = config::arguments_with_options(
+            &cfg,
+            &m,
+            Path::new("/profile"),
+            "about:blank",
+            "148.0.0.0",
+            config::LaunchOptions::for_purpose(config::LaunchPurpose::BrowseClaudeAi),
+        );
+        assert!(
+            args.contains(&expected.to_string()),
+            "expected {expected} in {args:?} for input {raw}"
+        );
+        assert!(
+            args.iter().any(|arg| arg.starts_with("--host-resolver-rules=")),
+            "expected --host-resolver-rules for {raw}: {args:?}"
+        );
+    }
+}
+
+#[test]
+fn utf8_multibyte_inputs_do_not_panic_in_proxy_mask_or_asn_parsers() {
+    assert_eq!(
+        config::normalize_reqwest_proxy("socks5:\u{4e2d}"),
+        "socks5:\u{4e2d}"
+    );
+    assert_eq!(
+        config::normalize_reqwest_proxy("socks4:\u{4e2d}"),
+        "socks4:\u{4e2d}"
+    );
+    assert_eq!(mask_email("a\u{7528}@example.com"), "a***@example.com");
+    assert_eq!(mask_email("\u{7528}@example.com"), "*@example.com");
+    assert_eq!(
+        mask_email("\u{7528}\u{6237}\u{540d}\u{5b57}@example.com"),
+        "\u{7528}\u{6237}***@example.com"
+    );
+    let parsed = network::parse(&serde_json::json!({
+        "ip": "1.2.3.4",
+        "country": "US",
+        "asn": "\u{4e2d}",
+        "org": "\u{4e2d}\u{6587} ISP"
+    }))
+    .unwrap();
+    assert_eq!(parsed.asn.as_deref(), Some("AS\u{4e2d}"));
 }

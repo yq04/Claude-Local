@@ -45,8 +45,8 @@ fn parse_asn_value(raw: Option<&Value>) -> Option<String> {
             {
                 return None;
             }
-            if trimmed.len() >= 2 && trimmed[..2].eq_ignore_ascii_case("AS") {
-                Some(format!("AS{}", &trimmed[2..]))
+            if let Some(rest) = super::config::strip_prefix_ascii_ci(trimmed, "AS") {
+                Some(format!("AS{rest}"))
             } else {
                 Some(format!("AS{trimmed}"))
             }
@@ -56,10 +56,10 @@ fn parse_asn_value(raw: Option<&Value>) -> Option<String> {
 }
 fn split_leading_asn(raw: &str) -> Option<(String, String)> {
     let trimmed = raw.trim();
-    if trimmed.len() < 4 || !trimmed[..2].eq_ignore_ascii_case("AS") {
+    if trimmed.len() < 4 {
         return None;
     }
-    let after_prefix = &trimmed[2..];
+    let after_prefix = super::config::strip_prefix_ascii_ci(trimmed, "AS")?;
     let digit_len = after_prefix
         .bytes()
         .take_while(|b| b.is_ascii_digit())
@@ -648,11 +648,7 @@ fn parse_asn_number(raw: Option<&str>) -> Option<u32> {
     if s.is_empty() {
         return None;
     }
-    let rest = if s.len() >= 2 && s[..2].eq_ignore_ascii_case("as") {
-        &s[2..]
-    } else {
-        s
-    };
+    let rest = super::config::strip_prefix_ascii_ci(s, "as").unwrap_or(s);
     let digits: String = rest
         .trim_start()
         .chars()

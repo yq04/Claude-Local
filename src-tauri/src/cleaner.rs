@@ -1,5 +1,5 @@
 // [INPUT]: Claude 白名单、所选文件夹发现、配置变换、原子写入、官方原生 CLI 版本路径及 macOS/Linux/Windows 白名单路径边界。
-// [OUTPUT]: 全机/文件夹元数据扫描、文件残留专用快照与选择清理、实时 Claude 进程角色分类（InteractiveCli/BackgroundDaemon/BackgroundPtyHost/BackgroundWorker/Desktop）与子 Shell 检测、后台守护进程优雅挂起（`daemon stop --any` 保活脱离 Shell 并落盘 `adopt.json`）、进程停止与退出后工作区文件句柄释放等待；CLI、身份和残留操作共用互斥门，身份写入显式提升代次，额度短提交门保持只读代次。
+// [OUTPUT]: 全机/文件夹元数据扫描、文件残留专用快照与选择清理、实时 Claude 进程角色分类（InteractiveCli/BackgroundDaemon/BackgroundPtyHost/BackgroundWorker/Desktop）与子 Shell 检测、后台守护进程优雅挂起（`daemon stop --any` 保活脱离 Shell 并落盘 `adopt.json`）、进程停止与退出后工作区文件句柄释放等待；支持排他写锁（enter）、并发只读配额门（enter_quota）与按账号分片并发的伴生浏览器打开门（enter_browser_account），身份写入显式提升代次。
 // [POS]: 白名单与进程共用边界；身份由 identities 编排，残留入口仅允许文件操作且不访问钥匙串。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use crate::native;
@@ -14,11 +14,12 @@ use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Mutex,
+        atomic::{AtomicU64, Ordering},
+        Arc, Condvar, Mutex,
     },
 };
 use tauri::{ipc::Channel, Manager};
@@ -142,27 +143,135 @@ pub struct Scan {
     #[serde(default)]
     pub cli_security: Option<crate::risk_check::CliSecurityAudit>,
 }
+const WRITER_BIT: u64 = 1u64 << 63;
+const BROWSER_SHIFT: u32 = 32;
+const BROWSER_ONE: u64 = 1u64 << BROWSER_SHIFT;
+const BROWSER_MASK: u64 = 0x7FFF_FFFF_0000_0000;
+const QUOTA_MASK: u64 = 0x0000_0000_FFFF_FFFF;
+
+type AccountShard = Arc<(Mutex<bool>, Condvar)>;
+
+struct ShardGuard(AccountShard);
+
+impl Drop for ShardGuard {
+    fn drop(&mut self) {
+        let mut held = self.0 .0.lock().unwrap_or_else(|e| e.into_inner());
+        *held = false;
+        self.0 .1.notify_one();
+    }
+}
+
+pub(crate) struct BrowserAccountGuard<'a> {
+    cleaner: &'a Cleaner,
+    _shard: ShardGuard,
+}
+
+impl Drop for BrowserAccountGuard<'_> {
+    fn drop(&mut self) {
+        let mut cur = self.cleaner.lock_state.load(Ordering::SeqCst);
+        loop {
+            debug_assert!((cur & BROWSER_MASK) >= BROWSER_ONE);
+            let next = if (cur & BROWSER_MASK) >= BROWSER_ONE {
+                cur - BROWSER_ONE
+            } else {
+                cur & !BROWSER_MASK
+            };
+            match self.cleaner.lock_state.compare_exchange_weak(
+                cur,
+                next,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(actual) => cur = actual,
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Cleaner {
     plan: Mutex<Option<Scan>>,
     residue_plan: Mutex<Option<Scan>>,
-    active: AtomicBool,
-    identity_epoch: std::sync::atomic::AtomicU64,
+    /// Bit 63: exclusive writer (`enter`);
+    /// Bits 32..62: browser-open shared readers (`enter_browser_account`);
+    /// Bits 0..31: quota shared readers (`enter_quota`).
+    lock_state: AtomicU64,
+    identity_epoch: AtomicU64,
+    account_locks: Mutex<HashMap<String, AccountShard>>,
 }
 impl Cleaner {
     pub(crate) fn enter(&self) -> Result<(), String> {
-        if self.active.swap(true, Ordering::SeqCst) {
-            Err("已有清理操作正在运行。".into())
-        } else {
-            Ok(())
+        self.lock_state
+            .compare_exchange(0, WRITER_BIT, Ordering::SeqCst, Ordering::SeqCst)
+            .map(|_| ())
+            .map_err(|_| "已有清理操作正在运行。".into())
+    }
+    // Quota reads/commits share a reader count without mutating identity or blocking browser opens.
+    pub(crate) fn enter_quota(&self) -> Result<(), String> {
+        let mut cur = self.lock_state.load(Ordering::SeqCst);
+        loop {
+            if (cur & WRITER_BIT) != 0 || (cur & QUOTA_MASK) == QUOTA_MASK {
+                return Err("quotaOnline.busy".into());
+            }
+            match self.lock_state.compare_exchange_weak(
+                cur,
+                cur + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(actual) => cur = actual,
+            }
         }
     }
-    // Quota reads/commits use the same door without pretending to mutate identity.
-    pub(crate) fn enter_quota(&self) -> Result<(), String> {
-        self.active
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .map(|_| ())
-            .map_err(|_| "quotaOnline.busy".into())
+    // Browser opens serialize per normalized account shard while running concurrently with other accounts and quota commits.
+    pub(crate) fn enter_browser_account(
+        &self,
+        account_key: &str,
+    ) -> Result<BrowserAccountGuard<'_>, String> {
+        let normalized = {
+            let trimmed = account_key.trim();
+            if trimmed.is_empty() {
+                "__empty__".to_string()
+            } else {
+                trimmed.to_ascii_lowercase()
+            }
+        };
+        let shard = {
+            let mut map = self.account_locks.lock().unwrap_or_else(|e| e.into_inner());
+            map.entry(normalized)
+                .or_insert_with(|| Arc::new((Mutex::new(false), Condvar::new())))
+                .clone()
+        };
+        {
+            let mut held = shard.0.lock().unwrap_or_else(|e| e.into_inner());
+            while *held {
+                held = shard.1.wait(held).unwrap_or_else(|e| e.into_inner());
+            }
+            *held = true;
+        }
+        let shard_guard = ShardGuard(shard);
+        let mut cur = self.lock_state.load(Ordering::SeqCst);
+        loop {
+            if (cur & WRITER_BIT) != 0 || (cur & BROWSER_MASK) == BROWSER_MASK {
+                return Err("quotaOnline.busy".into());
+            }
+            match self.lock_state.compare_exchange_weak(
+                cur,
+                cur + BROWSER_ONE,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => {
+                    return Ok(BrowserAccountGuard {
+                        cleaner: self,
+                        _shard: shard_guard,
+                    });
+                }
+                Err(actual) => cur = actual,
+            }
+        }
     }
     pub(crate) fn identity_epoch(&self) -> u64 {
         self.identity_epoch.load(Ordering::SeqCst)
@@ -172,10 +281,28 @@ impl Cleaner {
         self.identity_epoch.fetch_add(1, Ordering::SeqCst);
     }
     pub(crate) fn leave(&self) {
-        self.active.store(false, Ordering::SeqCst);
+        let mut cur = self.lock_state.load(Ordering::SeqCst);
+        loop {
+            let next = if (cur & WRITER_BIT) != 0 {
+                cur & !WRITER_BIT
+            } else if (cur & QUOTA_MASK) > 0 {
+                cur - 1
+            } else {
+                break;
+            };
+            match self.lock_state.compare_exchange_weak(
+                cur,
+                next,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(actual) => cur = actual,
+            }
+        }
     }
     pub(crate) fn is_busy(&self) -> bool {
-        self.active.load(Ordering::SeqCst)
+        self.lock_state.load(Ordering::SeqCst) != 0
     }
 }
 fn home() -> Result<PathBuf, String> {
@@ -726,7 +853,7 @@ pub async fn cleaner_scan(
     .await
     .map_err(|_| "深度扫描被中断，请重试。".to_string())
     .and_then(|r| r);
-    state.active.store(false, Ordering::SeqCst);
+    state.leave();
     result
 }
 #[cfg(not(test))]
@@ -1035,7 +1162,7 @@ pub async fn cleaner_stop(app: tauri::AppHandle) -> Result<Scan, String> {
     .await
     .map_err(|_| "结束进程被中断，请刷新。".to_string())
     .and_then(|r| r);
-    state.active.store(false, Ordering::SeqCst);
+    state.leave();
     result
 }
 fn selected(plan: &Scan, ids: &[String]) -> Result<Vec<Item>, String> {

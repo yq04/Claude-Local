@@ -1,8 +1,8 @@
 /**
  * [INPUT]: Selected `quotaDetails` target, active/saved identity summaries, subscription/reset/KYC metadata, and native `quota_setup_status` / app version IPCs.
- * [OUTPUT]: Controlled `QuotaDetailsModal` dialog (`quota-details-dialog`, width 600) showing 5h/7d windows, burn ETA, Fable pool, weekly pace, plan/expiry/reset/KYC facts, diagnostic copy, and action footer.
- * [POS]: Submodule of `src/identities.tsx`; preserves `restoreFocus={!suppressQuotaRestoreFocus}` focus handoff to `WakeupModal` and `expiryEditor`.
- * [PROTOCOL]: Update this header and `src/CLAUDE.md` when changing QuotaDetails modal props or DOM structure.
+ * [OUTPUT]: Controlled `QuotaDetailsModal` dialog (`quota-details-dialog`, width 600) showing 5-layer hierarchy (profile summary, 5h/7d windows + burn ETA + Fable pool, weekly pace + callouts, inline-action facts `<dl>`, collapsible diagnostics) and a streamlined 2-action footer (`browser.enterClaudeAi`, `quota.syncSubscription`).
+ * [POS]: Submodule of `src/identities.tsx`; preserves `restoreFocus={!suppressQuotaRestoreFocus}` focus handoff to `expiryEditor`.
+ * [PROTOCOL]: Update this header, `src/identities/CLAUDE.md`, and `src/CLAUDE.md` when changing QuotaDetails modal props or DOM structure.
  */
 import {useEffect, useState} from 'react';
 import {getVersion} from '@tauri-apps/api/app';
@@ -39,9 +39,6 @@ export interface QuotaDetailsModalProps {
   suppressQuotaRestoreFocus: boolean;
   busy: boolean;
   loading: boolean;
-  manualSyncing: boolean;
-  batchBusy: boolean;
-  wakingAccountId: string | null;
   syncingAccountIds: Record<string, boolean>;
   quotaFeedbackText: string;
   smartRelaySpentThresholdPct: number;
@@ -53,11 +50,7 @@ export interface QuotaDetailsModalProps {
   setShowCleanroomBar: (show: boolean) => void;
   onQuotaFeedback: (entry: QuotaFeedbackEntry) => void;
   onClose: () => void;
-  onRefreshLocal: () => void;
-  onWakeSingle: (accountId: string, expectedIdentity: string) => void;
-  onCalibrateOnline: () => void;
   onOpenAccountBrowser: (target: QuotaBatchTarget, openMode?: 'usage' | 'claude_ai') => void;
-  onOpenUsagePage: () => void;
   onSyncSubscription: (accountId?: string, expectedIdentity?: string, verifyReset?: boolean) => void;
   onOpenExpiryEditor: (
     accountId: string,
@@ -79,9 +72,6 @@ export function QuotaDetailsModal({
   suppressQuotaRestoreFocus,
   busy,
   loading,
-  manualSyncing,
-  batchBusy,
-  wakingAccountId,
   syncingAccountIds,
   quotaFeedbackText,
   smartRelaySpentThresholdPct,
@@ -93,11 +83,7 @@ export function QuotaDetailsModal({
   setShowCleanroomBar,
   onQuotaFeedback,
   onClose,
-  onRefreshLocal,
-  onWakeSingle,
-  onCalibrateOnline,
   onOpenAccountBrowser,
-  onOpenUsagePage,
   onSyncSubscription,
   onOpenExpiryEditor,
   t,
@@ -191,26 +177,6 @@ export function QuotaDetailsModal({
       restoreFocus={!suppressQuotaRestoreFocus}
       footer={
         <>
-          <Button variant="ghost" size="small" disabled={busy || loading || manualSyncing} onClick={onRefreshLocal}>
-            {t('quota.refreshLocal')}
-          </Button>
-          {(detailsQuota?.inferred5h || detailsQuota?.expired5h) && detailsSummary?.quota_identity && (
-            <Button
-              variant="ghost"
-              size="small"
-              loading={wakingAccountId === (detailsAreCurrent ? 'current' : quotaDetails?.id)}
-              disabled={busy || loading || batchBusy || wakingAccountId !== null}
-              onClick={() => onWakeSingle(detailsAreCurrent ? 'current' : quotaDetails!.id, detailsSummary.quota_identity!)}
-            >
-              {t('wakeup.wakeNow')}
-            </Button>
-          )}
-          {(detailsQuota?.inferred5h || detailsQuota?.inferred7d) && (
-            <Button variant="ghost" size="small" disabled={busy || loading || batchBusy} onClick={onCalibrateOnline}>
-              {t('quota.calibrateOnline')}
-            </Button>
-          )}
-          <span className="quota-details-footer-spacer" aria-hidden="true" />
           <Button
             variant="secondary"
             size="small"
@@ -228,25 +194,6 @@ export function QuotaDetailsModal({
             }}
           >
             {t('browser.enterClaudeAi')}
-          </Button>
-          <Button
-            variant="secondary"
-            size="small"
-            loading={busy}
-            disabled={busy || !quotaDetails?.expectedIdentity || !!state?.recovery}
-            onClick={() => {
-              if (!quotaDetails?.expectedIdentity) return;
-              if (detailsAreCurrent) {
-                onOpenUsagePage();
-              } else {
-                onOpenAccountBrowser(
-                  {account_id: quotaDetails.id, expected_identity: quotaDetails.expectedIdentity},
-                  'usage',
-                );
-              }
-            }}
-          >
-            {t('quota.openOfficial')}
           </Button>
           {(detailsAreCurrent || !!quotaDetails?.expectedIdentity) && (
             <Button
@@ -430,12 +377,16 @@ export function QuotaDetailsModal({
                 <h3>{shownName}</h3>
                 {detailsSummary?.email && <p>{maskEmailAddress(detailsSummary.email, privacyMask)}</p>}
               </div>
-              {plan && (
-                <span className="identity-plan-pill" data-plan-tier={normalizePlanSlug(plan)}>
-                  {plan}
-                </span>
+              {(plan || detailsAreCurrent) && (
+                <div className="quota-details-badges">
+                  {plan && (
+                    <span className="identity-plan-pill" data-plan-tier={normalizePlanSlug(plan)}>
+                      {plan}
+                    </span>
+                  )}
+                  {detailsAreCurrent && <span className="quota-details-current">{t('quota.currentAccount')}</span>}
+                </div>
               )}
-              {detailsAreCurrent && <span className="quota-details-current">{t('quota.currentAccount')}</span>}
             </header>
 
             <section className="quota-details-windows" aria-label={t('quota.windowsHeading')}>

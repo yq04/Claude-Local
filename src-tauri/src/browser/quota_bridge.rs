@@ -1,43 +1,16 @@
-// [INPUT]: 用户显式触发的隔离 Chromium、带本地 quota_identity 指纹的短期票据与当前或已保存账号的绑定身份快照。
-// [OUTPUT]: 独立短期回环监听与多票据目标绑定复核后的白名单订阅/重置元数据（区分自动续费 next_renewal 与取消到期 access_until）、实时 5h/7d（含 Ultra five_hour=null 与周级模型池回退）额度窗口、有界权益有效期（24h新鲜度边界 + 可选未截断最晚 grant 结束时间 + 逐份 active grant 明细）与剥离厂商字段的 kyc_status/kyc_check_kind，或白名单桥接失败；Python仍唯一写入额度账本。
+// [INPUT]: 用户显式触发的隔离 Chromium（`LaunchPurpose::QuotaSync`）、带本地 quota_identity 指纹的单次受控回环提交与当前或已保存账号的绑定身份快照。
+// [OUTPUT]: 经 `Cleaner < SlotGate < Browser::gate` 协调且不跨启动/退出占锁的短期回环监听与未挂载扩展实例自动切换重开、目标绑定复核后的白名单订阅/重置元数据（区分 next_renewal 与 access_until）、实时 5h/7d 额度窗口、有界权益有效期与逐份 active grant 明细及脱敏 kyc_status/kyc_check_kind，或白名单桥接失败；Python仍唯一写入额度账本。
 // [POS]: Claude.ai 到身份账本的多账号并发短期单次桥；支持 current 与任意已保存 account_id 并行同步，不串号、不抢占全局会话、不读取 Cookie，不后台轮询。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub(crate) use super::quota_existing::query_existing_profile;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    net::TcpListener,
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use std::{net::TcpListener, time::Duration};
 use tauri::{Emitter, Manager};
 
-#[cfg(test)]
-pub(super) const TICKET_TTL: Duration = Duration::from_secs(90);
 const SYNC_WAIT: Duration = Duration::from_secs(45);
-#[cfg(test)]
-const MAX_PENDING_TICKETS: usize = 16;
 const MAX_GRANTS: usize = 100;
 const ZERO_VALIDITY_SECS: i64 = 6 * 60 * 60;
-
-struct CleanerGuard(tauri::AppHandle);
-
-impl Drop for CleanerGuard {
-    fn drop(&mut self) {
-        self.0.state::<crate::cleaner::Cleaner>().leave();
-    }
-}
-
-pub(super) struct Ticket {
-    pub nonce: String,
-    pub session_token: String,
-    pub requested_account_id: Option<String>,
-    pub slot_owner_id: String,
-    pub account_id: String,
-    pub quota_identity: String,
-    pub expires_at: Instant,
-    pub reply: mpsc::Sender<Result<(), String>>,
-}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -429,7 +402,7 @@ pub(crate) fn verify_ticket_binding(
     Ok(())
 }
 
-pub(super) fn commit_browser_snapshot(
+fn commit_browser_snapshot(
     app: &tauri::AppHandle,
     requested_account_id: Option<&str>,
     slot_owner_id: &str,
@@ -510,22 +483,17 @@ fn sync(
         "http://127.0.0.1:{port}/{token}/browser.html#quota-sync={nonce}&quota_identity={quota_identity}"
     );
 
-    // Acquire Cleaner -> Browser in strict order to launch the isolated profile safely,
-    // then drop both guards immediately so UI and concurrent account browsers never block.
+    // Acquire Cleaner::enter_browser_account -> SlotGate -> short Browser::gate (only to read/recheck
+    // slot selection, never held across launch/quit/preflight).
     {
-        let cleaner = app.state::<crate::cleaner::Cleaner>();
-        cleaner.enter_quota().map_err(|_| "quotaOnline.busy")?;
-        let _cleaner_guard = CleanerGuard(app.clone());
-
-        let browser = app.state::<super::Browser>();
-        let _browser_guard = browser.gate.lock().unwrap();
-
         let root = super::root(app)?;
         super::workspaces::ready(&root)?;
-        let db = super::workspaces::database(&root)?;
-        if !db.browser_link()?.enabled {
-            return Err("quotaOnline.unavailable".into());
-        }
+        let cleaner = app.state::<crate::cleaner::Cleaner>();
+        let _account_guard = cleaner.enter_browser_account(&quota_identity)?;
+        let _running_memo = super::profile::begin_running_memo();
+        let browser = app.state::<super::Browser>();
+        let options =
+            super::config::LaunchOptions::for_purpose(super::config::LaunchPurpose::QuotaSync);
 
         let recheck_binding = || -> Result<(), String> {
             let (fresh_slot_owner, fresh_collector_id, fresh_quota_identity) =
@@ -545,23 +513,87 @@ fn sync(
         recheck_binding()?;
 
         if slot_owner_id == "current" {
-            if db.current_browser_is_warming()? {
-                return Err("quotaOnline.unavailable".into());
-            }
-            let scope = super::workspaces::ensure(&root)?;
-            super::quota_connection::launch_scope_url_locked(app, &scope, &target, recheck_binding)?;
-        } else {
-            super::quota_connection::materialize_identity_profile_locked(
-                app,
-                &collector_account_id,
-                &quota_identity,
+            browser.with_active_slot_gate(
+                || {
+                    let db = super::workspaces::database(&root)?;
+                    if !db.browser_link()?.enabled || db.current_browser_is_warming()? {
+                        return Err("quotaOnline.unavailable".into());
+                    }
+                    db.browser_slot()
+                },
+                |slot, gate| {
+                    let scope = {
+                        let _guard = gate.lock().unwrap();
+                        let db = super::workspaces::database(&root)?;
+                        if !db.browser_link()?.enabled || db.current_browser_is_warming()? {
+                            return Err("quotaOnline.unavailable".into());
+                        }
+                        if db.browser_slot()? != slot {
+                            return Ok((false, ()));
+                        }
+                        recheck_binding()?;
+                        super::workspaces::ensure(&root)?
+                    };
+                    super::quota_connection::launch_scope_url_with_options_locked(
+                        app,
+                        &scope,
+                        &target,
+                        options,
+                        None,
+                        recheck_binding,
+                    )?;
+                    Ok((true, ()))
+                },
             )?;
-            recheck_binding()?;
-            super::quota_connection::launch_bound_profile_url_locked(
+        } else {
+            let mut proof_cache = super::lifecycle::CliProofCache::default();
+            let pre_slot = super::quota_connection::lookup_existing_bound_slot_with_cache(
                 app,
                 &collector_account_id,
                 &quota_identity,
+                &mut proof_cache,
+            );
+            let pre_gate = pre_slot.as_deref().map(|s| browser.slot_gate(s));
+            let mut pre_guard = pre_gate.as_ref().map(|g| g.lock());
+
+            super::quota_connection::materialize_identity_profile_with_cache(
+                app,
+                &collector_account_id,
+                &quota_identity,
+                &mut proof_cache,
+            )?;
+            let bound = super::quota_connection::resolve_bound_profile_target_with_cache(
+                app,
+                &collector_account_id,
+                &quota_identity,
+                &mut proof_cache,
+            )?;
+            let _late_gate;
+            let _late_guard;
+            if pre_slot.as_deref() != Some(bound.slot.as_str()) {
+                drop(pre_guard.take());
+                _late_gate = browser.slot_gate(&bound.slot);
+                _late_guard = Some(_late_gate.lock());
+            }
+            recheck_binding()?;
+            super::quota_connection::launch_scope_url_with_options_locked(
+                app,
+                &bound.scope,
                 &target,
+                options,
+                None,
+                || {
+                    recheck_binding()?;
+                    let fresh = super::quota_connection::resolve_bound_profile_target_uncached(
+                        app,
+                        &collector_account_id,
+                        &quota_identity,
+                    )?;
+                    if fresh != bound {
+                        return Err("quotaOnline.accountMismatch".into());
+                    }
+                    Ok(())
+                },
             )?;
         }
     }
@@ -588,28 +620,6 @@ fn sync(
         }
         Err(err) => Err(err),
     }
-}
-
-#[cfg(test)]
-pub(super) fn push_ticket(pending: &mut Vec<Ticket>, ticket: Ticket, now: Instant) {
-    pending.retain(|item| item.expires_at > now && item.account_id != ticket.account_id);
-    if pending.len() >= MAX_PENDING_TICKETS {
-        pending.remove(0);
-    }
-    pending.push(ticket);
-}
-
-pub(super) fn take_ticket(
-    pending: &mut Vec<Ticket>,
-    session_token: &str,
-    nonce: &str,
-    now: Instant,
-) -> Option<Ticket> {
-    pending.retain(|ticket| ticket.expires_at > now);
-    let idx = pending
-        .iter()
-        .position(|ticket| ticket.session_token == session_token && ticket.nonce == nonce)?;
-    Some(pending.swap_remove(idx))
 }
 
 #[cfg(test)]
@@ -778,53 +788,6 @@ mod tests {
                 ends_at: None,
             }])
         );
-    }
-
-    #[test]
-    fn ticket_requires_matching_session_and_nonce_and_supports_concurrent_accounts() {
-        let (reply_a, _rx_a) = mpsc::channel();
-        let (reply_b, _rx_b) = mpsc::channel();
-        let now = Instant::now();
-        let nonce_b = "fedcba9876543210fedcba9876543210fedcba9876543210";
-        let mut pending = Vec::new();
-        push_ticket(
-            &mut pending,
-            Ticket {
-                nonce: NONCE.into(),
-                session_token: "session-a".into(),
-                requested_account_id: None,
-                slot_owner_id: "active-32-hex".into(),
-                account_id: "current".into(),
-                quota_identity: "a".repeat(64),
-                expires_at: now + TICKET_TTL,
-                reply: reply_a,
-            },
-            now,
-        );
-        push_ticket(
-            &mut pending,
-            Ticket {
-                nonce: nonce_b.into(),
-                session_token: "session-a".into(),
-                requested_account_id: Some("saved-card-id".into()),
-                slot_owner_id: "saved-card-id".into(),
-                account_id: "saved-card-id".into(),
-                quota_identity: "b".repeat(64),
-                expires_at: now + TICKET_TTL,
-                reply: reply_b,
-            },
-            now,
-        );
-        assert_eq!(pending.len(), 2);
-        assert!(take_ticket(&mut pending, "session-b", NONCE, now).is_none());
-        assert_eq!(pending.len(), 2);
-        assert!(take_ticket(&mut pending, "session-a", "bad-nonce", now).is_none());
-        let taken_b = take_ticket(&mut pending, "session-a", nonce_b, now).unwrap();
-        assert_eq!(taken_b.account_id, "saved-card-id");
-        assert_eq!(pending.len(), 1);
-        let taken_a = take_ticket(&mut pending, "session-a", NONCE, now).unwrap();
-        assert_eq!(taken_a.account_id, "current");
-        assert!(take_ticket(&mut pending, "session-a", NONCE, now).is_none());
     }
 
     #[test]

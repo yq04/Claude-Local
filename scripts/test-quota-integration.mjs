@@ -187,7 +187,8 @@ try{
     throw new Error(`${String(error)}; page=${normal.page.url()}; queries=${queried.join(',')||'none'}; observed=${JSON.stringify(observed)}; pageDiagnostics=${JSON.stringify(pageDiagnostics)}; routeFailure=${routeFailure||'none'}`);
   }
   await waitFor(()=>callbacks.length>=1,12_000);
-  assert.ok(normal.page.url().startsWith('https://claude.ai/settings/usage'));
+  assert.equal(normal.page.url(),'https://claude.ai/settings/usage','navigation URL must contain zero #claude-local-sync fragment');
+  assert.equal(await normal.page.evaluate(()=>location.hash),'','page JS must see zero location.hash');
   assert.equal(callbacks[0].origin,'chrome-extension://ejcmmmehjkifepdoejgbaleeogcfagjg');
   assert.deepEqual(Object.keys(callbacks[0].body).sort(),['account_uuid','nonce','organization_uuid','usage']);
   assert.equal(callbacks[0].body.account_uuid,account);
@@ -225,7 +226,8 @@ try{
   }
   assert.ok(await workerRestartPromise,'MV3 worker should restart with a new target after the test-only close');
   await waitFor(()=>callbacks.length>beforeRestart,12000);
-  assert.ok(restartFlow.page.url().startsWith('https://claude.ai/settings/usage'));
+  assert.equal(restartFlow.page.url(),'https://claude.ai/settings/usage');
+  assert.equal(await restartFlow.page.evaluate(()=>location.hash),'');
 
   const beforeExpiry=callbacks.length;
   const expired=await navigate('expired-ticket',{expire:true});

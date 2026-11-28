@@ -1,5 +1,5 @@
 // [INPUT]: SQLite 目录、用户策略、白名单源、已验收归档代次、认证加密与平台凭据桥。
-// [OUTPUT]: 有界主密钥读取、切号前纯后台守护进程优雅挂起（自动落盘 `adopt.json` 并保活脱离 Shell）、跨切号 `.claude/jobs/*/adopt.json` 保护（即使不保留历史也绝不误删待接管后台 Shell 句柄）、先暂存后切换（保留 120 秒内并发 .stage-* 目录）、`empty`/`delete("current")` 隔离设备 ID 预置与 `save_current` 碰撞保护、防封交接检查点（清理前只读捕获 `HandoffDraft` 并仅在 `db.complete` 后原子提交）、`settings.local.json` 优先与代理基线快照回退（`slotProxies` 覆写跨切号零串扰）、切换后 `anonymousId`/`firstStartTime`/代理核验、Pass #4 `account`/`settings` TOCTOU 校验、子代理隔离槽位忙锁/租约拒绝与轮换凭据单调 expiresAt 安全回灌（sync_slot_credentials）、Windows 文件锁退避、单重故障自动无残留回滚、双重故障一键干净恢复（recover_clean）与显式命名恢复检查点（recover）、窄账号缓存与残留锁清场、独立养号转正草稿保护与真实阶段进度。
+// [OUTPUT]: 有界主密钥读取、切号前纯后台守护进程优雅挂起（自动落盘 `adopt.json` 并保活脱离 Shell）、先暂存后切换、`empty`/`delete("current")` 隔离设备 ID 预置与 `save_current` 碰撞保护、防封交接检查点、`settings.local.json` 优先与代理基线快照回退、切号/退登/恢复期接入 `sanitize_desktop_residue_for_switch` 清理桌面残留、提交前 `verify_switch_isolation` 默认严格隔离校验阻断回滚（可经 `strictSlotIsolation:false` 退回告警）、子代理隔离槽位忙锁/租约拒绝与轮换凭据单调回灌、单/双重故障干净恢复与真实阶段进度。
 // [POS]: 身份的文件事务；SQLite 与文件系统由恢复日志与切换前目录快照协调，优先自动自愈回滚，极端中断保底零丢数据。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{
@@ -1022,12 +1022,6 @@ impl Store {
             .iter()
             .all(|k| env_obj.get(*k).and_then(serde_json::Value::as_str) == Some(expected_proxy))
     }
-    fn now_epoch_ms() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
-            .unwrap_or(0)
-    }
     fn prospective_empty_device_id(&self) -> Result<(String, Option<String>), String> {
         if let Some(promo_id) = self
             .db
@@ -1068,11 +1062,7 @@ impl Store {
             .and_then(serde_json::Value::as_str)
             .map(str::to_string)
     }
-    fn stamp_isolated_device_identity(
-        &self,
-        record_id: &str,
-        saved_at: u64,
-    ) -> Result<(), String> {
+    fn stamp_isolated_device_identity(&self, record_id: &str) -> Result<(), String> {
         if !super::valid_id(record_id) {
             return Ok(());
         }
@@ -1097,7 +1087,7 @@ impl Store {
         let expected_anon = super::orchestrator::derive_slot_anonymous_id(&self.key, record_id);
         let expected_mid = super::orchestrator::derive_slot_machine_id(&self.key, record_id);
         let expected_fst =
-            super::orchestrator::derive_slot_first_start_time(&self.key, record_id, saved_at);
+            super::orchestrator::derive_slot_first_start_time(&self.key, record_id);
         let mut changed = false;
         for (key, next_val) in [
             ("userID", Some(expected_uid)),
@@ -1123,6 +1113,116 @@ impl Store {
             .map_err(|_| "身份配置无法更新设备标识。")?;
         }
         Ok(())
+    }
+    fn read_strict_slot_isolation(app_dir: &Path) -> bool {
+        let path = app_dir.join("smart_relay_v1.json");
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            return true;
+        };
+        if crate::cleaner::linked(&meta) || !meta.is_file() || meta.len() > 2 * 1024 * 1024 {
+            return true;
+        }
+        let Ok(bytes) = crate::cleaner::file_io::read_bytes_retry(&path) else {
+            return true;
+        };
+        let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            return true;
+        };
+        val.get("strictSlotIsolation")
+            .or_else(|| val.get("strict_slot_isolation"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true)
+    }
+    fn verify_switch_isolation(
+        &self,
+        target: &str,
+        policy: &Policy,
+        settings_path: &Path,
+        incoming_slot_proxy: Option<&str>,
+    ) -> Result<Option<&'static str>, String> {
+        let cred_path = self.home.join(".claude/.credentials.json");
+        if let Ok(meta) = fs::symlink_metadata(&cred_path) {
+            if !crate::cleaner::linked(&meta) && meta.is_file() {
+                let valid_json = crate::cleaner::file_io::read_bytes_retry(&cred_path)
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                    .is_some_and(|v| v.is_object());
+                if !valid_json {
+                    return Ok(Some("切换后本地凭据校验失败，请重新登录。"));
+                }
+            }
+        }
+        if target != "empty" {
+            if let Ok(target_rec) = self.record(target) {
+                let expected_key = target_rec
+                    .account_key
+                    .as_deref()
+                    .filter(|k| !k.is_empty());
+                let actual_key = super::catalog::live_key(&self.home, &self.key)?;
+                if expected_key.is_some() && actual_key.as_deref() != expected_key {
+                    return Ok(Some("切换后身份键与目标账号不一致，请检查。"));
+                }
+            }
+            if super::valid_id(target) {
+                let cj_path = self.home.join(".claude.json");
+                if let Ok(meta) = fs::symlink_metadata(&cj_path) {
+                    if !crate::cleaner::linked(&meta)
+                        && meta.is_file()
+                        && meta.len() <= 8 * 1024 * 1024
+                    {
+                        let expected_uid =
+                            super::orchestrator::derive_slot_user_id(&self.key, target);
+                        let expected_mid =
+                            super::orchestrator::derive_slot_machine_id(&self.key, target);
+                        let expected_anon =
+                            super::orchestrator::derive_slot_anonymous_id(&self.key, target);
+                        let expected_fst =
+                            super::orchestrator::derive_slot_first_start_time(&self.key, target);
+                        let stamped_ok = crate::cleaner::file_io::read_bytes_retry(&cj_path)
+                            .ok()
+                            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                            .is_some_and(|v| {
+                                v.get("userID").and_then(|x| x.as_str())
+                                    == Some(expected_uid.as_str())
+                                    && v.get("machineID").and_then(|x| x.as_str())
+                                        == Some(expected_mid.as_str())
+                                    && v.get("anonymousId").and_then(|x| x.as_str())
+                                        == Some(expected_anon.as_str())
+                                    && expected_fst.as_deref().is_none_or(|fst| {
+                                        v.get("firstStartTime").and_then(|x| x.as_str())
+                                            == Some(fst)
+                                    })
+                            });
+                        if !stamped_ok {
+                            return Ok(Some("切换后隔离设备标识未正确写入，请检查。"));
+                        }
+                    }
+                }
+                if policy.settings {
+                    let expected_proxy = incoming_slot_proxy.map(str::to_string).or_else(|| {
+                        self.vault.parent().and_then(|app_dir| {
+                            let relay_cfg = super::orchestrator::config::load_config(app_dir);
+                            relay_cfg.slot_proxies.get(target).and_then(|raw| {
+                                super::orchestrator::config::normalize_proxy_to_http(raw)
+                            })
+                        })
+                    });
+                    if let Some(expected_proxy) = expected_proxy {
+                        let local_settings_path = self.home.join(".claude/settings.local.json");
+                        let main_ok = Self::settings_proxy_aligned(settings_path, &expected_proxy);
+                        let local_ok = !Self::settings_has_proxy_env_keys(&local_settings_path)
+                            || Self::settings_proxy_aligned(
+                                &local_settings_path,
+                                &expected_proxy,
+                            );
+                        if !main_ok || !local_ok {
+                            return Ok(Some("代理出口对齐未完全成功，请检查设置。"));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
     fn restore(
         &self,
@@ -1407,6 +1507,7 @@ impl Store {
                 .map_err(|_| "直接删除未完成；部分数据可能已删除，请刷新检查。".to_string())?;
             identity::clear_stale_locks(&self.home);
             let _ = identity::maintain_account_caches(&self.home);
+            let _ = identity::sanitize_desktop_residue_for_switch(&self.home);
             reporter.log("commit", "running", "正在保存空身份状态。", 0, Some(1));
             self.db.complete("empty")?;
             let next_id = if let Some(draft_id) = self.db.browser_draft()? {
@@ -1416,7 +1517,7 @@ impl Store {
                 self.db.set_state("pending_device_id", &fresh)?;
                 fresh
             };
-            self.stamp_isolated_device_identity(&next_id, Self::now_epoch_ms())?;
+            self.stamp_isolated_device_identity(&next_id)?;
             reporter.log("commit", "ok", "空身份状态已保存。", 1, Some(1));
         } else {
             let record = self.record(id)?;
@@ -1492,7 +1593,7 @@ impl Store {
             })
         });
         if user_id_collides {
-            self.stamp_isolated_device_identity(&record.id, record.saved_at)?;
+            self.stamp_isolated_device_identity(&record.id)?;
         }
         self.db.remember(&record)?;
         if let Some(old_archive) = superseded {
@@ -1574,8 +1675,8 @@ impl Store {
         reporter.log("validate", "ok", "当前本地身份已核对。", 1, Some(1));
         if target != "empty" && live_key.is_some() && self.record(target)?.account_key == live_key {
             // 当前账号仍是最新状态；避免用自己的旧快照覆盖当前刷新过的登录。
-            let target_saved_at = self.record(target)?.saved_at;
-            self.stamp_isolated_device_identity(target, target_saved_at)?;
+            self.stamp_isolated_device_identity(target)?;
+            let _ = identity::sanitize_desktop_residue_for_switch(&self.home);
             reporter.log("commit", "running", "正在保存当前身份选择。", 0, Some(1));
             self.db.complete(target)?;
             self.db.compact()?;
@@ -1810,15 +1911,33 @@ impl Store {
             if identity::maintain_account_caches_report(&self.home).is_err() {
                 cleanroom_warning = true;
             }
+            if identity::sanitize_desktop_residue_for_switch(&self.home).is_err() {
+                cleanroom_warning = true;
+            }
             let pending_empty_device_id = if target != "empty" {
-                let target_saved_at = self.record(target)?.saved_at;
-                self.stamp_isolated_device_identity(target, target_saved_at)?;
+                self.stamp_isolated_device_identity(target)?;
                 None
             } else {
                 let (next_id, pending_id) = self.prospective_empty_device_id()?;
-                self.stamp_isolated_device_identity(&next_id, Self::now_epoch_ms())?;
+                self.stamp_isolated_device_identity(&next_id)?;
                 pending_id
             };
+            let pre_commit_warning = self.verify_switch_isolation(
+                target,
+                policy,
+                &settings_path,
+                incoming_slot_proxy.as_deref(),
+            )?;
+            let strict_isolation = self
+                .vault
+                .parent()
+                .is_none_or(Self::read_strict_slot_isolation);
+            if let Some(err_msg) = pre_commit_warning {
+                if strict_isolation {
+                    return Err(err_msg.into());
+                }
+                cleanroom_warning = true;
+            }
             if cleanroom_warning {
                 reporter.log(
                     "cleanroom",
@@ -1915,8 +2034,9 @@ impl Store {
                         true,
                     )?;
                     let _ = identity::maintain_account_caches(&self.home);
+                    let _ = identity::sanitize_desktop_residue_for_switch(&self.home);
                     if !record.empty {
-                        self.stamp_isolated_device_identity(&record.id, record.saved_at)?;
+                        self.stamp_isolated_device_identity(&record.id)?;
                     }
                     if super::catalog::live_key(&self.home, &self.key)? != live_key {
                         return Err("身份归档读写或验证失败；请保留暂存文件并重试。".into());
@@ -1975,81 +2095,12 @@ impl Store {
             0,
             None,
         );
-        let mut verify_warning: Option<&'static str> = None;
-        let cred_path = self.home.join(".claude/.credentials.json");
-        if let Ok(meta) = fs::symlink_metadata(&cred_path) {
-            if !crate::cleaner::linked(&meta) && meta.is_file() {
-                let valid_json = crate::cleaner::file_io::read_bytes_retry(&cred_path)
-                    .ok()
-                    .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-                    .is_some_and(|v| v.is_object());
-                if !valid_json {
-                    verify_warning = Some("切换后本地凭据校验失败，请重新登录。");
-                }
-            }
-        }
-        if verify_warning.is_none() && target != "empty" {
-            if let Ok(target_rec) = self.record(target) {
-                let expected_key = target_rec
-                    .account_key
-                    .as_deref()
-                    .filter(|k| !k.is_empty());
-                let actual_key = super::catalog::live_key(&self.home, &self.key)?;
-                if expected_key.is_some() && actual_key.as_deref() != expected_key {
-                    verify_warning = Some("切换后身份键与目标账号不一致，请检查。");
-                }
-            }
-        }
-        if verify_warning.is_none() && target != "empty" && super::valid_id(target) {
-            let cj_path = self.home.join(".claude.json");
-            if let Ok(meta) = fs::symlink_metadata(&cj_path) {
-                if !crate::cleaner::linked(&meta) && meta.is_file() && meta.len() <= 8 * 1024 * 1024
-                {
-                    let expected_uid =
-                        super::orchestrator::derive_slot_user_id(&self.key, target);
-                    let expected_mid =
-                        super::orchestrator::derive_slot_machine_id(&self.key, target);
-                    let expected_anon =
-                        super::orchestrator::derive_slot_anonymous_id(&self.key, target);
-                    let expected_fst =
-                        super::orchestrator::derive_slot_first_start_time(&self.key, target, 0);
-                    let stamped_ok = crate::cleaner::file_io::read_bytes_retry(&cj_path)
-                        .ok()
-                        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-                        .is_some_and(|v| {
-                            v.get("userID").and_then(|x| x.as_str()) == Some(expected_uid.as_str())
-                                && v.get("machineID").and_then(|x| x.as_str())
-                                    == Some(expected_mid.as_str())
-                                && v.get("anonymousId").and_then(|x| x.as_str())
-                                    == Some(expected_anon.as_str())
-                                && expected_fst.as_deref().is_none_or(|fst| {
-                                    v.get("firstStartTime").and_then(|x| x.as_str()) == Some(fst)
-                                })
-                        });
-                    if !stamped_ok {
-                        verify_warning = Some("切换后隔离设备标识未正确写入，请检查。");
-                    }
-                }
-            }
-            if verify_warning.is_none() && policy.settings {
-                if let Some(app_dir) = self.vault.parent() {
-                    let relay_cfg = super::orchestrator::config::load_config(app_dir);
-                    if let Some(expected_proxy) = relay_cfg
-                        .slot_proxies
-                        .get(target)
-                        .and_then(|raw| super::orchestrator::config::normalize_proxy_to_http(raw))
-                    {
-                        let local_settings_path = self.home.join(".claude/settings.local.json");
-                        let main_ok = Self::settings_proxy_aligned(&settings_path, &expected_proxy);
-                        let local_ok = !Self::settings_has_proxy_env_keys(&local_settings_path)
-                            || Self::settings_proxy_aligned(&local_settings_path, &expected_proxy);
-                        if !main_ok || !local_ok {
-                            verify_warning = Some("代理出口对齐未完全成功，请检查设置。");
-                        }
-                    }
-                }
-            }
-        }
+        let verify_warning = self.verify_switch_isolation(
+            target,
+            policy,
+            &settings_path,
+            incoming_slot_proxy.as_deref(),
+        )?;
         if let Some(warn_msg) = verify_warning {
             reporter.log("verify", "warning", warn_msg, 1, Some(1));
         } else {
@@ -2170,8 +2221,9 @@ impl Store {
             true,
         )?;
         let _ = identity::maintain_account_caches(&self.home);
+        let _ = identity::sanitize_desktop_residue_for_switch(&self.home);
         if !record.empty {
-            self.stamp_isolated_device_identity(&record.id, record.saved_at)?;
+            self.stamp_isolated_device_identity(&record.id)?;
         }
         reporter.log(
             "commit",
@@ -2285,6 +2337,7 @@ impl Store {
             true,
         )?;
         let _ = identity::maintain_account_caches(&self.home);
+        let _ = identity::sanitize_desktop_residue_for_switch(&self.home);
         let expected_key = outgoing
             .manifest
             .account_key
@@ -2308,7 +2361,7 @@ impl Store {
         } else {
             self.db.complete(&record.id)?;
             if !record.empty {
-                self.stamp_isolated_device_identity(&record.id, record.saved_at)?;
+                self.stamp_isolated_device_identity(&record.id)?;
                 self.persist_stage_summary(
                     &record.id,
                     &outgoing,

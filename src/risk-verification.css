@@ -1,6 +1,6 @@
 /**
- * [INPUT]: style.css 主题令牌、毛玻璃表面变量、.settings-card/.settings-group-heading 几何与 Cromma UI 基础控件。
- * [OUTPUT]: 基于 @container risk-env 的四模块风控工作台样式：态势条与 4 栏细线遥测条、双层 3 列边线核验矩阵、无多余折叠条的手机 KYC 桥接及 2x3 边线飞行清单。
+ * [INPUT]: style.css 主题令牌、毛玻璃表面变量、.settings-card/.settings-group-heading 几何、共享 .env-telemetry-* 基座与 Cromma UI 基础控件。
+ * [OUTPUT]: 基于 @container risk-env 的四模块风控工作台样式：态势条与可折行 4 栏遥测增量样式、双层 3 列边线核验矩阵与两段式修复栏、均衡双栏排布手机 KYC 桥接（148px 独立 QR）及 2x3 边线飞行清单（适配 Cromma Checkbox）。
  * [POS]: 仅作用于 .risk-page 命名空间（及严格路由 Portal 弹窗内 .risk-strict-route-guide），全部选择器 >= (0,2,0) 保持明暗双主题、六色强调色与窄侧栏零横溢。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -224,104 +224,15 @@
   color: var(--muted-foreground);
 }
 
-.risk-page .risk-telemetry-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-}
-
 .risk-page .risk-telemetry-cell {
-  display: grid;
   grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  gap: 4px;
-  min-width: 0;
-  padding: 12px 14px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-}
-
-.risk-page .risk-telemetry-cell + .risk-telemetry-cell {
-  border-left: 1px solid var(--landing-line);
-}
-
-.risk-page .risk-telemetry-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.risk-page .risk-telemetry-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background: #94a3b8;
-}
-
-.risk-page .risk-telemetry-dot.is-ready {
-  background: #16a34a;
-}
-
-.risk-page .risk-telemetry-dot.is-warming {
-  background: #0891b2;
-}
-
-.risk-page .risk-telemetry-dot.is-pending {
-  background: #d97706;
-}
-
-:root.dark .risk-page .risk-telemetry-dot.is-ready {
-  background: #4ade80;
-}
-
-:root.dark .risk-page .risk-telemetry-dot.is-warming {
-  background: #22d3ee;
-}
-
-:root.dark .risk-page .risk-telemetry-dot.is-pending {
-  background: #fbbf24;
-}
-
-.risk-page .risk-telemetry-label {
-  font-size: 11.5px;
-  line-height: 1.3;
-  color: var(--muted-foreground);
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.risk-page .risk-telemetry-cell strong {
-  font-size: 13.5px;
-  line-height: 1.35;
-  font-weight: 600;
-  color: var(--foreground);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .risk-page .risk-telemetry-cell small {
-  font-size: 11.5px;
-  line-height: 1.35;
-  color: var(--muted-foreground);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.risk-page .risk-telemetry-cell small[data-browser-owner-scope] {
   white-space: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
@@ -358,17 +269,16 @@
 .risk-page .risk-inline-warn {
   display: block;
   max-width: 100%;
-  padding: 1px 6px;
+  padding: 2px 6px;
   border-radius: 5px;
   border: 1px solid rgba(245, 158, 11, 0.34);
   background: rgba(245, 158, 11, 0.12);
   color: #b45309;
   font-size: 10.5px;
   font-weight: 500;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 :root.dark .risk-page .risk-inline-warn {
@@ -461,8 +371,10 @@
 
 .risk-page .risk-check-body strong {
   font-size: 12.5px;
+  line-height: 1.35;
   font-weight: 600;
   color: var(--foreground);
+  overflow-wrap: anywhere;
 }
 
 .risk-page .risk-check-body p {
@@ -474,13 +386,11 @@
 }
 
 .risk-page .risk-remediation-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px 16px;
-  padding: 10px 16px;
+  display: grid;
+  gap: 8px;
+  padding: 11px 16px;
   border-top: 0;
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
 }
 
 .risk-page .risk-remediation-bar p {
@@ -488,7 +398,6 @@
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--muted-foreground);
-  flex: 1 1 240px;
 }
 
 .risk-page .risk-action-group,
@@ -496,7 +405,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px 8px;
 }
 
 .risk-page .risk-copy-feedback,
@@ -904,12 +813,16 @@
 
 .risk-page .risk-standalone-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(250px, 0.95fr);
+  grid-template-columns: minmax(0, 1.15fr) minmax(260px, 1fr);
   gap: 0;
   align-items: stretch;
 }
 
 .risk-page .risk-standalone-steps {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
   padding: 14px 16px;
   min-width: 0;
 }
@@ -964,13 +877,19 @@
 .risk-page .risk-ephemeral-qr-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   padding: 14px 16px;
   border: 0;
   border-left: 1px solid var(--landing-line);
   border-radius: 0;
   background: color-mix(in srgb, var(--muted) 18%, transparent);
+}
+
+.risk-page .risk-ephemeral-qr-card .risk-qr-frame,
+.risk-page .risk-ephemeral-qr-card .risk-qr-empty {
+  width: 148px;
+  height: 148px;
 }
 
 .risk-page .risk-ephemeral-qr-head {
@@ -1012,19 +931,20 @@
 .risk-page .risk-standalone-footer-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 10px 16px;
   flex-wrap: wrap;
 }
 
 .risk-page .risk-callout.risk-callout-inline {
-  flex: 1 1 320px;
   margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  padding: 9px 12px;
+  border: 1px solid var(--landing-line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--muted) 22%, transparent);
   color: var(--muted-foreground);
+  font-size: 11.5px;
+  line-height: 1.45;
 }
 
 .risk-page .risk-callout.risk-callout-inline strong {
@@ -1122,13 +1042,9 @@
   cursor: pointer;
 }
 
-.risk-page .risk-checklist-label input[type="checkbox"] {
+.risk-page .risk-checklist-label .risk-checklist-checkbox {
   margin-top: 2px;
-  width: 15px;
-  height: 15px;
-  accent-color: var(--local-accent);
   flex-shrink: 0;
-  cursor: pointer;
 }
 
 .risk-page .risk-checklist-copy {
@@ -1214,22 +1130,6 @@
 }
 
 @container risk-env (max-width: 680px) {
-  .risk-page .risk-telemetry-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .risk-page .risk-telemetry-cell + .risk-telemetry-cell {
-    border-left: 0;
-  }
-
-  .risk-page .risk-telemetry-cell:nth-child(even) {
-    border-left: 1px solid var(--landing-line);
-  }
-
-  .risk-page .risk-telemetry-cell:nth-child(n + 3) {
-    border-top: 1px solid var(--landing-line);
-  }
-
   .risk-page .risk-bridge-grid,
   .risk-page .risk-standalone-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -1271,19 +1171,5 @@
 @container risk-env (max-width: 480px) {
   .risk-page .risk-mini-fields {
     grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@container risk-env (max-width: 390px) {
-  .risk-page .risk-telemetry-strip {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .risk-page .risk-telemetry-cell:nth-child(even) {
-    border-left: 0;
-  }
-
-  .risk-page .risk-telemetry-cell + .risk-telemetry-cell {
-    border-top: 1px solid var(--landing-line);
   }
 }

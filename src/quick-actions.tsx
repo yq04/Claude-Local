@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Independent identity/browser/system/CLI reads, page icons, locale and local refresh event.
- * [OUTPUT]: Horizontal telemetry strip (including pure in-memory pool readiness, Reset Card count & active subagent slots from identities_read), scoped failure feedback and compact 2-column workbench action grid across eight destinations.
+ * [OUTPUT]: Shared 4-column telemetry strip (.env-telemetry-strip with pure in-memory pool readiness, Reset Card count & active subagent slots from identities_read), scoped failure feedback and compact 2-column workbench action grid across eight destinations.
  * [POS]: Mounted only on the quick page; actions navigate or refresh guarded reads, never rotate fingerprints, start browsers or change system settings.
  * [PROTOCOL]: Update this header and src/CLAUDE.md with changes.
  */
@@ -138,15 +138,15 @@ export function QuickSetupPanel({onNavigate}: {onNavigate: (page: Page) => void}
     <div className="quick-content">
       <section className="settings-card quick-overview" aria-busy={busy}>
         <h2 className="sr-only">{t('quick.overview')}</h2>
-        <div className="quick-state-grid">
+        <div className="env-telemetry-strip quick-state-grid">
           {snapshots.map(({key, label, state, value, detail}) => {
             const readState = state.pending ? 'pending' : state.error ? 'failed' : 'ready';
             const displayValue = status(state, value);
             const displayDetail = state.pending || state.error ? '—' : detail;
-            return <div key={key} className="quick-telemetry-cell" data-quick-state={key} data-read-state={readState} aria-busy={state.pending}>
-              <div className="quick-telemetry-head">
-                <span className={`quick-status-dot is-${readState}`} aria-hidden="true" />
-                <span className="quick-telemetry-label">{label}</span>
+            return <div key={key} className="env-telemetry-cell quick-telemetry-cell" data-quick-state={key} data-read-state={readState} aria-busy={state.pending}>
+              <div className="env-telemetry-head quick-telemetry-head">
+                <span className={`env-status-dot quick-status-dot is-${readState}`} aria-hidden="true" />
+                <span className="env-telemetry-label quick-telemetry-label">{label}</span>
               </div>
               <strong title={displayValue}>{displayValue}</strong>
               <small title={state.pending || state.error ? '' : detail}>{displayDetail}</small>

@@ -1,5 +1,5 @@
 // [INPUT]: rusqlite/内嵌 SQLite、私有保险库目录和脱敏身份元数据与本机加盐的账号索引。
-// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与身份目录、保留策略、当前身份、`pending_device_id` 事务管理、进程内 `DB_PROTECTED` ACL 缓存、SQLite v3 浏览器绑定、切换前目录快照与无残留回滚撤销（abort_pending / finish_transient_recovery）及身份移除事务；已初始化 v3 库的无写锁快速打开与首开/迁移的进程内串行化。
+// [OUTPUT]: 默认联动/显式关闭保留、首身份预留编号与 32-hex 初始 `browser.active`（禁止新建回退 `'legacy'`）、保留策略、当前身份、`pending_device_id` 事务管理、进程内 `DB_PROTECTED` ACL 缓存、SQLite v3 浏览器绑定、切换前目录快照与无残留回滚撤销（abort_pending / finish_transient_recovery）及身份移除事务；已初始化 v3 库的无写锁快速打开与首开/迁移的进程内串行化。
 // [POS]: 保险库的索引事务；短期 Mutex 保护打开边界，v3 已就绪时跳过写事务与重复 DDL，未初始化或旧版本时以 IMMEDIATE 事务保护跨连接版本迁移与默认状态，凭据和会话正文仅进入加密归档。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -159,8 +159,15 @@ impl Database {
             return Err("身份目录版本较新，请更新应用。".into());
         }
         tx.execute_batch("CREATE TABLE IF NOT EXISTS browser_bindings(identity TEXT PRIMARY KEY,slot TEXT NOT NULL UNIQUE,seed INTEGER NOT NULL UNIQUE); PRAGMA user_version=3;").map_err(error)?;
-        // 未设置过的用户默认联动；显式关闭和已有资料指针始终保留。
-        tx.execute_batch("INSERT OR IGNORE INTO state VALUES('browser.enabled','1'); INSERT OR IGNORE INTO state VALUES('browser.active','legacy');").map_err(error)?;
+        // 未设置过的用户默认联动；初始激活槽位使用独立 32-hex `contexts/<slot_id>`，绝不落入 `"legacy"`。
+        let initial_slot = super::new_id()?;
+        tx.execute_batch("INSERT OR IGNORE INTO state VALUES('browser.enabled','1');")
+            .map_err(error)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO state VALUES('browser.active',?1)",
+            [&initial_slot],
+        )
+        .map_err(error)?;
         tx.execute(
             "INSERT OR IGNORE INTO state VALUES('browser.draft',?1)",
             [super::new_id()?],
@@ -549,15 +556,19 @@ impl Database {
         tx.execute("DELETE FROM browser_bindings WHERE identity=?1", [transient_id])
             .map_err(error)?;
         if !restored_empty && super::valid_id(transient_id) {
-            let legacy_unbound: bool = tx
+            let active_unbound_isolated: bool = tx
                 .query_row(
-                    "SELECT COALESCE((SELECT value FROM state WHERE key='browser.active')='legacy', 0)
-                        AND NOT EXISTS(SELECT 1 FROM browser_bindings WHERE slot='legacy')",
+                    "SELECT CASE WHEN value IS NOT NULL AND length(value)=32 AND value!='legacy'
+                        AND NOT EXISTS(SELECT 1 FROM browser_bindings WHERE slot=value)
+                        THEN 1 ELSE 0 END
+                     FROM state WHERE key='browser.active'",
                     [],
                     |row| row.get(0),
                 )
-                .map_err(error)?;
-            if legacy_unbound {
+                .optional()
+                .map_err(error)?
+                .unwrap_or(false);
+            if active_unbound_isolated {
                 tx.execute(
                     "INSERT OR IGNORE INTO state VALUES('browser.draft',?1)",
                     [transient_id],

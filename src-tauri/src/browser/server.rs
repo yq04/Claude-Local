@@ -1,6 +1,6 @@
-// [INPUT]: 只读有界身份摘要、打包起始页、随机会话令牌、机器上下文与显式触发的一次性扩展快照。
-// [OUTPUT]: 仅 127.0.0.1 的起始页、观测接口和严格扩展 Origin 的额度回传路由；Host/正文校验、有界并发及时限，资源限定在打包目录。
-// [POS]: Chromium 与工具箱之间的窄桥；额度路由只经单次身份绑定票据调用既有白名单账本接口。
+// [INPUT]: 只读有界身份摘要、打包起始页、随机会话令牌与机器上下文。
+// [OUTPUT]: 仅 `127.0.0.1:{port}` 精确 Host/Origin 的起始页与观测接口；严格校验唯一 Host/Origin/Content-Type/Content-Length、拒绝冒号前空白与 Transfer-Encoding，有界并发及时限，静态资源限定在打包目录。
+// [POS]: 伴生浏览器起始页与回环自检观测服务；不开放 `localhost` 或 `port == 0` 宽松匹配，不包含额度回传路由。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::{network::Report, Browser, Context};
 use std::{
@@ -16,7 +16,6 @@ use std::{
 use tauri::{Emitter, Manager};
 const MAX_REQUESTS: usize = 32;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
-const QUOTA_BRIDGE_ORIGIN: &str = "chrome-extension://ejcmmmehjkifepdoejgbaleeogcfagjg";
 struct RequestPermit(Arc<AtomicUsize>);
 impl RequestPermit {
     fn acquire(active: &Arc<AtomicUsize>) -> Option<Self> {
@@ -61,19 +60,10 @@ fn answer(stream: &mut TcpStream, status: &str, kind: &str, body: &[u8]) {
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body);
 }
-fn answer_quota(stream: &mut TcpStream, status: &str, body: &[u8]) {
-    let header = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nAccess-Control-Allow-Origin: {QUOTA_BRIDGE_ORIGIN}\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nAccess-Control-Allow-Headers: content-type\r\nVary: Origin\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\n\r\n", body.len());
-    let _ = stream.write_all(header.as_bytes());
-    let _ = stream.write_all(body);
-}
-
 struct RequestHeaders {
     valid: bool,
-    content_length_count: usize,
     content_type: Option<String>,
     origin: Option<String>,
-    requested_method: Option<String>,
-    requested_headers: Option<String>,
 }
 
 fn parse_request_headers(header: &str, port: u16) -> RequestHeaders {
@@ -81,26 +71,25 @@ fn parse_request_headers(header: &str, port: u16) -> RequestHeaders {
     let mut host_valid = false;
     let mut content_length_count = 0;
     let mut content_length_valid = true;
+    let mut content_type_count = 0;
     let mut content_type = None;
+    let mut origin_count = 0;
     let mut origin = None;
-    let mut requested_method = None;
-    let mut requested_headers = None;
     let mut has_transfer_encoding = false;
+    let mut has_invalid_header_name = false;
 
     for line in header.lines().skip(1) {
-        if let Some((key, value)) = line.split_once(':') {
-            let key = key.trim().to_ascii_lowercase();
+        if let Some((raw_key, value)) = line.split_once(':') {
+            if raw_key.is_empty() || raw_key.bytes().any(|b| b.is_ascii_whitespace()) {
+                has_invalid_header_name = true;
+                continue;
+            }
+            let key = raw_key.to_ascii_lowercase();
             let value = value.trim();
             match key.as_str() {
                 "host" => {
                     host_count += 1;
-                    if port > 0 {
-                        let expected_ip = format!("127.0.0.1:{port}");
-                        let expected_localhost = format!("localhost:{port}");
-                        if value == expected_ip || value == expected_localhost {
-                            host_valid = true;
-                        }
-                    } else if value.starts_with("127.0.0.1") || value.starts_with("localhost") {
+                    if port > 0 && value == format!("127.0.0.1:{port}") {
                         host_valid = true;
                     }
                 }
@@ -110,11 +99,17 @@ fn parse_request_headers(header: &str, port: u16) -> RequestHeaders {
                         content_length_valid = false;
                     }
                 }
-                "content-type" => content_type = Some(value.to_ascii_lowercase()),
-                "origin" => origin = Some(value.to_string()),
-                "access-control-request-method" => requested_method = Some(value.to_string()),
-                "access-control-request-headers" => {
-                    requested_headers = Some(value.to_ascii_lowercase())
+                "content-type" => {
+                    content_type_count += 1;
+                    if content_type.is_none() {
+                        content_type = Some(value.to_ascii_lowercase());
+                    }
+                }
+                "origin" => {
+                    origin_count += 1;
+                    if origin.is_none() {
+                        origin = Some(value.to_string());
+                    }
                 }
                 "transfer-encoding" => has_transfer_encoding = true,
                 _ => {}
@@ -127,12 +122,12 @@ fn parse_request_headers(header: &str, port: u16) -> RequestHeaders {
             && host_valid
             && content_length_count <= 1
             && content_length_valid
-            && !has_transfer_encoding,
-        content_length_count,
+            && content_type_count <= 1
+            && origin_count <= 1
+            && !has_transfer_encoding
+            && !has_invalid_header_name,
         content_type,
         origin,
-        requested_method,
-        requested_headers,
     }
 }
 pub fn nonce() -> Result<String, String> {
@@ -278,105 +273,15 @@ fn handle(
         answer(stream, "404 Not Found", "text/plain", b"Not found");
         return;
     };
-    let quota_route = path == "quota-sync";
     if let Some(ref org) = parsed.origin {
-        let valid_origin = if port > 0 {
-            org == &format!("http://127.0.0.1:{port}") || org == &format!("http://localhost:{port}")
-        } else {
-            org.starts_with("http://127.0.0.1") || org.starts_with("http://localhost")
-        };
-        if !valid_origin && !(quota_route && org == QUOTA_BRIDGE_ORIGIN) {
+        let valid_origin = port > 0 && org == &format!("http://127.0.0.1:{port}");
+        if !valid_origin {
             answer(stream, "403 Forbidden", "text/plain", b"Invalid origin");
             return;
         }
     }
     if !current_session(&app.state::<Browser>().session.lock().unwrap(), token) {
         answer(stream, "410 Gone", "text/plain", b"Session expired");
-        return;
-    }
-    if quota_route && method == "OPTIONS" {
-        if parsed.origin.as_deref() == Some(QUOTA_BRIDGE_ORIGIN)
-            && parsed.requested_method.as_deref() == Some("POST")
-            && parsed.requested_headers.as_deref() == Some("content-type")
-        {
-            answer_quota(stream, "204 No Content", b"");
-        } else {
-            answer(stream, "403 Forbidden", "text/plain", b"Invalid preflight");
-        }
-        return;
-    }
-    if quota_route && method == "POST" {
-        if parsed.origin.as_deref() != Some(QUOTA_BRIDGE_ORIGIN)
-            || parsed.content_type.as_deref() != Some("application/json")
-            || parsed.content_length_count != 1
-        {
-            answer(
-                stream,
-                "403 Forbidden",
-                "text/plain",
-                b"Invalid quota bridge request",
-            );
-            return;
-        }
-        let length = header
-            .lines()
-            .filter_map(|line| line.split_once(':'))
-            .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
-            .and_then(|(_, v)| v.trim().parse::<usize>().ok())
-            .filter(|n| *n > 0 && *n <= 16_384);
-        let Some(length) = length else {
-            answer(stream, "400 Bad Request", "text/plain", b"Invalid length");
-            return;
-        };
-        let mut body = vec![0u8; length];
-        if read_before(stream, &mut body, deadline).is_err() {
-            return;
-        }
-        let incoming = serde_json::from_slice::<super::quota_bridge::Incoming>(&body);
-        let Ok(incoming) = incoming else {
-            answer(
-                stream,
-                "400 Bad Request",
-                "text/plain",
-                b"Invalid quota snapshot",
-            );
-            return;
-        };
-        let ticket = {
-            let browser = app.state::<Browser>();
-            let mut pending = browser.quota_sync.lock().unwrap();
-            super::quota_bridge::take_ticket(&mut pending, token, &incoming.nonce, Instant::now())
-        };
-        let Some(ticket) = ticket else {
-            answer_quota(stream, "410 Gone", b"{\"ok\":false}");
-            return;
-        };
-        let result = (|| -> Result<(), String> {
-            let observed_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| "quotaOnline.unavailable")?
-                .as_millis() as u64;
-            let snapshot = super::quota_bridge::snapshot(incoming, observed_ms)?;
-            super::quota_bridge::commit_browser_snapshot(
-                app,
-                ticket.requested_account_id.as_deref(),
-                &ticket.slot_owner_id,
-                &ticket.account_id,
-                &ticket.quota_identity,
-                snapshot,
-            )
-        })();
-        let ok = result.is_ok();
-        let _ = ticket.reply.send(result);
-        answer_quota(
-            stream,
-            if ok { "200 OK" } else { "409 Conflict" },
-            if ok {
-                b"{\"ok\":true}"
-            } else {
-                b"{\"ok\":false}"
-            },
-        );
         return;
     }
     if method == "GET" && path == "context" {
@@ -698,5 +603,186 @@ mod tests {
         drop(server_stream);
         let client_resp = client.join().unwrap();
         assert!(String::from_utf8_lossy(&client_resp).contains("400 Bad Request"));
+    }
+
+    #[test]
+    fn host_and_port_zero_reject_localhost_and_permissive_prefixes() {
+        let port = 45678;
+        assert!(parse_request_headers(
+            &format!("GET /t/browser.html HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"),
+            port
+        )
+        .valid);
+        assert!(!parse_request_headers(
+            &format!("GET /t/browser.html HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n"),
+            port
+        )
+        .valid);
+        assert!(!parse_request_headers(
+            "GET /t/browser.html HTTP/1.1\r\nHost: 127.0.0.1:45678\r\n\r\n",
+            0
+        )
+        .valid);
+        assert!(!parse_request_headers(
+            "GET /t/browser.html HTTP/1.1\r\nHost: localhost:45678\r\n\r\n",
+            0
+        )
+        .valid);
+    }
+
+    #[test]
+    fn duplicate_origin_and_content_type_headers_including_case_variants_are_rejected() {
+        let port = 45678;
+        let expected_origin = format!("http://127.0.0.1:{port}");
+
+        // 1. 重复 Origin：同值重复、先恶后正、先正后恶、混合大小写重复
+        let origin_cases = [
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {expected_origin}\r\nOrigin: {expected_origin}\r\n\r\n"
+            ),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: https://evil.example\r\nOrigin: {expected_origin}\r\n\r\n"
+            ),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {expected_origin}\r\nOrigin: https://evil.example\r\n\r\n"
+            ),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {expected_origin}\r\norigin: {expected_origin}\r\nORIGIN: {expected_origin}\r\n\r\n"
+            ),
+        ];
+        for req in &origin_cases {
+            assert!(
+                !parse_request_headers(req, port).valid,
+                "duplicate Origin must be rejected: {req}"
+            );
+        }
+
+        // 2. 重复 Content-Type：同值重复、先 text/plain 后 application/json、先 application/json 后 text/plain、混合大小写重复
+        let content_type_cases = [
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Type: application/json\r\n\r\n"
+            ),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: text/plain\r\nContent-Type: application/json\r\n\r\n"
+            ),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Type: text/plain\r\n\r\n"
+            ),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\ncontent-type: application/json\r\nCONTENT-TYPE: text/plain\r\n\r\n"
+            ),
+        ];
+        for req in &content_type_cases {
+            assert!(
+                !parse_request_headers(req, port).valid,
+                "duplicate Content-Type must be rejected: {req}"
+            );
+        }
+
+        // 3. 重复 Content-Length 与 Transfer-Encoding 均拒绝
+        let framing_cases = [
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 10\r\ncontent-length: 10\r\n\r\n"
+            ),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nTransfer-Encoding: chunked\r\n\r\n"
+            ),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\ntRaNsFeR-eNcOdInG: chunked\r\n\r\n"
+            ),
+        ];
+        for req in &framing_cases {
+            assert!(
+                !parse_request_headers(req, port).valid,
+                "ambiguous framing must be rejected: {req}"
+            );
+        }
+
+        // 4. 合法混合大小写单值头通过并正确归一化提取
+        let valid_req = format!(
+            "POST /t/report HTTP/1.1\r\nhOsT: 127.0.0.1:{port}\r\noRiGiN: {expected_origin}\r\ncOnTeNt-TyPe: APPLICATION/JSON; charset=utf-8\r\nContent-Length: 12\r\n\r\n"
+        );
+        let parsed = parse_request_headers(&valid_req, port);
+        assert!(parsed.valid);
+        assert_eq!(parsed.origin.as_deref(), Some(expected_origin.as_str()));
+        assert_eq!(
+            parsed.content_type.as_deref(),
+            Some("application/json; charset=utf-8")
+        );
+    }
+
+    #[test]
+    fn duplicate_origin_or_content_type_returns_400_bad_request_over_loopback() {
+        for build_raw in [
+            |port: u16| {
+                format!(
+                    "POST /test/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: https://evil.example\r\norigin: http://127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n"
+                )
+            },
+            |port: u16| {
+                format!(
+                    "POST /test/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\nContent-Type: text/plain\r\nCONTENT-TYPE: application/json\r\nContent-Length: 0\r\n\r\n"
+                )
+            },
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let raw = build_raw(address.port());
+            let client = std::thread::spawn(move || {
+                let mut stream = TcpStream::connect(address).unwrap();
+                stream.write_all(raw.as_bytes()).unwrap();
+                stream.shutdown(std::net::Shutdown::Write).unwrap();
+                let mut buf = Vec::new();
+                stream.read_to_end(&mut buf).unwrap();
+                buf
+            });
+            let (mut server_stream, _) = listener.accept().unwrap();
+            server_stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0u8; 1];
+                server_stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            let header = String::from_utf8(request).unwrap();
+            assert!(!parse_request_headers(&header, address.port()).valid);
+            answer(
+                &mut server_stream,
+                "400 Bad Request",
+                "text/plain",
+                b"Bad request",
+            );
+            drop(server_stream);
+            let client_resp = client.join().unwrap();
+            let resp_str = String::from_utf8_lossy(&client_resp);
+            assert!(
+                resp_str.starts_with("HTTP/1.1 400 Bad Request"),
+                "expected 400 Bad Request, got: {resp_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn space_before_colon_in_header_name_is_rejected() {
+        let port = 45678;
+        for bad in [
+            format!("GET /t/context HTTP/1.1\r\nHost : 127.0.0.1:{port}\r\n\r\n"),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length : 2\r\n\r\n"
+            ),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin : http://127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n"
+            ),
+            format!(
+                "POST /t/report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nTransfer-Encoding : chunked\r\n\r\n"
+            ),
+        ] {
+            assert!(
+                !parse_request_headers(&bad, port).valid,
+                "whitespace before header colon must be rejected: {bad}"
+            );
+        }
     }
 }

@@ -1,5 +1,5 @@
-// [INPUT]: Explicit local pairing ticket, bounded Claude account/org candidates, and projected metadata (subscription, usage, optional kyc_status).
-// [OUTPUT]: One nonce/tab-bound callback after fingerprint matching, or an allowlisted failure with no account payload.
+// [INPUT]: Explicit local pairing ticket, sender.frameId === 0 tab messages, bounded Claude account/org candidates, and projected metadata (subscription, usage, optional kyc_status).
+// [OUTPUT]: One nonce/tab-bound single-use claim (`tab:{id}` in `chrome.storage.session`) and bounded-retry callback (80ms/200ms on network throw, no retry on HTTP 4xx/5xx) after fingerprint matching, or an allowlisted failure with no account payload.
 // [POS]: Fixed MV3 bridge service worker; fingerprint stays in session storage and never reaches claude.ai.
 "use strict";
 
@@ -9,9 +9,13 @@ const FAILURES = new Set(["identity_unavailable", "identity_changed", "usage_una
   "web_auth_required", "web_access_denied", "request_timeout", "invalid_response"]);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id || !sender.tab?.id || !sender.tab?.url) return;
+  if (sender.id !== chrome.runtime.id || !sender.tab?.id || !sender.tab?.url || sender.frameId !== 0) return;
   if (message?.kind === "claude-local-quota-pair") {
     void pair(message, sender).then(sendResponse, () => sendResponse({ paired: false }));
+    return true;
+  }
+  if (message?.kind === "claude-local-quota-claim") {
+    void claimTabTask(message, sender).then(sendResponse, () => sendResponse({ nonce: null }));
     return true;
   }
   if (message?.kind === "claude-local-quota-candidates") {
@@ -25,6 +29,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function pair(message, sender) {
+  if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || !sender.tab?.id || !sender.tab?.url) {
+    return { paired: false };
+  }
   const tab = new URL(sender.tab.url);
   const nonce = message.nonce;
   const fragment = new URLSearchParams(tab.hash.slice(1));
@@ -35,23 +42,56 @@ async function pair(message, sender) {
       fragment.get("quota-sync") !== nonce || fragment.get("quota_identity") !== quotaIdentity ||
       !/^[a-f0-9]{48}$/.test(nonce) || !/^[a-f0-9]{64}$/.test(quotaIdentity) || consumed.has(nonce)) return { paired: false };
   const callbackUrl = new URL(tab.pathname.replace(/\/browser\.html$/, "/quota-sync"), tab.origin);
+  const expiresAt = Date.now() + 90_000;
   const value = {
     callbackUrl: callbackUrl.href,
     tabId: sender.tab.id,
     expectedHash: quotaIdentity,
-    expiresAt: Date.now() + 90_000
+    expiresAt,
+    claimed: false
   };
   const existing = await chrome.storage.session.get(nonce);
   if (existing[nonce]) return { paired: false };
-  await chrome.storage.session.set({ [nonce]: value });
+  const tabKey = `tab:${sender.tab.id}`;
+  await chrome.storage.session.set({
+    [nonce]: value,
+    [tabKey]: { nonce, expiresAt }
+  });
   return { paired: true };
+}
+
+async function claimTabTask(_message, sender) {
+  if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || !sender.tab?.id || !sender.tab?.url) {
+    return { nonce: null };
+  }
+  const tab = new URL(sender.tab.url);
+  if (tab.origin !== "https://claude.ai" || tab.pathname !== "/settings/usage") {
+    return { nonce: null };
+  }
+  const tabKey = `tab:${sender.tab.id}`;
+  const tabStored = await chrome.storage.session.get(tabKey);
+  const ticket = tabStored[tabKey];
+  await chrome.storage.session.remove(tabKey);
+  const nonce = ticket?.nonce;
+  if (typeof nonce !== "string" || !/^[a-f0-9]{48}$/.test(nonce) ||
+      !ticket.expiresAt || ticket.expiresAt <= Date.now() || consumed.has(nonce)) {
+    return { nonce: null };
+  }
+  const stored = await chrome.storage.session.get(nonce);
+  const paired = stored[nonce];
+  if (!paired || paired.tabId !== sender.tab.id || paired.expiresAt <= Date.now() || paired.claimed) {
+    return { nonce: null };
+  }
+  await chrome.storage.session.set({ [nonce]: { ...paired, claimed: true } });
+  return { nonce };
 }
 
 async function matchCandidates(message, sender) {
   const nonce = message.nonce;
   const tab = new URL(sender.tab.url);
-  if (sender.id !== chrome.runtime.id || tab.origin !== "https://claude.ai" ||
-      tab.pathname !== "/settings/usage" || !/^[a-f0-9]{48}$/.test(nonce)) return { matched: null };
+  if (sender.id !== chrome.runtime.id || sender.frameId !== 0 ||
+      tab.origin !== "https://claude.ai" || tab.pathname !== "/settings/usage" ||
+      !/^[a-f0-9]{48}$/.test(nonce)) return { matched: null };
   const stored = await chrome.storage.session.get(nonce);
   const paired = stored[nonce];
   if (!paired || paired.tabId !== sender.tab.id || paired.expiresAt <= Date.now() || paired.selected) return { matched: null };
@@ -85,8 +125,8 @@ async function matchCandidates(message, sender) {
 async function deliver(message, sender) {
   const nonce = message.nonce;
   const tab = new URL(sender.tab.url);
-  if (tab.origin !== "https://claude.ai" ||
-      tab.pathname !== "/settings/usage" ||
+  if (sender.id !== chrome.runtime.id || sender.frameId !== 0 ||
+      tab.origin !== "https://claude.ai" || tab.pathname !== "/settings/usage" ||
       !/^[a-f0-9]{48}$/.test(nonce) || consumed.has(nonce)) return { ok: false };
   const stored = await chrome.storage.session.get(nonce);
   const paired = stored[nonce];
@@ -97,7 +137,7 @@ async function deliver(message, sender) {
       !Number.isInteger(Number(callback.port)) ||
       Number(callback.port) < 1 || Number(callback.port) > 65535) return { ok: false };
   consumed.add(nonce);
-  await chrome.storage.session.remove(nonce);
+  await chrome.storage.session.remove([nonce, `tab:${sender.tab.id}`]);
   const snapshot = message.snapshot;
   if (!snapshot || snapshot.nonce !== nonce) return { ok: false };
   const failure = FAILURES.has(snapshot.failure);
@@ -105,15 +145,27 @@ async function deliver(message, sender) {
   if (!failure && (!paired.selected || snapshot.account_uuid !== paired.selected.account_uuid ||
       snapshot.organization_uuid !== paired.selected.organization_uuid)) return { ok: false };
   const safeSnapshot = failure ? { nonce, failure: snapshot.failure } : projectSnapshot(snapshot, paired.selected);
-  const response = await fetch(callback.href, {
+  const RETRY_DELAYS_MS = [80, 200];
+  const requestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(safeSnapshot),
     cache: "no-store",
     credentials: "omit",
     redirect: "error"
-  });
-  return { ok: response.ok };
+  };
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const response = await fetch(callback.href, requestInit);
+      return { ok: response.ok };
+    } catch (_err) {
+      if (attempt >= RETRY_DELAYS_MS.length) {
+        return { ok: false };
+      }
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+  return { ok: false };
 }
 
 function projectSnapshot(snapshot, selected) {

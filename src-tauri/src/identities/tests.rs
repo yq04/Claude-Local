@@ -1085,3 +1085,176 @@ fn database_acl_cache_and_archive_stream_ram_cap_enforced() {
     std::fs::remove_dir_all(folder).unwrap();
 }
 
+
+#[test]
+fn store_switch_strict_isolation_blocks_commit_and_rolls_back_before_completion() {
+    let folder = canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("baga-strict-iso-{}", new_id().unwrap()));
+    let app_dir = folder.join("app");
+    let home = folder.join("home");
+    let vault = app_dir.join("identity-vault");
+    private::directory(&home.join(".claude")).unwrap();
+
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"acct-1"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"tok-1"}}"#,
+    )
+    .unwrap();
+    fixture_write(home.join(".claude/settings.json"), r#"{"env":{}}"#).unwrap();
+
+    let mut store = store::Store::open(&vault, &home).unwrap();
+    let r = Reporter::channel(None);
+    let p = Policy::default();
+    store.save_current("One", &p, &r).unwrap();
+    let rec_one = store
+        .records()
+        .into_iter()
+        .find(|rec| rec.name == "One")
+        .unwrap();
+
+    // Create Account Two cleanly, then force a slotProxies alignment failure during switch to Two.
+    store.switch("empty", "One", &p, &r).unwrap();
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"acct-2"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"tok-2"}}"#,
+    )
+    .unwrap();
+    store.save_current("Two", &p, &r).unwrap();
+    let rec_two = store
+        .records()
+        .into_iter()
+        .find(|rec| rec.name == "Two")
+        .unwrap();
+
+    // Switch back to One cleanly first.
+    store.switch(&rec_one.id, "Two", &p, &r).unwrap();
+    assert_eq!(store.db.get("active").unwrap().as_deref(), Some(rec_one.id.as_str()));
+
+    // Induce an expected_key vs live_key mismatch on Two so pre-commit verify_switch_isolation fails cleanly.
+    store
+        .db
+        .connection
+        .execute(
+            "UPDATE identities SET account_key='mismatched-hmac-key' WHERE id=?1",
+            [&rec_two.id],
+        )
+        .unwrap();
+
+    // Switching to Two under default strict isolation must fail BEFORE complete_with_pending and roll back to One.
+    let err = store.switch(&rec_two.id, "One", &p, &r).unwrap_err();
+    assert!(
+        err.contains("身份键") || err.contains("已恢复"),
+        "unexpected switch err: {err}"
+    );
+    assert_eq!(store.db.get("active").unwrap().as_deref(), Some(rec_one.id.as_str()));
+    assert!(store.db.get("recovery").unwrap().is_none());
+
+    // When strictSlotIsolation=false, switching falls back to warning and succeeds.
+    fixture_write(
+        app_dir.join("smart_relay_v1.json"),
+        br#"{"strictSlotIsolation":false}"#,
+    )
+    .unwrap();
+    store.switch(&rec_two.id, "One", &p, &r).unwrap();
+    assert_eq!(store.db.get("active").unwrap().as_deref(), Some(rec_two.id.as_str()));
+
+    drop(store);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn r1_compatibility_invariants_bagaid01_baga_sqlite_v3_hmac_ccbaga_roundtrip() {
+    let folder = canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("baga-r1-compat-{}", new_id().unwrap()));
+    let app_dir = folder.join("app");
+    let restore_root = folder.join("restore");
+    let home = folder.join("home");
+    let vault = app_dir.join("identity-vault");
+    private::directory(&home.join(".claude")).unwrap();
+    private::directory(&restore_root).unwrap();
+
+    fixture_write(
+        home.join(".claude.json"),
+        r#"{"oauthAccount":{"accountUuid":"r1-acct-uuid"}}"#,
+    )
+    .unwrap();
+    fixture_write(
+        home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"tok-r1"}}"#,
+    )
+    .unwrap();
+
+    let mut store = store::Store::open(&vault, &home).unwrap();
+    store
+        .save_current("R1Card", &Policy::default(), &Reporter::channel(None))
+        .unwrap();
+    let record = store
+        .records()
+        .into_iter()
+        .find(|r| r.name == "R1Card")
+        .unwrap();
+
+    // 1) BAGAID01 archive header invariant.
+    let archive_bytes = std::fs::read(vault.join(&record.archive)).unwrap();
+    assert_eq!(&archive_bytes[..8], b"BAGAID01");
+
+    // 2) SQLite user_version == 3 invariant.
+    let uv: i64 = store
+        .db
+        .connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(uv, 3);
+
+    // 3) HMAC account key determinism.
+    let live_k1 = catalog::live_key(&home, &store.key).unwrap();
+    let live_k2 = catalog::live_key(&home, &store.key).unwrap();
+    assert_eq!(live_k1, live_k2);
+    assert_eq!(record.account_key, live_k1);
+
+    // 4) CCBaga/browser/{id}/{attempt} seed domain invariant.
+    let digest = ring::digest::digest(
+        &ring::digest::SHA256,
+        format!("CCBaga/browser/{}/0", record.id).as_bytes(),
+    );
+    let d = digest.as_ref();
+    let expected_seed = u32::from_be_bytes([d[0], d[1], d[2], d[3]]);
+    assert_eq!(browser_link::seed(&record.id, 0), expected_seed);
+
+    // 5) .baga full export & restore round-trip.
+    let baga_path = folder.join("roundtrip.baga");
+    let receipt =
+        backup::export_from_root(&app_dir, &baga_path, b"r1-passphrase-2026", false).unwrap();
+    assert!(receipt.verified);
+    assert_eq!(receipt.saved_identities, 1);
+
+    let restored =
+        backup::restore_from_archive(&baga_path, &restore_root, b"r1-passphrase-2026").unwrap();
+    assert_eq!(restored.saved_identities, 1);
+    let restored_db = database::Database::open(
+        &std::path::PathBuf::from(&restored.path).join("identity-vault"),
+    )
+    .unwrap();
+    let restored_uv: i64 = restored_db
+        .connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(restored_uv, 3);
+    assert_eq!(restored_db.records().unwrap()[0].id, record.id);
+
+    drop(restored_db);
+    drop(store);
+    std::fs::remove_dir_all(folder).unwrap();
+}

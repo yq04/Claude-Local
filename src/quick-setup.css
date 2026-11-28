@@ -1,7 +1,7 @@
-/* [INPUT]: Existing theme, spacing and typography tokens.
- * [OUTPUT]: Single-border 4-column telemetry strip and compact 2-column workbench action grid sized for 1040x820 zero-scroll layout.
- * [POS]: Quick page only; selectors scoped under .quick-page so layout rules cleanly supersede shared rules regardless of import order.
- * [PROTOCOL]: Update src/CLAUDE.md with changes. */
+/* [INPUT]: Shared .env-telemetry-* base and theme/typography tokens from style.css.
+ * [OUTPUT]: Quick page 2-line wrapping telemetry cells, 2-column workbench action grid, and container-responsive breakpoints without duplicate telemetry strip rules.
+ * [POS]: Quick page only; imported after style.css and scoped under .quick-page.
+ * [PROTOCOL]: Update this header and src/CLAUDE.md with changes. */
 .quick-page .sr-only {
   position: absolute;
   width: 1px;
@@ -20,7 +20,7 @@
 }
 
 .quick-page .quick-content {
-  padding: 0 0 4px;
+  padding: 0;
   display: grid;
   gap: 14px;
   container: quick / inline-size;
@@ -32,99 +32,18 @@
   overflow: hidden;
 }
 
-.quick-page .quick-state-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-}
-
-.quick-page .quick-telemetry-cell {
-  display: grid;
-  align-content: start;
-  gap: 4px;
-  min-width: 0;
-  padding: 12px 14px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-}
-
-.quick-page .quick-telemetry-cell + .quick-telemetry-cell {
-  border-left: 1px solid var(--landing-line);
-}
-
-.quick-page .quick-telemetry-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.quick-page .quick-status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background: #94a3b8;
-}
-
-.quick-page .quick-status-dot.is-ready {
-  background: #16a34a;
-}
-
-.quick-page .quick-status-dot.is-pending {
-  background: #d97706;
-}
-
-.quick-page .quick-status-dot.is-failed {
-  background: #dc2626;
-}
-
-:root.dark .quick-page .quick-status-dot.is-ready {
-  background: #4ade80;
-}
-
-:root.dark .quick-page .quick-status-dot.is-pending {
-  background: #fbbf24;
-}
-
-:root.dark .quick-page .quick-status-dot.is-failed {
-  background: #f87171;
-}
-
-.quick-page .quick-telemetry-label {
-  font-size: 11.5px;
-  line-height: 1.3;
-  color: var(--muted-foreground);
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.quick-page .quick-telemetry-cell strong {
-  font-size: 13.5px;
-  line-height: 1.35;
-  font-weight: 600;
-  color: var(--foreground);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .quick-page .quick-telemetry-cell small {
-  font-size: 11.5px;
-  line-height: 1.35;
-  color: var(--muted-foreground);
-  min-width: 0;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .quick-page .quick-telemetry-cell small.quick-read-error {
+  display: block;
+  -webkit-line-clamp: unset;
   color: var(--error-foreground, var(--destructive, #dc2626));
   white-space: normal;
   overflow-wrap: anywhere;
@@ -195,12 +114,15 @@
 .quick-page .quick-card-copy p {
   margin: 0;
   font-size: 11.5px;
-  line-height: 1.35;
+  line-height: 1.38;
   color: var(--muted-foreground);
   min-width: 0;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .quick-page .quick-card-action {
@@ -209,40 +131,12 @@
 }
 
 @container quick (max-width: 680px) {
-  .quick-page .quick-state-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .quick-page .quick-telemetry-cell + .quick-telemetry-cell {
-    border-left: 0;
-  }
-
-  .quick-page .quick-telemetry-cell:nth-child(even) {
-    border-left: 1px solid var(--landing-line);
-  }
-
-  .quick-page .quick-telemetry-cell:nth-child(n + 3) {
-    border-top: 1px solid var(--landing-line);
-  }
-
   .quick-page .quick-setup-grid {
     grid-template-columns: 1fr;
   }
 }
 
 @container quick (max-width: 390px) {
-  .quick-page .quick-state-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .quick-page .quick-telemetry-cell:nth-child(even) {
-    border-left: 0;
-  }
-
-  .quick-page .quick-telemetry-cell + .quick-telemetry-cell {
-    border-top: 1px solid var(--landing-line);
-  }
-
   .quick-page .quick-setup-card {
     grid-template-columns: 28px minmax(0, 1fr);
     align-items: start;

@@ -1,5 +1,5 @@
 // [INPUT]: 身份 SQLite 绑定、smart_relay_v1.json 槽位代理、独立浏览器根目录、受限配置和用户确认后的切换事务。
-// [OUTPUT]: CLI/养号独占资料与稳定种子、按需具化并自动修复已绑定身份资料槽位（新建槽位按 slotProxies[owner_id] -> ~/.claude 回环代理 -> 根配置 -> 活跃联动槽位优先级继承，受限主机对齐时区语言且绝不改动既有种子）、只读槽位代理与运行状态快照（bound_slot_browser_proxies）、按账号同步 CLI 代理到绑定浏览器槽位（sync_identity_browser_proxy_in）、只读槽位查询、普通CLI事务保留养号会话、单重故障干净回滚后仅按需恢复原已运行浏览器、双重故障未恢复启动阻断。
+// [OUTPUT]: 强制 32-hex `contexts/<slot_id>` 隔离资料（`isolated_slot_path` 拒认 `"legacy"` 且保留既有老资料不回写）与非零随机种子兜底、经 `Cleaner < SlotGate(字典序) < Browser::gate` 协调的两阶段 `transition`/`switch_warming_browser`/`detach_warming_browser`/`delete_saved`（取消启动前过早清除 Kill-Switch 告警）、按需具化并自愈槽位、只读槽位代理快照与同步，以及单/双重故障恢复阻断。
 // [POS]: 身份与浏览器的协调边界；资料不压缩、不复制、不合并 Cookie，失败状态如实返回。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 use super::*;
@@ -22,6 +22,15 @@ pub(super) fn slot_path(root: &Path, slot: &str) -> Result<PathBuf, String> {
     } else {
         root.join("contexts").join(slot)
     };
+    profile::check_path(root, &path)?;
+    Ok(path)
+}
+
+pub(super) fn isolated_slot_path(root: &Path, slot: &str) -> Result<PathBuf, String> {
+    if !crate::identities::valid_id(slot) {
+        return Err("浏览器资料选择无效。".into());
+    }
+    let path = root.join("contexts").join(slot);
     profile::check_path(root, &path)?;
     Ok(path)
 }
@@ -57,11 +66,7 @@ pub(super) fn selected_slot_readonly(root: &Path) -> Result<String, String> {
         .optional()
         .map_err(|_| "无法读取浏览器选择。".to_string())
     };
-    let slot = if read("browser.enabled")?.as_deref() == Some("1") {
-        read("browser.active")?.ok_or("浏览器资料选择无效。")?
-    } else {
-        "legacy".to_string()
-    };
+    let slot = read("browser.active")?.ok_or("浏览器资料选择无效。")?;
     if !browser_link::valid_slot(&slot) {
         return Err("浏览器资料选择无效。".into());
     }
@@ -244,7 +249,7 @@ fn sanitize_browser_proxy(raw: &str) -> String {
     format!("{}://{host}:{port}", url.scheme())
 }
 
-fn to_browser_proxy_from_raw(raw: &str) -> Option<String> {
+pub(super) fn to_browser_proxy_from_raw(raw: &str) -> Option<String> {
     if let Some(socks) = convert_loopback_http_to_socks5(raw) {
         return Some(socks);
     }
@@ -255,8 +260,8 @@ fn to_browser_proxy_from_raw(raw: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    let normalized = if trimmed.len() >= 10 && trimmed[..10].eq_ignore_ascii_case("socks5h://") {
-        format!("socks5://{}", &trimmed[10..])
+    let normalized = if let Some(rest) = config::strip_prefix_ascii_ci(trimmed, "socks5h://") {
+        format!("socks5://{rest}")
     } else {
         trimmed.to_string()
     };
@@ -404,6 +409,8 @@ pub(super) fn ensure_slot_with_home_and_policy(
         };
         if bound {
             config.seed = seed;
+        } else if config.seed == 0 {
+            config.seed = config::random_seed()?;
         }
         config::save(&path, &config)?;
         if bound {
@@ -412,6 +419,14 @@ pub(super) fn ensure_slot_with_home_and_policy(
     } else if slot != "legacy" && !profile::running(&path.join("profile")).unwrap_or(false) {
         if let Ok(mut existing) = config::load(&path) {
             let mut dirty = false;
+            if existing.seed == 0 {
+                existing.seed = if bound {
+                    seed
+                } else {
+                    config::random_seed()?
+                };
+                dirty = true;
+            }
             let donor = find_active_or_consensus_donor(root, db, slot);
             let slot_proxy = resolve_slot_owner_id(root, slot)
                 .and_then(|owner| read_smart_relay_slot_proxy(root, &owner));
@@ -578,6 +593,7 @@ pub(crate) fn ensure_identity_slot(root: &Path, owner_id: &str) -> Result<PathBu
         return Err("quotaOnline.unavailable".into());
     }
     let (slot, _) = db.ensure_identity_binding(owner_id)?;
+    isolated_slot_path(root, &slot)?;
     ensure_slot(root, &db, &slot)
 }
 pub(super) fn block(app: &tauri::AppHandle, root: &Path) -> Result<(), String> {
@@ -623,7 +639,7 @@ pub(crate) fn promote_warming_identity(
 ) -> Result<(), String> {
     transition(app, reporter, true, true, action)
 }
-/// Caller holds Cleaner short gate; lock order is always Cleaner -> Browser.
+/// Caller holds Cleaner short gate; lock order is always Cleaner < SlotGate(字典序) < Browser::gate.
 pub(crate) fn switch_warming_browser(
     app: &tauri::AppHandle,
     reporter: &Reporter,
@@ -631,12 +647,19 @@ pub(crate) fn switch_warming_browser(
     open_mode: &str,
 ) -> Result<(), String> {
     validate_warming_open_mode(open_mode)?;
-    if !browser_link::valid_slot(slot) {
+    if !crate::identities::valid_id(slot) {
         return Err("浏览器资料选择无效。".into());
     }
     let browser = app.state::<Browser>();
-    let _guard = browser.gate.lock().unwrap();
-    switch_browser_locked(app, reporter, slot, open_mode, false)
+    let root = root(app)?;
+    let target_slot = slot.to_string();
+    browser.with_slots_then_gate(
+        || {
+            let previous = database(&root)?.browser_slot()?;
+            Ok(vec![previous, target_slot.clone()])
+        },
+        || switch_browser_locked(app, reporter, &target_slot, open_mode, false),
+    )
 }
 /// Detach a selected warming card before deletion, retaining its data until the
 /// separately confirmed delete_saved action. Caller owns Cleaner short gate.
@@ -645,12 +668,23 @@ pub(crate) fn detach_warming_browser(
     reporter: &Reporter,
 ) -> Result<(), String> {
     let browser = app.state::<Browser>();
-    let _guard = browser.gate.lock().unwrap();
     let root = root(app)?;
-    ready(&root)?;
-    let db = database(&root)?;
-    let slot = fresh_browser_slot(&root, &db)?;
-    switch_browser_locked(app, reporter, &slot, "switch_only", true)
+    {
+        let _guard = browser.gate.lock().unwrap();
+        ready(&root)?;
+    }
+    let fresh_slot = {
+        let _guard = browser.gate.lock().unwrap();
+        let db = database(&root)?;
+        fresh_browser_slot(&root, &db)?
+    };
+    browser.with_slots_then_gate(
+        || {
+            let previous = database(&root)?.browser_slot()?;
+            Ok(vec![previous, fresh_slot.clone()])
+        },
+        || switch_browser_locked(app, reporter, &fresh_slot, "switch_only", true),
+    )
 }
 pub(super) fn fresh_browser_slot(root: &Path, db: &Database) -> Result<String, String> {
     if db.get("recovery")?.is_some() {
@@ -710,7 +744,6 @@ fn switch_browser_locked(
         return Err(error);
     }
     *browser.warning.lock().unwrap() = None;
-    super::kill_switch::clear_alert(app);
     ensure(&root)?;
     refresh_launch_args(app)?;
     match open_mode {
@@ -747,39 +780,69 @@ pub(crate) fn delete_saved(
     action: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     let browser = app.state::<Browser>();
-    let _guard = browser.gate.lock().unwrap();
     let root = root(app)?;
-    let db = database(&root)?;
-    let slot = db.browser_for(id)?;
-    if remove_profile {
-        if let Some(slot) = slot.as_deref() {
-            if slot == db.browser_slot()? {
-                return Err("关联浏览器资料正在使用，不能删除。".into());
-            }
-            let path = slot_path(&root, slot)?.join("profile");
-            if profile::running(&path)? {
-                return Err("关联浏览器资料正在使用，不能删除。".into());
-            }
-        }
-    }
-    action()?;
-    if remove_profile {
-        if let Some(slot) = slot {
-            let scope = slot_path(&root, &slot)?;
-            let target = if slot == "legacy" {
-                scope.join("profile")
-            } else {
-                scope
-            };
-            profile::check_path(&root, &target)?;
-            if target.exists() {
-                private::safe(&target)?;
-                fs::remove_dir_all(&target)
-                    .map_err(|_| "身份已删除，关联浏览器资料未完全删除，请检查。")?;
+    let existing_slot = {
+        let _guard = browser.gate.lock().unwrap();
+        database(&root)?.browser_for(id)?
+    };
+    let run_delete = || -> Result<(), String> {
+        let db = database(&root)?;
+        let slot = db.browser_for(id)?;
+        if remove_profile {
+            if let Some(slot) = slot.as_deref() {
+                if slot == db.browser_slot()? {
+                    return Err("关联浏览器资料正在使用，不能删除。".into());
+                }
+                let path = slot_path(&root, slot)?.join("profile");
+                if profile::running(&path)? {
+                    return Err("关联浏览器资料正在使用，不能删除。".into());
+                }
             }
         }
+        action()?;
+        if remove_profile {
+            if let Some(slot) = slot {
+                let scope = slot_path(&root, &slot)?;
+                let target = if slot == "legacy" {
+                    scope.join("profile")
+                } else {
+                    scope
+                };
+                profile::check_path(&root, &target)?;
+                if target.exists() {
+                    private::safe(&target)?;
+                    fs::remove_dir_all(&target)
+                        .map_err(|_| "身份已删除，关联浏览器资料未完全删除，请检查。")?;
+                }
+            }
+        }
+        Ok(())
+    };
+    if existing_slot.is_some() {
+        browser.with_slot_then_gate(
+            || {
+                database(&root)?
+                    .browser_for(id)?
+                    .ok_or_else(|| "浏览器身份绑定状态已变化，请重试。".to_string())
+            },
+            |_| run_delete(),
+        )
+    } else {
+        let mut guard = Some(browser.gate.lock().unwrap());
+        if database(&root)?.browser_for(id)?.is_some() {
+            drop(guard.take());
+            return browser.with_slot_then_gate(
+                || {
+                    database(&root)?
+                        .browser_for(id)?
+                        .ok_or_else(|| "浏览器身份绑定状态已变化，请重试。".to_string())
+                },
+                |_| run_delete(),
+            );
+        }
+        let _guard = guard;
+        run_delete()
     }
-    Ok(())
 }
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum TransitionMode {
@@ -829,61 +892,110 @@ pub(super) fn transition(
     action: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     let browser = app.state::<Browser>();
-    let _guard = browser.gate.lock().unwrap();
     let root = root(app)?;
-    match transition_mode(&database(&root)?, force)? {
-        TransitionMode::Unlinked => return action(),
-        TransitionMode::PreserveWarming => {
-            let selected = scope(&root)?;
-            let result = action();
-            // Successful CLI work leaves the browser session, launch.args and
-            // live profile untouched. An unresolved failure still quarantines
-            // the browser until the existing recovery transaction is resolved.
-            let safety: Result<(), String> = (|| {
-                if database(&root)?.get("recovery")?.is_some() {
-                    block(app, &root)?;
-                    *browser.warning.lock().unwrap() =
-                        Some("浏览器保持关闭，请先恢复身份切换。".into());
-                    let prof = selected.join("profile");
-                    if profile::running(&prof)? {
-                        reporter.log("browser", "running", "正在正常退出关联浏览器。", 0, None);
-                        profile::quit(&prof)?;
-                    }
-                }
-                Ok(())
-            })();
-            if let Err(error) = &safety {
-                reporter.log("browser", "error", error, 0, None);
+    let mut action = Some(action);
+    enum PhaseOne {
+        Done(Result<(), String>),
+        Coordinate {
+            was_running: bool,
+            result: Result<(), String>,
+        },
+    }
+    let phase_one = browser.with_active_slot_gate(
+        || database(&root)?.browser_slot(),
+        |expected_slot, gate| {
+            let _guard = gate.lock().unwrap();
+            if database(&root)?.browser_slot()? != expected_slot {
+                return Ok((false, PhaseOne::Done(Ok(()))));
             }
-            return result.and(safety);
-        }
-        TransitionMode::Coordinate => (),
-    }
-    *browser.warning.lock().unwrap() = None;
-    let profile = scope(&root)?.join("profile");
-    let was_running = profile::running(&profile)?;
-    block(app, &root)?;
-    if let Err(error) = quit_if_running(&profile, was_running, reporter) {
-        let _ = refresh_launch_args(app);
-        return Err(error);
-    }
-    let result = action();
-    let finish = (|| {
-        reporter.log("browser", "running", "正在同步关联浏览器资料。", 0, None);
-        refresh_launch_args(app)?;
-        let db = database(&root)?;
-        let should_reopen = if result.is_ok() {
-            was_running || launch_on_linked
-        } else {
-            was_running && db.get("recovery")?.is_none()
-        };
-        if should_reopen && db.browser_link()?.enabled {
-            launch_locked(app, reporter)?;
-        }
-        Ok::<_, String>(())
-    })();
+            let run_action = action
+                .take()
+                .ok_or_else(|| "浏览器状态切换事务重复执行。".to_string())?;
+            match transition_mode(&database(&root)?, force)? {
+                TransitionMode::Unlinked => return Ok((true, PhaseOne::Done(run_action()))),
+                TransitionMode::PreserveWarming => {
+                    let selected = scope(&root)?;
+                    let result = run_action();
+                    // Successful CLI work leaves the browser session, launch.args and
+                    // live profile untouched. An unresolved failure still quarantines
+                    // the browser until the existing recovery transaction is resolved.
+                    let safety: Result<(), String> = (|| {
+                        if database(&root)?.get("recovery")?.is_some() {
+                            block(app, &root)?;
+                            *browser.warning.lock().unwrap() =
+                                Some("浏览器保持关闭，请先恢复身份切换。".into());
+                            let prof = selected.join("profile");
+                            if profile::running(&prof)? {
+                                reporter.log(
+                                    "browser",
+                                    "running",
+                                    "正在正常退出关联浏览器。",
+                                    0,
+                                    None,
+                                );
+                                profile::quit(&prof)?;
+                            }
+                        }
+                        Ok(())
+                    })();
+                    if let Err(error) = &safety {
+                        reporter.log("browser", "error", error, 0, None);
+                    }
+                    return Ok((true, PhaseOne::Done(result.and(safety))));
+                }
+                TransitionMode::Coordinate => (),
+            }
+            *browser.warning.lock().unwrap() = None;
+            let profile = scope(&root)?.join("profile");
+            let was_running = profile::running(&profile)?;
+            block(app, &root)?;
+            if let Err(error) = quit_if_running(&profile, was_running, reporter) {
+                let _ = refresh_launch_args(app);
+                return Err(error);
+            }
+            let result = run_action();
+            Ok((
+                true,
+                PhaseOne::Coordinate {
+                    was_running,
+                    result,
+                },
+            ))
+        },
+    )?;
+    let (was_running, result) = match phase_one {
+        PhaseOne::Done(res) => return res,
+        PhaseOne::Coordinate {
+            was_running,
+            result,
+        } => (was_running, result),
+    };
+    let finish = browser.with_active_slot_gate(
+        || database(&root)?.browser_slot(),
+        |expected_slot, gate| {
+            let _guard = gate.lock().unwrap();
+            if database(&root)?.browser_slot()? != expected_slot {
+                return Ok((false, ()));
+            }
+            reporter.log("browser", "running", "正在同步关联浏览器资料。", 0, None);
+            refresh_launch_args(app)?;
+            let db = database(&root)?;
+            let should_reopen = if result.is_ok() {
+                was_running || launch_on_linked
+            } else {
+                was_running && db.get("recovery")?.is_none()
+            };
+            if should_reopen && db.browser_link()?.enabled {
+                launch_locked(app, reporter)?;
+            }
+            Ok((true, ()))
+        },
+    );
     if let Err(error) = finish {
-        let in_recovery = database(&root)?.get("recovery")?.is_some();
+        let in_recovery = {
+            let _guard = browser.gate.lock().unwrap();
+            database(&root)?.get("recovery")?.is_some()
+        };
         let warning = if in_recovery {
             "浏览器保持关闭，请先恢复身份切换。"
         } else {

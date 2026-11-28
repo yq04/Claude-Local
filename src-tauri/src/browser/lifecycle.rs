@@ -1,10 +1,14 @@
-// [INPUT]: 所选浏览器槽位、只读精确资料进程/窗口、live CLI账号HMAC与冻结额度指纹和既有绑定。
-// [OUTPUT]: 无缓存/凭据/网络采样的运行三态、桌面专用CLI摘要，以及仅浏览器的返回核验与失败补偿。
-// [POS]: Cleaner -> Browser门内的归属边界；不停止CLI、不切CLI身份、不创建缺失绑定或改变联动偏好。
+// [INPUT]: 所选浏览器槽位、只读精确资料进程/窗口、live CLI账号HMAC（带 FileStamp 与 CliProofCache 请求级复用）与冻结额度指纹和既有绑定。
+// [OUTPUT]: 无缓存/凭据/网络采样的运行三态、桌面专用CLI摘要（缓存首读+无缓存TOCTOU复核消除同滴答碰撞），以及按 `Cleaner < SlotGate(字典序) < Browser::gate` 编排的返回核验与失败补偿。
+// [POS]: Cleaner -> SlotGate(sorted) -> Browser::gate 内的归属边界；不停止CLI、不切CLI身份、不创建缺失绑定或改变联动偏好。
 // [PROTOCOL]: Update header on change and check CLAUDE.md.
 use super::*;
 use crate::identities::{browser_link::BrowserIdentity, catalog, database::Database, private};
 use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 
 const UNAVAILABLE: &str = "当前 CLI 身份或既有浏览器绑定无法确认，请刷新身份后重试。";
 const CHANGED: &str = "当前 CLI 身份或浏览器绑定已变化，未继续打开。";
@@ -24,33 +28,163 @@ impl Drop for IdentityGuard {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct CliProof {
     pub(super) id: String,
     pub(super) fingerprint: String,
     identity: BrowserIdentity,
 }
 
-/// Only the bounded public account metadata in .claude.json is needed here.
-/// Never call identities::state/profile::read: those also inspect credentials,
-/// ledgers and session history and do not belong to this browser action.
-pub(super) fn prove_cli(app: &tauri::AppHandle) -> Result<CliProof, String> {
+#[derive(Clone, PartialEq, Eq)]
+struct FileStamp {
+    exists: bool,
+    len: u64,
+    modified_sec: i64,
+    modified_nsec: i64,
+    #[cfg(windows)]
+    created: u64,
+    #[cfg(windows)]
+    attrs: u32,
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+}
+
+fn file_stamp(path: &Path) -> Option<FileStamp> {
+    match fs::symlink_metadata(path) {
+        Ok(m) => Some(FileStamp {
+            exists: true,
+            #[cfg(windows)]
+            len: m.file_size(),
+            #[cfg(not(windows))]
+            len: m.len(),
+            #[cfg(windows)]
+            modified_sec: m.last_write_time() as i64,
+            #[cfg(windows)]
+            modified_nsec: 0,
+            #[cfg(unix)]
+            modified_sec: m.mtime(),
+            #[cfg(unix)]
+            modified_nsec: m.mtime_nsec(),
+            #[cfg(windows)]
+            created: m.creation_time(),
+            #[cfg(windows)]
+            attrs: m.file_attributes(),
+            #[cfg(unix)]
+            dev: m.dev(),
+            #[cfg(unix)]
+            ino: m.ino(),
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(FileStamp {
+            exists: false,
+            len: 0,
+            modified_sec: 0,
+            modified_nsec: 0,
+            #[cfg(windows)]
+            created: 0,
+            #[cfg(windows)]
+            attrs: 0,
+            #[cfg(unix)]
+            dev: 0,
+            #[cfg(unix)]
+            ino: 0,
+        }),
+        Err(_) => None,
+    }
+}
+
+#[derive(Default)]
+pub(super) struct CliProofCache {
+    entry: Option<CachedCliProof>,
+    #[cfg(test)]
+    pub(super) misses: usize,
+    #[cfg(test)]
+    pub(super) hits: usize,
+}
+
+struct CachedCliProof {
+    epoch: u64,
+    claude_json_stamp: FileStamp,
+    key_bin_stamp: FileStamp,
+    proof: CliProof,
+}
+
+pub(super) fn prove_cli_cached_at(
+    vault: &Path,
+    home: &Path,
+    db: &Database,
+    epoch: u64,
+    cache: &mut CliProofCache,
+) -> Result<CliProof, String> {
+    if db.get("recovery")?.is_some() || db.get("browser.promotion")?.is_some() {
+        cache.entry = None;
+        return Err(UNAVAILABLE.into());
+    }
+    let claude_stamp = file_stamp(&home.join(".claude.json"));
+    let key_stamp = file_stamp(&vault.join("key.bin"));
+    if let (Some(cs), Some(ks), Some(cached)) = (&claude_stamp, &key_stamp, &cache.entry) {
+        if cs.exists
+            && cached.epoch == epoch
+            && cached.claude_json_stamp == *cs
+            && cached.key_bin_stamp == *ks
+        {
+            #[cfg(test)]
+            {
+                cache.hits += 1;
+            }
+            return Ok(cached.proof.clone());
+        }
+    }
+    #[cfg(test)]
+    {
+        cache.misses += 1;
+    }
+    let proof = prove_cli_at(vault, home, db)?;
+    if let (Some(cs), Some(ks)) = (claude_stamp, key_stamp) {
+        cache.entry = Some(CachedCliProof {
+            epoch,
+            claude_json_stamp: cs,
+            key_bin_stamp: ks,
+            proof: proof.clone(),
+        });
+    }
+    Ok(proof)
+}
+
+pub(super) fn prove_cli_cached(
+    app: &tauri::AppHandle,
+    cache: &mut CliProofCache,
+) -> Result<CliProof, String> {
     let root = root(app)?;
     let db = workspaces::database(&root)?;
     let vault = root.parent().ok_or(UNAVAILABLE)?.join("identity-vault");
-    prove_cli_at(&vault, &crate::cleaner::identity::root()?, &db)
+    let home = crate::cleaner::identity::root()?;
+    let epoch = app.state::<crate::cleaner::Cleaner>().identity_epoch();
+    prove_cli_cached_at(&vault, &home, &db, epoch, cache)
 }
 
-fn prove_cli_at(vault: &Path, home: &Path, db: &Database) -> Result<CliProof, String> {
+pub(super) fn prove_cli_uncached(app: &tauri::AppHandle) -> Result<CliProof, String> {
+    let root = root(app)?;
+    let db = workspaces::database(&root)?;
+    let vault = root.parent().ok_or(UNAVAILABLE)?.join("identity-vault");
+    let home = crate::cleaner::identity::root()?;
+    prove_cli_at(&vault, &home, &db)
+}
+
+pub(super) fn prove_cli_at(vault: &Path, home: &Path, db: &Database) -> Result<CliProof, String> {
     if db.get("recovery")?.is_some() || db.get("browser.promotion")?.is_some() {
         return Err(UNAVAILABLE.into());
     }
+    let path = home.join(".claude.json");
+    let stamp_before = file_stamp(&path);
+    let key_stamp_before = file_stamp(&vault.join("key.bin"));
     let id = catalog::current_id(vault, home, db)?.ok_or(UNAVAILABLE)?;
     let record = db
         .records()?
         .into_iter()
         .find(|record| record.id == id && !record.empty)
         .ok_or(UNAVAILABLE)?;
-    let path = home.join(".claude.json");
     private::parents(home)?;
     private::safe(&path)?;
     let meta = fs::symlink_metadata(&path).map_err(|_| UNAVAILABLE)?;
@@ -69,8 +203,16 @@ fn prove_cli_at(vault: &Path, home: &Path, db: &Database) -> Result<CliProof, St
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| UNAVAILABLE)?;
     let fingerprint = crate::identities::profile::quota_identity(&value).ok_or(UNAVAILABLE)?;
     quota_connection::validate_fingerprint(&fingerprint)?;
-    if catalog::current_id(vault, home, db)?.as_deref() != Some(id.as_str()) {
-        return Err(CHANGED.into());
+    let stamp_after = file_stamp(&path);
+    let key_stamp_after = file_stamp(&vault.join("key.bin"));
+    if stamp_before.is_none()
+        || key_stamp_before.is_none()
+        || stamp_before != stamp_after
+        || key_stamp_before != key_stamp_after
+    {
+        if catalog::current_id(vault, home, db)?.as_deref() != Some(id.as_str()) {
+            return Err(CHANGED.into());
+        }
     }
     let field = |key: &str, max: usize| {
         value["oauthAccount"][key]
@@ -154,8 +296,26 @@ fn resolve_cli_target(
     })
 }
 
-pub(super) fn current_target(app: &tauri::AppHandle, expected: &str) -> Result<CliTarget, String> {
-    let proof = prove_cli(app)?;
+pub(super) fn current_target_cached(
+    app: &tauri::AppHandle,
+    expected: &str,
+    cache: &mut CliProofCache,
+) -> Result<CliTarget, String> {
+    let proof = prove_cli_cached(app, cache)?;
+    let root = root(app)?;
+    resolve_cli_target(
+        &root,
+        &workspaces::database(&root)?,
+        Some((&proof.id, &proof.fingerprint)),
+        expected,
+    )
+}
+
+pub(super) fn current_target_uncached(
+    app: &tauri::AppHandle,
+    expected: &str,
+) -> Result<CliTarget, String> {
+    let proof = prove_cli_uncached(app)?;
     let root = root(app)?;
     resolve_cli_target(
         &root,
@@ -166,12 +326,29 @@ pub(super) fn current_target(app: &tauri::AppHandle, expected: &str) -> Result<C
 }
 
 pub(super) fn snapshot_cli(app: &tauri::AppHandle) -> (Option<BrowserIdentity>, Option<String>) {
-    let Ok(proof) = prove_cli(app) else {
+    let Ok(root) = root(app) else {
         return (None, None);
     };
-    let expected = current_target(app, &proof.fingerprint)
-        .ok()
-        .map(|_| proof.fingerprint);
+    let Ok(db) = workspaces::database(&root) else {
+        return (None, None);
+    };
+    let Some(vault) = root.parent().map(|p| p.join("identity-vault")) else {
+        return (None, None);
+    };
+    let Ok(home) = crate::cleaner::identity::root() else {
+        return (None, None);
+    };
+    let Ok(proof) = prove_cli_at(&vault, &home, &db) else {
+        return (None, None);
+    };
+    let expected = resolve_cli_target(
+        &root,
+        &db,
+        Some((&proof.id, &proof.fingerprint)),
+        &proof.fingerprint,
+    )
+    .ok()
+    .map(|_| proof.fingerprint);
     (
         Some(mask_browser_identity(
             proof.identity,
@@ -245,7 +422,8 @@ fn return_locked(
     if open_mode != "verify" && open_mode != "claude_ai" {
         return Err("浏览器打开方式无效。".into());
     }
-    let target = current_target(app, expected)?;
+    let mut proof_cache = CliProofCache::default();
+    let target = current_target_cached(app, expected, &mut proof_cache)?;
     let root = root(app)?;
     let previous = workspaces::database(&root)?.browser_slot()?;
     let old_profile = workspaces::slot_path(&root, &previous)?.join("profile");
@@ -282,7 +460,7 @@ fn return_locked(
             );
             profile::quit(&old_profile)?;
         }
-        if current_target(app, expected)? != target {
+        if current_target_uncached(app, expected)? != target {
             return Err(CHANGED.into());
         }
         workspaces::select_existing_slot(&root, &previous, &target.bound.slot)?;
@@ -353,8 +531,21 @@ pub async fn browser_return_to_cli(
     run(move || {
         let _cleaner = IdentityGuard::acquire(&app)?;
         let browser = app.state::<Browser>();
-        let _guard = browser.gate.lock().unwrap();
-        return_locked(&app, &expected_identity, &mode, &Reporter::channel(on_progress))
+        browser.with_slots_then_gate(
+            || {
+                let root = root(&app)?;
+                let db = workspaces::database(&root)?;
+                let previous = db.browser_slot()?;
+                let mut slots = vec![previous];
+                if let Ok(proof) = prove_cli_uncached(&app) {
+                    if let Ok(Some(target_slot)) = db.browser_for(&proof.id) {
+                        slots.push(target_slot);
+                    }
+                }
+                Ok(slots)
+            },
+            || return_locked(&app, &expected_identity, &mode, &Reporter::channel(on_progress)),
+        )
     })
     .await
 }

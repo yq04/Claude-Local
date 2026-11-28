@@ -1,12 +1,22 @@
 /**
- * [INPUT]: 跨平台虚构宿主上下文和网页观测。
- * [OUTPUT]: 红/黄/绿状态、失败原因、断连/未知值、目标时区变化与深度防封指标（IDC 机房识别、语言列表中文残留、WebRTC、webdriver、硬件 WebGL）回归。
+ * [INPUT]: 跨平台虚构宿主上下文、网页观测与跨上下文探针快照（Window/Worker/SharedWorker/ServiceWorker/Iframe）。
+ * [OUTPUT]: 红/黄/绿状态、失败原因、断连/未知值、目标时区变化、深度防封指标与 9 维跨上下文一致性 / 防篡改 / UTF-8 有界截断回归。
  * [POS]: 真实页面与纯核验模型的契约测试，不调用原生权限或外部服务。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {test,expect} from 'bun:test';
-import {REQUIRED_CHECK_IDS,verifyBrowser} from './browser-verification';
-import type {BrowserContext,Report} from './browser-model';
+import {
+  evaluateCrossContextConsistency,
+  REQUIRED_CHECK_IDS,
+  truncateUtf8Bytes,
+  verifyBrowser,
+} from './browser-verification';
+import type {
+  BrowserContext,
+  CrossContextProbeRecord,
+  CrossContextSnapshot,
+  Report,
+} from './browser-model';
 const context:BrowserContext={ui_language:'zh',exit_services:[],region:{id:'us-la',label:'LA',country:'US',language:'en-US',locale:'en_US',timezone:'America/Los_Angeles'},config:{seed:1,proxy:'',follow_machine:false,language:'en-US',timezone:'America/Los_Angeles',native_graphics:true},machine:{platform:'windows',version:'10.0.26100',cores:8,timezone:'America/Los_Angeles',languages:['en-US'],locale:'en_US',locale_country:'US',location_enabled:false,timezones:[]},engine_version:'148.0.7778.215'};
 const report:Report={schema_version:1,language:'en-US',languages:['en-US'],timezone:'America/Los_Angeles',platform:'Win32',platform_version:'10.0.26100',cores:8,user_agent:'fixture',browser_version:'148.0.7778.215',geolocation:'denied',exit:{ip:'203.0.113.1',country:'US',city:'LA',timezone:'America/Los_Angeles',isp:'fixture',hosting:false},error:'',webrtc_ok:true,webrtc_detail:'local candidates observed',webdriver:false,graphics_ok:true,webgl_renderer:'WebGL device',tz_offset_ok:true,tz_offset_detail:'offset available',media_fingerprint_ok:true,media_fingerprint_detail:'Canvas + AudioContext capability',client_hints_ok:true,client_hints_detail:'desktop hints'};
 test('只有全部实测匹配且回传连接有效时才变绿，重测立即变黄',()=>{
@@ -148,4 +158,298 @@ test('20 checks with 18 passed and 2 unknown produces incomplete neutral phase w
  }, true, '', false);
  expect(realFail.phase).toBe('failed');
  expect(realFail.checks.filter(c => c.ok === false)).toHaveLength(1);
+});
+
+function makeSnapshot(overrides: Partial<CrossContextSnapshot> = {}): CrossContextSnapshot {
+  return {
+    kind: 'window',
+    isSecureContext: true,
+    platform: 'Win32',
+    language: 'en-US',
+    languages: ['en-US', 'en'],
+    hardwareConcurrency: 8,
+    deviceMemory: 8,
+    userAgentData: {
+      mobile: false,
+      platform: 'Windows',
+      brands: [{ brand: 'Chromium', version: '148' }],
+      highEntropy: {
+        platformVersion: '15.0.0',
+        uaFullVersion: '148.0.7778.215',
+        architecture: 'x86',
+        bitness: '64',
+        model: '',
+      },
+    },
+    intl: {
+      timeZone: 'America/Los_Angeles',
+      locale: 'en-US',
+      timezoneOffsetMin: -420,
+    },
+    screen: {
+      available: true,
+      width: 1920,
+      height: 1080,
+      orientationType: 'landscape-primary',
+      orientationAngle: 0,
+    },
+    offscreenWebgl: {
+      supported: true,
+      vendor: 'Google Inc. (NVIDIA)',
+      renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4080 Direct3D11)',
+      debugExtension: true,
+    },
+    nativeIntegrity: {
+      ok: true,
+      toStringOk: true,
+      ownPropTampered: false,
+      stackTampered: false,
+      details: [],
+    },
+    ...overrides,
+  };
+}
+
+function makeAllIsolatedRecords(overrides: Partial<Record<CrossContextProbeRecord['kind'], Partial<CrossContextSnapshot>>> = {}): CrossContextProbeRecord[] {
+  const kinds: CrossContextProbeRecord['kind'][] = [
+    'worker',
+    'shared-worker',
+    'service-worker',
+    'same-origin-iframe',
+    'sandbox-iframe',
+  ];
+  return kinds.map(kind => {
+    const isWorker = kind === 'worker' || kind === 'shared-worker' || kind === 'service-worker';
+    const base = makeSnapshot({
+      kind,
+      screen: isWorker
+        ? { available: false, width: null, height: null, orientationType: null, orientationAngle: null }
+        : { available: true, width: 1920, height: 1080, orientationType: 'landscape-primary', orientationAngle: 0 },
+    });
+    return {
+      kind,
+      status: 'ok',
+      snapshot: { ...base, ...(overrides[kind] ?? {}) },
+    };
+  });
+}
+
+test('跨上下文 6 环境一致时通过且保持 20 项核验不变', () => {
+  const main = makeSnapshot();
+  const records = makeAllIsolatedRecords();
+  const evalRes = evaluateCrossContextConsistency(main, records, {
+    vendor: main.offscreenWebgl.vendor,
+    renderer: main.offscreenWebgl.renderer,
+  });
+  expect(evalRes.blocking).toBe(false);
+  expect(evalRes.status).toBe('passed');
+  expect(evalRes.matchedContexts).toBe(5);
+  expect(evalRes.unsupportedContexts).toBe(0);
+  expect(evalRes.mismatches).toHaveLength(0);
+  expect(evalRes.metrics).toHaveLength(9);
+
+  const verified = verifyBrowser(context, report, true, '', false, null, evalRes);
+  expect(verified.phase).toBe('passed');
+  expect(verified.checks).toHaveLength(20);
+});
+
+test('SharedWorker 与 ServiceWorker 降级 unsupported 保持中性不误报阻断', () => {
+  const main = makeSnapshot();
+  const records = makeAllIsolatedRecords().map(rec =>
+    rec.kind === 'shared-worker' || rec.kind === 'service-worker'
+      ? { kind: rec.kind, status: 'unsupported' as const, reason: 'policy_disabled', snapshot: null }
+      : rec,
+  );
+  const evalRes = evaluateCrossContextConsistency(main, records);
+  expect(evalRes.blocking).toBe(false);
+  expect(evalRes.status).toBe('passed');
+  expect(evalRes.matchedContexts).toBe(3);
+  expect(evalRes.unsupportedContexts).toBe(2);
+  expect(evalRes.contextStates['shared-worker'].status).toBe('unsupported');
+  expect(evalRes.contextStates['service-worker'].status).toBe('unsupported');
+  expect(verifyBrowser(context, report, true, '', false, null, evalRes).phase).toBe('passed');
+});
+
+test('硬件、语言、UA-CH 与 Intl 跨上下文漂移触发阻断级告警并拉红 verifyBrowser', () => {
+  const cases: {
+    kind: CrossContextProbeRecord['kind'];
+    patch: Partial<CrossContextSnapshot>;
+    metricId: string;
+  }[] = [
+    { kind: 'worker', patch: { platform: 'Linux x86_64' }, metricId: 'ctx.platform' },
+    { kind: 'sandbox-iframe', patch: { language: 'zh-CN', languages: ['zh-CN', 'zh'] }, metricId: 'ctx.languages' },
+    { kind: 'worker', patch: { hardwareConcurrency: 4 }, metricId: 'ctx.cores' },
+    { kind: 'worker', patch: { deviceMemory: 4 }, metricId: 'ctx.device-memory' },
+    {
+      kind: 'worker',
+      patch: {
+        userAgentData: {
+          mobile: false,
+          platform: 'macOS',
+          brands: [{ brand: 'Chromium', version: '148' }],
+          highEntropy: null,
+        },
+      },
+      metricId: 'ctx.ua-data',
+    },
+    {
+      kind: 'service-worker',
+      patch: { intl: { timeZone: 'Asia/Shanghai', locale: 'zh-CN', timezoneOffsetMin: 480 } },
+      metricId: 'ctx.intl',
+    },
+  ];
+
+  const main = makeSnapshot();
+  for (const item of cases) {
+    const records = makeAllIsolatedRecords({ [item.kind]: item.patch });
+    const evalRes = evaluateCrossContextConsistency(main, records);
+    expect(evalRes.blocking).toBe(true);
+    expect(evalRes.status).toBe('failed');
+    expect(evalRes.mismatches.some(m => m.metricId === item.metricId && m.context === item.kind)).toBe(true);
+    const verified = verifyBrowser(context, report, true, '', false, null, evalRes);
+    expect(verified.phase).toBe('failed');
+    expect(verified.problems).toContain('browserVerify.crossContext.blockingTitle');
+  }
+});
+
+test('screen.orientation 在 Worker 豁免为不适用，几何矛盾或 iframe 漂移触发阻断', () => {
+  const main = makeSnapshot();
+  const baseRecords = makeAllIsolatedRecords();
+  const baseEval = evaluateCrossContextConsistency(main, baseRecords);
+  const screenMetric = baseEval.metrics.find(m => m.id === 'ctx.screen-orientation')!;
+  expect(screenMetric.cells.worker.status).toBe('not_applicable');
+  expect(screenMetric.cells['shared-worker'].status).toBe('not_applicable');
+  expect(screenMetric.cells['service-worker'].status).toBe('not_applicable');
+  expect(screenMetric.status).toBe('matched');
+
+  const badMain = makeSnapshot({
+    screen: { available: true, width: 1920, height: 1080, orientationType: 'portrait-primary', orientationAngle: 0 },
+  });
+  const badGeomEval = evaluateCrossContextConsistency(badMain, baseRecords);
+  expect(badGeomEval.blocking).toBe(true);
+  expect(badGeomEval.mismatches.some(m => m.metricId === 'ctx.screen-orientation' && m.messageKey === 'browserVerify.crossContext.orientationGeometryMismatch')).toBe(true);
+
+  const iframeDriftEval = evaluateCrossContextConsistency(
+    main,
+    makeAllIsolatedRecords({
+      'sandbox-iframe': {
+        screen: { available: true, width: 1920, height: 1080, orientationType: 'landscape-secondary', orientationAngle: 180 },
+      },
+    }),
+  );
+  expect(iframeDriftEval.blocking).toBe(true);
+  expect(iframeDriftEval.mismatches.some(m => m.metricId === 'ctx.screen-orientation' && m.context === 'sandbox-iframe')).toBe(true);
+});
+
+test('OffscreenCanvas WebGL 跨上下文不一致或软件渲染拦截，ServiceWorker 缺能力降级不阻断', () => {
+  const main = makeSnapshot();
+  const swUnsupported = makeAllIsolatedRecords({
+    'service-worker': { offscreenWebgl: { supported: false, vendor: '', renderer: '', debugExtension: false } },
+  });
+  const okEval = evaluateCrossContextConsistency(main, swUnsupported);
+  expect(okEval.blocking).toBe(false);
+  expect(okEval.metrics.find(m => m.id === 'ctx.offscreen-webgl')?.cells['service-worker'].status).toBe('unsupported');
+
+  const swiftWorker = makeAllIsolatedRecords({
+    worker: { offscreenWebgl: { supported: true, vendor: 'Google Inc.', renderer: 'Google SwiftShader', debugExtension: true } },
+  });
+  const swiftEval = evaluateCrossContextConsistency(main, swiftWorker);
+  expect(swiftEval.blocking).toBe(true);
+  expect(swiftEval.mismatches.some(m => m.metricId === 'ctx.offscreen-webgl' && m.context === 'worker')).toBe(true);
+
+  const vendorMismatch = makeAllIsolatedRecords({
+    'same-origin-iframe': {
+      offscreenWebgl: { supported: true, vendor: 'Intel Inc.', renderer: 'Intel(R) UHD Graphics', debugExtension: true },
+    },
+  });
+  expect(evaluateCrossContextConsistency(main, vendorMismatch).blocking).toBe(true);
+});
+
+test('Function.prototype.toString 与 Error.stack 防篡改检测拦截注入痕迹', () => {
+  const main = makeSnapshot();
+  const tamperedRecords = makeAllIsolatedRecords({
+    'same-origin-iframe': {
+      nativeIntegrity: {
+        ok: false,
+        toStringOk: false,
+        ownPropTampered: true,
+        stackTampered: true,
+        details: ['navigator.own_platform', 'webgl_getParameter:proxy_or_extension_frame'],
+      },
+    },
+  });
+  const evalRes = evaluateCrossContextConsistency(main, tamperedRecords);
+  expect(evalRes.blocking).toBe(true);
+  expect(evalRes.mismatches.some(m => m.metricId === 'ctx.anti-tamper' && m.context === 'same-origin-iframe')).toBe(true);
+});
+
+test('truncateUtf8Bytes 严格保证线缆摘要小于 300 UTF-8 字节', () => {
+  const longAscii = 'Cross-context conflict: ' + 'x'.repeat(500);
+  const longCjk = '跨上下文一致性告警：' + '测试'.repeat(200);
+  const enc = new TextEncoder();
+  expect(enc.encode(truncateUtf8Bytes(longAscii, 280)).length).toBeLessThan(300);
+  expect(enc.encode(truncateUtf8Bytes(longCjk, 280)).length).toBeLessThan(300);
+});
+
+test('超过 140 字符的一致 WebGL 渲染器不误报 ctx.offscreen-webgl 冲突且线缆报告仍受 300B 限制', () => {
+  const longRenderer =
+    'ANGLE (NVIDIA, NVIDIA GeForce RTX 4090 (0x00002684) Direct3D11 vs_5_0 ps_5_0, D3D11-32.0.15.6636, Extended-Driver-Descriptor-Long-Suffix-0123456789)';
+  expect(longRenderer.length).toBeGreaterThan(140);
+  const main = makeSnapshot({
+    offscreenWebgl: {
+      supported: true,
+      vendor: 'Google Inc. (NVIDIA)',
+      renderer: longRenderer,
+      debugExtension: true,
+    },
+  });
+  const records = makeAllIsolatedRecords({
+    worker: {
+      offscreenWebgl: {
+        supported: true,
+        vendor: 'Google Inc. (NVIDIA)',
+        renderer: longRenderer,
+        debugExtension: true,
+      },
+    },
+    'shared-worker': {
+      offscreenWebgl: {
+        supported: true,
+        vendor: 'Google Inc. (NVIDIA)',
+        renderer: longRenderer,
+        debugExtension: true,
+      },
+    },
+    'service-worker': {
+      offscreenWebgl: {
+        supported: true,
+        vendor: 'Google Inc. (NVIDIA)',
+        renderer: longRenderer,
+        debugExtension: true,
+      },
+    },
+    'same-origin-iframe': {
+      offscreenWebgl: {
+        supported: true,
+        vendor: 'Google Inc. (NVIDIA)',
+        renderer: longRenderer,
+        debugExtension: true,
+      },
+    },
+    'sandbox-iframe': {
+      offscreenWebgl: {
+        supported: true,
+        vendor: 'Google Inc. (NVIDIA)',
+        renderer: longRenderer,
+        debugExtension: true,
+      },
+    },
+  });
+  const evalRes = evaluateCrossContextConsistency(main, records, {
+    vendor: 'Google Inc. (NVIDIA)',
+    renderer: longRenderer,
+  });
+  expect(evalRes.blocking).toBe(false);
+  expect(evalRes.mismatches).toHaveLength(0);
+  expect(new TextEncoder().encode(truncateUtf8Bytes(longRenderer, 280)).length).toBeLessThan(300);
 });

@@ -1,11 +1,11 @@
 /**
  * [INPUT]: Claude 四个固定服务域名、用户触发的原生只读诊断、发行者固定的 iKuuu/Kookeey 推广链接、AI 配置提示词、多端口 Clash YAML 生成器（buildMultiPortClashYaml）、隐私遮罩偏好、Pika 图标、env-pages.css 与双语文案。
- * [OUTPUT]: 顶部内联复制状态胶囊、四栏链式拓扑发丝遥测条、三列紧凑代理配置卡（徽章 + 角色标签 + 步骤脚注与单复制按钮）、只读多端口 Clash 配置生成入口及 Portaled `AppDialog` 弹窗（2-5 端口、起始端口、代理组名、纯复制 YAML）、支持隐私遮罩的 2×2 边线四域名连通性矩阵及含 Persona/Yoti/Sift/Hexagon 分流规则与前置容灾/SSE TCP keep-alive 稳态指引的双语 AI 配置提示词。
+ * [OUTPUT]: 定高占位防跳动的顶部内联复制状态胶囊、四栏链式拓扑发丝遥测条、三列紧凑代理配置卡（徽章 + 角色标签 + 步骤脚注与单复制按钮）、带独立分组标头的只读多端口 Clash 配置生成入口及 Portaled `AppDialog` 弹窗（2-5 端口、起始端口、代理组名、纯复制 YAML）、支持隐私遮罩的 2×2 边线四域名连通性矩阵及含 Persona/Yoti/Sift/Hexagon 分流规则与前置容灾/SSE TCP keep-alive 稳态指引的双语 AI 配置提示词。
  * [POS]: 固定链接随软件分享，不接受本机自定义覆盖或外部自动导航；仅在点击检测后发起连通性探测；多端口生成器仅只读复制 YAML，不写入任何磁盘配置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {Button, Input} from 'cromma-ui';
-import {Refresh, CheckTickCircle, Share01, Server, Settings01, Globe} from 'cromma-ui/pika';
+import {Refresh, CheckTickCircle, Share01, Server, Settings01, Globe, ShieldCheck} from 'cromma-ui/pika';
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {AppDialog} from './dialog';
@@ -147,11 +147,13 @@ export function VpsPanel() {
     <section className="system-page network-page">
       <header className="cleanup-title network-header">
         <h1>{t('网络环境')}</h1>
-        {(copiedId || copyError) && (
-          <p className={`network-copy-status${copyError ? ' error' : ''}`} role={copyError ? 'alert' : 'status'}>
-            {copyError ? t('network.copyFailed') : t(copiedId === 'ai-prompt' ? '已复制提示词' : '已复制')}
-          </p>
-        )}
+        <div className="network-header-status">
+          {(copiedId || copyError) && (
+            <p className={`network-copy-status${copyError ? ' error' : ''}`} role={copyError ? 'alert' : 'status'}>
+              {copyError ? t('network.copyFailed') : t(copiedId === 'ai-prompt' ? '已复制提示词' : '已复制')}
+            </p>
+          )}
+        </div>
       </header>
 
       <div className="network-sections">
@@ -275,9 +277,14 @@ export function VpsPanel() {
           </article>
         </div>
 
+        <div className="settings-group-heading">
+          <span className="settings-group-bar" aria-hidden="true" />
+          <h2>{t('network.multiPortGroupTitle')}</h2>
+        </div>
+
         <section className="settings-card network-multiport-card" aria-labelledby="multiport-setup-title">
           <div className="network-multiport-copy">
-            <span className="settings-icon-badge" aria-hidden="true"><Settings01 size={16} /></span>
+            <span className="settings-icon-badge" aria-hidden="true"><ShieldCheck size={16} /></span>
             <div>
               <h2 id="multiport-setup-title">{t('network.multiPortTitle')}</h2>
               <p>{t('network.multiPortDesc')}</p>

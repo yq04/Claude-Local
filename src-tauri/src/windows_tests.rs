@@ -136,3 +136,20 @@ fn windows_proxy_environment_values_skip_empty_entries() {
         Some("socks5h://127.0.0.1:1080".into())
     );
 }
+
+#[test]
+fn rtl_get_version_matches_four_part_windows_version_format() {
+    let ver = os_version_string();
+    let parts: Vec<&str> = ver.split('.').collect();
+    assert_eq!(parts.len(), 4, "expected 4-part OS version, got {ver:?}");
+    let major: u32 = parts[0].parse().unwrap();
+    let build: u32 = parts[2].parse().unwrap();
+    assert!(major >= 10, "expected Windows 10/11 major >= 10, got {ver}");
+    assert!(build > 0, "expected non-zero build number, got {ver}");
+    for part in parts {
+        assert!(part.parse::<u32>().is_ok(), "non-numeric part in {ver}");
+    }
+
+    let machine: Value = crate::native::decode(unsafe { rf_browser_machine() }).unwrap();
+    assert_eq!(machine["version"].as_str(), Some(ver.as_str()));
+}

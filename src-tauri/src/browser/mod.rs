@@ -1,5 +1,5 @@
 // [INPUT]: 本机指纹引擎（优先 /Applications/Claude-Local Browser.app，回退 ~/Applications）、本地版浏览器包标识、配置/资料边界、真实浏览器观测、宿主界面语言与共享操作日志。
-// [OUTPUT]: 有界 CLI/养号绑定上下文、只读所选资料窗口状态、按槽位与配置绑定的核验结果记忆、伴生浏览器异常断流急停状态、冻结CLI归属的返回/用量页及转正/恢复编排。
+// [OUTPUT]: 有界 CLI/养号绑定上下文、只读所选资料窗口状态、严格无环偏序 `Cleaner < SlotGate(字典序) < Browser::gate < LeafMutexes` 闭锁原语（`with_slot_then_gate` / `with_slots_then_gate` / `with_active_slot_gate`）、含 `enable_quota_bridge` 的 LaunchedSlotSnapshot（launch.snapshot.json）、`LaunchPurpose::Verification` 写参、无阻塞 launch/quit/open_usage 编排、按槽位与配置绑定的核验结果记忆、伴生浏览器异常断流急停状态、冻结CLI归属的返回/用量页及转正/恢复编排。
 // [POS]: 独立浏览器模块的唯一编排入口；改变资料前必须退出浏览器；不自行改系统默认浏览器，只发起系统确认。
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 pub(crate) mod config;
@@ -21,28 +21,56 @@ pub(crate) use workspaces::switch_identity;
 pub(crate) use workspaces::switch_warming_browser;
 pub(crate) fn sync_identity_browser_proxy(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
     let state = app.state::<Browser>();
-    let _guard = state.gate.lock().unwrap();
     let browser_root = root(app)?;
     let app_dir = app
         .path()
         .app_data_dir()
         .map_err(|_| "应用目录不可用。".to_string())?;
     let claude_home = crate::cleaner::identity::root()?;
-    let (slot, changed, is_active) = workspaces::sync_identity_browser_proxy_in(
-        &browser_root,
-        &app_dir,
-        &claude_home,
-        id,
-        &profile::running,
-    )?;
-    if changed {
-        state.last_observations.lock().unwrap().remove(&slot);
+    let sync_locked = || -> Result<(), String> {
+        let (slot, changed, is_active) = workspaces::sync_identity_browser_proxy_in(
+            &browser_root,
+            &app_dir,
+            &claude_home,
+            id,
+            &profile::running,
+        )?;
+        if changed {
+            state.last_observations.lock().unwrap().remove(&slot);
+        }
+        if is_active && (changed || !browser_root.join("launch.args").is_file()) {
+            refresh_launch_args(app)?;
+            renew_session(app);
+        }
+        Ok(())
+    };
+    let existing_slot = {
+        let _guard = state.gate.lock().unwrap();
+        workspaces::database(&browser_root)?.browser_for(id)?
+    };
+    if existing_slot.is_some() {
+        return state.with_slot_then_gate(
+            || {
+                workspaces::database(&browser_root)?
+                    .browser_for(id)?
+                    .ok_or_else(|| "浏览器身份绑定状态已变化，请重试。".to_string())
+            },
+            |_| sync_locked(),
+        );
     }
-    if is_active && (changed || !browser_root.join("launch.args").is_file()) {
-        refresh_launch_args(app)?;
-        renew_session(app);
+    let guard = state.gate.lock().unwrap();
+    if workspaces::database(&browser_root)?.browser_for(id)?.is_some() {
+        drop(guard);
+        return state.with_slot_then_gate(
+            || {
+                workspaces::database(&browser_root)?
+                    .browser_for(id)?
+                    .ok_or_else(|| "浏览器身份绑定状态已变化，请重试。".to_string())
+            },
+            |_| sync_locked(),
+        );
     }
-    Ok(())
+    sync_locked()
 }
 pub(crate) fn configure_identity(
     app: &tauri::AppHandle,
@@ -106,14 +134,244 @@ pub(crate) struct CachedObservation {
     pub received_at: u64,
 }
 #[derive(Default)]
+pub(crate) struct SlotGate {
+    inner: Mutex<()>,
+}
+
+impl SlotGate {
+    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LaunchRuntimeSnapshot {
+    pub proxy: String,
+    pub effective_proxy: String,
+    pub region_id: String,
+    pub language: String,
+    pub timezone: String,
+    pub seed: u32,
+    pub native_graphics: bool,
+    #[serde(default)]
+    pub enable_quota_bridge: bool,
+}
+
+impl LaunchRuntimeSnapshot {
+    #[allow(dead_code)]
+    pub(crate) fn from_config(config: &Config, machine: &Machine) -> Self {
+        Self::from_config_with_options(config, machine, config::LaunchOptions::legacy_default())
+    }
+
+    pub(crate) fn from_config_with_options(
+        config: &Config,
+        machine: &Machine,
+        options: config::LaunchOptions,
+    ) -> Self {
+        let effective_proxy = if config.proxy.trim().is_empty() {
+            machine.system_proxy.trim().to_string()
+        } else {
+            config.proxy.trim().to_string()
+        };
+        let region_id = config
+            .region(machine)
+            .map(|r| r.id.to_string())
+            .unwrap_or_default();
+        Self {
+            proxy: config.proxy.trim().to_string(),
+            effective_proxy,
+            region_id,
+            language: config.language(machine),
+            timezone: config.timezone(machine),
+            seed: config.seed,
+            native_graphics: config.native_graphics,
+            enable_quota_bridge: options.enable_quota_bridge,
+        }
+    }
+}
+
+#[derive(Default)]
 pub struct Browser {
     gate: Mutex<()>,
+    pub(crate) slot_gates: Mutex<std::collections::HashMap<String, std::sync::Arc<SlotGate>>>,
+    pub(crate) launched_configs: Mutex<std::collections::HashMap<String, LaunchRuntimeSnapshot>>,
     pub(crate) warning: Mutex<Option<String>>,
     session: Mutex<Option<Session>>,
     pub(crate) last_observations: Mutex<std::collections::HashMap<String, CachedObservation>>,
-    quota_sync: Mutex<Vec<quota_bridge::Ticket>>,
     host: Mutex<Option<Exit>>,
     pub(crate) kill_switch: Mutex<kill_switch::KillSwitchState>,
+}
+
+impl Browser {
+    pub(crate) fn slot_gate(&self, slot: &str) -> std::sync::Arc<SlotGate> {
+        let mut gates = self.slot_gates.lock().unwrap_or_else(|e| e.into_inner());
+        gates
+            .entry(slot.to_string())
+            .or_insert_with(|| std::sync::Arc::new(SlotGate::default()))
+            .clone()
+    }
+
+    const SLOT_GATE_RETRIES: usize = 12;
+
+    fn slot_gate_backoff(attempt: usize) {
+        match attempt {
+            0 => {}
+            1..=3 => std::thread::yield_now(),
+            _ => std::thread::sleep(std::time::Duration::from_millis(1)),
+        }
+    }
+
+    pub(crate) fn with_slot_then_gate<T>(
+        &self,
+        mut resolve_slot: impl FnMut() -> Result<String, String>,
+        action: impl FnOnce(&str) -> Result<T, String>,
+    ) -> Result<T, String> {
+        for attempt in 0..Self::SLOT_GATE_RETRIES {
+            Self::slot_gate_backoff(attempt);
+            let slot = {
+                let _gate = self.gate.lock().unwrap();
+                resolve_slot()?
+            };
+            let slot_gate = self.slot_gate(&slot);
+            let _slot_guard = slot_gate.lock();
+            let _gate = self.gate.lock().unwrap();
+            if resolve_slot()? == slot {
+                return action(&slot);
+            }
+        }
+        Err("浏览器身份仍在切换，请重试。".into())
+    }
+
+    pub(crate) fn with_slots_then_gate<T>(
+        &self,
+        mut resolve_slots: impl FnMut() -> Result<Vec<String>, String>,
+        action: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        fn normalize(mut slots: Vec<String>) -> Vec<String> {
+            slots.sort();
+            slots.dedup();
+            slots
+        }
+        for attempt in 0..Self::SLOT_GATE_RETRIES {
+            Self::slot_gate_backoff(attempt);
+            let slots = {
+                let _gate = self.gate.lock().unwrap();
+                normalize(resolve_slots()?)
+            };
+            let gates: Vec<_> = slots.iter().map(|s| self.slot_gate(s)).collect();
+            let _slot_guards: Vec<_> = gates.iter().map(|g| g.lock()).collect();
+            let _gate = self.gate.lock().unwrap();
+            if normalize(resolve_slots()?) == slots {
+                return action();
+            }
+        }
+        Err("浏览器身份仍在切换，请重试。".into())
+    }
+
+    pub(crate) fn with_active_slot_gate<T>(
+        &self,
+        mut resolve_slot: impl FnMut() -> Result<String, String>,
+        mut action: impl FnMut(&str, &Mutex<()>) -> Result<(bool, T), String>,
+    ) -> Result<T, String> {
+        for attempt in 0..Self::SLOT_GATE_RETRIES {
+            Self::slot_gate_backoff(attempt);
+            let slot = {
+                let _gate = self.gate.lock().unwrap();
+                resolve_slot()?
+            };
+            let slot_gate = self.slot_gate(&slot);
+            let _slot_guard = slot_gate.lock();
+            match action(&slot, &self.gate)? {
+                (true, value) => return Ok(value),
+                (false, _) => continue,
+            }
+        }
+        Err("浏览器身份仍在切换，请重试。".into())
+    }
+
+    pub(crate) fn record_launched_config(
+        &self,
+        scope: &Path,
+        slot: &str,
+        snapshot: &LaunchRuntimeSnapshot,
+    ) {
+        self.launched_configs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(slot.to_string(), snapshot.clone());
+        let path = scope.join("launch.snapshot.json");
+        if profile::check_path(scope, &path).is_ok() {
+            if let Ok(bytes) = serde_json::to_vec(snapshot) {
+                let _ = crate::identities::private::write(&path, &bytes);
+            }
+        }
+    }
+
+    pub(crate) fn clear_launched_config(&self, scope: &Path, slot: &str) {
+        self.launched_configs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(slot);
+        let path = scope.join("launch.snapshot.json");
+        if profile::check_path(scope, &path).is_ok() {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    pub(crate) fn read_launched_config(
+        &self,
+        scope: &Path,
+        slot: &str,
+    ) -> Option<LaunchRuntimeSnapshot> {
+        if let Some(found) = self
+            .launched_configs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(slot)
+            .cloned()
+        {
+            return Some(found);
+        }
+        let path = scope.join("launch.snapshot.json");
+        profile::check_path(scope, &path).ok()?;
+        let bytes = fs::read(&path).ok()?;
+        let parsed: LaunchRuntimeSnapshot = serde_json::from_slice(&bytes).ok()?;
+        self.launched_configs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(slot.to_string(), parsed.clone());
+        Some(parsed)
+    }
+}
+
+pub(crate) fn slot_name_for_scope(scope: &Path) -> String {
+    let name = scope
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    if name == "browser" || name.is_empty() {
+        "legacy".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+pub(crate) fn load_config_ensured_seed(
+    root: &Path,
+    scope: &Path,
+    slot: Option<&str>,
+) -> Result<Config, String> {
+    let mut config = config::load(scope)?;
+    if config.seed == 0 {
+        let db_seed = workspaces::database(root).ok().and_then(|db| {
+            let resolved_slot = slot
+                .map(str::to_string)
+                .or_else(|| db.browser_slot().ok())?;
+            db.browser_seed(&resolved_slot).ok().flatten()
+        });
+        config::ensure_persisted_seed(scope, db_seed, &mut config)?;
+    }
+    Ok(config)
 }
 struct Session {
     token: String,
@@ -379,7 +637,14 @@ fn write_launch_args(
     profile: &Path,
     version: &str,
 ) -> Result<(), String> {
-    let mut args = config::arguments(config, machine, profile, "", version);
+    let mut args = config::arguments_with_options(
+        config,
+        machine,
+        profile,
+        "",
+        version,
+        config::LaunchOptions::for_purpose(config::LaunchPurpose::Verification),
+    );
     args.pop();
     crate::identities::private::directory(root)?;
     crate::identities::private::write(
@@ -394,7 +659,7 @@ fn refresh_launch_args(app: &tauri::AppHandle) -> Result<(), String> {
     let settings = workspaces::scope(&root)?;
     let profile = settings.join("profile");
     profile::check_path(&root, &profile)?;
-    let config = config::load(&workspaces::scope(&root)?)?;
+    let config = load_config_ensured_seed(&root, &settings, None)?;
     let machine = config::machine()?;
     config.validate(&machine)?;
     let engine = engine(app)?;
@@ -436,7 +701,6 @@ fn open_session(
     let web = web(app)?;
     let root = root(app)?;
     let slot = workspaces::database(&root)?.browser_slot()?;
-    state.quota_sync.lock().unwrap().clear();
     *state.session.lock().unwrap() = Some(Session {
         token: token.clone(),
         slot,
@@ -454,7 +718,8 @@ fn open_session(
 fn renew_session(app: &tauri::AppHandle) {
     let result = (|| -> Result<(), String> {
         let root = root(app)?;
-        let config = config::load(&workspaces::scope(&root)?)?;
+        let scope = workspaces::scope(&root)?;
+        let config = load_config_ensured_seed(&root, &scope, None)?;
         let machine = config::machine()?;
         config.validate(&machine)?;
         let engine = engine(app)?;
@@ -469,7 +734,6 @@ fn renew_session(app: &tauri::AppHandle) {
 }
 /// 宿主退出时删除 start.url，避免 CCBrowser 入口读到失效令牌。
 pub fn forget_start_url(app: &tauri::AppHandle) {
-    app.state::<Browser>().quota_sync.lock().unwrap().clear();
     if let Ok(root) = root(app) {
         let _ = fs::remove_file(root.join("start.url"));
     }
@@ -487,44 +751,48 @@ pub fn companion(app: tauri::AppHandle) {
 fn start_companion(app: &tauri::AppHandle) -> Result<(), String> {
     let browser = installed().ok_or("未安装 /Applications/Claude-Local Browser.app。")?;
     let state = app.state::<Browser>();
-    let _guard = state.gate.lock().unwrap();
-    let root = root(app)?;
-    workspaces::ensure(&root)?;
-    let settings = workspaces::scope(&root)?;
-    let profile = settings.join("profile");
-    profile::check_path(&root, &profile)?;
-    let config = config::load(&workspaces::scope(&root)?)?;
-    let machine = config::machine()?;
-    config.validate(&machine)?;
-    // 先刷新参数：浏览器已由 Claude-Local Browser 入口先行启动时，下一次启动也能沿用指纹参数。
-    write_launch_args(&root, &config, &machine, &profile, &version(&browser))?;
-    let page = open_session(app, &config, &machine, version(&browser))?;
-    if profile::running(&profile)? {
-        // 宿主重装/重启后端口与令牌变化：给运行中的浏览器打开新的实测页，避免旧标签失联。
-        let mut child = Command::new(browser.join("Contents/MacOS/Chromium"))
-            .arg(format!("--user-data-dir={}", profile.display()))
-            .args(["--profile-directory=Default", &page])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| "无法重新连接运行中的 Claude-Local Browser。")?;
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-        return Ok(());
-    }
-    profile::preferences(&profile, &config, &machine)?;
-    register(&browser)?;
-    let status = Command::new("/usr/bin/open")
-        .args(["-g", "-a"])
-        .arg(&browser)
-        .status()
-        .map_err(|_| "无法打开 Claude-Local Browser。")?;
-    if !status.success() {
-        return Err("LaunchServices 拒绝打开 Claude-Local Browser。".into());
-    }
-    Ok(())
+    state.with_slot_then_gate(
+        || workspaces::database(&root(app)?)?.browser_slot(),
+        |_slot| {
+            let root = root(app)?;
+            workspaces::ensure(&root)?;
+            let settings = workspaces::scope(&root)?;
+            let profile = settings.join("profile");
+            profile::check_path(&root, &profile)?;
+            let config = load_config_ensured_seed(&root, &settings, None)?;
+            let machine = config::machine()?;
+            config.validate(&machine)?;
+            // 先刷新参数：浏览器已由 Claude-Local Browser 入口先行启动时，下一次启动也能沿用指纹参数。
+            write_launch_args(&root, &config, &machine, &profile, &version(&browser))?;
+            let page = open_session(app, &config, &machine, version(&browser))?;
+            if profile::running(&profile)? {
+                // 宿主重装/重启后端口与令牌变化：给运行中的浏览器打开新的实测页，避免旧标签失联。
+                let mut child = Command::new(browser.join("Contents/MacOS/Chromium"))
+                    .arg(format!("--user-data-dir={}", profile.display()))
+                    .args(["--profile-directory=Default", &page])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .map_err(|_| "无法重新连接运行中的 Claude-Local Browser。")?;
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return Ok(());
+            }
+            profile::preferences(&profile, &config, &machine)?;
+            register(&browser)?;
+            let status = Command::new("/usr/bin/open")
+                .args(["-g", "-a"])
+                .arg(&browser)
+                .status()
+                .map_err(|_| "无法打开 Claude-Local Browser。")?;
+            if !status.success() {
+                return Err("LaunchServices 拒绝打开 Claude-Local Browser。".into());
+            }
+            Ok(())
+        },
+    )
 }
 #[derive(Serialize, Deserialize)]
 pub struct DefaultBrowser {
@@ -653,7 +921,7 @@ fn snapshot(app: &tauri::AppHandle) -> Result<Snapshot, String> {
     let profile = settings.join("profile");
     profile::check_path(&root, &profile)?;
     let machine = config::machine()?;
-    let config = config::load(&settings)?;
+    let config = load_config_ensured_seed(&root, &settings, None)?;
     config.validate(&machine)?;
     let engine = engine(app)?;
     let engine_version = packaged_version(app, &engine);
@@ -741,20 +1009,23 @@ pub async fn browser_read(app: tauri::AppHandle) -> Result<Snapshot, String> {
 pub async fn browser_save(app: tauri::AppHandle, config: Config) -> Result<Snapshot, String> {
     run(move || {
         let state = app.state::<Browser>();
-        let _guard = state.gate.lock().unwrap();
-        workspaces::ready(&root(&app)?)?;
-        let root = root(&app)?;
-        if profile::running(&workspaces::scope(&root)?.join("profile"))? {
-            return Err("先退出浏览器，再保存指纹设置。".into());
-        }
-        config.validate(&config::machine()?)?;
-        config::save(&workspaces::scope(&root)?, &config)?;
-        if let Ok(slot) = workspaces::database(&root).and_then(|db| db.browser_slot()) {
-            state.last_observations.lock().unwrap().remove(&slot);
-        }
-        refresh_launch_args(&app)?;
-        renew_session(&app);
-        snapshot(&app)
+        state.with_slot_then_gate(
+            || workspaces::database(&root(&app)?)?.browser_slot(),
+            |slot| {
+                let root = root(&app)?;
+                workspaces::ready(&root)?;
+                if profile::running(&workspaces::scope(&root)?.join("profile"))? {
+                    return Err("先退出浏览器，再保存指纹设置。".into());
+                }
+                config.validate(&config::machine()?)?;
+                config::save(&workspaces::scope(&root)?, &config)?;
+                config::invalidate_exit_country_cache(None);
+                state.last_observations.lock().unwrap().remove(slot);
+                refresh_launch_args(&app)?;
+                renew_session(&app);
+                snapshot(&app)
+            },
+        )
     })
     .await
 }
@@ -764,18 +1035,54 @@ pub async fn browser_launch(
     on_progress: Channel<Progress>,
 ) -> Result<Snapshot, String> {
     run(move || {
+        let reporter = Reporter::channel(Some(on_progress));
         let state = app.state::<Browser>();
-        let _guard = state.gate.lock().unwrap();
-        launch_locked(&app, &Reporter::channel(Some(on_progress)))
+        state
+            .with_active_slot_gate(
+                || workspaces::database(&root(&app)?)?.browser_slot(),
+                |slot, gate| {
+                    let pending = {
+                        let _guard = gate.lock().unwrap();
+                        if workspaces::database(&root(&app)?)?.browser_slot()? != slot {
+                            return Ok((false, None));
+                        }
+                        launch::spawn_with_urls_locked(&app, &reporter, &[])?
+                    };
+                    let snap = match pending {
+                        launch::SpawnOutcome::AlreadyReady(snap) => snap,
+                        launch::SpawnOutcome::WaitRunning(wait) => {
+                            launch::wait_launched_holding_slot_gate(&app, wait, &reporter)?
+                        }
+                    };
+                    Ok((true, Some(snap)))
+                },
+            )?
+            .ok_or_else(|| "浏览器身份仍在切换，请重试。".to_string())
     })
     .await
 }
 #[tauri::command]
 pub async fn browser_quit(app: tauri::AppHandle) -> Result<Snapshot, String> {
     run(move || {
+        let (slot, scope, profile) = {
+            let state = app.state::<Browser>();
+            let _guard = state.gate.lock().unwrap();
+            let root = root(&app)?;
+            let scope = workspaces::scope(&root)?;
+            let slot = workspaces::database(&root)?.browser_slot()?;
+            let profile = scope.join("profile");
+            profile::check_path(&root, &profile)?;
+            (slot, scope, profile)
+        };
+        {
+            let state = app.state::<Browser>();
+            let slot_gate = state.slot_gate(&slot);
+            let _slot_guard = slot_gate.lock();
+            profile::quit(&profile)?;
+            state.clear_launched_config(&scope, &slot);
+        }
         let state = app.state::<Browser>();
         let _guard = state.gate.lock().unwrap();
-        profile::quit(&workspaces::scope(&root(&app)?)?.join("profile"))?;
         renew_session(&app);
         snapshot(&app)
     })
@@ -794,106 +1101,107 @@ pub async fn browser_clear(
     }
     run(move || {
         let state = app.state::<Browser>();
-        let _guard = state.gate.lock().unwrap();
-        workspaces::ready(&root(&app)?)?;
-        let profile = workspaces::scope(&root(&app)?)?.join("profile");
-        let log = Reporter::channel(Some(on_progress));
-        log.log(
-            "browser",
-            "running",
-            if reset {
-                "正在核验当前浏览器的完整资料。"
-            } else {
-                "核验浏览器已退出；只处理独立资料内的固定项目。"
-            },
-            0,
-            None,
-        );
-        if profile::running(&profile)? {
-            return Err("浏览器正在使用资料，退出后再清理。".into());
-        }
-        let mut count = 0;
-        let mut total = 0;
-        let mut reported_at: Option<std::time::Instant> = None;
-        let result = if reset {
-            profile::reset(
-                &profile,
-                || {
-                    if profile::running(&profile)? {
-                        Err("浏览器正在使用资料，退出后再清理。".into())
-                    } else {
-                        Ok(())
-                    }
-                },
-                |name, done, completed, planned| {
-                    count = completed;
-                    total = planned;
-                    if completed == planned
-                        || reported_at.is_none_or(|last| {
-                            last.elapsed() >= std::time::Duration::from_millis(50)
-                        })
-                    {
-                        log.log(
-                            "browser",
-                            "running",
-                            &format!("{}：{name}", if done { "已删除" } else { "正在删除" }),
-                            completed,
-                            Some(planned),
-                        );
-                        reported_at = Some(std::time::Instant::now());
-                    }
-                },
-            )
-        } else {
-            total = profile::scan(&profile)?
-                .iter()
-                .filter(|x| include_site_data || !x.login)
-                .count();
-            profile::clear(&profile, include_site_data, |name, done| {
-                if done {
-                    count += 1;
-                }
+        state.with_slot_then_gate(
+            || workspaces::database(&root(&app)?)?.browser_slot(),
+            |slot| {
+                let root_dir = root(&app)?;
+                workspaces::ready(&root_dir)?;
+                let profile = workspaces::scope(&root_dir)?.join("profile");
+                let log = Reporter::channel(Some(on_progress));
                 log.log(
                     "browser",
-                    if done { "ok" } else { "running" },
-                    &format!("{}：{name}", if done { "已删除" } else { "正在删除" }),
-                    count,
-                    Some(total),
+                    "running",
+                    if reset {
+                        "正在核验当前浏览器的完整资料。"
+                    } else {
+                        "核验浏览器已退出；只处理独立资料内的固定项目。"
+                    },
+                    0,
+                    None,
                 );
-            })
-        };
-        if let Err(error) = result {
-            if reset {
-                if let Ok(slot) = workspaces::database(&root(&app)?).and_then(|db| db.browser_slot()) {
-                    state.last_observations.lock().unwrap().remove(&slot);
+                if profile::running(&profile)? {
+                    return Err("浏览器正在使用资料，退出后再清理。".into());
+                }
+                let mut count = 0;
+                let mut total = 0;
+                let mut reported_at: Option<std::time::Instant> = None;
+                let result = if reset {
+                    profile::reset(
+                        &profile,
+                        || {
+                            if profile::running(&profile)? {
+                                Err("浏览器正在使用资料，退出后再清理。".into())
+                            } else {
+                                Ok(())
+                            }
+                        },
+                        |name, done, completed, planned| {
+                            count = completed;
+                            total = planned;
+                            if completed == planned
+                                || reported_at.is_none_or(|last| {
+                                    last.elapsed() >= std::time::Duration::from_millis(50)
+                                })
+                            {
+                                log.log(
+                                    "browser",
+                                    "running",
+                                    &format!("{}：{name}", if done { "已删除" } else { "正在删除" }),
+                                    completed,
+                                    Some(planned),
+                                );
+                                reported_at = Some(std::time::Instant::now());
+                            }
+                        },
+                    )
+                } else {
+                    total = profile::scan(&profile)?
+                        .iter()
+                        .filter(|x| include_site_data || !x.login)
+                        .count();
+                    profile::clear(&profile, include_site_data, |name, done| {
+                        if done {
+                            count += 1;
+                        }
+                        log.log(
+                            "browser",
+                            if done { "ok" } else { "running" },
+                            &format!("{}：{name}", if done { "已删除" } else { "正在删除" }),
+                            count,
+                            Some(total),
+                        );
+                    })
+                };
+                if let Err(error) = result {
+                    if reset {
+                        state.last_observations.lock().unwrap().remove(slot);
+                        renew_session(&app);
+                        log.log(
+                            "browser",
+                            "error",
+                            &error,
+                            count,
+                            (total > 0).then_some(total),
+                        );
+                    } else {
+                        log.fail(&error);
+                    }
+                    return Err(error);
+                }
+                if reset {
+                    state.last_observations.lock().unwrap().remove(slot);
                 }
                 renew_session(&app);
                 log.log(
                     "browser",
-                    "error",
-                    &error,
+                    "ok",
+                    &format!("直接清理 {count} 个项目，不保留副本。"),
                     count,
-                    (total > 0).then_some(total),
+                    Some(total),
                 );
-            } else {
-                log.fail(&error);
-            }
-            return Err(error);
-        }
-        if reset {
-            if let Ok(slot) = workspaces::database(&root(&app)?).and_then(|db| db.browser_slot()) {
-                state.last_observations.lock().unwrap().remove(&slot);
-            }
-        }
-        renew_session(&app);
-        log.log(
-            "browser",
-            "ok",
-            &format!("直接清理 {count} 个项目，不保留副本。"),
-            count,
-            Some(total),
-        );
-        snapshot(&app)
+                snapshot(&app)
+            },
+        )
     })
     .await
 }
@@ -915,78 +1223,92 @@ pub async fn browser_align(
     on_progress: Channel<Progress>,
 ) -> Result<Snapshot, String> {
     let settings = workspaces::scope(&root(&app)?)?;
-    let config = config::load(&settings)?;
-    let exit = network::probe(&config.proxy).await?;
+    let proxy = config::load(&settings)?.proxy;
+    let exit = network::probe(&proxy).await?;
     if exit.country != "US" {
         return Err("实际代理出口不是美国，未修改机器。".into());
     }
     let app_align = app.clone();
     crate::system::run_change(app.clone(), "align", move || {
         let state = app_align.state::<Browser>();
-        let _guard = state.gate.lock().unwrap();
-        workspaces::ready(&root(&app_align)?)?;
-        let log = Reporter::channel(Some(on_progress));
-        if workspaces::scope(&root(&app_align)?)? != settings { return Err("浏览器身份已变化，请重试。".into()); }
-        if profile::running(&settings.join("profile"))? {
-            return Err("先退出浏览器，再对齐机器。".into());
-        }
-        let machine = config::machine()?;
-        if !machine.timezones.contains(&exit.timezone) {
-            return Err("出口未返回可用时区，未修改机器。".into());
-        }
-        #[cfg(target_os = "linux")]
-        {
-            if machine.location_enabled.is_none() {
-                return Err("Linux location state is unknown on this desktop; full machine alignment cannot be verified. No system settings were changed.".into());
-            }
-            let _: serde_json::Value = decode(unsafe {
-                rf_system_region(b"en-US\0".as_ptr().cast(), b"en_US\0".as_ptr().cast())
-            })?;
-        }
-        log.log(
-            "browser",
-            "running",
-            "设置实际美国出口对应的时区，请完成系统管理员授权。",
-            0,
-            None,
-        );
-        let zone = std::ffi::CString::new(exit.timezone.clone()).map_err(|_| "出口时区无效。")?;
-        let _: serde_json::Value = decode(unsafe { rf_system_timezone(zone.as_ptr()) })?;
-        log.log("browser", "ok", "系统时区已核验。", 1, Some(3));
-        let _: serde_json::Value = decode(unsafe {
-            rf_system_region(b"en-US\0".as_ptr().cast(), b"en_US\0".as_ptr().cast())
-        })?;
-        log.log("browser", "ok", "美国英语与 en_US 区域已保存。", 2, Some(3));
-        if config::machine()?.location_enabled != Some(false) {
-            let _: serde_json::Value = decode(unsafe { rf_system_location() })?;
-        }
-        let fresh = config::machine()?;
-        if fresh.location_enabled != Some(false)
-            || !crate::regions::timezones_match(&fresh.timezone, &exit.timezone)
-            || !fresh.locale.starts_with("en_US")
-            || fresh.languages.first().map(String::as_str) != Some("en-US")
-        {
-            return Err("部分系统设置未能核验，请查看电脑设置。".into());
-        }
-        let mut config = config;
-        config.follow_machine = true;
-        config.language = "en-US".into();
-        config.timezone = exit.timezone;
-        config::save(&workspaces::scope(&root(&app_align)?)?, &config)?;
-        state.last_observations.lock().unwrap().clear();
-        refresh_launch_args(&app_align)?;
-        renew_session(&app_align);
-        log.log(
-            "browser",
-            "ok",
-            "机器与实际美国出口对齐完成；重新打开浏览器核验。",
-            3,
-            Some(3),
-        );
-        Ok(serde_json::json!({ "message": "完成" }))
+        state.with_slot_then_gate(
+            || workspaces::database(&root(&app_align)?)?.browser_slot(),
+            |slot| {
+                let root_align = root(&app_align)?;
+                workspaces::ready(&root_align)?;
+                let log = Reporter::channel(Some(on_progress));
+                if workspaces::scope(&root_align)? != settings {
+                    return Err("浏览器身份已变化，请重试。".into());
+                }
+                if profile::running(&settings.join("profile"))? {
+                    return Err("先退出浏览器，再对齐机器。".into());
+                }
+                let machine = config::machine()?;
+                if !machine.timezones.contains(&exit.timezone) {
+                    return Err("出口未返回可用时区，未修改机器。".into());
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    if machine.location_enabled.is_none() {
+                        return Err("Linux location state is unknown on this desktop; full machine alignment cannot be verified. No system settings were changed.".into());
+                    }
+                    let _: serde_json::Value = decode(unsafe {
+                        rf_system_region(b"en-US\0".as_ptr().cast(), b"en_US\0".as_ptr().cast())
+                    })?;
+                }
+                log.log(
+                    "browser",
+                    "running",
+                    "设置实际美国出口对应的时区，请完成系统管理员授权。",
+                    0,
+                    None,
+                );
+                let zone =
+                    std::ffi::CString::new(exit.timezone.clone()).map_err(|_| "出口时区无效。")?;
+                let _: serde_json::Value = decode(unsafe { rf_system_timezone(zone.as_ptr()) })?;
+                log.log("browser", "ok", "系统时区已核验。", 1, Some(3));
+                let _: serde_json::Value = decode(unsafe {
+                    rf_system_region(b"en-US\0".as_ptr().cast(), b"en_US\0".as_ptr().cast())
+                })?;
+                log.log("browser", "ok", "美国英语与 en_US 区域已保存。", 2, Some(3));
+                if config::machine()?.location_enabled != Some(false) {
+                    let _: serde_json::Value = decode(unsafe { rf_system_location() })?;
+                }
+                let fresh = config::machine()?;
+                if fresh.location_enabled != Some(false)
+                    || !crate::regions::timezones_match(&fresh.timezone, &exit.timezone)
+                    || !fresh.locale.starts_with("en_US")
+                    || fresh.languages.first().map(String::as_str) != Some("en-US")
+                {
+                    return Err("部分系统设置未能核验，请查看电脑设置。".into());
+                }
+                workspaces::ensure(&root_align)?;
+                let mut config = load_config_ensured_seed(&root_align, &settings, Some(slot))?;
+                config.follow_machine = true;
+                config.language = "en-US".into();
+                config.timezone = exit.timezone;
+                config::save(&settings, &config)?;
+                state.last_observations.lock().unwrap().clear();
+                refresh_launch_args(&app_align)?;
+                renew_session(&app_align);
+                log.log(
+                    "browser",
+                    "ok",
+                    "机器与实际美国出口对齐完成；重新打开浏览器核验。",
+                    3,
+                    Some(3),
+                );
+                Ok(serde_json::json!({ "message": "完成" }))
+            },
+        )
     })
     .await?;
-    run(move || snapshot(&app)).await
+    run(move || {
+        let state = app.state::<Browser>();
+        let _guard = state.gate.lock().unwrap();
+        snapshot(&app)
+    })
+    .await
 }
 
 pub fn mask_email(email: &str) -> String {
@@ -998,11 +1320,13 @@ pub fn mask_email(email: &str) -> String {
         Some(0) => format!("***{email}"),
         Some(at) => {
             let (local, domain) = email.split_at(at);
-            if local.len() <= 1 {
+            let char_count = local.chars().count();
+            if char_count <= 1 {
                 format!("*{domain}")
             } else {
-                let keep = (local.len() / 2).max(1).min(3);
-                format!("{}***{domain}", &local[..keep])
+                let keep = (char_count / 2).clamp(1, 3);
+                let prefix: String = local.chars().take(keep).collect();
+                format!("{prefix}***{domain}")
             }
         }
     }
@@ -1050,11 +1374,49 @@ pub async fn browser_open_usage(
 ) -> Result<Snapshot, String> {
     let on_progress = on_progress.map(|id| id.channel_on(webview));
     run(move || {
-        let _cleaner = lifecycle::IdentityGuard::acquire(&app)?;
-        let state = app.state::<Browser>();
-        let _guard = state.gate.lock().unwrap();
-        quota_connection::materialize_identity_profile_locked(&app, "current", &expected_identity)?;
-        quota_connection::launch_identity_profile_locked(&app, "current", &expected_identity)?;
+        let cleaner = app.state::<crate::cleaner::Cleaner>();
+        let _account_guard = cleaner.enter_browser_account(&expected_identity)?;
+        let _running_memo = profile::begin_running_memo();
+        let mut proof_cache = lifecycle::CliProofCache::default();
+        {
+            let browser = app.state::<Browser>();
+            let pre_slot = quota_connection::lookup_existing_bound_slot_with_cache(
+                &app,
+                "current",
+                &expected_identity,
+                &mut proof_cache,
+            );
+            let pre_gate = pre_slot.as_deref().map(|s| browser.slot_gate(s));
+            let mut pre_guard = pre_gate.as_ref().map(|g| g.lock());
+            quota_connection::materialize_identity_profile_with_cache(
+                &app,
+                "current",
+                &expected_identity,
+                &mut proof_cache,
+            )?;
+            let target = quota_connection::resolve_bound_profile_target_with_cache(
+                &app,
+                "current",
+                &expected_identity,
+                &mut proof_cache,
+            )?;
+            let _late_gate;
+            let _late_guard;
+            if pre_slot.as_deref() != Some(target.slot.as_str()) {
+                drop(pre_guard.take());
+                _late_gate = browser.slot_gate(&target.slot);
+                _late_guard = Some(_late_gate.lock());
+            }
+            quota_connection::launch_bound_profile_target_with_options(
+                &app,
+                &target,
+                config::LaunchOptions {
+                    purpose: config::LaunchPurpose::QuotaSync,
+                    enable_quota_bridge: true,
+                },
+                None,
+            )?;
+        }
         Reporter::channel(on_progress).log(
             "browser",
             "ok",
@@ -1062,6 +1424,8 @@ pub async fn browser_open_usage(
             1,
             Some(1),
         );
+        let state = app.state::<Browser>();
+        let _guard = state.gate.lock().unwrap();
         snapshot(&app)
     })
     .await

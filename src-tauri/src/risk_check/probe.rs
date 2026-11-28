@@ -1,5 +1,5 @@
 // [INPUT]: 冻结浏览器代理配置、目标地区参数以及用户触发的三路 trace URL。
-// [OUTPUT]: 浏览器 DNS/代理防护投影（parse_browser_dns_guard）、Cloudflare trace 解析及经远端 DNS 代理并发验证的出口一致性报告（ConsistencyProbeReport）。
+// [OUTPUT]: 浏览器 DNS/代理防护投影（parse_browser_dns_guard，对齐 browser::config::proxy 覆盖 http/https/socks5/socks5h 远端 DNS 锁定）、Cloudflare trace 解析及并发验证的一致性报告（ConsistencyProbeReport）。
 // [POS]: risk_check 子模块：只读浏览器代理语义投影与边缘 trace 出口一致性并发探测。
 // [PROTOCOL]: 变更时更新此头部，然后检查 risk_check/CLAUDE.md
 use super::{
@@ -30,7 +30,7 @@ pub fn parse_browser_dns_guard(
     }
     if let Ok(url) = reqwest::Url::parse(trimmed) {
         let scheme = url.scheme().to_ascii_lowercase();
-        let remote_dns_locked = scheme == "socks5" || scheme == "socks5h";
+        let remote_dns_locked = crate::browser::config::proxy(trimmed).is_ok_and(|u| u.is_some());
         let local_host = url.host_str().is_some_and(|host| {
             let clean = host.trim_matches(['[', ']']);
             clean.eq_ignore_ascii_case("localhost")

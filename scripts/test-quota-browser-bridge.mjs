@@ -22,12 +22,28 @@ const otherOrganization='33333333-3333-4333-8333-333333333333';
 const email='private@example.invalid';
 const quotaIdentity=createHash('sha256').update(JSON.stringify([account,email,organization])).digest('hex');
 let received=[];const receivedOrigins=[];
+const retryNonce='222233334444555566667777888899990000aaaabbbbcccc';
+const httpErrNonce='33334444555566667777888899990000aaaabbbbccccdddd';
+let retryHits=0;let httpErrHits=0;
 const server=createServer((request,response)=>{
   if(request.method==='OPTIONS'){
     response.writeHead(204,{'Access-Control-Allow-Origin':request.headers.origin||'null','Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'content-type'});response.end();return;
   }
   if(/^\/[a-f0-9]{48}\/browser\.html$/.test(request.url)){response.writeHead(200,{'Content-Type':'text/html'});response.end('<!doctype html><title>fixture</title>');return;}
   if(/^\/[a-f0-9]{48}\/quota-sync$/.test(request.url)&&request.method==='POST'){
+    if(request.url===`/${retryNonce}/quota-sync`){
+      retryHits+=1;
+      if(retryHits===1){
+        request.socket.destroy();
+        return;
+      }
+    }
+    if(request.url===`/${httpErrNonce}/quota-sync`){
+      httpErrHits+=1;
+      response.writeHead(500,{'Access-Control-Allow-Origin':request.headers.origin||'null'});
+      response.end('server error');
+      return;
+    }
     let body='';request.setEncoding('utf8');request.on('data',chunk=>body+=chunk);request.on('end',()=>{
       try{received.push(JSON.parse(body));receivedOrigins.push(request.headers.origin);response.writeHead(200,{'Access-Control-Allow-Origin':request.headers.origin||'null','Content-Type':'application/json'});response.end('{"ok":true}');}
       catch{response.writeHead(400);response.end();}
@@ -46,13 +62,18 @@ try{
   });
   const workers=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker',{timeout:15000});
   const localUrl=`http://127.0.0.1:${port}/${nonce}/browser.html#quota-sync=${nonce}&quota_identity=${quotaIdentity}`;
-  const claudeUrl=`https://claude.ai/settings/usage#claude-local-sync=${nonce}`;
+  const claudeUrl='https://claude.ai/settings/usage';
   let outbound;
   const paired=await workers.evaluate(async({nonce,localUrl,quotaIdentity})=>{
-    const sender={id:chrome.runtime.id,tab:{id:7,url:localUrl}};
-    return {first:await pair({nonce,quotaIdentity},sender),duplicate:await pair({nonce,quotaIdentity},sender)};
+    const sender={id:chrome.runtime.id,frameId:0,tab:{id:7,url:localUrl}};
+    const subframeRejected=await pair({nonce,quotaIdentity},{id:chrome.runtime.id,frameId:1,tab:{id:7,url:localUrl}});
+    return {
+      subframeRejected,
+      first:await pair({nonce,quotaIdentity},sender),
+      duplicate:await pair({nonce,quotaIdentity},sender)
+    };
   },{nonce,localUrl,quotaIdentity});
-  assert.deepEqual(paired,{first:{paired:true},duplicate:{paired:false}});
+  assert.deepEqual(paired,{subframeRejected:{paired:false},first:{paired:true},duplicate:{paired:false}});
   const queried=[];
   const fakeResponses={
     '/api/account':{account:{uuid:account,email_address:email},unrelated:'drop'},
@@ -62,12 +83,15 @@ try{
     [`/api/organizations/${organization}/usage?at_wall=1&skip_spend=1`]:{five_hour:{utilization:23,resets_at:'2027-01-01T00:00:00Z',private:'drop'},seven_day:{utilization:44,resets_at:'2027-01-05T00:00:00Z'},cedar_ember:{eligible:true,grants:[{resets_left:3,starts_at:'2026-01-01T00:00:00Z',ends_at:'2028-01-01T00:00:00Z',paused:false,secret:'must-not-leak'}],private:'drop'}}
   };
   const content=await readFile(join(extension,'content.js'),'utf8');
+  const windowObj={};
+  windowObj.top=windowObj;
   await runInNewContext(content,{
-    URL,AbortController,setTimeout,clearTimeout,TextDecoder,location:{href:claudeUrl,origin:'https://claude.ai',pathname:'/settings/usage',search:'',hash:`#claude-local-sync=${nonce}`},
-    history:{replaceState(){}},sessionStorage:{getItem(){return null;},setItem(){}},
+    window:windowObj,
+    URL,AbortController,setTimeout,clearTimeout,TextDecoder,location:{href:claudeUrl,origin:'https://claude.ai',pathname:'/settings/usage',search:'',hash:''},
     fetch:async path=>{queried.push(path);return {ok:Object.hasOwn(fakeResponses,path)&&fakeResponses[path]!==null,json:async()=>fakeResponses[path]};},
     chrome:{runtime:{sendMessage:async message=>{
-      const sender={id:workers.url().match(/^chrome-extension:\/\/([^/]+)/)[1],tab:{id:7,url:claudeUrl}};
+      const sender={id:workers.url().match(/^chrome-extension:\/\/([^/]+)/)[1],frameId:0,tab:{id:7,url:claudeUrl}};
+      if(message.kind==='claude-local-quota-claim')return workers.evaluate(({msg,sender})=>claimTabTask(msg,sender),{msg:message,sender});
       if(message.kind==='claude-local-quota-candidates')return workers.evaluate(({msg,sender})=>matchCandidates(msg,sender),{msg:message,sender});
       if(message.kind==='claude-local-quota-snapshot'){
         outbound=message;
@@ -79,30 +103,53 @@ try{
   });
   for(let i=0;i<30&&!outbound;i++)await new Promise(resolveWait=>setTimeout(resolveWait,10));
   assert.equal(outbound?.kind,'claude-local-quota-snapshot');
+
+  // Negative check 1: Forged location.hash without tab-bound claim must never trigger fetch or match.
+  const forgedQueried=[];
+  await runInNewContext(content,{
+    window:windowObj,
+    URL,AbortController,setTimeout,clearTimeout,TextDecoder,
+    location:{href:`${claudeUrl}#claude-local-sync=${nonce}`,origin:'https://claude.ai',pathname:'/settings/usage',search:'',hash:`#claude-local-sync=${nonce}`},
+    fetch:async path=>{forgedQueried.push(path);return {ok:false};},
+    chrome:{runtime:{sendMessage:async message=>{
+      const sender={id:workers.url().match(/^chrome-extension:\/\/([^/]+)/)[1],frameId:0,tab:{id:7,url:claudeUrl}};
+      if(message.kind==='claude-local-quota-claim')return workers.evaluate(({msg,sender})=>claimTabTask(msg,sender),{msg:message,sender});
+      return {matched:null};
+    }}},
+    encodeURIComponent
+  });
+  assert.equal(forgedQueried.length,0,'forged location.hash without paired tab claim must not fetch');
+
+  // Negative check 2: Non-zero frameId must be rejected by claimTabTask / matchCandidates / deliver.
+  const subframeClaim=await workers.evaluate(async({claudeUrl})=>{
+    return claimTabTask({},{id:chrome.runtime.id,frameId:1,tab:{id:7,url:claudeUrl}});
+  },{claudeUrl});
+  assert.deepEqual(subframeClaim,{nonce:null});
+
   const mismatchNonce='abcdef0123456789abcdef0123456789abcdef0123456789';
   const mismatchHash=createHash('sha256').update(JSON.stringify([account,email,otherOrganization])).digest('hex');
   const mismatch=await workers.evaluate(async({nonce,hash,port,account,email,organization})=>{
     const local=`http://127.0.0.1:${port}/${nonce}/browser.html#quota-sync=${nonce}&quota_identity=${hash}`;
-    const sender={id:chrome.runtime.id,tab:{id:8,url:local}};
+    const sender={id:chrome.runtime.id,frameId:0,tab:{id:8,url:local}};
     await pair({nonce,quotaIdentity:hash},sender);
     return matchCandidates({kind:'claude-local-quota-candidates',nonce,accountUuids:[account],emails:[email],organizationUuids:[organization]},
-      {id:chrome.runtime.id,tab:{id:8,url:'https://claude.ai/settings/usage'}});
+      {id:chrome.runtime.id,frameId:0,tab:{id:8,url:'https://claude.ai/settings/usage'}});
   },{nonce:mismatchNonce,hash:mismatchHash,port,account,email,organization});
   assert.deepEqual(mismatch,{matched:null},'unbound identity fingerprint must not select an organization');
   const differentMember='44444444-4444-4444-8444-444444444444';
   const memberMismatch=await workers.evaluate(async({nonce,hash,port,differentMember,email,organization})=>{
     const local=`http://127.0.0.1:${port}/${nonce}/browser.html#quota-sync=${nonce}&quota_identity=${hash}`;
-    await pair({nonce,quotaIdentity:hash},{id:chrome.runtime.id,tab:{id:9,url:local}});
+    await pair({nonce,quotaIdentity:hash},{id:chrome.runtime.id,frameId:0,tab:{id:9,url:local}});
     return matchCandidates({kind:'claude-local-quota-candidates',nonce,
       accountUuids:[differentMember],emails:[email],organizationUuids:[organization]},
-      {id:chrome.runtime.id,tab:{id:9,url:'https://claude.ai/settings/usage'}});
+      {id:chrome.runtime.id,frameId:0,tab:{id:9,url:'https://claude.ai/settings/usage'}});
   },{nonce:'bcdef0123456789abcdef0123456789abcdef0123456789a',hash:quotaIdentity,port,differentMember,email,organization});
   assert.deepEqual(memberMismatch,{matched:null},'same organization with another member must not match');
   const missingAccount=await workers.evaluate(async({nonce,hash,port,email,organization})=>{
     const local=`http://127.0.0.1:${port}/${nonce}/browser.html#quota-sync=${nonce}&quota_identity=${hash}`;
-    await pair({nonce,quotaIdentity:hash},{id:chrome.runtime.id,tab:{id:10,url:local}});
+    await pair({nonce,quotaIdentity:hash},{id:chrome.runtime.id,frameId:0,tab:{id:10,url:local}});
     return matchCandidates({kind:'claude-local-quota-candidates',nonce,accountUuids:[],emails:[email],organizationUuids:[organization]},
-      {id:chrome.runtime.id,tab:{id:10,url:'https://claude.ai/settings/usage'}});
+      {id:chrome.runtime.id,frameId:0,tab:{id:10,url:'https://claude.ai/settings/usage'}});
   },{nonce:'cdef0123456789abcdef0123456789abcdef0123456789ab',hash:quotaIdentity,port,email,organization});
   assert.deepEqual(missingAccount,{matched:null},'organization and email without account UUID must not match');
   const snapshot=outbound.snapshot;
@@ -122,9 +169,9 @@ try{
 
   const kycNonce='1111222233334444555566667777888899990000aaaabbbb';
   const kycLocalUrl=`http://127.0.0.1:${port}/${kycNonce}/browser.html#quota-sync=${kycNonce}&quota_identity=${quotaIdentity}`;
-  const kycClaudeUrl=`https://claude.ai/settings/usage#claude-local-sync=${kycNonce}`;
+  const kycClaudeUrl='https://claude.ai/settings/usage';
   const kycPair=await workers.evaluate(async({nonce,localUrl,quotaIdentity})=>{
-    const sender={id:chrome.runtime.id,tab:{id:11,url:localUrl}};
+    const sender={id:chrome.runtime.id,frameId:0,tab:{id:11,url:localUrl}};
     return pair({nonce,quotaIdentity},sender);
   },{nonce:kycNonce,localUrl:kycLocalUrl,quotaIdentity});
   assert.deepEqual(kycPair,{paired:true});
@@ -147,11 +194,12 @@ try{
     }
   };
   await runInNewContext(content,{
-    URL,AbortController,setTimeout,clearTimeout,TextDecoder,location:{href:kycClaudeUrl,origin:'https://claude.ai',pathname:'/settings/usage',search:'',hash:`#claude-local-sync=${kycNonce}`},
-    history:{replaceState(){}},sessionStorage:{getItem(){return null;},setItem(){}},
+    window:windowObj,
+    URL,AbortController,setTimeout,clearTimeout,TextDecoder,location:{href:kycClaudeUrl,origin:'https://claude.ai',pathname:'/settings/usage',search:'',hash:''},
     fetch:async path=>{kycQueried.push(path);return {ok:Object.hasOwn(kycResponses,path)&&kycResponses[path]!==null,json:async()=>kycResponses[path]};},
     chrome:{runtime:{sendMessage:async message=>{
-      const sender={id:workers.url().match(/^chrome-extension:\/\/([^/]+)/)[1],tab:{id:11,url:kycClaudeUrl}};
+      const sender={id:workers.url().match(/^chrome-extension:\/\/([^/]+)/)[1],frameId:0,tab:{id:11,url:kycClaudeUrl}};
+      if(message.kind==='claude-local-quota-claim')return workers.evaluate(({msg,sender})=>claimTabTask(msg,sender),{msg:message,sender});
       if(message.kind==='claude-local-quota-candidates')return workers.evaluate(({msg,sender})=>matchCandidates(msg,sender),{msg:message,sender});
       if(message.kind==='claude-local-quota-snapshot'){
         kycOutbound=message;
@@ -172,7 +220,39 @@ try{
   assert.ok(!JSON.stringify(kycBody).includes('vendor_inquiry'));
   assert.ok(!JSON.stringify(kycBody).includes('secret'));
   assert.ok(!JSON.stringify(kycOutbound).includes('secret'));
-  console.log('Synthetic MV3 quota bridge passed: duplicate pairing rejected and filtered snapshot delivered once.');
+
+  // G6 check 1: Transient connection drop (TypeError in fetch) retries with backoff and delivers once, while blocking replay.
+  const retryPair=await workers.evaluate(async({nonce,port,quotaIdentity,account,email,organization})=>{
+    const localUrl=`http://127.0.0.1:${port}/${nonce}/browser.html#quota-sync=${nonce}&quota_identity=${quotaIdentity}`;
+    const tabSender={id:chrome.runtime.id,frameId:0,tab:{id:12,url:localUrl}};
+    const pairedRes=await pair({nonce,quotaIdentity},tabSender);
+    const claudeSender={id:chrome.runtime.id,frameId:0,tab:{id:12,url:'https://claude.ai/settings/usage'}};
+    const claimed=await claimTabTask({},claudeSender);
+    const matched=await matchCandidates({kind:'claude-local-quota-candidates',nonce,accountUuids:[account],emails:[email],organizationUuids:[organization]},claudeSender);
+    const deliverRes=await deliver({kind:'claude-local-quota-snapshot',nonce,snapshot:{nonce,account_uuid:account,organization_uuid:organization,usage:{five_hour:{utilization:15,resets_at:'2027-01-01T00:00:00Z'}}}},claudeSender);
+    const replayRes=await deliver({kind:'claude-local-quota-snapshot',nonce,snapshot:{nonce,account_uuid:account,organization_uuid:organization,usage:{five_hour:{utilization:15,resets_at:'2027-01-01T00:00:00Z'}}}},claudeSender);
+    return {pairedRes,claimed,matched,deliverRes,replayRes};
+  },{nonce:retryNonce,port,quotaIdentity,account,email,organization});
+  assert.deepEqual(retryPair.pairedRes,{paired:true});
+  assert.deepEqual(retryPair.claimed,{nonce:retryNonce});
+  assert.deepEqual(retryPair.deliverRes,{ok:true});
+  assert.deepEqual(retryPair.replayRes,{ok:false});
+  assert.equal(retryHits,2,'transient connection drop must trigger bounded retry and succeed on second attempt');
+  assert.equal(received.length,3,'retried delivery must be recorded once');
+
+  // G6 check 2: HTTP 500 response must NOT retry and must return { ok: false }.
+  const httpErrPair=await workers.evaluate(async({nonce,port,quotaIdentity,account,email,organization})=>{
+    const localUrl=`http://127.0.0.1:${port}/${nonce}/browser.html#quota-sync=${nonce}&quota_identity=${quotaIdentity}`;
+    await pair({nonce,quotaIdentity},{id:chrome.runtime.id,frameId:0,tab:{id:13,url:localUrl}});
+    const claudeSender={id:chrome.runtime.id,frameId:0,tab:{id:13,url:'https://claude.ai/settings/usage'}};
+    await claimTabTask({},claudeSender);
+    await matchCandidates({kind:'claude-local-quota-candidates',nonce,accountUuids:[account],emails:[email],organizationUuids:[organization]},claudeSender);
+    return deliver({kind:'claude-local-quota-snapshot',nonce,snapshot:{nonce,account_uuid:account,organization_uuid:organization,usage:{five_hour:{utilization:15,resets_at:'2027-01-01T00:00:00Z'}}}},claudeSender);
+  },{nonce:httpErrNonce,port,quotaIdentity,account,email,organization});
+  assert.deepEqual(httpErrPair,{ok:false});
+  assert.equal(httpErrHits,1,'HTTP 5xx response must not be retried');
+
+  console.log('Synthetic MV3 quota bridge passed: duplicate pairing rejected, bounded network retry verified, and filtered snapshot delivered once.');
 }finally{
   if(context)await context.close();
   await new Promise(resolveClose=>server.close(resolveClose));

@@ -1,0 +1,279 @@
+/* [INPUT]: `src/browser-start.tsx` 跨上下文阻断级告警横幅与 6 上下文 / 9 维一致性矩阵 DOM。
+ * [OUTPUT]: 独立于 `src/style.css` 的伴生浏览器核验页跨上下文阻断高亮、上下文三态胶囊与 9 维指标对比网格样式。
+ * [POS]: 仅由 `src/browser-start.tsx` 导入，不进入主桌面应用包，不改动 `src/style.css` L1250-1298 或现有 `.verification-banner` 高度契约。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 `src/CLAUDE.md`
+ */
+.verification-blocking-alert {
+  margin: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid #f0b4ae;
+  border-left: 5px solid #b42318;
+  background: linear-gradient(135deg, #fff1f0 0%, #ffe4e2 100%);
+  color: #7a1410;
+  display: grid;
+  gap: 8px;
+}
+
+.verification-blocking-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.verification-blocking-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  background: #b42318;
+  color: #ffffff;
+}
+
+.verification-blocking-alert h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #7a1410;
+}
+
+.verification-blocking-alert p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #8f1d18;
+}
+
+.verification-blocking-alert ul {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.verification-blocking-alert li {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 35, 24, 0.28);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.verification-cross-context {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--landing-line);
+  background: var(--panel);
+  display: grid;
+  gap: 14px;
+}
+
+.verification-cross-context-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 16px;
+}
+
+.verification-cross-context-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--foreground);
+}
+
+.verification-cross-context-head p {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.verification-cross-context-head p.is-blocking {
+  color: #b42318;
+  font-weight: 600;
+}
+
+.verification-context-pills {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.verification-context-pill {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--landing-line);
+  background: var(--muted);
+  min-width: 0;
+}
+
+.verification-context-pill strong {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verification-context-pill span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.verification-context-pill[data-context-status="matched"] {
+  border-color: rgba(22, 112, 60, 0.28);
+  background: #edf9f1;
+}
+
+.verification-context-pill[data-context-status="matched"] span {
+  color: #16703c;
+}
+
+.verification-context-pill[data-context-status="mismatch"] {
+  border-color: rgba(180, 35, 24, 0.45);
+  background: #fff1f0;
+}
+
+.verification-context-pill[data-context-status="mismatch"] span {
+  color: #b42318;
+}
+
+.verification-context-pill[data-context-status="unsupported"] {
+  border-style: dashed;
+}
+
+.verification-cross-matrix {
+  display: grid;
+  gap: 8px;
+}
+
+.verification-cross-row {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.2fr) minmax(160px, 1fr) repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--landing-line);
+  background: var(--card-elevated, var(--panel));
+  font-size: 11.5px;
+}
+
+.verification-cross-row.is-blocking-mismatch {
+  border-color: #b42318;
+  background: #fff4f3;
+  box-shadow: inset 3px 0 0 #b42318;
+}
+
+.verification-cross-metric {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.verification-cross-metric strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.verification-cross-scope {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+
+.verification-cross-baseline {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.verification-cross-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 7px;
+  background: var(--muted);
+}
+
+.verification-cross-cell > em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.verification-cross-cell > span {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verification-cross-cell[data-cell-status="matched"] {
+  background: #edf9f1;
+}
+
+.verification-cross-cell[data-cell-status="matched"] > span {
+  color: #16703c;
+}
+
+.verification-cross-cell[data-cell-status="mismatch"] {
+  background: #ffe4e2;
+  border: 1px solid rgba(180, 35, 24, 0.35);
+}
+
+.verification-cross-cell[data-cell-status="mismatch"] > span {
+  color: #b42318;
+}
+
+.verification-cross-cell[data-cell-status="not_applicable"] > span,
+.verification-cross-cell[data-cell-status="unsupported"] > span {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+@media (max-width: 1040px) {
+  .verification-context-pills {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .verification-cross-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .verification-cross-metric {
+    grid-column: 1 / -1;
+  }
+  .verification-cross-baseline {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 600px) {
+  .verification-context-pills {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .verification-blocking-alert,
+  .verification-cross-context {
+    padding: 12px 16px;
+  }
+}

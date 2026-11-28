@@ -1,10 +1,10 @@
 /**
- * [INPUT]: 原生只读环境快照（risk_inspect_local_env 含 CLI 遥测护盾/MCP 供应链审计与 Mihomo Sift/Hexagon/Telemetry 规则标志 has_sift_rules / has_telemetry_rules）、用户触发的三路边缘一致性探针（risk_probe_consistency）、隐私遮罩偏好与双语文案。
- * [OUTPUT]: 四模块单层工作台布局：安全态势与四栏紧凑去重遥测条（含 Datadog/遥测 `[data-risk-telemetry-rules]` 与 Sift/Hexagon `[data-risk-sift-rules]` 分流规则对齐指示）、带分组标头的双层三列静态/动态核验矩阵与 strict-route 闭环修复向导、移动端 3+2 徽章去折叠扫码桥接（含贴边分隔独立提示框）及 6 步前置飞行清单（含 PayPal 站点清理直达助手）。
+ * [INPUT]: 原生只读环境快照（risk_inspect_local_env 含 CLI 遥测护盾/MCP 供应链审计与 Mihomo Sift/Hexagon/Telemetry 规则标志 has_sift_rules / has_telemetry_rules）、用户触发的三路边缘一致性探针（risk_probe_consistency）、Cromma Button/Checkbox/Input、隐私遮罩偏好与双语文案。
+ * [OUTPUT]: 四模块单层工作台布局：安全态势与复用共享基座的四栏可折行遥测条（含 Datadog/遥测 `[data-risk-telemetry-rules]` 与 Sift/Hexagon `[data-risk-sift-rules]` 分流规则对齐指示）、带分组标头的双层三列静态/动态核验矩阵与两段式修复栏及 strict-route 闭环修复向导、双栏均衡排布的移动端 3+2 徽章扫码桥接（含贴边分隔独立提示框）及使用 Cromma Checkbox 的 6 步前置飞行清单（含 PayPal 站点清理直达助手）。
  * [POS]: 风控验证主页面；零上游凭据读取、零临时口令落盘、严格拦截非 RFC1918 内网暴露，所有修复通过可审计 AI 提示词或用户显式下载完成。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import {Button, Input} from 'cromma-ui';
+import {Button, Checkbox, Input} from 'cromma-ui';
 import {CheckTickCircle, Refresh} from 'cromma-ui/pika';
 import {useCallback, useEffect, useId, useMemo, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
@@ -95,6 +95,7 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
   const srPortId = useId();
   const srUserId = useId();
   const srPassId = useId();
+  const checklistIdPrefix = useId();
 
   const [local, setLocal] = useState<LocalRiskSnapshot | null>(null);
   const [inspecting, setInspecting] = useState(true);
@@ -509,11 +510,11 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
             )}
           </div>
 
-          <div className="risk-telemetry-strip">
-            <div className="risk-telemetry-cell">
-              <div className="risk-telemetry-head">
-                <span className={`risk-telemetry-dot${browserDotClass ? ` ${browserDotClass}` : ''}`} aria-hidden="true" />
-                <span className="risk-telemetry-label">{t('risk.telemetry.browserLabel')}</span>
+          <div className="env-telemetry-strip risk-telemetry-strip">
+            <div className="env-telemetry-cell risk-telemetry-cell">
+              <div className="env-telemetry-head">
+                <span className={`env-status-dot${browserDotClass ? ` ${browserDotClass}` : ''}`} aria-hidden="true" />
+                <span className="env-telemetry-label">{t('risk.telemetry.browserLabel')}</span>
               </div>
               <strong data-risk-browser-identity={local?.browser_identity?.status} title={browserDisplayName}>
                 {browserDisplayName}
@@ -523,10 +524,10 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               </small>
             </div>
 
-            <div className="risk-telemetry-cell">
-              <div className="risk-telemetry-head">
-                <span className={`risk-telemetry-dot${coreDotClass ? ` ${coreDotClass}` : ''}`} aria-hidden="true" />
-                <span className="risk-telemetry-label">{t('risk.telemetry.coreLabel')}</span>
+            <div className="env-telemetry-cell risk-telemetry-cell">
+              <div className="env-telemetry-head">
+                <span className={`env-status-dot${coreDotClass ? ` ${coreDotClass}` : ''}`} aria-hidden="true" />
+                <span className="env-telemetry-label">{t('risk.telemetry.coreLabel')}</span>
               </div>
               <strong title={coreSourceValue}>{local ? stripTelemetryPrefix(coreSourceValue) : coreSourceValue}</strong>
               {local?.mihomo.has_telemetry_rules ? (
@@ -558,10 +559,10 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               )}
             </div>
 
-            <div className="risk-telemetry-cell">
-              <div className="risk-telemetry-head">
-                <span className={`risk-telemetry-dot${cliDotClass ? ` ${cliDotClass}` : ''}`} aria-hidden="true" />
-                <span className="risk-telemetry-label">{t('risk.telemetry.cliLabel')}</span>
+            <div className="env-telemetry-cell risk-telemetry-cell">
+              <div className="env-telemetry-head">
+                <span className={`env-status-dot${cliDotClass ? ` ${cliDotClass}` : ''}`} aria-hidden="true" />
+                <span className="env-telemetry-label">{t('risk.telemetry.cliLabel')}</span>
               </div>
               <strong
                 data-risk-cli-shield={cliSec ? (cliShieldOk ? 'ok' : 'warn') : undefined}
@@ -608,10 +609,10 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
               )}
             </div>
 
-            <div className="risk-telemetry-cell">
-              <div className="risk-telemetry-head">
-                <span className={`risk-telemetry-dot${mcpDotClass ? ` ${mcpDotClass}` : ''}`} aria-hidden="true" />
-                <span className="risk-telemetry-label">{t('risk.telemetry.mcpLabel')}</span>
+            <div className="env-telemetry-cell risk-telemetry-cell">
+              <div className="env-telemetry-head">
+                <span className={`env-status-dot${mcpDotClass ? ` ${mcpDotClass}` : ''}`} aria-hidden="true" />
+                <span className="env-telemetry-label">{t('risk.telemetry.mcpLabel')}</span>
               </div>
               <strong data-risk-mcp-audit={cliSec ? (cliMcpOk ? 'ok' : 'warn') : undefined} title={mcpAuditFull}>
                 {cliSec ? stripTelemetryPrefix(mcpAuditFull) : mcpAuditFull}
@@ -1027,6 +1028,10 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
                       </li>
                     ))}
                   </ol>
+                  <div className="risk-callout risk-callout-inline risk-standalone-note" role="note">
+                    <strong>{t('risk.mobile.srSwitchModeBadge')}</strong>
+                    <span>{t('risk.mobile.srSwitchModeNote')}</span>
+                  </div>
                 </div>
 
                 <aside className="risk-ephemeral-qr-card" aria-label={t('risk.mobile.srQrTitle')}>
@@ -1147,10 +1152,6 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
 
               <div className="risk-standalone-footer">
                 <div className="risk-standalone-footer-bar">
-                  <div className="risk-callout risk-callout-inline" role="note">
-                    <strong>{t('risk.mobile.srSwitchModeBadge')}</strong>
-                    <span>{t('risk.mobile.srSwitchModeNote')}</span>
-                  </div>
                   <div className="risk-action-group">
                     <Button
                       variant="secondary"
@@ -1278,14 +1279,16 @@ export function RiskVerificationPanel({onNavigate}: {onNavigate?: (page: Page) =
           <ol className="risk-checklist-list">
             {CHECKLIST_STEP_IDS.map(stepId => {
               const checked = Boolean(checkedSteps[stepId]);
+              const checkboxId = `${checklistIdPrefix}-${stepId}`;
               return (
                 <li key={stepId} className="risk-checklist-item" data-checked={checked}>
-                  <label className="risk-checklist-label">
-                    <input
-                      type="checkbox"
+                  <label htmlFor={checkboxId} className="risk-checklist-label">
+                    <Checkbox
+                      id={checkboxId}
+                      className="risk-checklist-checkbox"
                       checked={checked}
-                      onChange={event =>
-                        setCheckedSteps(prev => ({...prev, [stepId]: event.target.checked}))
+                      onCheckedChange={next =>
+                        setCheckedSteps(prev => ({...prev, [stepId]: next === true}))
                       }
                     />
                     <span className="risk-checklist-copy">
